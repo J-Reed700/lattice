@@ -95,6 +95,59 @@ belong to their respective adapters, not the sync contracts.
   credential command without accessing the OS keychain, plus sink persistence,
   concurrent delivery, bounded history, and logger enable/disable behavior.
 
+## Conversation memory
+
+Bounded conversation memory follows the same layer rules as everything else.
+Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
+
+- `domain/conversation_memory.rs` owns the memory value types — item identity and
+  kind, validity, evidence spans, proposed changes, allowed transitions — and all
+  deterministic validation. An untrusted model proposal becomes a committable
+  candidate only by passing rules that live here. The module is pure: no sqlx,
+  Tauri, or axum, and no imports from `application`, `features`, or
+  `infrastructure`. Calling a model and paging a transcript belong to the
+  application layer; SQL belongs to the repository.
+- `application/ports/conversation_memory.rs` declares `ConversationMemoryPort`
+  (snapshot load, commit, source reads) and `ConversationMemoryReadPort`
+  (recall). Application services depend on these traits only, so their tests use
+  fakes while the SQL stays behind the repository barrier.
+- `application/services/context_assembler/{mod,budget,plan,render,tests}.rs` is
+  the single budget owner. `BudgetAllocation::plan` derives every pool from the
+  active model's capacity, and it is now shared by the chat path and the QA path;
+  the QA path previously carried its own percentage constants. Mandatory-memory
+  overflow is an explicit `ActiveMemoryBudgetExceeded` carrying required and
+  available counts, never a silent eviction. `plan.rs` returns the typed plan and
+  its token accounting; `render.rs` emits typed messages, so memory is never
+  spliced into the system prompt as a string.
+- `application/services/conversation_memory/` (`mod`, `job`, `selection`,
+  `prompts`, `extract`, `verify`, `summarize`, `segment`) is the only compaction
+  implementation, with `mod.rs` as the façade. `CompactionJob` in `job.rs` must be a singleton: it
+  holds the per-conversation single-flight slots, so two instances each hold
+  their own map and the mutual exclusion means nothing. `CompactionJob::with_slots`
+  exists so a caller can share process-wide slots deliberately.
+- `features/conversation/repository/{memory,memory_recall,memory_port}.rs` are
+  the only places memory SQL lives. `load_memory_snapshot` reads state, items,
+  evidence, and summary in one transaction, so no caller can pair revision `N`'s
+  summary with revision `N+1`'s ledger. `commit_memory` is one atomic
+  transaction: it checks both revisions, re-resolves every evidence span against
+  live message content, then applies items, evidence, summary, watermark, and
+  revision together. It is the only writer of `conversation_summaries`.
+  `memory_recall.rs` scopes retrieval to one conversation — ownership is in the
+  `WHERE` clause of every query, and only `source = 'message'` rows are returned,
+  so a title or bookmark note cannot be presented as something the user said.
+  `memory_port.rs` is thin delegation to those inherent methods.
+- `features/conversation/chat/memory_context.rs` assembles one turn's bounded
+  typed input from memory plus recall, and returns nothing when the setting is
+  off or no memory has been extracted, so short conversations pay for none of it.
+  `chat/history_tools.rs` owns both shapes of recovery: the two read-only tools a
+  continuation model may call, and the same retrieval run automatically for
+  providers and QA paths that have no tools.
+- `features/conversation/memory_dto.rs` and `memory_details.rs` are the
+  read-only details view. There is no edit-memory shape, because a free-form
+  editor creates requirements with no source behind them. Quotations are
+  resolved from the original messages on every read and never cached beside the
+  item, so deleting a message deletes its quotation from this view too.
+
 ## Remote chat providers
 
 - Ollama uses its native `/api/tags` and `/api/chat` routes. Its connection test
@@ -141,11 +194,56 @@ belong to their respective adapters, not the sync contracts.
   from `SELECT DISTINCT checksum FROM documents` read out of the snapshot
   itself, so the tar and the manifest always agree, and orphans never travel.
 
+## Command registration and schema invariants
+
+These are enforced by generators, scripts, and the database rather than by the
+Rust compiler, so they are the parts that bite a newcomer.
+
+- Registering a Tauri command takes five separate edits: the `_impl` in the
+  feature's `plugin_impl.rs`, the handler and `invoke_handler` entry in
+  `plugin.rs`, the command name in `src-tauri/build.rs` under
+  `InlinedPlugin::commands`, the matching `<feature>:allow-<command>` permission
+  in `capabilities/main.json`, and the specta/TypeScript binding. Missing any one
+  of the five is not a compile error — the ACL rejects the command at runtime.
+  `compact_conversation` had exactly this defect: registered in the handler and
+  present in the generated bindings, absent from `build.rs` and
+  `capabilities/main.json`, so `/compact` would have failed in the running app
+  while the whole test suite passed. `export_bindings -- --check` and
+  `scripts/check-ipc-contracts.mjs` cover the binding side only, which is how
+  that omission survived. The ACL side is now covered by
+  `scripts/check-tauri-command-inventory.py` (`npm run contracts:commands`),
+  which cross-checks every `generate_handler!` entry against `build.rs` and
+  `capabilities/main.json` in both directions and runs in CI. It found two more
+  live instances of the same defect on its first run — `search:reranker_status`
+  and `search:download_reranker` — which is the argument for having it.
+- Two conversation-memory invariants live in SQLite triggers, not in callers.
+  `trg_conversation_transcript_revision_{ai,au,ad}` bump
+  `conversations.transcript_revision` on every message insert, update, and
+  delete. `trg_conversation_memory_invalidate_{au,ad}` and
+  `trg_conversation_memory_vectors_invalidate_au` invalidate derived memory when
+  source content changes or a message disappears. They are triggers precisely so
+  correctness does not depend on a caller remembering: a new write path gets the
+  revision bump and the invalidation without knowing they exist.
+- Memory concurrency is compare-and-swap on the
+  `(transcript_revision, memory_revision)` pair plus operation-id idempotency. A
+  commit states the pair it read; a mismatch fails the commit and the run retries
+  from a fresh snapshot instead of overwriting a newer ledger. Re-running the
+  same operation id does not apply a second time.
+- Schema changes go directly into
+  `src-tauri/migrations/20260916000000_init_schema.sql`. There is no migration
+  chain and no compatibility shim, so a schema change means deleting local
+  databases.
+- Tests run the real migration through `sqlx::migrate!("./migrations")`. Two
+  hand-rolled test schemas existed and had drifted from it, hiding trigger
+  behavior and column defaults from exactly the tests that depended on them;
+  both were replaced by the migration and the pattern should not return.
+
 ## Verification commands
 
 ```sh
 bash scripts/check-rust-layer-boundaries.sh
 bash scripts/check-repository-barrier.sh
+python3 scripts/check-tauri-command-inventory.py
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
@@ -153,9 +251,20 @@ cargo check --manifest-path src-tauri/Cargo.toml --all-targets
 cargo run --manifest-path src-tauri/Cargo.toml --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib
 cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored
+cargo test --manifest-path src-tauri/Cargo.toml --test conversation_memory_evals -- --list
 ```
 
-The last command requires a disposable PostgreSQL `DATABASE_URL`. SQLx creates
+The conversation-memory evaluation suite is opt-in and needs a configured model
+plus the environment documented at the top of
+`src-tauri/tests/conversation_memory_evals.rs`. Authenticated Qwen calibrations
+have exercised correction and conflict cases. The corrected-value and
+unresolved-conflict cases pass after repairs to same-batch transitions, repair
+context, and ambiguous-transition review. A subsequent release run found and
+repaired contradictory action probes and a continuation harness that truncated
+multi-tool answers after two rounds. The corrected three-repeat corpus-wide
+release baseline has not completed and must not be reported as passing.
+
+The `sync_persistence` command requires a disposable PostgreSQL `DATABASE_URL`. SQLx creates
 isolated test databases. CI provisions PostgreSQL and runs these tests explicitly;
 ordinary local unit tests do not require a database server.
 
@@ -179,6 +288,12 @@ This is not a claim of “10/10” architecture or production readiness.
 - The shared desktop error layer remains a coupling point, and ignored tests
   remain coverage gaps. A green library run does not substitute for live desktop,
   migration, packaging, or inference validation.
+- Bounded conversation memory has only limited real-model calibration. The
+  deterministic suite covers quote fidelity, commit atomicity, revision
+  preconditions, and budget arithmetic. One authenticated Qwen correction case
+  and one unresolved-conflict case pass. Extraction quality, recall usefulness,
+  multi-cycle drift, and corpus-wide reliability remain unestablished until the
+  full repeated baseline completes.
 - The API is still explicitly a scaffold: trusted-header authentication, merged
   conflict application, and outbox delivery need product/security decisions.
   This refactor does not silently implement or change those protocols.

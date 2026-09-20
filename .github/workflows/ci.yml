@@ -19,10 +19,15 @@ jobs:
   rust-check:
     name: cargo check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Intel source checks precede publication of its first sidecar. This
+    # debug-only override cannot produce a release bundle; the package job
+    # below builds and verifies a real sidecar instead.
+    env:
+      LATTICE_ALLOW_UNPINNED_SIDECAR: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +69,8 @@ jobs:
           case "${{ runner.os }}" in
             Linux) touch src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu \
                          src-tauri/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
-            macOS) touch src-tauri/binaries/llama-server-aarch64-apple-darwin ;;
+            macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+                   touch "src-tauri/binaries/llama-server-$triple" ;;
             Windows) touch src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe \
                            src-tauri/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
@@ -181,6 +187,100 @@ jobs:
         shell: bash
         run: bash src-tauri/scripts/fetch-llama-binaries.sh --strict
 
+  desktop-compatibility:
+    name: Desktop compatibility (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS-Apple-Silicon, os: macos-15, intel: false }
+          - { name: macOS-Intel, os: macos-15-intel, intel: true }
+          - { name: Ubuntu-24.04-x64, os: ubuntu-24.04, intel: false }
+          # Hosted Windows runners use Server, not Windows 11. Keep the actual
+          # runner visible; Windows 11 installation remains a release check.
+          - { name: Windows-x64-Server-2025, os: windows-2025, intel: false }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libvulkan1 xvfb
+      - name: Windows Vulkan loader
+        if: runner.os == 'Windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        with:
+          vulkan_version: 1.3.290.0
+          install_runtime_only: true
+          cache: true
+      - name: Install Windows Vulkan loader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "C:\VulkanSDK\1.3.290.0\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: desktop-compatibility-${{ matrix.name }}
+      - name: Fetch verified published sidecars
+        if: ${{ !matrix.intel }}
+        shell: bash
+        run: bash src-tauri/scripts/fetch-llama-binaries.sh --strict
+      - name: Build and execute Intel sidecar candidate
+        if: matrix.intel
+        run: bash src-tauri/scripts/build-intel-macos-sidecar.sh
+      - name: Pin verified Intel candidate for this CI bundle only
+        if: matrix.intel
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib
+          from pathlib import Path
+          root = Path('src-tauri')
+          binary = root / 'binaries/llama-server-x86_64-apple-darwin'
+          lock = root / 'scripts/llama-server.lock'
+          lines = [line for line in lock.read_text().splitlines()
+                   if not (line.startswith('sha256 ') and line.endswith(' ' + binary.name))]
+          lines.append(f'sha256 {hashlib.sha256(binary.read_bytes()).hexdigest()} {binary.name}')
+          lock.write_text('\n'.join(lines) + '\n')
+          PYCODE
+      - run: npm ci
+      - name: Build and install isolated package candidate
+        run: npm run test:desktop:build -- --release
+      - name: Exercise the native desktop app (macOS and Windows)
+        if: runner.os != 'Linux'
+        run: npm run test:desktop
+      - name: Exercise the native desktop app (Linux display session)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:desktop
+      - name: Generate text with the packaged CPU engine
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --max-time 60 \
+            https://huggingface.co/ggml-org/models-moved/resolve/main/tinyllamas/stories260K.gguf \
+            -o "$RUNNER_TEMP/stories260K.gguf"
+          binary="$(node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('e2e-results/desktop/manifest.json')); console.log(m.sidecar)")"
+          python3 src-tauri/scripts/smoke_llama_cpu.py "$binary" "$RUNNER_TEMP/stories260K.gguf" | tee e2e-results/desktop/reports/cpu-generation.json
+      - name: Upload results, screenshots and native logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-compatibility-${{ matrix.name }}
+          path: |
+            e2e-results/desktop/reports/
+            e2e-results/desktop/manifest.json
+            e2e-results/desktop/config.json
+          if-no-files-found: warn
+
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
     name: architecture boundary checks
@@ -193,6 +293,7 @@ jobs:
       - run: bash scripts/check-rust-layer-boundaries.sh
       - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
       - run: python3 scripts/check-sql-contracts.py
+      - run: python3 scripts/check-tauri-command-inventory.py
 
   frontend:
     name: frontend (type-check, lint, test)
@@ -224,8 +325,8 @@ jobs:
       - name: Renderer production build
         run: npx vite build
 
-      - name: Install browser for smoke tests
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers for smoke tests
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Browser smoke tests
         run: npm run test:e2e

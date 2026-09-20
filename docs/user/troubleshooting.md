@@ -24,9 +24,13 @@ This guide helps you diagnose and resolve common issues with Recall/Vault.
 **Solutions:**
 
 1. **Check System Requirements**
-   - **Windows:** Windows 10 or later
-   - **macOS:** macOS 10.15 (Catalina) or later
-   - **Linux:** Modern distribution with glibc 2.31+
+   - **Windows:** Windows 11 x64
+   - **macOS:** macOS 13.3 or later, Apple Silicon; Intel CPU builds are being qualified
+   - **Linux:** Ubuntu 24.04 LTS x64
+
+   See [platform support](../development/platform-support.md) for Intel build
+   availability and qualification status. An Apple Silicon package cannot run
+   on an Intel Mac; use the separate Intel package when available.
    - At least 4GB RAM, 500MB free disk space
 
 2. **Install Missing Dependencies**

@@ -120,3 +120,8 @@ docs/audit/
 
 # Builder scratch state (local editor snapshots)
 .builder/
+
+# Conversation-memory evaluation traces. These contain conversation text; the
+# harness writes them to the system temp dir by default, and this covers the case
+# where someone points LATTICE_EVAL_LOG_DIR at the repository.
+lattice-conversation-memory-evals-*.jsonl

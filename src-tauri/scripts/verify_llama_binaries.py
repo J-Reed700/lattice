@@ -220,10 +220,14 @@ _LINUX = "x86_64-unknown-linux-gnu"
 # needs macOS 14, so GGML_METAL_USE_BF16 is not here: llama-build.yml adds it
 # only when the lock's macos_min allows it.
 TARGETS: Dict[str, Target] = {
-    # Apple Silicon only: Intel Macs would need a CPU-only binary.
     f"llama-server-{_MAC}": Target(
         _MAC, "macos", "aarch64", "metal", "macos-14",
         "-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON"),
+    # Intel Macs use CPU inference. Do not require the runner's AVX extensions.
+    "llama-server-x86_64-apple-darwin": Target(
+        "x86_64-apple-darwin", "macos", "x86_64", "cpu", "macos-15-intel",
+        "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=OFF -DGGML_BLAS=OFF "
+        "-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"),
     # Vulkan covers NVIDIA, AMD and Intel GPUs without the CUDA toolchain.
     f"llama-server-{_WIN}.exe": Target(
         _WIN, "windows", "x86_64", "vulkan", "windows-2022", "-DGGML_VULKAN=ON"),
@@ -391,15 +395,15 @@ def _decode_macho_version(value: int) -> Version:
     return (value >> 16, (value >> 8) & 0xFF, value & 0xFF)
 
 
-def parse_macho(data: bytes) -> MachOInfo:
-    """Parse a thin arm64/x86_64 Mach-O, or the arm64 slice of a universal one."""
+def parse_macho(data: bytes, arch: str = "arm64") -> MachOInfo:
+    """Parse a thin Mach-O, or the requested slice of a universal one."""
     (magic,) = _unpack(">I", data, 0)
     if magic in (FAT_MAGIC, FAT_MAGIC_64):
-        return _parse_universal(data, magic == FAT_MAGIC_64)
+        return _parse_universal(data, magic == FAT_MAGIC_64, arch)
     return _parse_thin_macho(data)
 
 
-def _parse_universal(data: bytes, is64: bool) -> MachOInfo:
+def _parse_universal(data: bytes, is64: bool, arch: str) -> MachOInfo:
     (count,) = _unpack(">I", data, 4)
     if not 0 < count <= 32:
         raise FormatError(f"implausible universal binary slice count {count}")
@@ -415,10 +419,10 @@ def _parse_universal(data: bytes, is64: bool) -> MachOInfo:
         slices.append((_macho_arch_name(cputype, cpusubtype), start, size))
     names = [name for name, _, _ in slices]
     for name, start, size in slices:
-        if name != "arm64":
+        if name != arch:
             continue
         if start + size > len(data):
-            raise FormatError("arm64 slice extends past the end of the file")
+            raise FormatError(f"{arch} slice extends past the end of the file")
         info = _parse_thin_macho(data[start:start + size])
         info.universal_slices = names
         return info
@@ -816,13 +820,14 @@ def _short_dylib_name(path: str) -> str:
 
 
 def check_macos(info: MachOInfo, target: Target, lock: Lock, report: Report) -> None:
-    if info.arch != "arm64":
-        report.fail(f"architecture is {info.arch}; {target.triple} needs a thin arm64 "
-                    "Mach-O (or a universal binary with an arm64 slice)")
+    arch = "arm64" if target.arch == "aarch64" else target.arch
+    if info.arch != arch:
+        report.fail(f"architecture is {info.arch}; {target.triple} needs a thin {arch} "
+                    f"Mach-O (or a universal binary with a {arch} slice)")
         return
     if info.universal_slices:
         report.notes.append(f"universal binary ({', '.join(info.universal_slices)}); "
-                            "checked the arm64 slice")
+                            f"checked the {arch} slice")
     if info.filetype != MH_EXECUTE:
         report.fail(f"Mach-O file type is {info.filetype}, expected MH_EXECUTE")
 
@@ -840,6 +845,9 @@ def check_macos(info: MachOInfo, target: Target, lock: Lock, report: Report) -> 
             path.startswith(MACOS_METAL_FRAMEWORK_PREFIX) for _, path in info.dylibs):
         report.fail("Metal build does not link Metal.framework; the Metal backend is "
                     "missing or loaded at runtime")
+    if target.backend == "cpu" and any(
+            path.startswith(MACOS_METAL_FRAMEWORK_PREFIX) for _, path in info.dylibs):
+        report.fail("CPU build unexpectedly links Metal.framework")
 
     macos_versions = [version for platform_id, version in info.min_versions
                       if platform_id == PLATFORM_MACOS]
@@ -855,8 +863,8 @@ def check_macos(info: MachOInfo, target: Target, lock: Lock, report: Report) -> 
                         f"macos_min {lock.macos_min}")
 
     if not info.has_code_signature:
-        report.fail("no code signature; arm64 macOS kills unsigned executables "
-                    "(the linker's ad-hoc signature is enough)")
+        report.fail("no code signature; macOS sidecars must be signed "
+                    "(an ad-hoc signature is enough for verification)")
     elif info.signature_problem:
         report.fail(f"code signature invalid: {info.signature_problem}")
     else:
@@ -1168,7 +1176,8 @@ def verify_file(path: Path, lock: Lock, *, require_hashes: bool = False, run: bo
 
     format_name, parse, check = FORMATS[target.os]
     try:
-        info = parse(data)
+        info = (parse_macho(data, "arm64" if target.arch == "aarch64" else target.arch)
+                if target.os == "macos" else parse(data))
     except FormatError as exc:
         report.fail(f"not a valid {format_name} executable: {exc}")
     else:
@@ -1222,17 +1231,18 @@ def format_report(report: Report) -> str:
 PRINT_TARGET_FORMATS = ("files", "matrix", "markdown")
 
 
-def print_targets(fmt: str) -> str:
+def print_targets(fmt: str, names: Optional[Sequence[str]] = None) -> str:
     """The release file list, in the shape the caller consumes it."""
+    targets = {name: TARGETS[name] for name in (names if names is not None else EXPECTED_FILES)}
     if fmt == "files":
-        return "\n".join(EXPECTED_FILES)
+        return "\n".join(targets)
     if fmt == "matrix":
         return json.dumps({"include": [
             {"name": f"{target.label} ({target.backend_label})", "os": target.runner,
              "file": name, "vulkan": target.uses_vulkan, "backend": target.cmake_backend}
-            for name, target in TARGETS.items()]})
+            for name, target in targets.items()]})
     return "\n".join(f"| `{name}` | {target.label} | {target.backend_label} |"
-                     for name, target in TARGETS.items())
+                     for name, target in targets.items())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1255,6 +1265,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "(so a caller cannot trust a run that never happened)")
     parser.add_argument("--expect-all", action="store_true",
                         help=f"fail unless all {len(EXPECTED_FILES)} release files are present")
+    parser.add_argument("--pinned-only", action="store_true",
+                        help="select only files already pinned in the lock (for fetching the "
+                             "current release while new build targets are being qualified)")
     parser.add_argument("--print-targets", choices=PRINT_TARGET_FORMATS, metavar="FORMAT",
                         help="print the release file list and exit, as one of: "
                              + ", ".join(PRINT_TARGET_FORMATS))
@@ -1276,8 +1289,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stdout.reconfigure(errors="replace", newline="\n")
     parser = build_parser()
     args = parser.parse_args(argv)
+    expected = EXPECTED_FILES
+    if args.pinned_only:
+        try:
+            pinned = parse_lock(args.lock).sha256
+            if not pinned or any(name not in TARGETS for name in pinned):
+                raise LockError("--pinned-only needs nonempty checksums for known targets")
+            expected = tuple(name for name in TARGETS if name in pinned)
+        except LockError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
     if args.print_targets:
-        _say(print_targets(args.print_targets))
+        _say(print_targets(args.print_targets, expected))
         return EXIT_OK
     if not args.paths:
         parser.error("at least one PATH is required")
@@ -1289,6 +1312,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         lock = parse_lock(args.lock)
         files = collect_binaries(args.paths)
+        if args.pinned_only:
+            # Known candidate architectures can coexist with the pinned set;
+            # unexpected filenames must still fail verification.
+            files = [path for path in files if path.name in expected or path.name not in TARGETS]
     except (LockError, UsageError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -1317,7 +1344,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         failed = True
     if args.expect_all:
         present = {path.name for path in files}
-        missing = [name for name in EXPECTED_FILES if name not in present]
+        missing = [name for name in expected if name not in present]
         if missing:
             _say(f"FAIL missing release file(s): {', '.join(missing)}")
             failed = True

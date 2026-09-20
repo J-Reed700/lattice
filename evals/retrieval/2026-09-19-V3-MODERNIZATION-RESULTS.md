@@ -16,8 +16,17 @@ spans. "After" is the merged modernization branch. Metric files are in
 | After, late chunking | 0.7110 | 0.6353 | 0.6289 | 0.6965 | n/a |
 | After, ms-marco reranker | 0.7755 | 0.6910 | 0.6986 | 0.7688 | 533 ms |
 
-synthetic-library-v2 is unchanged by the branch: 0.9706 / 0.9170 / 0.9387. It has
-no headroom and should not be used to judge a retrieval change.
+On synthetic-library-v2, recall@5 stayed at 0.9706, while nDCG@5 moved from
+0.9222 to 0.9170 and MRR@5 from 0.9461 to 0.9387. The earlier description of
+all three metrics as unchanged was incorrect. Its high recall leaves little
+headroom, but its ranking regressions still need to be reported.
+
+These are synthetic-fixture retrieval measurements, not verified answer
+accuracy or evidence of robustness on real libraries. The graph parameter
+sweep below used 1,145 vectors; it does not establish recall or latency above
+the 20,000-vector production threshold. Runtime figures apply to the tested
+Mac and configurations only. No desktop fresh-install or cross-platform
+acceptance run was part of this evaluation.
 
 ## nDCG@5 by dimension
 

@@ -47,6 +47,15 @@ service are available if you want them.
 
 ## Getting started
 
+The desktop release targets are Windows 11 x64, macOS 13.3+ (Apple Silicon and
+Intel), and Ubuntu 24.04 LTS x64. Intel Mac support is being qualified and uses
+CPU inference. See [platform support](docs/development/platform-support.md)
+for its build instructions and remaining release gates.
+
+Native compatibility tests build and exercise isolated app packages on macOS
+(both architectures), Windows x64 and Ubuntu. See the
+[desktop test guide](e2e/desktop/README.md) for local commands and CI coverage.
+
 You'll need Node.js 20 or newer, a current Rust toolchain, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
 platform.
@@ -79,6 +88,16 @@ npm run type-check
 npm run lint
 npm test -- --run
 ```
+
+Production renderer smoke tests (Chromium and WebKit, with simulated desktop IPC):
+
+```bash
+npx playwright install --with-deps chromium webkit
+npm run test:e2e
+```
+
+The suite builds its own renderer in `e2e-results/renderer` and serves it on port
+4173. Keep that port free; the tests do not reuse a running development server.
 
 Desktop backend:
 

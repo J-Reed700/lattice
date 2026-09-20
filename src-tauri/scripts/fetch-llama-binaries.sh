@@ -102,8 +102,12 @@ for candidate in python3 python; do
 done
 [[ -n "$PYTHON" ]] || die "python >= 3.9 is required to verify the binaries"
 
-# The verifier's TARGETS table is the one list of release files; keeping a copy
-# here is how the two drifted apart before.
+# Install/check the published set. --update-lock requires the entire build
+# matrix, including new architectures, before a new release can be pinned.
+SELECT_FLAGS=()
+if [[ "$MODE" != update-lock ]]; then
+  SELECT_FLAGS+=(--pinned-only)
+fi
 FILES=()
 while IFS= read -r file; do
   # Strip a trailing CR: the lock lookup matches filenames exactly, so one
@@ -111,12 +115,12 @@ while IFS= read -r file; do
   # writes LF on every host, and this keeps that from being load-bearing.
   file="${file%$'\r'}"
   [[ -n "$file" ]] && FILES+=("$file")
-done < <("$PYTHON" "$VERIFY" --print-targets files)
+done < <("$PYTHON" "$VERIFY" --lock "$LOCK" ${SELECT_FLAGS[@]+"${SELECT_FLAGS[@]}"} --print-targets files)
 [[ ${#FILES[@]} -gt 0 ]] || die "$VERIFY --print-targets files listed no release files"
 
 verify() {
   # shellcheck disable=SC2086 # RUN_FLAG is intentionally empty or split into flags
-  "$PYTHON" "$VERIFY" --lock "$LOCK" --expect-all $RUN_FLAG "$@"
+  "$PYTHON" "$VERIFY" --lock "$LOCK" ${SELECT_FLAGS[@]+"${SELECT_FLAGS[@]}"} --expect-all $RUN_FLAG "$@"
 }
 
 RELEASE="$(lock_value release)"

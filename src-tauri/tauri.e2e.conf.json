@@ -1,0 +1,21 @@
+{
+  "productName": "Lattice Compatibility Test",
+  "identifier": "tech.lattice.compatibility.tests",
+  "build": {
+    "beforeBuildCommand": "vite build --outDir e2e-results/desktop/renderer",
+    "frontendDist": "../e2e-results/desktop/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "main",
+        {
+          "identifier": "desktop-e2e",
+          "windows": ["main"],
+          "permissions": ["wdio-webdriver:default"]
+        }
+      ]
+    }
+  }
+}
