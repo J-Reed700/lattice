@@ -35,9 +35,12 @@ vi.mock('../../TiptapEditor', () => ({
   TiptapViewer: ({ citationNumbers, claims }: { citationNumbers?: number[]; claims?: { sentence: string }[] }) => (
     <div>
       Answer body
-      {(citationNumbers ?? []).map((number) => (
-        <span key={number} className="cite-chip" data-cite={number}>{number}</span>
-      ))}
+      {/* Each source is cited twice, as a long answer cites it: two marks, two sentences. */}
+      {(citationNumbers ?? []).flatMap((number) =>
+        [0, 1].map((at) => (
+          <span key={`${number}-${at}`} className="cite-chip" data-cite={number} data-cite-at={at}>{number}</span>
+        ))
+      )}
       {(claims ?? []).map((claim, index) => (
         // Marked, not repeated: the real viewer decorates text already in the answer.
         <span key={claim.sentence} className="claim" data-claim={index}>checked sentence</span>
@@ -196,5 +199,21 @@ describe('opening the source reader from an answer', () => {
       useChatReaderStore.getState().close();
     });
     expect(chip().classList.contains('is-lit')).toBe(false);
+  });
+
+  it('tells the reader which mark of a source was clicked, and lights that mark alone', () => {
+    renderAnswer([source(1), source(2)]);
+    const marks = () => Array.from(document.querySelectorAll('[data-cite="2"]'));
+
+    fireEvent.click(marks()[1]!);
+
+    // The same source further down the answer stands for a different sentence.
+    expect(useChatReaderStore.getState().session?.occurrence).toBe(1);
+    expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([false, true]);
+
+    fireEvent.click(marks()[0]!);
+
+    expect(useChatReaderStore.getState().session?.occurrence).toBe(0);
+    expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([true, false]);
   });
 });

@@ -91,6 +91,8 @@ export interface SourceReaderBodyProps {
    * the Library, Compare, the reference inbox — and then nothing is marked.
    */
   ownerKey?: string;
+  /** Which of the answer's marks for this source was clicked, if one was. */
+  occurrence?: number | null;
   /** The reader at its largest. Owned by the surface, which changes size for it. */
   isFocused?: boolean;
   /** Omit to leave the expand toggle out (the full-screen dialog has nothing to expand into). */
@@ -107,6 +109,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onCitationIndexChange,
   onLocationResolved,
   ownerKey,
+  occurrence = null,
   isFocused = false,
   onToggleFocus,
 }) => {
@@ -545,6 +548,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
           url={openableUrl}
           source={source}
           ownerKey={ownerKey}
+          occurrence={occurrence}
           onActivePassageChange={setActivePassage}
           actions={
             openableUrl && !isCompact ? (

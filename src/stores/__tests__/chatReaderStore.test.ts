@@ -35,6 +35,19 @@ beforeEach(() => {
 });
 
 describe('the chat reader session', () => {
+  it('keeps the mark that was clicked, and lets go of it when stepping to another source', () => {
+    useChatReaderStore.getState().open('message-1', citations, 1, 2);
+    expect(useChatReaderStore.getState().session?.occurrence).toBe(2);
+
+    // `]` moves to a source nobody clicked a mark of.
+    useChatReaderStore.getState().setIndex(2);
+    expect(useChatReaderStore.getState().session?.occurrence).toBeNull();
+
+    // Opened from the source list: the source as a whole.
+    useChatReaderStore.getState().open('message-1', citations, 0);
+    expect(useChatReaderStore.getState().session?.occurrence).toBeNull();
+  });
+
   it('opens on the citation it was given and remembers who it belongs to', () => {
     useChatReaderStore.getState().open('message-1', citations, 1);
 

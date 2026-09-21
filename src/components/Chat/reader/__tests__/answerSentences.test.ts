@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { citationsIn, sentencesCiting, splitAnswerSentences } from '../answerSentences';
+import {
+  citationsIn,
+  sentencesByOccurrence,
+  sentencesCiting,
+  splitAnswerSentences,
+} from '../answerSentences';
 
 const ANSWER = [
   '**Short version:** about 1.2 °C of daytime cooling per 10 points of canopy [1][2].',
@@ -55,5 +60,41 @@ describe('picking the sentences that cite a source', () => {
   it('returns nothing for a number the answer never cites', () => {
     expect(sentencesCiting(ANSWER, 9)).toEqual([]);
     expect(sentencesCiting('', 1)).toEqual([]);
+  });
+});
+
+describe('which sentence a clicked mark sits in', () => {
+  const REPEATED = [
+    'Potatoes give the most calories per square foot indoors [6].',
+    '',
+    '- Microgreens are ready in ten days [2][6]. They need no deep soil.',
+    '',
+    '```',
+    'yield[6] = 4',
+    '```',
+    '',
+    'Skip `grid[6]` lookups; dwarf tomatoes want eight hours of light [6, 2] and a five-gallon pot [6].',
+  ].join('\n');
+
+  it('answers each mark of a source with its own sentence, in reading order', () => {
+    expect(sentencesByOccurrence(REPEATED, 6)).toEqual([
+      'Potatoes give the most calories per square foot indoors.',
+      'Microgreens are ready in ten days.',
+      'Skip lookups; dwarf tomatoes want eight hours of light and a five-gallon pot.',
+    ]);
+  });
+
+  it('counts only what is drawn as a chip: not code, and not the comma form', () => {
+    // `yield[6]` is in a fence, `grid[6]` is inline code and `[6, 2]` is never a chip.
+    expect(sentencesByOccurrence(REPEATED, 6)).toHaveLength(3);
+    expect(sentencesByOccurrence(REPEATED, 2)).toEqual(['Microgreens are ready in ten days.']);
+  });
+
+  it('repeats a sentence that carries the same mark twice, so the count stays in step', () => {
+    expect(sentencesByOccurrence('Kale [3] outgrows chard [3]. Both bolt in heat [3].', 3)).toEqual([
+      'Kale outgrows chard.',
+      'Kale outgrows chard.',
+      'Both bolt in heat.',
+    ]);
   });
 });

@@ -9,11 +9,12 @@ import { useConversationsStore } from '@/stores/conversationsStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
 
-import { sentencesCiting } from './answerSentences';
+import { sentencesByOccurrence, sentencesCiting } from './answerSentences';
 import {
   findQuoteSpan,
   findSourcedPassages,
   mergePassages,
+  stripCitationMarkers,
   type SourcedPassage,
 } from './sourcedPassages';
 
@@ -37,6 +38,11 @@ export interface WebArticleViewProps {
   source: SourceWithMetadata;
   /** The message whose citations the reader is showing, when it came from one. */
   ownerKey?: string;
+  /**
+   * Which of the answer's marks for this source was clicked. The answer cites a
+   * page from several sentences; the reader opens on the passage for this one.
+   */
+  occurrence?: number | null;
   /** Import and Open URL. The compact readers keep them in the footer instead. */
   actions?: ReactNode;
   /** The passage in view, so "Open URL" can point the browser at it too. */
@@ -47,9 +53,30 @@ export interface WebArticleViewProps {
 interface CitedSentences {
   sentences: string[];
   quotes: { text: string; sentenceIndex: number }[];
+  /** The sentence the clicked mark sits in, as an index into `sentences`. */
+  focus: number | null;
 }
 
-const EMPTY_SENTENCES: CitedSentences = { sentences: [], quotes: [] };
+const EMPTY_SENTENCES: CitedSentences = { sentences: [], quotes: [], focus: null };
+
+/** Letters and digits only: the verifier and the splitter cut markdown differently. */
+function comparable(sentence: string): string {
+  return stripCitationMarkers(sentence)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Where `target` is among `sentences`, exactly or as the larger part of one. */
+function indexOfSentence(sentences: readonly string[], target: string | undefined): number | null {
+  if (!target) return null;
+  const wanted = comparable(target);
+  if (!wanted) return null;
+  const keys = sentences.map(comparable);
+  const exact = keys.indexOf(wanted);
+  if (exact >= 0) return exact;
+  const partial = keys.findIndex((key) => key.length > 0 && (key.includes(wanted) || wanted.includes(key)));
+  return partial >= 0 ? partial : null;
+}
 
 /**
  * Which sentences of the answer cite this source.
@@ -61,7 +88,8 @@ const EMPTY_SENTENCES: CitedSentences = { sentences: [], quotes: [] };
  */
 function useCitedSentences(
   ownerKey: string | undefined,
-  citationNumber: number | undefined
+  citationNumber: number | undefined,
+  occurrence: number | null
 ): CitedSentences {
   const messageVerification = useConversationsStore((state) => state.messageVerification);
   const conversations = useConversationsStore((state) => state.conversations);
@@ -69,25 +97,36 @@ function useCitedSentences(
   return useMemo(() => {
     if (!ownerKey || !citationNumber) return EMPTY_SENTENCES;
 
+    let content: string | undefined;
+    for (const conversation of conversations) {
+      content = conversation.messages?.find((candidate) => candidate.id === ownerKey)?.content;
+      if (content !== undefined) break;
+    }
+    // The chips are drawn from the answer's text, so that is where a clicked
+    // one is looked up, whichever record then supplies the sentences.
+    const clicked =
+      occurrence === null || content === undefined
+        ? undefined
+        : sentencesByOccurrence(content, citationNumber)[occurrence];
+
     const verdicts = (messageVerification.get(ownerKey)?.claimVerdicts ?? []).filter((verdict) =>
       verdict.citationIds.includes(citationNumber)
     );
     if (verdicts.length > 0) {
+      const sentences = verdicts.map((verdict) => verdict.sentence);
       return {
-        sentences: verdicts.map((verdict) => verdict.sentence),
+        sentences,
         quotes: verdicts.flatMap((verdict, sentenceIndex) =>
           verdict.evidenceQuote ? [{ text: verdict.evidenceQuote, sentenceIndex }] : []
         ),
+        focus: indexOfSentence(sentences, clicked),
       };
     }
 
-    for (const conversation of conversations) {
-      const message = conversation.messages?.find((candidate) => candidate.id === ownerKey);
-      if (!message) continue;
-      return { sentences: sentencesCiting(message.content, citationNumber), quotes: [] };
-    }
-    return EMPTY_SENTENCES;
-  }, [ownerKey, citationNumber, messageVerification, conversations]);
+    if (content === undefined) return EMPTY_SENTENCES;
+    const sentences = sentencesCiting(content, citationNumber);
+    return { sentences, quotes: [], focus: indexOfSentence(sentences, clicked) };
+  }, [ownerKey, citationNumber, occurrence, messageVerification, conversations]);
 }
 
 interface Span {
@@ -142,12 +181,16 @@ function scrollPassageIntoView(mark: HTMLElement): void {
   }
   if (!scroller || scroller === document.body) return;
 
-  const top =
+  scrollArticleTo(
+    scroller,
     scroller.scrollTop +
-    (mark.getBoundingClientRect().top - scroller.getBoundingClientRect().top) -
-    scroller.clientHeight / 3;
-  const target = Math.max(0, top);
+      (mark.getBoundingClientRect().top - scroller.getBoundingClientRect().top) -
+      scroller.clientHeight / 3
+  );
+}
 
+function scrollArticleTo(scroller: HTMLElement, top: number): void {
+  const target = Math.max(0, top);
   if (typeof scroller.scrollTo === 'function') {
     scroller.scrollTo({ top: target, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
     return;
@@ -159,6 +202,7 @@ export function WebArticleView({
   url,
   source,
   ownerKey,
+  occurrence = null,
   actions,
   onActivePassageChange,
 }: WebArticleViewProps) {
@@ -179,7 +223,7 @@ export function WebArticleView({
   });
 
   const pageText = page?.text ?? '';
-  const { sentences, quotes } = useCitedSentences(ownerKey, source.citationId);
+  const { sentences, quotes, focus } = useCitedSentences(ownerKey, source.citationId, occurrence);
 
   const passages = useMemo<SourcedPassage[]>(() => {
     if (!pageText) return [];
@@ -193,18 +237,45 @@ export function WebArticleView({
     return mergePassages([...quoted, ...findSourcedPassages(pageText, sentences)], pageText);
   }, [pageText, sentences, quotes]);
 
+  /**
+   * The passage to open on: the clicked sentence's, or the first.
+   *
+   * Looked for on its own rather than by `sentenceIndex`, because passages that
+   * touch are merged and the merged one remembers only its strongest sentence.
+   * -1 when a sentence was clicked and the page has nothing like it — lighting
+   * some other sentence's passage would answer a question nobody asked.
+   */
+  const openingIndex = useMemo(() => {
+    if (focus === null) return 0;
+    const quote = quotes.find((candidate) => candidate.sentenceIndex === focus);
+    const span =
+      (quote && findQuoteSpan(pageText, quote.text)) ??
+      findSourcedPassages(pageText, [sentences[focus] ?? ''])[0];
+    if (!span) return -1;
+    return passages.findIndex((passage) => passage.start <= span.start && span.start < passage.end);
+  }, [focus, quotes, sentences, pageText, passages]);
+
   const paragraphs = useMemo(() => paragraphSpans(pageText), [pageText]);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(openingIndex);
   const markRefs = useRef(new Map<number, HTMLElement>());
+  const articleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setActiveIndex(0);
-  }, [passages]);
+    setActiveIndex(openingIndex);
+  }, [passages, openingIndex]);
 
   useEffect(() => {
     const mark = markRefs.current.get(activeIndex);
-    if (mark) scrollPassageIntoView(mark);
-  }, [activeIndex, passages]);
+    if (mark) {
+      scrollPassageIntoView(mark);
+    } else if (activeIndex < 0 && articleRef.current) {
+      // Nothing matched the clicked sentence. Staying where the last click left
+      // the page would read as "this is its passage", so go back to the top.
+      scrollArticleTo(articleRef.current, 0);
+    }
+    // `occurrence` too: another mark of the same sentence is a new request to
+    // be shown the passage, even though the passage has not changed.
+  }, [activeIndex, passages, occurrence]);
 
   const activePassage = passages[activeIndex];
   const activeText = activePassage ? pageText.slice(activePassage.start, activePassage.end) : null;
@@ -306,6 +377,14 @@ export function WebArticleView({
   };
 
   const showMatchNotice = Boolean(page) && sentences.length > 0;
+  // A verdict's sentence is raw markdown; a reader is shown words.
+  const focusedSentence =
+    page && focus !== null
+      ? stripCitationMarkers(sentences[focus] ?? '')
+          .replace(/[*_`#>|]+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : '';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -324,11 +403,31 @@ export function WebArticleView({
         {actions}
       </div>
 
+      {focusedSentence && (
+        <p
+          className="shrink-0 truncate border-b border-subtle py-2 text-xs text-[hsl(var(--text-secondary))]"
+          title={focusedSentence}
+        >
+          <span className="text-[hsl(var(--text-muted))]">For the sentence </span>“{focusedSentence}”
+        </p>
+      )}
+
       {showMatchNotice && (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-subtle py-2">
-          <p className="text-xs text-[hsl(var(--text-muted))]">
+          <p
+            className={`text-xs ${
+              // A click that found nothing has to say so louder than a count does.
+              focus !== null && openingIndex < 0
+                ? 'font-medium text-[hsl(var(--text-primary))]'
+                : 'text-[hsl(var(--text-muted))]'
+            }`}
+          >
             {passages.length === 0
               ? 'No passage on this page closely matches the sentences that cite it.'
+              : focus !== null && openingIndex < 0
+                ? `No passage on this page closely matches that sentence · ${passages.length} ${
+                    passages.length === 1 ? 'passage matches' : 'passages match'
+                  } the answer's other sentences citing it`
               : `${passages.length} passage${passages.length === 1 ? '' : 's'} match${
                   passages.length === 1 ? 'es' : ''
                 } what the answer says · matched on ${
@@ -337,12 +436,12 @@ export function WebArticleView({
                     : 'wording'
                 }`}
           </p>
-          {passages.length > 1 && (
+          {(passages.length > 1 || (passages.length > 0 && activeIndex < 0)) && (
             <div className="flex items-center gap-1">
               <IconButton
                 label="Previous matching passage"
                 onClick={() => setActiveIndex((index) => Math.max(0, index - 1))}
-                disabled={activeIndex === 0}
+                disabled={activeIndex <= 0}
               >
                 <ChevronUp />
               </IconButton>
@@ -358,7 +457,7 @@ export function WebArticleView({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">{renderBody()}</div>
+      <div ref={articleRef} className="min-h-0 flex-1 overflow-y-auto">{renderBody()}</div>
     </div>
   );
 }
