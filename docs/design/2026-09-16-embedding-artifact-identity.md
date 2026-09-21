@@ -339,7 +339,7 @@ cd src-tauri
 cargo fmt --all -- --check
 cargo clippy -j 2 --all-targets -- -D warnings
 cargo test -j 2 --lib
-cargo run --bin export_bindings -- --check
+cargo run --features bindings-export --bin export_bindings -- --check
 cd ..
 bash scripts/check-rust-layer-boundaries.sh
 bash scripts/check-repository-barrier.sh

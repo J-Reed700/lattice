@@ -100,7 +100,7 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          cargo test --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
+          cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -125,7 +125,7 @@ jobs:
 
       - name: Desktop Rust unit and repository tests
         working-directory: src-tauri
-        run: cargo test --lib --bin export_bindings --test sidecar_guard_test
+        run: cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test
 
       - name: Audit and credential backend integration tests
         working-directory: src-tauri
@@ -139,7 +139,7 @@ jobs:
 
       - name: generated bindings are current
         working-directory: src-tauri
-        run: cargo run --bin export_bindings -- --check
+        run: cargo run --features bindings-export --bin export_bindings -- --check
 
       - name: cargo fmt --check
         working-directory: src-tauri

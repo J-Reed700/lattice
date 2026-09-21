@@ -42,8 +42,8 @@
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report e2e-results/html",
-    "bindings:generate": "cd src-tauri && cargo run --bin export_bindings",
-    "bindings:check": "cd src-tauri && cargo run --bin export_bindings -- --check",
+    "bindings:generate": "cd src-tauri && cargo run --features bindings-export --bin export_bindings",
+    "bindings:check": "cd src-tauri && cargo run --features bindings-export --bin export_bindings -- --check",
     "contracts:check": "node scripts/check-ipc-contracts.mjs --self-test",
     "contracts:sql": "python3 scripts/check-sql-contracts.py",
     "contracts:commands": "python3 scripts/check-tauri-command-inventory.py"
