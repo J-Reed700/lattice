@@ -725,17 +725,26 @@ export function useConversationsController(): ConversationsState {
     addRequestedId('requestedLinkedConversationIds', id);
     addRequestedId('requestedWebSourceConversationIds', id);
     try {
-      await Promise.all([
+      const [, detail] = await Promise.all([
         queryClient.fetchQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.linkedDocuments(id), queryFn: () => fetchLinkedDocuments(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.webSources(id), queryFn: () => fetchWebSources(id), staleTime: 0 }),
       ]);
+      // The chat decides the space, not the other way round: a conversation
+      // opened from "All spaces", the spotlight or a link searches its own
+      // space's library, and a sidebar still showing another space would say
+      // otherwise. Skipped if the reader has already moved on to another chat.
+      const current = conversationUiStore.getState();
+      const spaceId = detail?.spaceId;
+      if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
+        await loadConversations({ spaceId });
+      }
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [queryClient, loadConversations]);
 
   /**
    * One generation turn, shared by `sendMessage` and `regenerateResponse`.
