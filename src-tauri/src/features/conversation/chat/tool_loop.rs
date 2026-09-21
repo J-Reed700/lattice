@@ -1,3 +1,4 @@
+mod document_evidence;
 mod document_progress;
 mod scoped_document_tools;
 
@@ -234,6 +235,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // One memo for the whole turn: a repeated read of a range already exhausted
     // answers with a reference instead of paying for the same text twice.
     let mut history_memo = super::history_tools::HistoryToolMemo::default();
+    let mut document_evidence = document_evidence::DocumentEvidence::default();
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
         if is_cancel_requested(request_id) {
@@ -651,8 +653,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     } else {
                                         tool_step.failed(result.error_message.clone());
                                     }
-                                    timings.tool_success_count =
-                                        timings.tool_success_count.saturating_add(1);
+                                    if result.success {
+                                        timings.tool_success_count =
+                                            timings.tool_success_count.saturating_add(1);
+                                    } else {
+                                        timings.tool_failure_count =
+                                            timings.tool_failure_count.saturating_add(1);
+                                    }
                                     let tool_sources = collect_tool_sources(
                                         resolved_tool,
                                         &result,
@@ -710,6 +717,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                             ));
                                         }
                                     }
+                                    result_text = document_evidence.render(
+                                        resolved_tool,
+                                        &result,
+                                        result_text,
+                                        |excerpt| {
+                                            if native_progress {
+                                                native_request.input.iter().any(|item| matches!(item,
+                                                    CompletionInput::ToolResult { output, .. } if output == excerpt))
+                                            } else {
+                                                let entry = format!("System: [Tool '{}' result (excerpted): {}]", resolved_tool, excerpt);
+                                                tool_context.iter().any(|item| item == &entry)
+                                            }
+                                        },
+                                    );
                                     if let Some(id) = &tc.id {
                                         native_request.input.push(CompletionInput::ToolResult {
                                             id: id.clone(),
