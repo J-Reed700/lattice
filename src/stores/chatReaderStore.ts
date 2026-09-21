@@ -34,6 +34,13 @@ export interface ReaderSession {
   ownerKey: string;
   citations: SourceWithMetadata[];
   index: number;
+  /**
+   * Which `[n]` mark in the answer was clicked, counted per source in reading
+   * order. An answer cites one source from several sentences, and each means a
+   * different passage of it. Null when the reader was opened on the source as a
+   * whole — from the source list, or by stepping to it.
+   */
+  occurrence: number | null;
 }
 
 export interface ChatReaderState {
@@ -45,7 +52,12 @@ export interface ChatReaderState {
    * page, not just the one whose reader resolved it.
    */
   resolvedLocations: Map<string, string>;
-  open: (_ownerKey: string, _citations: SourceWithMetadata[], _index: number) => void;
+  open: (
+    _ownerKey: string,
+    _citations: SourceWithMetadata[],
+    _index: number,
+    _occurrence?: number | null
+  ) => void;
   setIndex: (_index: number) => void;
   close: () => void;
   setWidth: (_px: number) => void;
@@ -77,13 +89,14 @@ export const useChatReaderStore = create<ChatReaderState>((set, get) => ({
   width: readStoredWidth(),
   resolvedLocations: new Map(),
 
-  open: (ownerKey, citations, index) => {
+  open: (ownerKey, citations, index, occurrence = null) => {
     if (citations.length === 0) return;
     set({
       session: {
         ownerKey,
         citations,
         index: Math.min(citations.length - 1, Math.max(0, index)),
+        occurrence,
       },
     });
   },
@@ -94,7 +107,8 @@ export const useChatReaderStore = create<ChatReaderState>((set, get) => ({
       if (!session) return {};
       const next = Math.min(session.citations.length - 1, Math.max(0, index));
       if (next === session.index) return {};
-      return { session: { ...session, index: next } };
+      // Stepping to another source leaves the clicked mark behind.
+      return { session: { ...session, index: next, occurrence: null } };
     }),
 
   close: () => {

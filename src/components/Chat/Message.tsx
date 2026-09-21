@@ -139,24 +139,29 @@ export function Message({
   const ownerKey = messageId ?? domMessageId ?? '';
 
   const openCitation = useCallback(
-    (index: number) => {
+    (index: number, occurrence: number | null = null) => {
       if (index < 0 || !ownerKey) return;
-      openReader(ownerKey, citationSources, index);
+      openReader(ownerKey, citationSources, index, occurrence);
     },
     [ownerKey, openReader, citationSources]
   );
 
-  /** Open the reader on a source by identity, whatever its position. */
+  /**
+   * Open the reader on a source by identity, whatever its position.
+   *
+   * `occurrence` is the mark that was clicked, when one was: the answer cites a
+   * source from several sentences and the reader opens on the one that was meant.
+   */
   const openSource = useCallback(
-    (source: SourceWithMetadata) => {
+    (source: SourceWithMetadata, occurrence: number | null = null) => {
       const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
       // A passage the answer never numbered — two chunks that share a citation
       // id keep one of them out of the map — still opens, on its own.
       if (index < 0) {
-        if (ownerKey) openReader(ownerKey, [source], 0);
+        if (ownerKey) openReader(ownerKey, [source], 0, occurrence);
         return;
       }
-      openCitation(index);
+      openCitation(index, occurrence);
     },
     [citationSources, openCitation, openReader, ownerKey]
   );
@@ -487,12 +492,18 @@ export function Message({
     if (next) article.querySelectorAll(next).forEach((element) => element.classList.add('is-lit'));
   }, []);
 
-  // The open citation is lit in the text as long as the reader shows it.
+  // The open citation is lit in the text as long as the reader shows it: the
+  // one mark that was clicked, since the same number further down stands for a
+  // different passage — or every mark of the source, when it was opened whole.
+  const readerOccurrence = readerSession?.occurrence ?? null;
   useEffect(() => {
-    restingLitRef.current =
-      readerCitationNumber === null ? null : `[data-cite="${readerCitationNumber}"]`;
+    if (readerCitationNumber === null) restingLitRef.current = null;
+    else if (readerOccurrence === null) restingLitRef.current = `[data-cite="${readerCitationNumber}"]`;
+    else {
+      restingLitRef.current = `[data-cite="${readerCitationNumber}"][data-cite-at="${readerOccurrence}"]`;
+    }
     setLit(null);
-  }, [readerCitationNumber, setLit]);
+  }, [readerCitationNumber, readerOccurrence, setLit]);
 
   // Resting on a sentence says why it is trusted; clicking it is how the
   // sentence leaves the chat.
@@ -505,7 +516,8 @@ export function Message({
       if (!source) return;
       event.preventDefault();
       setCitationHover(null);
-      openSource(source);
+      const at = Number(chip.dataset.citeAt);
+      openSource(source, Number.isInteger(at) ? at : null);
       return;
     }
 

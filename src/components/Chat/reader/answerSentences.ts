@@ -14,6 +14,12 @@ const CITATION_MARKER = /\[(\d{1,4}(?:\s*,\s*\d{1,4})*)\]/g;
 /** Markdown that carries no words: list bullets, headings, quotes, table pipes. */
 const BLOCK_PREFIX = /^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+|#{1,6}\s+|>\s*|\|\s*)/;
 
+/** The opening or closing line of a fenced code block. */
+const FENCE = /^\s*(?:```|~~~)/;
+
+/** Inline code, whose `[n]` the chips leave as text. */
+const INLINE_CODE = /`[^`\n]*`/g;
+
 /** Emphasis markers, which are punctuation to a reader and noise to a matcher. */
 const EMPHASIS = /(\*\*|__|\*|_|`)/g;
 
@@ -34,7 +40,14 @@ function cleanLine(line: string): string {
  */
 export function splitAnswerSentences(text: string): string[] {
   const sentences: string[] = [];
+  let fenced = false;
   for (const line of text.split('\n')) {
+    // Code is not something the answer said, and the chips skip it too.
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
     const cleaned = cleanLine(line);
     if (!cleaned) continue;
     for (const span of sentenceSpans(cleaned)) {
@@ -57,6 +70,18 @@ export function citationsIn(sentence: string): number[] {
   return numbers;
 }
 
+/** A cited sentence as a matcher and a tooltip want it: no markers, no gaps. */
+function withoutMarkers(sentence: string): string {
+  return (
+    stripCitationMarkers(sentence)
+      .replace(/\s+/g, ' ')
+      // The marker sat before the full stop; the gap it leaves would otherwise
+      // show up in the tooltip that names the sentence.
+      .replace(/\s+([.,;:!?])/g, '$1')
+      .trim()
+  );
+}
+
 /**
  * The sentences of `text` that cite source `citationNumber`, with the markers
  * taken out — a matcher should not be given `[4]` to look for.
@@ -65,13 +90,32 @@ export function sentencesCiting(text: string, citationNumber: number): string[] 
   const sentences: string[] = [];
   for (const sentence of splitAnswerSentences(text)) {
     if (!citationsIn(sentence).includes(citationNumber)) continue;
-    const stripped = stripCitationMarkers(sentence)
-      .replace(/\s+/g, ' ')
-      // The marker sat before the full stop; the gap it leaves would otherwise
-      // show up in the tooltip that names the sentence.
-      .replace(/\s+([.,;:!?])/g, '$1')
-      .trim();
+    const stripped = withoutMarkers(sentence);
     if (stripped) sentences.push(stripped);
+  }
+  return sentences;
+}
+
+/**
+ * The sentence each `[n]` chip of one source sits in, one entry per chip in
+ * reading order — entry `k` answers the chip stamped `data-cite-at="k"`.
+ *
+ * Counted the way `CitationMarks` draws: a bare `[n]` outside code. `[1, 3]` is
+ * a citation but never a chip, so it is not counted here.
+ */
+export function sentencesByOccurrence(text: string, citationNumber: number): string[] {
+  const chip = new RegExp(`\\[${citationNumber}\\]`, 'g');
+  // Inline code goes before the lines are cleaned: cleaning drops the backticks.
+  // A fence line is left alone so the splitter still sees the block open.
+  const prose = text
+    .split('\n')
+    .map((line) => (FENCE.test(line) ? line : line.replace(INLINE_CODE, ' ')))
+    .join('\n');
+  const sentences: string[] = [];
+  for (const sentence of splitAnswerSentences(prose)) {
+    const chips = sentence.match(chip)?.length ?? 0;
+    const stripped = withoutMarkers(sentence);
+    for (let i = 0; i < chips; i += 1) sentences.push(stripped);
   }
   return sentences;
 }
