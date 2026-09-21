@@ -248,7 +248,7 @@ cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
 cargo check --manifest-path src-tauri/Cargo.toml --all-targets
-cargo run --manifest-path src-tauri/Cargo.toml --bin export_bindings -- --check
+cargo run --manifest-path src-tauri/Cargo.toml --features bindings-export --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib
 cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored
 cargo test --manifest-path src-tauri/Cargo.toml --test conversation_memory_evals -- --list
