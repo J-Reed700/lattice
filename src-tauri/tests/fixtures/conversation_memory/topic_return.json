@@ -1,0 +1,132 @@
+{
+  "family": "topic_return",
+  "capability": "Exact facts from an early exchange are recovered after a long unrelated stretch, quoting the original turn.",
+  "mode": "standard",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "The intermittent failure is in the tide-gauge importer: it drops the last row when the CSV has no trailing newline."
+    },
+    {
+      "role": "assistant",
+      "content": "Noted: tide-gauge importer drops the final row on files without a trailing newline."
+    },
+    {
+      "role": "user",
+      "content": "It only happens for files above 40 MB, and only on the Reykjavik feed."
+    },
+    {
+      "role": "assistant",
+      "content": "Narrowed: above 40 MB, Reykjavik feed only."
+    },
+    {
+      "role": "user",
+      "content": "Park that. I need help planning a two-week bread-baking course instead."
+    },
+    {
+      "role": "assistant",
+      "content": "Two weeks gives room for sourdough, enriched doughs, and laminated doughs."
+    },
+    {
+      "role": "user",
+      "content": "Six sessions, two hours each, eight students."
+    },
+    {
+      "role": "assistant",
+      "content": "Six two-hour sessions for eight students; that allows one bake per session."
+    },
+    {
+      "role": "user",
+      "content": "Sketch the equipment list."
+    },
+    {
+      "role": "assistant",
+      "content": "Twelve bannetons, four dough scrapers, two deck ovens, one spiral mixer."
+    },
+    {
+      "role": "user",
+      "content": "And the shopping list for week one."
+    },
+    {
+      "role": "assistant",
+      "content": "Strong white flour, rye, fine salt, fresh yeast, and two kilos of starter."
+    },
+    {
+      "role": "user",
+      "content": "Back to the importer. What exactly were the conditions for the failure?"
+    },
+    {
+      "role": "assistant",
+      "content": "I will restate them from your original description."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Separately, remind me what a p95 latency figure actually measures."
+    },
+    {
+      "role": "assistant",
+      "content": "It is the value below which 95 percent of observations fall."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 0,
+    "required_active_quotes": [
+      "drops the last row when the CSV has no trailing newline"
+    ],
+    "superseded_quotes": [],
+    "must_not_be_authoritative": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [],
+    "allowed_tools": [
+      "read_note"
+    ],
+    "questions": [
+      {
+        "ask": "What exactly were the conditions under which the importer failure happened?",
+        "must_quote": [
+          "40 MB",
+          "Reykjavik"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      },
+      {
+        "ask": "Which feed was affected?",
+        "must_quote": [
+          "Reykjavik"
+        ],
+        "must_not_contain": [
+          "affected feed was Bergen",
+          "all feeds were affected"
+        ],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear"
+    ]
+  },
+  "cycles": [
+    1,
+    3,
+    10
+  ],
+  "reload_after_cycles": [
+    1,
+    3
+  ]
+}

@@ -29,13 +29,13 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         aria-label={label}
         aria-pressed={active || undefined}
         className={cn(
-          'inline-flex shrink-0 items-center justify-center rounded-sm transition-colors duration-fast',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+          'pressable inline-flex shrink-0 items-center justify-center rounded-md transition-[background-color,color,scale] duration-fast',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           'disabled:cursor-not-allowed disabled:opacity-50',
-          size === 'sm' ? 'h-7 w-7 [&>svg]:h-4 [&>svg]:w-4' : 'h-8 w-8 [&>svg]:h-[18px] [&>svg]:w-[18px]',
+          size === 'sm' ? 'h-7 w-7 [&>svg]:h-[15px] [&>svg]:w-[15px]' : 'h-8 w-8 [&>svg]:h-4 [&>svg]:w-4',
           active
             ? 'bg-accent-muted text-accent'
-            : 'text-text-muted hover:bg-surface-raised hover:text-text-primary',
+            : 'text-text-tertiary hover:bg-[hsl(var(--text-primary)/0.07)] hover:text-text-primary',
           className,
         )}
         {...props}
@@ -50,7 +50,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         <TooltipContent side={tooltipSide} sideOffset={6}>
           <span className="flex items-center gap-2">
             <span>{label}</span>
-            {shortcut ? <kbd className="font-mono text-xxs text-text-muted">{shortcut}</kbd> : null}
+            {shortcut ? <kbd className="kbd">{shortcut}</kbd> : null}
           </span>
         </TooltipContent>
       </Tooltip>

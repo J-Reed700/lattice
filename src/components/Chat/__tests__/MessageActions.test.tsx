@@ -1,5 +1,8 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
+
+import type { SourceWithMetadata } from '@/types/conversation';
 
 import { MessageActions } from '../MessageActions';
 
@@ -23,6 +26,19 @@ const baseProps = {
   onEdit: noop,
   onBranch: noop,
 };
+
+const answerSource = {
+  documentId: 'doc-halvorsen',
+  chunkId: 'doc-halvorsen#c1',
+  fileName: 'Halvorsen 2024.pdf',
+  filePath: '/vault/Halvorsen 2024.pdf',
+  mimeType: 'application/pdf',
+  category: 'Research Paper',
+  content: 'A cited passage.',
+  score: 0.9,
+  fileSizeBytes: 100,
+  modifiedAt: '2026-08-01T00:00:00.000Z',
+} as SourceWithMetadata;
 
 describe('MessageActions', () => {
   it('offers regenerate and try-with on the last assistant turn', () => {
@@ -86,5 +102,44 @@ describe('MessageActions', () => {
     expect(screen.getByLabelText('Copy message to clipboard').className).toContain(
       'focus-visible:ring-2'
     );
+  });
+
+  it('offers a way to carry a grounded answer out of the chat', () => {
+    // The verbs that leave the chat sit in the row like every other one: a menu
+    // that only exists on hover teaches nobody it is there.
+    render(
+      <MemoryRouter>
+        <MessageActions
+          {...baseProps}
+          role="assistant"
+          isLastTurn
+          answerSources={[answerSource]}
+          answerMarkdown="The pooled estimate was 1.2 °C [1]."
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Use this answer')).toBeInTheDocument();
+  });
+
+  it('offers nothing to carry out of an answer with no sources behind it', () => {
+    render(<MessageActions {...baseProps} role="assistant" isLastTurn answerMarkdown="Just prose." />);
+    expect(screen.queryByText('Use this answer')).not.toBeInTheDocument();
+  });
+
+  it('never offers it on a question', () => {
+    render(
+      <MemoryRouter>
+        <MessageActions
+          {...baseProps}
+          role="user"
+          isLastTurn
+          answerSources={[answerSource]}
+          answerMarkdown="What do my sources say?"
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('Use this answer')).not.toBeInTheDocument();
   });
 });

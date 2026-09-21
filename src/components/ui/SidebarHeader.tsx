@@ -19,11 +19,11 @@ export function SidebarHeader({ title, actions, className }: SidebarHeaderProps)
   return (
     <div
       className={cn(
-        'flex h-16 shrink-0 items-center justify-between border-b border-border-subtle px-4',
+        'flex h-12 shrink-0 items-center justify-between px-4',
         className,
       )}
     >
-      <h2 className="truncate text-sm font-semibold tracking-tight text-text-primary">{title}</h2>
+      <h2 className="truncate text-ui font-semibold tracking-[-0.01em] text-text-primary">{title}</h2>
       {actions ? <div className="flex shrink-0 items-center gap-0.5">{actions}</div> : null}
     </div>
   );
@@ -48,7 +48,7 @@ export function SidebarSearch({ value, onChange, placeholder, className }: Sideb
       placeholder={placeholder}
       aria-label={placeholder}
       className={cn(
-        'h-9 w-full rounded-md border border-border-subtle bg-bg px-3 text-sm text-text-primary placeholder:text-text-muted outline-none transition-colors duration-fast focus:border-accent',
+        'h-8 w-full rounded-md border border-transparent bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none transition-[background-color,border-color,box-shadow] duration-fast hover:bg-[hsl(var(--text-primary)/0.08)] focus:border-accent/60 focus:bg-surface focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]',
         className,
       )}
     />
@@ -79,7 +79,7 @@ export function SidebarTabs<T extends string>({ value, onChange, options, classN
             aria-selected={isActive}
             onClick={() => onChange(option.id)}
             className={cn(
-              'border-b-2 pb-1 transition-colors duration-fast',
+              '-mb-px border-b-[1.5px] pb-1.5 font-medium transition-colors duration-fast',
               isActive
                 ? 'border-accent text-text-primary'
                 : 'border-transparent text-text-tertiary hover:text-text-primary',

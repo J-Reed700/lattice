@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyDownloadSnapshot } from './useDownloads';
+import { applyDownloadSnapshot, fileNameWithinModel } from './useDownloads';
 
 import type { DownloadStatus } from '../types/downloads';
 import type { TauriEvents } from '../types/events';
@@ -56,5 +56,29 @@ describe('applyDownloadSnapshot', () => {
       state: 'Completed',
       model_id: 'Qwen/Qwen3-Embedding-0.6B',
     });
+  });
+});
+
+describe('fileNameWithinModel', () => {
+  // A sentence-transformers model ships `config.json` and `1_Pooling/config.json`.
+  // Keyed by the bare file name, one row replaced the other and a five-file
+  // model showed as four.
+  it('tells apart two files that share a name inside one model', () => {
+    const base = '/Users/me/.cache/lattice/models/qwen3-embedding-0.6b';
+    const names = ['config.json', '1_Pooling/config.json'].map((file) =>
+      fileNameWithinModel({ destination: `${base}/${file}`, model_id: 'qwen3-embedding-0.6b' })
+    );
+    expect(names).toEqual(['config.json', '1_Pooling/config.json']);
+  });
+
+  it('reads a Windows path the same way', () => {
+    expect(fileNameWithinModel({
+      destination: 'C:\\models\\minilm\\1_Pooling\\config.json',
+      model_id: 'minilm',
+    })).toBe('1_Pooling/config.json');
+  });
+
+  it('falls back to the file name for a download that belongs to no model', () => {
+    expect(fileNameWithinModel({ destination: '/tmp/file.bin', model_id: null })).toBe('file.bin');
   });
 });

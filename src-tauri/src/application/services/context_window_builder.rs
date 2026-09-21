@@ -134,9 +134,12 @@ impl ContextWindowBuilder {
         // A compaction summary stands in for the messages it folded, so it is
         // charged to the budget first and the scan below only sees what is still
         // carried raw. Without a compaction this is None and nothing changes.
+        // `Assistant:`, never `System:`. A generated summary given system
+        // authority sits above the user's own words in precedence, so a
+        // paraphrase could revoke a restriction the user actually stated.
         let preamble = aggregate
             .context_preamble()
-            .map(|summary| format!("System: {}", summary));
+            .map(|summary| format!("Assistant: {}", summary));
         if let Some(preamble) = &preamble {
             total_tokens += (self.token_counter)(preamble);
         }

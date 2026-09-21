@@ -140,7 +140,13 @@ describe('useConversationsController optimistic cleanup', () => {
     ]);
   });
 
-  it('replaces a failed partial draft after a retry and ignores another request', async () => {
+  /**
+   * A retry used to arrive as text and overwrite the answer bubble, so a turn
+   * that recovered showed "Model response failed. Retrying..." where its answer
+   * should have been. It is a step now: the timeline records it and the answer
+   * keeps accumulating.
+   */
+  it('records a retry as a step without touching the answer', async () => {
     let emit: ((event: { payload: Record<string, unknown> }) => void) | undefined;
     vi.mocked(listen).mockImplementationOnce(async (_event, handler) => {
       emit = handler as typeof emit;
@@ -155,19 +161,65 @@ describe('useConversationsController optimistic cleanup', () => {
     await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
     const requestId = api.chatWithConversation.mock.calls[0][3];
     const send = (payload: Record<string, unknown>) => act(() => emit?.({ payload: {
-      conversationId: 'conversation-1', requestId, done: false, content: '', ...payload,
+      conversationId: 'conversation-1', requestId, done: false, ...payload,
     } }));
     const draft = () => [...result.current.optimisticMessages.values()].find(message => message.role === 'assistant')?.content;
-    send({ content: 'Failed partial answer' });
-    expect(draft()).toBe('Failed partial answer');
-    send({ status: 'retrying', attempt: 2, requestId: 'unrelated' });
-    expect(draft()).toBe('Failed partial answer');
-    send({ status: 'retrying', attempt: 2 });
-    expect(draft()).toContain('Retrying');
+    const steps = () => result.current.liveSteps.get('conversation-1') ?? [];
+
+    send({ content: 'Partial answer. ' });
+    expect(draft()).toBe('Partial answer. ');
+
+    const retryStep = {
+      id: 's3', kind: 'retry', label: 'Asking again — the model returned nothing',
+      state: 'done', startedAtMs: 400, durationMs: 0, result: 'attempt 2',
+    };
+    // Another generation on the same channel must not reach this turn.
+    send({ status: 'step', step: retryStep, requestId: 'unrelated' });
+    expect(steps()).toHaveLength(0);
+
+    send({ status: 'step', step: retryStep });
+    expect(draft()).toBe('Partial answer. ');
+    expect(steps()).toEqual([expect.objectContaining({ id: 's3', kind: 'retry' })]);
+
     send({ content: 'Recovered ' });
     send({ content: 'answer' });
-    expect(draft()).toBe('Recovered answer');
+    expect(draft()).toBe('Partial answer. Recovered answer');
     await act(async () => { resolveChat?.({ ok: false, error: 'fixture finished' }); await sending; });
+  });
+
+  /**
+   * A finish event carries the id of its start. Appending it would make a
+   * finished step jump to the bottom of the timeline the moment it completed.
+   */
+  it('merges a step finish into the step it started, in place', async () => {
+    let emit: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+    vi.mocked(listen).mockImplementationOnce(async (_event, handler) => {
+      emit = handler as typeof emit;
+      return () => {};
+    });
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    let sending: Promise<void> | undefined;
+    act(() => { sending = result.current.sendMessage('Search my notes'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+    const requestId = api.chatWithConversation.mock.calls[0][3];
+    const send = (payload: Record<string, unknown>) => act(() => emit?.({ payload: {
+      conversationId: 'conversation-1', requestId, done: false, ...payload,
+    } }));
+
+    send({ status: 'step', step: { id: 's0', kind: 'plan', label: 'Planning what to search for', state: 'running', startedAtMs: 0 } });
+    send({ status: 'step', step: { id: 's1', kind: 'search_documents', label: 'Searching your documents', state: 'running', startedAtMs: 800 } });
+    send({ status: 'step', step: { id: 's0', kind: 'plan', label: 'Planning what to search for', state: 'done', startedAtMs: 0, durationMs: 780 } });
+
+    const steps = result.current.liveSteps.get('conversation-1') ?? [];
+    expect(steps.map(step => step.id)).toEqual(['s0', 's1']);
+    expect(steps[0]).toMatchObject({ state: 'done', durationMs: 780 });
+
+    // Cleared exactly where the live retrieval trace is cleared.
+    await act(async () => { resolveChat?.({ ok: false, error: 'fixture finished' }); await sending; });
+    expect(result.current.liveSteps.has('conversation-1')).toBe(false);
   });
 
   it('removes both optimistic placeholders after a user cancellation', async () => {

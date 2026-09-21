@@ -1,6 +1,7 @@
 //! Branching a conversation into a sibling thread.
 
 use super::ConversationRepository;
+use crate::domain::conversation_memory::compute_digest;
 use crate::shared::error::{AppError, Result};
 use chrono::Utc;
 
@@ -14,6 +15,12 @@ impl ConversationRepository {
     /// message ids that mean something else in the new thread) or
     /// `conversation_memory_vectors` (keyed `UNIQUE(message_id)`, regenerated
     /// on the next turn).
+    ///
+    /// The memory ledger is not copied either, for the same reason and a
+    /// stronger one: every evidence span names a parent message id, and reusing
+    /// those ids would let a later correction in the parent leak into a branch
+    /// taken before it. The fork gets fresh message ids and a fresh sequence
+    /// run, and rebuilds its own memory lazily on the next compaction.
     ///
     /// An `up_to_message_id` that is not in the conversation copies **zero**
     /// messages — an unknown anchor must never be read as "copy everything".
@@ -52,26 +59,6 @@ impl ConversationRepository {
         .map_err(|e| AppError::Database(format!("Failed to load conversation to fork: {}", e)))?
         .ok_or_else(|| AppError::NotFound(format!("Conversation {} not found", conversation_id)))?;
 
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"
-            INSERT INTO conversations
-                (id, title, model_name, system_prompt, space_id,
-                 created_at, updated_at, message_count, total_tokens)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
-            "#,
-        )
-        .bind(new_id)
-        .bind(new_title)
-        .bind(&source.model_name)
-        .bind(&source.system_prompt)
-        .bind(&source.space_id)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to create branch conversation: {}", e)))?;
-
         #[derive(sqlx::FromRow)]
         struct CopyRow {
             role: String,
@@ -82,37 +69,47 @@ impl ConversationRepository {
             status: String,
         }
 
-        let rows: Vec<CopyRow> = match up_to_message_id {
+        // Resolved before the branch row is written, because the anchor is also
+        // the lineage link: an id that does not belong to the parent copies no
+        // messages, and recording it would point the "branched from" line at a
+        // turn that is not there.
+        let anchor = match up_to_message_id {
             Some(anchor_id) => {
-                match Self::load_message_position(&mut tx, conversation_id, anchor_id).await? {
-                    Some(anchor) => sqlx::query_as::<_, CopyRow>(
-                        r#"
+                Self::load_message_position(&mut tx, conversation_id, anchor_id).await?
+            }
+            None => None,
+        };
+        let forked_from_message_id = anchor.as_ref().and(up_to_message_id);
+
+        let rows: Vec<CopyRow> = match up_to_message_id {
+            Some(_) => match &anchor {
+                Some(anchor) => sqlx::query_as::<_, CopyRow>(
+                    r#"
                         SELECT role, content, tokens, created_at, metadata, status
                         FROM conversation_messages
                         WHERE conversation_id = ?
                           AND (created_at < ? OR (created_at = ? AND rowid <= ?))
-                        ORDER BY created_at ASC, rowid ASC
+                        ORDER BY sequence ASC, created_at ASC, rowid ASC
                         "#,
-                    )
-                    .bind(conversation_id)
-                    .bind(&anchor.created_at)
-                    .bind(&anchor.created_at)
-                    .bind(anchor.rowid)
-                    .fetch_all(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::Database(format!("Failed to read messages to copy: {}", e))
-                    })?,
-                    // Unknown anchor: copy nothing rather than everything.
-                    None => Vec::new(),
-                }
-            }
+                )
+                .bind(conversation_id)
+                .bind(&anchor.created_at)
+                .bind(&anchor.created_at)
+                .bind(anchor.rowid)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to read messages to copy: {}", e))
+                })?,
+                // Unknown anchor: copy nothing rather than everything.
+                None => Vec::new(),
+            },
             None => sqlx::query_as::<_, CopyRow>(
                 r#"
                 SELECT role, content, tokens, created_at, metadata, status
                 FROM conversation_messages
                 WHERE conversation_id = ?
-                ORDER BY created_at ASC, rowid ASC
+                ORDER BY sequence ASC, created_at ASC, rowid ASC
                 "#,
             )
             .bind(conversation_id)
@@ -121,15 +118,43 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to read messages to copy: {}", e)))?,
         };
 
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO conversations
+                (id, title, model_name, system_prompt, space_id,
+                 created_at, updated_at, message_count, total_tokens,
+                 forked_from_conversation_id, forked_from_message_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+            "#,
+        )
+        .bind(new_id)
+        .bind(new_title)
+        .bind(&source.model_name)
+        .bind(&source.system_prompt)
+        .bind(&source.space_id)
+        .bind(&now)
+        .bind(&now)
+        .bind(conversation_id)
+        .bind(forked_from_message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to create branch conversation: {}", e)))?;
+
         let mut copied: u32 = 0;
         let mut total_tokens: i64 = 0;
+        // A fresh sequence run, allocated the same way an ordinary append is.
+        // The branch's ordering is its own; it never inherits the parent's
+        // numbers, which is what keeps the two transcripts independent.
         for row in &rows {
             let message_id = uuid::Uuid::new_v4().to_string();
+            let sequence = Self::allocate_sequence(&mut tx, new_id).await?;
             sqlx::query(
                 r#"
                 INSERT INTO conversation_messages
-                    (id, conversation_id, role, content, tokens, created_at, metadata, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, role, content, tokens, created_at, metadata, status,
+                     sequence, content_digest)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&message_id)
@@ -140,6 +165,8 @@ impl ConversationRepository {
             .bind(&row.created_at)
             .bind(&row.metadata)
             .bind(&row.status)
+            .bind(sequence)
+            .bind(compute_digest(&row.content))
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to copy message: {}", e)))?;

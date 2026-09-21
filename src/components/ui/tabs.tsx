@@ -13,7 +13,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center rounded-lg bg-[hsl(var(--surface))] p-1 text-[hsl(var(--text-muted))]",
+      "inline-flex h-8 items-center justify-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px] text-[hsl(var(--text-tertiary))]",
       className
     )}
     {...props}
@@ -28,7 +28,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))] disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[hsl(var(--surface-raised))] data-[state=active]:text-[hsl(var(--text-primary))]",
+      "inline-flex h-full items-center justify-center whitespace-nowrap rounded-[5px] px-3 text-ui font-medium transition-[background-color,color,box-shadow] duration-fast hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[hsl(var(--surface-overlay))] data-[state=active]:text-[hsl(var(--text-primary))] data-[state=active]:shadow-control",
       className
     )}
     {...props}

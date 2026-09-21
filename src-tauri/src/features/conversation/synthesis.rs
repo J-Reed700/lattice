@@ -473,6 +473,12 @@ pub async fn synthesize_journal_entries_impl(
         followup_mode: true,
         turn_mode: Some("followup".to_string()),
         enabled_tools: None,
+        focus_document_ids: None,
+        // The prompts say "use only the provided entry transcripts", and the
+        // turn runs in a scratch conversation that belongs to no space the
+        // entries came from. Anything retrieved for it is by definition from
+        // the wrong place.
+        closed_book: true,
     };
 
     let mut synthesis_conversation_id: Option<String> = None;

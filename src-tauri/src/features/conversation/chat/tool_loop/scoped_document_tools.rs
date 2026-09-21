@@ -1,4 +1,5 @@
 //! Follow-up document tools obey the same scope as initial chat retrieval.
+use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::dto::{
@@ -22,18 +23,30 @@ pub(super) fn reads_the_vault(name: &str) -> bool {
 pub(super) async fn execute(
     container: &Container,
     conversation_id: &str,
+    focus: &FocusScope,
     call: FunctionCall,
 ) -> Result<FunctionResult> {
     if !reads_the_vault(&call.name) {
         return container.function_executor().execute(call).await;
     }
     let repository = ConversationRepository::new(container.db_pool().clone());
-    let (space, allowed) = repository
+    let (space, mut allowed) = repository
         .retrieval_document_scope(conversation_id)
         .await?
         .ok_or_else(|| {
             AppError::InvalidState("Could not resolve this conversation's document scope".into())
         })?;
+    // A chat pinned to particular documents is pinned here too. Retrieval and
+    // the tools the model reaches for afterwards have to agree about what this
+    // turn may read, or the model recovers by searching its way straight back
+    // out of the focus.
+    focus.confine(&mut allowed);
+    if focus.blocks_everything() {
+        return Err(AppError::InvalidState(format!(
+            "This chat is pinned to documents outside its space, so {}",
+            focus.unavailable_reason()
+        )));
+    }
     if call.name == "list_documents" {
         // Browsing is a read of the vault like any other. Left unscoped it
         // handed the model every filename, path and tag in the library, so a

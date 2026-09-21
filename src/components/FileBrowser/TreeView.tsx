@@ -255,7 +255,7 @@ export const TreeView = ({
                   type="button"
                   onClick={() => toggleFolder(row.node.path)}
                   aria-expanded={!collapsed.has(row.node.path)}
-                  className="flex w-full items-center gap-2 border-b border-border-subtle pr-3 text-left transition-colors duration-fast hover:bg-surface"
+                  className="row-hover flex w-full items-center gap-2 rounded-lg pr-3 text-left"
                   style={{
                     height: FOLDER_ROW_HEIGHT,
                     paddingLeft: 12 + row.depth * INDENT_PX,

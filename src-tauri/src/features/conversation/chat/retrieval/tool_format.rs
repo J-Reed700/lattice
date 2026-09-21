@@ -261,6 +261,7 @@ mod fetched_page_tests {
                 word_count: content.split_whitespace().count(),
                 fetch_time_ms: 137.67,
                 content_type: Some("text/html".to_string()),
+                from_cache: false,
             })
             .unwrap_or_default(),
         )

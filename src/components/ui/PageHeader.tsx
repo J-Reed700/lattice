@@ -24,13 +24,13 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, meta, actions, className }: PageHeaderProps) {
   return (
-    <header className={cn('mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-border-subtle pb-6', className)}>
+    <header className={cn('mb-6 flex flex-wrap items-end justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h1 className="font-serif text-[clamp(30px,3vw,40px)] font-medium leading-tight tracking-[-0.035em] text-text-primary">
+        <h1 className="font-serif text-[28px] font-normal leading-[1.15] tracking-[-0.025em] text-text-primary">
           {title}
         </h1>
         {meta ? (
-          <p className="mt-3 text-sm text-text-tertiary tabular-nums">{meta}</p>
+          <p className="mt-1.5 text-ui text-text-muted tabular-nums">{meta}</p>
         ) : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
@@ -45,6 +45,6 @@ export function PageHeader({ title, meta, actions, className }: PageHeaderProps)
  */
 export function SectionHeading({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <h2 className={cn('pb-3 text-lg font-medium text-text-secondary', className)}>{children}</h2>
+    <h2 className={cn('pb-2.5 text-[15px] font-medium tracking-[-0.005em] text-text-primary', className)}>{children}</h2>
   );
 }

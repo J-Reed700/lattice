@@ -57,6 +57,8 @@ export type {
   TurnMode,
   ToolPreferences,
   CompactionRecord,
+  SpaceDocument,
+  WebPage,
 } from './conversation';
 
 export * from './api';

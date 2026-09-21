@@ -25,10 +25,26 @@ const STATUS_TO_STATE: Record<string, DownloadState> = {
 export const toDownloadState = (status: string): DownloadState =>
   STATUS_TO_STATE[status.toLowerCase()] ?? 'Pending';
 
-const cacheKeyFor = (download: DownloadStatus): string => {
-  const filename = download.destination.split(/[\\/]/).pop() ?? 'unknown';
-  return download.model_id ? `${download.model_id}:${filename}` : download.id;
+/**
+ * A file's path inside its model folder (`1_Pooling/config.json`), which is
+ * what the backend's batch snapshot calls it. The bare file name is not enough:
+ * a sentence-transformers model has two `config.json` files, and keyed by that
+ * one row silently replaced the other.
+ */
+export const fileNameWithinModel = (
+  download: Pick<DownloadStatus, 'destination' | 'model_id'>
+): string => {
+  const path = download.destination.replace(/\\/g, '/');
+  if (download.model_id) {
+    const marker = `/${download.model_id}/`;
+    const at = path.lastIndexOf(marker);
+    if (at >= 0) return path.slice(at + marker.length);
+  }
+  return path.split('/').pop() ?? 'unknown';
 };
+
+const cacheKeyFor = (download: DownloadStatus): string =>
+  download.model_id ? `${download.model_id}:${fileNameWithinModel(download)}` : download.id;
 
 const findByBackendId = (
   downloads: Map<string, DownloadStatus>,

@@ -12,6 +12,8 @@ struct ConversationStateRow {
     pinned_at: Option<String>,
     archived_at: Option<String>,
     last_message_preview: Option<String>,
+    forked_from_conversation_id: Option<String>,
+    forked_from_message_id: Option<String>,
 }
 async fn fetch_conversation_state(
     pool: &SqlitePool,
@@ -29,6 +31,8 @@ async fn fetch_conversation_state(
             c.bookmarked_at AS bookmarked_at,
             c.pinned_at AS pinned_at,
             c.archived_at AS archived_at,
+            c.forked_from_conversation_id AS forked_from_conversation_id,
+            c.forked_from_message_id AS forked_from_message_id,
             (
                 SELECT m.content
                 FROM conversation_messages m
@@ -64,6 +68,8 @@ fn to_conversation_dto(
         pinned_at,
         archived_at,
         last_message_preview,
+        forked_from_conversation_id,
+        forked_from_message_id,
     ) = if let Some(s) = state {
         (
             Some(s.space_id),
@@ -76,6 +82,8 @@ fn to_conversation_dto(
             s.pinned_at,
             s.archived_at,
             s.last_message_preview,
+            s.forked_from_conversation_id,
+            s.forked_from_message_id,
         )
     } else {
         (
@@ -84,6 +92,8 @@ fn to_conversation_dto(
             Some(false),
             Some(false),
             Some(false),
+            None,
+            None,
             None,
             None,
             None,
@@ -112,6 +122,8 @@ fn to_conversation_dto(
         archived_at,
         last_message_preview,
         compaction,
+        forked_from_conversation_id,
+        forked_from_message_id,
     }
 }
 

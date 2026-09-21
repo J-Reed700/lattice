@@ -2,7 +2,7 @@
 
 use super::ConversationRepository;
 use crate::domain::conversation::{
-    CompactionRecord, Conversation, ConversationAggregate, ConversationMessage, MessageRole,
+    Conversation, ConversationAggregate, ConversationMessage, MessageRole,
 };
 use crate::shared::error::Result;
 
@@ -112,8 +112,5 @@ impl crate::application::ports::conversation_repository::ConversationRepositoryP
     }
     async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         ConversationRepository::update_message_status(self, message_id, status).await
-    }
-    async fn save_compaction(&self, record: &CompactionRecord) -> Result<()> {
-        ConversationRepository::upsert_summary(self, record).await
     }
 }

@@ -1,12 +1,16 @@
-import { useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { PanelRight } from 'lucide-react';
 
 import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
+import { IconButton } from '@/components/ui/IconButton';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { EntryActionRail } from './EntryActionRail';
 import { EntryFromConversation } from './EntryFromConversation';
 import { EntryHeader } from './EntryHeader';
 import { EntryHighlightsStrip, HIGHLIGHT_CHAR_LIMIT } from './EntryHighlightsStrip';
+import { JournalContextRail } from './JournalContextRail';
 
 import type { SynthesisScope, WeekCandidateCounts } from './SynthesizePopover';
 import type { JournalEntrySummary } from './useJournalEntries';
@@ -30,6 +34,9 @@ interface EntryEditorProps {
   pageTitle: string | null;
   /** True when that title is just this journal's default page name. */
   isDefaultPage: boolean;
+  /** A page that was just made: put the caret in its title. */
+  autoFocusTitle?: boolean;
+  onRenamePage: (title: string) => void;
   selectedEntry: JournalEntrySummary | null;
   selectedEntryMessages: SnapshotMessage[];
   selectedEntryLoading: boolean;
@@ -42,6 +49,20 @@ interface EntryEditorProps {
   onSynthesize: (scope: SynthesisScope) => Promise<boolean>;
   weekCandidates?: WeekCandidateCounts;
   onNotify: (tone: 'info' | 'success' | 'error', message: string) => void;
+}
+
+const CONTEXT_RAIL_KEY = 'journal.contextRail.open';
+
+function readRailOpen(): boolean {
+  // At the minimum supported desktop width the journal index and context rail
+  // would otherwise leave almost no room for the page. Start compact windows
+  // with the rail closed; it remains available as an overlay from the header.
+  if (window.matchMedia('(max-width: 1023px)').matches) return false;
+  try {
+    return localStorage.getItem(CONTEXT_RAIL_KEY) !== '0';
+  } catch {
+    return true;
+  }
 }
 
 function countWords(markdown: string): number {
@@ -58,8 +79,9 @@ function countWords(markdown: string): number {
 }
 
 /**
- * Main editor pane: header → editor body → highlights strip →
- * from-this-conversation → action rail.
+ * The page and what sits beside it: a writing column on the desk, and a
+ * context rail holding the picked conversation, the kept highlights and
+ * Synthesize. The rail can be put away (⌘.) when the page wants the room.
  * Spec §5, §6.
  */
 export function EntryEditor({
@@ -78,6 +100,8 @@ export function EntryEditor({
   journalName,
   pageTitle,
   isDefaultPage,
+  autoFocusTitle = false,
+  onRenamePage,
   selectedEntry,
   selectedEntryMessages,
   selectedEntryLoading,
@@ -92,6 +116,38 @@ export function EntryEditor({
   onNotify,
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const [railOpen, setRailOpen] = useState(readRailOpen);
+
+  useEffect(() => {
+    const compact = window.matchMedia('(max-width: 1023px)');
+    const closeForCompactLayout = (event: MediaQueryListEvent) => {
+      if (event.matches) setRailOpen(false);
+    };
+    compact.addEventListener('change', closeForCompactLayout);
+    return () => compact.removeEventListener('change', closeForCompactLayout);
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    setRailOpen((open) => {
+      try {
+        localStorage.setItem(CONTEXT_RAIL_KEY, open ? '0' : '1');
+      } catch {
+        // Preference only.
+      }
+      return !open;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '.') {
+        event.preventDefault();
+        toggleRail();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleRail]);
 
   const date = useMemo(() => {
     if (activeNote?.updatedAt) {
@@ -116,47 +172,63 @@ export function EntryEditor({
     [onAddHighlight],
   );
 
+  const ready = !loadError && !isLoadingNote && Boolean(activeNote);
+
   return (
-    <main className="journal-desk relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-      <div className="journal-paper mx-auto flex w-full max-w-[860px] flex-1 flex-col px-8 pb-10 pt-10 lg:px-14 lg:pt-12">
-        {loadError ? (
-          <p className="text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
-        ) : isLoadingNote || !activeNote ? (
-          <p className="text-sm text-[hsl(var(--text-muted))]">Loading journal…</p>
-        ) : (
-          <>
-            <EntryHeader
-              date={date}
-              journalName={journalName}
-              pageTitle={isDefaultPage ? null : pageTitle}
-              wordCount={wordCount}
-              lastEditedAt={activeNote.updatedAt}
-              hasPendingChanges={hasPendingChanges}
-              isSaving={isSaving}
-              saveError={saveError}
-              onRetrySave={onSaveNow}
-            />
-            <div
-              ref={editorContainerRef}
-              className="journal-writing-surface min-h-[52vh] font-serif text-[17px] leading-[1.85] text-[hsl(var(--text-primary))]"
-            >
-              <TiptapEditor
-                value={activeNote.content ?? ''}
-                onChange={onUpdateNoteContent}
-                placeholder="A thought, a question, a place to begin…"
-                selectionActions={selectionActions}
+    <main className="relative flex min-h-0 min-w-0 flex-1">
+      <div className="journal-desk relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+        <div className="journal-paper mx-auto flex w-full max-w-[740px] flex-1 flex-col px-8 pb-16 pt-7 lg:px-14">
+          {loadError ? (
+            <p className="text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
+          ) : isLoadingNote || !activeNote ? (
+            <p className="text-sm text-[hsl(var(--text-muted))]">Loading journal…</p>
+          ) : (
+            <>
+              <EntryHeader
+                date={date}
+                journalName={journalName}
+                pageId={activeNote.id}
+                pageTitle={isDefaultPage ? null : pageTitle}
+                autoFocusTitle={autoFocusTitle}
+                onRename={onRenamePage}
+                wordCount={wordCount}
+                lastEditedAt={activeNote.updatedAt}
+                hasPendingChanges={hasPendingChanges}
+                isSaving={isSaving}
+                saveError={saveError}
+                onRetrySave={onSaveNow}
+                actions={
+                  railOpen ? null : (
+                    <IconButton label="Show conversation and highlights" shortcut="⌘." onClick={toggleRail}>
+                      <PanelRight />
+                    </IconButton>
+                  )
+                }
               />
-            </div>
-            <EntryHighlightsStrip
-              highlights={activeNote.highlights}
-              pinnedIds={pinnedHighlightIds}
-              onAddHighlight={onAddHighlight}
-              onRemoveHighlight={onRemoveHighlight}
-              onTogglePinned={onTogglePinnedHighlight}
-              editorContainerRef={editorContainerRef}
-              showFloatingToolbar={false}
-            />
+              <div
+                ref={editorContainerRef}
+                className="journal-writing-surface min-h-[52vh] flex-1 font-serif text-[17px] leading-[1.85] text-[hsl(var(--text-primary))]"
+              >
+                <TiptapEditor
+                  value={activeNote.content ?? ''}
+                  onChange={onUpdateNoteContent}
+                  placeholder="A thought, a question, a place to begin…"
+                  selectionActions={selectionActions}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {ready && activeNote && railOpen ? (
+        <JournalContextRail
+          selectedEntryId={selectedEntry?.id ?? null}
+          highlightCount={activeNote.highlights.length}
+          onClose={toggleRail}
+          conversation={
             <EntryFromConversation
+              embedded
               entry={selectedEntry}
               messages={selectedEntryMessages}
               isLoading={selectedEntryLoading}
@@ -166,6 +238,20 @@ export function EntryEditor({
               onJumpToEntry={onJumpToEntry}
               onNotify={onNotify}
             />
+          }
+          highlights={
+            <EntryHighlightsStrip
+              embedded
+              highlights={activeNote.highlights}
+              pinnedIds={pinnedHighlightIds}
+              onAddHighlight={onAddHighlight}
+              onRemoveHighlight={onRemoveHighlight}
+              onTogglePinned={onTogglePinnedHighlight}
+              editorContainerRef={editorContainerRef}
+              showFloatingToolbar={false}
+            />
+          }
+          footer={
             <EntryActionRail
               selectedEntryId={selectedEntry?.id ?? null}
               pinnedCount={pinnedEntryCount}
@@ -174,9 +260,9 @@ export function EntryEditor({
               disabled={!activeNote}
               weekCandidates={weekCandidates}
             />
-          </>
-        )}
-      </div>
+          }
+        />
+      ) : null}
     </main>
   );
 }

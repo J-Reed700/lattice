@@ -107,6 +107,7 @@ async fn test_fork_unknown_anchor_copies_nothing() {
 async fn test_fork_copies_linked_documents_and_web_sources() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
+    seed_documents(&pool, &["doc-1"]).await;
     let conversation_id = seed_thread(&pool).await;
 
     sqlx::query(
@@ -179,4 +180,95 @@ async fn test_fork_does_not_touch_original() {
         message_ids(&pool, &conversation_id).await,
         vec!["m1", "m2", "m3", "m4"]
     );
+}
+
+/// A branch has to say where it came from, so the sidebar and the chat header
+/// can offer the way back.
+#[tokio::test]
+async fn a_branch_records_the_conversation_and_turn_it_was_taken_from() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    repo.fork(
+        &conversation_id,
+        Some("m2"),
+        "conv-lineage",
+        "Thread · branch",
+    )
+    .await
+    .unwrap();
+
+    let lineage = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT forked_from_conversation_id, forked_from_message_id \
+         FROM conversations WHERE id = ?",
+    )
+    .bind("conv-lineage")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(lineage.0.as_deref(), Some(conversation_id.as_str()));
+    assert_eq!(lineage.1.as_deref(), Some("m2"));
+}
+
+/// Branching the whole thread names the parent but no turn: there is no single
+/// point it was taken at.
+#[tokio::test]
+async fn a_whole_thread_branch_records_the_parent_and_no_turn() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    repo.fork(&conversation_id, None, "conv-whole", "Thread · branch")
+        .await
+        .unwrap();
+
+    let lineage = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT forked_from_conversation_id, forked_from_message_id \
+         FROM conversations WHERE id = ?",
+    )
+    .bind("conv-whole")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(lineage.0.as_deref(), Some(conversation_id.as_str()));
+    assert_eq!(lineage.1, None);
+}
+
+/// An anchor that is not in the parent copies no messages, so it must not be
+/// recorded either — a lineage link to a turn that is not there is worse than
+/// none.
+#[tokio::test]
+async fn an_unknown_anchor_records_no_turn() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    let (_, copied) = repo
+        .fork(
+            &conversation_id,
+            Some("not-a-message"),
+            "conv-dangling",
+            "Thread · branch",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(copied, 0);
+    let lineage = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT forked_from_conversation_id, forked_from_message_id \
+         FROM conversations WHERE id = ?",
+    )
+    .bind("conv-dangling")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(lineage.0.as_deref(), Some(conversation_id.as_str()));
+    assert_eq!(lineage.1, None);
 }

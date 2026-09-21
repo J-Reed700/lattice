@@ -2,6 +2,10 @@
 use parking_lot::Mutex;
 use tauri::{Emitter, Listener, Manager};
 
+#[cfg(target_os = "macos")]
+#[path = "renderer_shutdown_macos.rs"]
+mod macos;
+
 #[derive(Default)]
 struct ShutdownState {
     ready: bool,
@@ -23,13 +27,13 @@ impl ShutdownState {
         self.pending
     }
 
-    fn respond(&mut self, id: u64, saved: bool) -> bool {
+    fn respond(&mut self, id: u64, saved: bool) -> Option<bool> {
         if self.pending != Some(id) {
-            return false;
+            return None;
         }
         self.pending = None;
         self.approved = saved;
-        saved
+        Some(saved)
     }
 }
 
@@ -42,7 +46,7 @@ struct Response {
     saved: bool,
 }
 
-pub fn install(app: &tauri::AppHandle) {
+pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
     app.manage(State::default());
     let handle = app.clone();
     app.listen("lattice:renderer-ready", move |_| {
@@ -57,10 +61,22 @@ pub fn install(app: &tauri::AppHandle) {
             .state::<State>()
             .lock()
             .respond(response.request_id, response.saved);
-        if approved {
+        if approved == Some(true) {
             handle.exit(0);
+        } else if approved == Some(false) {
+            #[cfg(target_os = "macos")]
+            macos::reply(&handle, false);
         }
     });
+    #[cfg(target_os = "macos")]
+    macos::install(app)?;
+    Ok(())
+}
+
+/// Called after repository and sidecar shutdown, before leaving the event loop.
+pub fn finish_native_termination(_app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    macos::reply(_app, true);
 }
 
 /// Returns true when native destruction must be prevented. A repeated quit
@@ -91,9 +107,10 @@ mod tests {
         };
         let id = state.request().unwrap();
         assert_eq!(state.request(), Some(id));
-        assert!(!state.respond(id + 1, true));
+        assert_eq!(state.respond(id + 1, true), None);
+        assert_eq!(state.respond(id + 1, false), None);
         assert_eq!(state.request(), Some(id));
-        assert!(state.respond(id, true));
+        assert_eq!(state.respond(id, true), Some(true));
         assert_eq!(state.request(), None);
     }
 
@@ -104,10 +121,10 @@ mod tests {
             ..Default::default()
         };
         let id = state.request().unwrap();
-        assert!(!state.respond(id, false));
+        assert_eq!(state.respond(id, false), Some(false));
         let retry = state.request().unwrap();
         assert_ne!(retry, id);
-        assert!(!state.respond(id, true));
-        assert!(state.respond(retry, true));
+        assert_eq!(state.respond(id, true), None);
+        assert_eq!(state.respond(retry, true), Some(true));
     }
 }

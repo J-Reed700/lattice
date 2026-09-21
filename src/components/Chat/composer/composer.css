@@ -1,0 +1,51 @@
+/*
+ * The composer's caret-anchored surfaces.
+ *
+ * Only the geometry lives here — the colours and the type are tokens and
+ * utility classes on the elements themselves, as everywhere else in the chat.
+ */
+
+.composer-caret-field {
+  position: relative;
+}
+
+/* A zero-size box sitting exactly on the caret. The panel hangs off it, so the
+   list opens where the words are being typed rather than at the composer's edge. */
+.composer-suggest-anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.composer-suggest-panel {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  max-height: 320px;
+  padding: 6px;
+}
+
+/* Only the rows scroll: the keys that drive the list are no use scrolled away. */
+.composer-suggest-rows {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.composer-suggest-row[data-active='true'] {
+  background-color: hsl(var(--text-primary) / 0.07);
+}
+
+.composer-suggest-hints {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid hsl(var(--border-subtle));
+  margin-top: 4px;
+}

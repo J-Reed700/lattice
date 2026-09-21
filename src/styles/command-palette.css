@@ -5,15 +5,16 @@
   inset: 0;
   background: hsl(var(--overlay));
   z-index: 9998;
+  animation: overlay-in 120ms var(--ease-out);
 }
 
 .command-palette-container {
   position: fixed;
-  top: 18vh;
+  top: 16vh;
   left: 50%;
   transform: translateX(-50%);
   width: 90%;
-  max-width: 600px;
+  max-width: 640px;
   z-index: 9999;
 }
 
@@ -22,10 +23,9 @@
   flex-direction: column;
   max-height: 60vh;
   overflow: hidden;
-  background: hsl(var(--surface-raised));
-  border: 1px solid hsl(var(--border-subtle));
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  background: hsl(var(--surface-overlay));
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
 }
 
 .command-input-wrapper {
@@ -37,9 +37,9 @@
 
 .command-input-icon {
   position: absolute;
-  left: 14px;
-  width: 16px;
-  height: 16px;
+  left: 18px;
+  width: 17px;
+  height: 17px;
   color: hsl(var(--text-muted));
   pointer-events: none;
 }
@@ -47,8 +47,9 @@
 .command-input {
   flex: 1;
   width: 100%;
-  padding: 12px 14px 12px 38px;
-  font-size: 15px;
+  padding: 16px 18px 16px 46px;
+  font-size: 16px;
+  letter-spacing: -0.01em;
   color: hsl(var(--text-primary));
   background: transparent;
   border: none;
@@ -94,30 +95,33 @@
 }
 
 [cmdk-group-heading] {
-  padding: 6px 12px 2px;
-  font-size: 11px;
+  padding: 8px 10px 4px;
+  font-size: 11.5px;
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: hsl(var(--text-muted));
   user-select: none;
 }
 
 .command-item {
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   cursor: pointer;
   user-select: none;
-  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
+/* Keyboard selection moves instantly: a palette is a high-frequency path. */
 .command-item[aria-selected='true'] {
-  background: hsl(var(--surface));
+  background: hsl(var(--text-primary) / 0.07);
+}
+
+.command-item[aria-selected='true'] svg {
+  color: hsl(var(--text-primary));
 }
 
 .command-shortcut {
   flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0.08em;
   color: hsl(var(--text-muted));
 }
 
@@ -131,8 +135,9 @@
 .command-footer {
   display: flex;
   gap: 16px;
-  padding: 8px 14px;
+  padding: 9px 16px;
   border-top: 1px solid hsl(var(--border-subtle));
+  background: hsl(var(--text-primary) / 0.025);
   font-size: 11px;
   color: hsl(var(--text-muted));
 }
@@ -144,7 +149,15 @@
 }
 
 .command-footer-hint kbd {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: hsl(var(--text-primary) / 0.07);
   color: hsl(var(--text-tertiary));
 }

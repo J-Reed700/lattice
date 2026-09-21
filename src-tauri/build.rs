@@ -43,6 +43,27 @@ fn embed_windows_manifest() {
 }
 
 fn main() {
+    // An instrumented binary must never use the shipping identity or its data.
+    // Keep the WebDriver endpoint opt-in and confined to test-only bundles.
+    if env::var_os("CARGO_FEATURE_DESKTOP_E2E").is_some() {
+        let target = env::var("TARGET").unwrap_or_default();
+        let patch = env::var("TAURI_CONFIG").ok();
+        let config = sidecar_guard::load_tauri_config(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            sidecar_guard::Platform::from_triple(&target),
+            patch.as_deref(),
+        );
+        let isolated = config.ok().is_some_and(|(config, _)| {
+            config
+                .get("identifier")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id.starts_with("tech.lattice.compatibility."))
+        });
+        if !isolated {
+            println!("cargo::error=desktop-e2e requires a tech.lattice.compatibility.* test identifier; use the desktop test build script");
+            return;
+        }
+    }
     embed_windows_manifest();
 
     if !guard_llama_sidecar() {
@@ -107,6 +128,8 @@ fn main() {
                     "find_similar_documents",
                     "search_with_recency",
                     "batch_search",
+                    "reranker_status",
+                    "download_reranker",
                 ]),
             )
             .plugin(
@@ -139,6 +162,7 @@ fn main() {
                     "set_conversation_bookmarked",
                     "set_conversation_pinned",
                     "set_conversation_archived",
+                    "list_space_documents",
                     "list_conversation_linked_documents",
                     "remove_conversation_linked_document",
                     "add_conversation_web_source",
@@ -157,6 +181,8 @@ fn main() {
                     "truncate_conversation_after",
                     "fork_conversation",
                     "regenerate_response",
+                    "compact_conversation",
+                    "get_conversation_memory",
                 ]),
             )
             .plugin(
@@ -311,6 +337,7 @@ fn main() {
                     "ingest_web_url",
                     "fetch_url_preview",
                     "extract_article",
+                    "read_web_page",
                 ]),
             )
             .plugin(

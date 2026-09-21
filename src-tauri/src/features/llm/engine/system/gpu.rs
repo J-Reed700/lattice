@@ -136,6 +136,10 @@ fn apple_silicon_name() -> String {
 }
 
 fn detect_gpu_sysinfo() -> Option<GPUInfo> {
+    // Intel macOS sidecars have no GPU backend, even when sysinfo sees a GPU.
+    if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return None;
+    }
     let components = Components::new_with_refreshed_list();
     let mut system = System::new();
     system.refresh_cpu();

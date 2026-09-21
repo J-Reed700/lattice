@@ -17,7 +17,7 @@ use candle_core::{Device, IndexOp, Tensor, D};
 use candle_transformers::models::whisper::{self as whisper, quantized_model, Config};
 use candle_transformers::quantized_var_builder::VarBuilder;
 use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::application::ports::transcription_port::{
     Transcript, TranscriptSegment, TranscriptionPort,
@@ -239,22 +239,10 @@ fn collect_language_tokens(tokenizer: &Tokenizer) -> Vec<(u32, String)> {
     tokens
 }
 
-/// Try Metal first on macOS, then CUDA, then CPU.
-///
-/// Mirrors `features/embedding/candle_service.rs::best_device`.
+/// Use the same platform policy as embeddings: Metal on Apple Silicon,
+/// CPU on Intel Macs, with recoverable accelerator initialization.
 fn best_device() -> Device {
-    #[cfg(target_os = "macos")]
-    {
-        match Device::new_metal(0) {
-            Ok(device) => return device,
-            Err(e) => warn!(error = %e, "Metal unavailable for transcription"),
-        }
-    }
-
-    Device::cuda_if_available(0).unwrap_or_else(|e| {
-        debug!(error = %e, "CUDA unavailable for transcription, using CPU");
-        Device::Cpu
-    })
+    crate::shared::utils::compute_device::best_available_compute_device("transcription")
 }
 
 fn load_whisper(resolved: &ResolvedModel) -> Result<LoadedWhisper, AppError> {

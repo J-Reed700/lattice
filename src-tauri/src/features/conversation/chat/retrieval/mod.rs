@@ -305,6 +305,8 @@ pub(super) async fn run_retrieval_pipeline(
     max_tokens: usize,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
+    focus: &super::focus::FocusScope,
+    recorder: &super::turn_record::TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     run_retrieval_pipeline_impl(
         container,
@@ -322,6 +324,8 @@ pub(super) async fn run_retrieval_pipeline(
         max_tokens,
         tool_output_settings,
         search_settings,
+        focus,
+        recorder,
     )
     .await
 }
@@ -344,6 +348,8 @@ async fn run_kb_retrieval(
     enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
+    focus: &super::focus::FocusScope,
+    recorder: &super::turn_record::TurnRecorder,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
@@ -357,6 +363,8 @@ async fn run_kb_retrieval(
         enable_reranking,
         semantic_threshold,
         tuning,
+        focus,
+        recorder,
     )
     .await
 }
@@ -385,6 +393,38 @@ async fn load_space_document_scope(
     conversation_id: &str,
 ) -> Option<SpaceDocumentScope> {
     load_space_document_scope_impl(container, conversation_id).await
+}
+
+/// The documents a conversation remembers citing, minus any its space no longer
+/// allows.
+///
+/// A reference is only a record that a document was once in scope. The
+/// conversation may have moved space since, or the document may have been filed
+/// elsewhere, and both the router and the follow-up path reopen the last
+/// reference by id, with no search — and so no scope filter — in between.
+/// An unresolvable scope keeps nothing, as KB retrieval does.
+pub(super) async fn confine_document_context(
+    container: &Container,
+    conversation_id: &str,
+    references: Vec<crate::domain::conversation::DocumentReference>,
+) -> Vec<crate::domain::conversation::DocumentReference> {
+    if references.is_empty() {
+        return references;
+    }
+    let Some(scope) = load_space_document_scope(container, conversation_id).await else {
+        return Vec::new();
+    };
+    keep_references_in_scope(references, &scope.document_ids)
+}
+
+fn keep_references_in_scope(
+    references: Vec<crate::domain::conversation::DocumentReference>,
+    allowed: &HashSet<String>,
+) -> Vec<crate::domain::conversation::DocumentReference> {
+    references
+        .into_iter()
+        .filter(|reference| allowed.contains(&reference.document_id))
+        .collect()
 }
 
 async fn build_hyde_context_window_for_conversation(

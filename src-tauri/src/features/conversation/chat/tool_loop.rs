@@ -21,11 +21,14 @@ use tracing::{error, info, warn};
 
 use super::cancellation::is_cancel_requested;
 use super::fetch_memory::{self, Delivery, FetchMemory, Recall};
+use super::focus::FocusScope;
 use super::prompting::render_tool_followup_prompt;
 use super::retrieval::{
     build_web_source_citations, deduplicate_sources, fetched_page_text_room, format_tool_result,
     merge_tool_sources, record_tool_document_references,
 };
+use super::turn_record::{TurnRecorder, TurnStepKind};
+use super::web_steps;
 use super::ChatStreamEventDto;
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -46,6 +49,12 @@ pub struct ToolLoopTimingMetrics {
 pub struct ToolLoopOutcome {
     pub response: String,
     pub timings: ToolLoopTimingMetrics,
+    /// Prompt and completion tokens as the provider reported them for the round
+    /// that produced the answer. `None` when it reported none — absent is not
+    /// zero, and a local model that says nothing about its usage has not used
+    /// no tokens.
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
 }
 
 /// Emits `llm-stream` events tagged with the turn they belong to.
@@ -87,30 +96,6 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
             content: Some(chunk.to_owned()),
             ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
         })
-    }
-
-    /// Emit a non-fatal status update (e.g. a retry notice).
-    pub(super) fn status(&self, status: &str, attempt: usize) -> Result<()> {
-        self.emit(ChatStreamEventDto {
-            status: Some(status.to_owned()),
-            attempt: Some(attempt),
-            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
-        })
-    }
-
-    /// Say what the turn is working on, for the stretches that produce no text.
-    ///
-    /// Best-effort: losing a progress note must never fail a generation that is
-    /// otherwise going fine, so the error is logged and swallowed rather than
-    /// propagated the way `content` propagates a dead frontend.
-    pub(super) fn activity(&self, detail: &str) {
-        if let Err(error) = self.emit(ChatStreamEventDto {
-            status: Some("activity".to_owned()),
-            detail: Some(detail.to_owned()),
-            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
-        }) {
-            warn!(%error, "Failed to emit activity update");
-        }
     }
 
     /// Emit the terminal event. Idempotent, so belt-and-braces calls on
@@ -164,15 +149,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
     time_budget: Duration,
     pages_already_read: FetchMemory,
+    focus: &FocusScope,
+    recorder: &TurnRecorder,
+    // A bounded typed plan from the shared context assembler, when bounded
+    // conversation memory is on for this turn. When present it *replaces* the
+    // string-context input: the point of the typed path is that memory is never
+    // promoted into system instructions by string parsing, and raw user bytes
+    // are never trimmed on the way in.
+    memory_plan: Option<&crate::application::services::context_assembler::ContextPlan>,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
 
     const MAX_TOOL_ITERATIONS: usize = 5;
     const CANCEL_POLL_INTERVAL_MS: u64 = 200;
-    /// How often to repeat the current activity while nothing else is happening.
-    /// Often enough to read as alive, rare enough not to spam the event channel.
-    const ACTIVITY_HEARTBEAT: Duration = Duration::from_secs(5);
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
     // One deadline for the whole turn: tool rounds and provider retries share it.
@@ -194,6 +184,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
     let tool_loop_start = Instant::now();
     let mut timings = ToolLoopTimingMetrics::default();
+    let mut input_tokens: Option<u64> = None;
+    let mut output_tokens: Option<u64> = None;
 
     tracing::info!(
         conversation_id = conv_id,
@@ -209,12 +201,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     let mut tool_context = context.to_vec();
     let mut current_prompt = base_prompt.clone();
     let mut native_request = CompletionRequest {
-        input: crate::application::services::completion_input::from_context(
-            &prompt_settings.system_prompt,
-            context,
-            &base_prompt,
-        ),
+        input: match memory_plan {
+            Some(plan) => plan.messages.clone(),
+            None => crate::application::services::completion_input::from_context(
+                &prompt_settings.system_prompt,
+                context,
+                &base_prompt,
+            ),
+        },
         tools: tools_ref.unwrap_or(&[]).to_vec(),
+        // Reserving output room and then not enforcing it is only bookkeeping:
+        // the model could generate past what the budget set aside and overrun
+        // the window the prompt was measured against.
+        max_output_tokens: memory_plan
+            .map(|plan| u32::try_from(plan.max_output_tokens).unwrap_or(u32::MAX)),
         ..Default::default()
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
@@ -224,6 +224,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // opened the top results already. Starting from its record is what stops
     // round one being spent asking for pages the prompt already carries.
     let mut fetch_memory = pages_already_read;
+    // Reading this conversation's own transcript is not a vault read, so it does
+    // not go through the space/focus scope path. The conversation id comes from
+    // the turn, and `HistoryToolScope` has no setter, so no tool argument can
+    // point it at another thread.
+    let history_port = crate::features::conversation::repository::ConversationRepository::new(
+        container.db_pool().clone(),
+    );
+    // One memo for the whole turn: a repeated read of a range already exhausted
+    // answers with a reference instead of paying for the same text twice.
+    let mut history_memo = super::history_tools::HistoryToolMemo::default();
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
         if is_cancel_requested(request_id) {
@@ -236,6 +246,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         );
 
         let llm_iteration_start = Instant::now();
+        // Begun before either branch so a round that never produces a token is
+        // still a visible, timed step rather than a gap. The guard ends it even
+        // on the budget and cancellation returns below.
+        let generate_step =
+            recorder.begin_guarded(TurnStepKind::Generate, thinking_label(iteration), None);
         let remaining = remaining_budget()?;
         native_request.time_budget = Some(remaining);
         let native_progress = llm.supports_typed_completions()
@@ -256,27 +271,29 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     }
                     emitter.content(&text)
                 };
-                let on_retry = |attempt| emitter.status("retrying", attempt);
-                emitter.activity(thinking_label(iteration));
+                // A provider-level retry is its own step. It used to overwrite
+                // the answer bubble's text, so a turn that recovered ended up
+                // showing "Model response failed. Retrying..." in place of the
+                // answer it went on to write.
+                let on_retry = |attempt: usize| {
+                    recorder.note(
+                        TurnStepKind::Retry,
+                        "Retrying the model",
+                        None,
+                        Some(format!("attempt {attempt}")),
+                    );
+                    Ok(())
+                };
                 let completion = timeout(
                     remaining,
                     llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
                 );
                 tokio::pin!(completion);
-                let mut last_heartbeat = Instant::now();
                 loop {
                     tokio::select! {
                         result = &mut completion => break result.map_err(|_| budget_exhausted())?,
                         _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
                             if is_cancel_requested(request_id) { return Err(cancellation_error()); }
-                            // Until the first text arrives there is nothing else
-                            // to show, and on a slow model that can be minutes.
-                            if !first_text_received.load(std::sync::atomic::Ordering::Relaxed)
-                                && last_heartbeat.elapsed() >= ACTIVITY_HEARTBEAT
-                            {
-                                last_heartbeat = Instant::now();
-                                emitter.activity(thinking_label(iteration));
-                            }
                         }
                     }
                 }
@@ -296,6 +313,10 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                 ));
             }
             tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
+            // The last round that reports usage is the one that produced the
+            // answer, so a later round's numbers replace an earlier round's.
+            input_tokens = Some(response.input_tokens);
+            output_tokens = Some(response.output_tokens);
             if llm.provider_name() == "openai" {
                 if let Some(items) = response.provider_output.as_array() {
                     native_request.input.extend(
@@ -411,6 +432,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         timings.llm_stream_ms = timings
                             .llm_stream_ms
                             .saturating_add(elapsed_ms(llm_iteration_start));
+                        generate_step
+                            .done(Some(round_result_line(&response_text, tool_calls.len())));
                         if tool_calls.is_empty() {
                             if response_text.trim().is_empty()
                                 && iteration + 1 < MAX_TOOL_ITERATIONS
@@ -423,7 +446,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 );
                                 timings.empty_response_retries =
                                     timings.empty_response_retries.saturating_add(1);
-                                emitter.status("retrying", iteration + 2)?;
+                                // A retry is a step of its own. It used to be
+                                // written into the answer bubble, so a turn
+                                // that recovered showed the retry notice where
+                                // its answer should have been.
+                                recorder.note(
+                                    TurnStepKind::Retry,
+                                    "Asking again — the model returned nothing",
+                                    None,
+                                    Some(format!("attempt {}", iteration + 2)),
+                                );
                                 tool_context
                                     .push(format!("System: [{}]", EMPTY_RESPONSE_RETRY_HINT));
                                 let retry_prompt = render_tool_followup_prompt(
@@ -458,6 +490,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             return Ok(ToolLoopOutcome {
                                 response: response_text,
                                 timings,
+                                input_tokens,
+                                output_tokens,
                             });
                         }
 
@@ -565,7 +599,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     continue;
                                 }
                             }
-                            emitter.activity(&tool_activity_label(resolved_tool, &tc.arguments));
+                            let tool_step = recorder.begin_guarded_with_links(
+                                tool_step_kind(resolved_tool),
+                                tool_activity_label(resolved_tool, &tc.arguments),
+                                web_steps::tool_detail(resolved_tool, &tc.arguments)
+                                    .or_else(|| Some(tool_argument_summary(&tc.arguments))),
+                                web_steps::links_for_call(resolved_tool, &tc.arguments),
+                            );
                             info!(
                                 requested_function = tc.name.as_str(),
                                 resolved_function = resolved_tool,
@@ -577,8 +617,40 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 resolved_tool,
                                 tc.arguments.clone(),
                             );
-                            match scoped_document_tools::execute(container, conv_id, call).await {
+                            let executed = if super::history_tools::is_history_tool(resolved_tool) {
+                                let scope = super::history_tools::HistoryToolScope::new(
+                                    conv_id,
+                                    super::history_tools::HistoryToolBudget {
+                                        // A char allowance used as a byte ceiling
+                                        // is conservative in the safe direction.
+                                        max_response_bytes: result_allowance,
+                                        deadline: Some(deadline),
+                                    },
+                                );
+                                super::history_tools::execute(
+                                    &history_port,
+                                    &scope,
+                                    &mut history_memo,
+                                    call,
+                                )
+                                .await
+                            } else {
+                                scoped_document_tools::execute(container, conv_id, focus, call)
+                                    .await
+                            };
+                            match executed {
                                 Ok(result) => {
+                                    if result.success {
+                                        web_steps::finish_tool_step(
+                                            tool_step,
+                                            recorder,
+                                            resolved_tool,
+                                            &tc.arguments,
+                                            result.data.as_ref(),
+                                        );
+                                    } else {
+                                        tool_step.failed(result.error_message.clone());
+                                    }
                                     timings.tool_success_count =
                                         timings.tool_success_count.saturating_add(1);
                                     let tool_sources = collect_tool_sources(
@@ -709,6 +781,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     );
                                 }
                                 Err(e) => {
+                                    tool_step.failed(Some(e.to_string()));
                                     timings.tool_failure_count =
                                         timings.tool_failure_count.saturating_add(1);
                                     warn!(
@@ -994,6 +1067,62 @@ fn thinking_label(iteration: usize) -> &'static str {
     }
 }
 
+/// What one generation round came to.
+///
+/// A round that only asked for tools wrote no answer, and saying "0 words"
+/// would read as a failure rather than as the model deciding to go and look
+/// something up.
+fn round_result_line(response_text: &str, tool_calls: usize) -> String {
+    let words = response_text.split_whitespace().count();
+    match (words, tool_calls) {
+        (0, 0) => "nothing".to_string(),
+        (0, 1) => "1 tool call".to_string(),
+        (0, calls) => format!("{calls} tool calls"),
+        (words, 0) => format!("{words} words"),
+        (words, 1) => format!("{words} words and 1 tool call"),
+        (words, calls) => format!("{words} words and {calls} tool calls"),
+    }
+}
+
+/// Which kind of step a tool call is, so the timeline groups a document search
+/// with the retrieval pipeline's rather than filing it under "tool".
+fn tool_step_kind(tool: &str) -> TurnStepKind {
+    match tool {
+        "semantic_search" => TurnStepKind::SearchDocuments,
+        "get_document" | "list_documents" => TurnStepKind::OpenDocument,
+        "web_search" => TurnStepKind::WebSearch,
+        "fetch_url_content" => TurnStepKind::ReadPage,
+        "wiki_search" | "wiki_summary" => TurnStepKind::Wiki,
+        _ => TurnStepKind::Tool,
+    }
+}
+
+/// A tool call's arguments in one line, for the step's detail.
+///
+/// The interesting arguments are short and named the same way across tools; the
+/// rest is noise a reader cannot act on, and `TurnRecorder` clips whatever gets
+/// through.
+fn tool_argument_summary(arguments: &serde_json::Value) -> String {
+    const INTERESTING: [&str; 4] = ["query", "url", "document_id", "page"];
+    let Some(object) = arguments.as_object() else {
+        return arguments.to_string();
+    };
+    let summary = INTERESTING
+        .iter()
+        .filter_map(|key| object.get(*key).map(|value| (key, value)))
+        .map(|(key, value)| match value.as_str() {
+            Some(text) => format!("{key}: {text}"),
+            None => format!("{key}: {value}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if summary.is_empty() {
+        arguments.to_string()
+    } else {
+        summary
+    }
+}
+
 /// Share of the context window the prompt may fill. The rest is the reply's.
 const CONTEXT_FILL_LIMIT: f64 = 0.75;
 
@@ -1078,6 +1207,9 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
         "semantic_search" => "Searching your documents".to_string(),
         "list_documents" => "Looking through your documents".to_string(),
         "get_document" => "Opening a document".to_string(),
+        "search_conversation_history" | "read_conversation_history" => {
+            "Looking back through this conversation".to_string()
+        }
         other => format!("Running {other}"),
     }
 }

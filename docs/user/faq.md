@@ -49,9 +49,14 @@ Yes, completely! All indexing and search happens locally on your computer. No in
 
 ### What platforms are supported?
 
-- **Windows:** Windows 10 and later
-- **macOS:** macOS 10.15 (Catalina) and later
-- **Linux:** Modern distributions with glibc 2.31+
+- **Windows:** Windows 11, x64 (Intel/AMD processors).
+- **macOS:** macOS 13.3 and later, Apple Silicon; Intel support is being
+  qualified and uses CPU inference.
+- **Linux:** Ubuntu 24.04 LTS, x64.
+
+These are the release targets. Intel Mac availability requires completion of
+the [platform qualification checks](../development/platform-support.md).
+Windows ARM and mobile devices are outside the initial support scope.
 
 ### How much disk space does it need?
 
@@ -195,6 +200,18 @@ Yes! Tag system features:
 - Search by tag
 - Filter by tag
 - Tag hierarchies (planned)
+
+### Does a chat remember what I told it earlier?
+
+Partly, and it is worth knowing exactly how much.
+
+A long conversation eventually will not fit in the model's context window, so older messages stop being sent. To stop requirements getting lost that way, turn on **Settings > AI > Chat > Remember requirements in a conversation**. Lattice then reads the older part of the conversation and records the constraints, decisions, goals and preferences it finds, each one stored with the exact quotation from your message that it came from. The required items are added to every later prompt in that conversation.
+
+What this does **not** do is remember everything you said. Finding those items is itself a model step, and it can miss things or read them the wrong way. What Lattice can promise is narrower and more useful: anything it *did* record is traceable to words you actually wrote, and it will not quietly drop a requirement it already recorded. Open **Show conversation memory** from the command palette to see every item and the quotation behind it, and to see when it is unsure about one.
+
+Your original messages are never changed, deleted or rewritten by this. They stay in the conversation and stay searchable, and the chat can look back through them when a question needs it. If you edit or delete a message, anything Lattice had recorded from it stops being quoted — a deleted passage does not come back through the memory view.
+
+`/compact` does the same work on demand instead of waiting.
 
 ### Does it sync across devices?
 

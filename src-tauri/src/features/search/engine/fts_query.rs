@@ -122,6 +122,12 @@ pub fn is_syntax_error_message(message: &str) -> bool {
     message.contains("fts5: syntax error")
         || message.contains("malformed MATCH expression")
         || message.contains("unterminated string")
+        // Prose that merely contains a `*` or a quote is taken for
+        // hand-written FTS syntax and passed through raw, where
+        // `rules - The Silo` parses as a column filter on a column named
+        // `The`. That is as much the query's fault as a syntax error, and
+        // without the retry the keyword half of the search was lost.
+        || message.contains("no such column")
 }
 
 /// An FTS5 string literal: the one form no user input can escape from.

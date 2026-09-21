@@ -93,10 +93,22 @@ async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived(
     assert_eq!(count, 0);
 }
 
+/// Moving a chat used to file every document it had cited into the destination
+/// space, where all the other chats then searched them.
 #[tokio::test]
-async fn move_rolls_back_when_document_membership_write_fails() {
+async fn moving_a_conversation_does_not_file_its_documents_into_the_destination() {
     let (_directory, repo) = repository().await;
     let conversation = repo.create("Research", "test-model", None).await.unwrap();
+    sqlx::query(
+        "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
+         VALUES ('doc-cited', '/vault/cited.pdf', 'cited.pdf', 1, '2026-09-01T10:00:00Z', 'sum')",
+    )
+    .execute(&repo.pool)
+    .await
+    .unwrap();
+    repo.add_document_reference(&conversation.id.to_string(), "doc-cited", None, Some(0.9))
+        .await
+        .unwrap();
     let target = ConversationSpaceRepository::new(repo.pool.clone())
         .create(CreateConversationSpaceRequestDto {
             name: "Destination".into(),
@@ -109,26 +121,29 @@ async fn move_rolls_back_when_document_membership_write_fails() {
         })
         .await
         .unwrap();
-    // Fail the second statement, after the conversation's space has been updated.
-    sqlx::query("DROP TABLE document_space_memberships")
-        .execute(&repo.pool)
-        .await
-        .unwrap();
-    let result = repo
-        .move_conversation_to_space(MoveConversationToSpaceRequestDto {
-            conversation_id: conversation.id.to_string(),
-            space_id: target.id,
-        })
-        .await;
-    assert!(result.is_err());
+
+    repo.move_conversation_to_space(MoveConversationToSpaceRequestDto {
+        conversation_id: conversation.id.to_string(),
+        space_id: target.id.clone(),
+    })
+    .await
+    .unwrap();
+
     assert_eq!(
         repo.project_conversation(&conversation)
             .await
             .unwrap()
             .space_id
             .as_deref(),
-        Some("space_general")
+        Some(target.id.as_str())
     );
+    let filed_in_destination: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ?")
+            .bind(&target.id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(filed_in_destination, 0);
 }
 
 #[tokio::test]

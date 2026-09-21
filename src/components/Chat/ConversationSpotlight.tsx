@@ -7,6 +7,7 @@ import { Bookmark, Loader2, MessageSquare, Search } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
+import { scrollToMessage } from '../../utils/chatMessageNavigation';
 import { formatChatTimestamp } from '../../utils/dateUtils';
 
 import type { ConversationDto, ConversationMessageBookmarkDto } from '../../types';
@@ -26,30 +27,6 @@ const normalizeHexColor = (value: string | null | undefined): string | null => {
   if (!trimmed) return null;
   const candidate = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
   return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(candidate) ? candidate.toLowerCase() : null;
-};
-
-const scrollToMessage = (messageId: string) => {
-  let attempts = 0;
-  const maxAttempts = 12;
-
-  const tick = () => {
-    const element = document.getElementById(`message-${messageId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      element.classList.add('chat-message-highlighted');
-      window.setTimeout(() => {
-        element.classList.remove('chat-message-highlighted');
-      }, 1500);
-      return;
-    }
-
-    attempts += 1;
-    if (attempts < maxAttempts) {
-      window.setTimeout(tick, 120);
-    }
-  };
-
-  window.setTimeout(tick, 80);
 };
 
 export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlightProps) {

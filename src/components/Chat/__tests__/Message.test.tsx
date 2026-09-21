@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { MessageVerificationSummary } from '@/types/conversation';
+import { useChatReaderStore } from '@/stores/chatReaderStore';
+import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 import { Message } from '../Message';
 
@@ -19,22 +20,64 @@ vi.mock('../../../stores/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
     messageVerification: new Map([['answer', verificationSummary]]),
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
-    liveRetrieval: new Map(), inFlightGenerations: new Map(),
+    liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [],
   }),
 }));
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router');
+  return { ...actual, useNavigate: () => vi.fn() };
+});
 vi.mock('@/hooks/queries' , () => ({ useSettingsQuery: () => ({ data: undefined }), usePassageReferenceIds: () => [] }));
 vi.mock('@/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ activeModel: null }) }));
-vi.mock('../../TiptapEditor', () => ({ TiptapViewer: () => <div>Answer body</div> }));
-vi.mock('../FilePreviewModal', () => ({ FilePreviewModal: () => null }));
+// The chips the answer body draws are what the reader is opened from, so the
+// viewer stands in for tiptap by drawing them.
+vi.mock('../../TiptapEditor', () => ({
+  TiptapViewer: ({ citationNumbers, claims }: { citationNumbers?: number[]; claims?: { sentence: string }[] }) => (
+    <div>
+      Answer body
+      {(citationNumbers ?? []).map((number) => (
+        <span key={number} className="cite-chip" data-cite={number}>{number}</span>
+      ))}
+      {(claims ?? []).map((claim, index) => (
+        // Marked, not repeated: the real viewer decorates text already in the answer.
+        <span key={claim.sentence} className="claim" data-claim={index}>checked sentence</span>
+      ))}
+    </div>
+  ),
+}));
+// What the popover offers is its own file's business; here, only that it opens.
+vi.mock('../actions/ClaimActionsPopover', () => ({
+  ClaimActionsPopover: ({ verdict }: { verdict: { sentence: string } }) => (
+    <div role="dialog" aria-label="Claim actions">{verdict.sentence}</div>
+  ),
+}));
 vi.mock('../MessageActions', () => ({ MessageActions: () => null }));
-vi.mock('../RetrievalTrace', () => ({ RetrievalTrace: () => null }));
+vi.mock('../turn/TurnRecord', () => ({ TurnRecord: () => null }));
+// Owned by another track; this file is about what the answer itself does.
+vi.mock('../EvidenceMargin', () => ({ EvidenceMargin: () => null }));
+vi.mock('../SourceCitations', () => ({ SourceCitations: () => null }));
 
-function renderAnswer() {
-  render(<Message message={{ id: 'answer', role: 'assistant', content: 'Answer', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']} />);
+const source = (number: number): SourceWithMetadata => ({
+  documentId: `document-${number}`,
+  chunkId: `chunk-${number}`,
+  fileName: `Source ${number}.md`,
+  filePath: `/vault/source-${number}.md`,
+  mimeType: 'text/markdown',
+  category: 'note',
+  content: `Passage ${number}`,
+  score: 0.5,
+  fileSizeBytes: 1024,
+  modifiedAt: '2026-09-19T00:00:00.000Z',
+  citationId: number,
+});
+
+function renderAnswer(sources?: SourceWithMetadata[]) {
+  render(<Message message={{ id: 'answer', role: 'assistant', content: 'Answer', createdAt: new Date().toISOString(), conversationId: 'conversation', ...(sources ? { sources } : {}) } as Parameters<typeof Message>[0]['message']} />);
 }
 
 beforeEach(() => {
   verificationSummary = DEFAULT_SUMMARY;
+  useChatReaderStore.setState({ session: null, resolvedLocations: new Map() });
 });
 
 describe('message verification disclosure', () => {
@@ -91,5 +134,67 @@ describe('message verification disclosure', () => {
     // contradicted".
     renderAnswer();
     expect(screen.getByRole('button', { name: /Partially verified · 1/ })).toBeInTheDocument();
+  });
+});
+
+describe('a checked sentence of the answer', () => {
+  const summaryWithVerdict: MessageVerificationSummary = {
+    ...DEFAULT_SUMMARY,
+    claimVerdicts: [
+      { sentence: 'Canopy cools streets by 1.2 °C.', citationIds: [1], verdict: 'unsupported', method: 'judge' },
+    ],
+  };
+
+  it('offers its actions when it is clicked', () => {
+    verificationSummary = summaryWithVerdict;
+    renderAnswer([source(1)]);
+
+    fireEvent.click(document.querySelector('[data-claim="0"]')!);
+
+    expect(screen.getByRole('dialog', { name: 'Claim actions' })).toHaveTextContent('Canopy cools streets');
+    // A sentence is not a citation: the reader stays shut.
+    expect(useChatReaderStore.getState().session).toBeNull();
+  });
+
+  it('is not drawn when verification was off for the turn', () => {
+    verificationSummary = { ...summaryWithVerdict, enabled: false };
+    renderAnswer([source(1)]);
+
+    expect(document.querySelector('[data-claim]')).toBeNull();
+  });
+});
+
+describe('opening the source reader from an answer', () => {
+  it('hands the reader every citation on the answer, opened at the chip that was clicked', () => {
+    renderAnswer([source(1), source(2)]);
+
+    fireEvent.click(document.querySelector('[data-cite="2"]')!);
+
+    const session = useChatReaderStore.getState().session;
+    expect(session?.ownerKey).toBe('answer');
+    expect(session?.index).toBe(1);
+    // All of them, so `[` / `]` can travel the whole answer from here.
+    expect(session?.citations.map((citation) => citation.chunkId)).toEqual(['chunk-1', 'chunk-2']);
+  });
+
+  it('lights the citation the reader is showing, and only in the answer it came from', () => {
+    renderAnswer([source(1), source(2)]);
+    const chip = () => document.querySelector('[data-cite="2"]')!;
+
+    act(() => {
+      useChatReaderStore.getState().open('another-answer', [source(2)], 0);
+    });
+    // Same number, different answer: that is a different passage.
+    expect(chip().classList.contains('is-lit')).toBe(false);
+
+    act(() => {
+      useChatReaderStore.getState().open('answer', [source(1), source(2)], 1);
+    });
+    expect(chip().classList.contains('is-lit')).toBe(true);
+
+    act(() => {
+      useChatReaderStore.getState().close();
+    });
+    expect(chip().classList.contains('is-lit')).toBe(false);
   });
 });

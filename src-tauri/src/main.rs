@@ -7,12 +7,19 @@ use lattice::infrastructure::setup;
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "desktop-e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();
+
+            // Register before the webview can announce readiness. On macOS
+            // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
+            setup::renderer_shutdown::install(app.handle())?;
 
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via
@@ -33,8 +40,6 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 app.handle().plugin(plugin)?;
             }
 
-            setup::renderer_shutdown::install(app.handle());
-
             Ok(())
         })
         .build(tauri::generate_context!())?
@@ -47,6 +52,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                         api.prevent_exit();
                     } else {
                         setup::graceful_shutdown(app_handle);
+                        setup::renderer_shutdown::finish_native_termination(app_handle);
                     }
                 }
                 tauri::RunEvent::WindowEvent {

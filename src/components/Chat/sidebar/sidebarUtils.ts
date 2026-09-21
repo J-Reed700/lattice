@@ -12,30 +12,6 @@ export const formatRoleLabel = (role: string | null | undefined): string => {
       return role ? role.charAt(0).toUpperCase() + role.slice(1) : '';
   }
 };
-export const scrollToMessage = (messageId: string) => {
-  let attempts = 0;
-  const maxAttempts = 12;
-
-  const tick = () => {
-    const element = document.getElementById(`message-${messageId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      element.classList.add('chat-message-highlighted');
-      window.setTimeout(() => {
-        element.classList.remove('chat-message-highlighted');
-      }, 1500);
-      return;
-    }
-
-    attempts += 1;
-    if (attempts < maxAttempts) {
-      window.setTimeout(tick, 120);
-    }
-  };
-
-  window.setTimeout(tick, 80);
-};
-
 export interface SpaceToolPreferences {
   knowledgeBase: boolean;
   webSearch: boolean;

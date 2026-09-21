@@ -69,6 +69,17 @@ pub struct ConversationDto {
     /// Active compaction summary, if the conversation's older messages have
     /// been folded into one (see `conversation_summaries`).
     pub compaction: Option<CompactionRecordDto>,
+
+    /// The conversation this one was branched from, when it was.
+    ///
+    /// There is no foreign key behind this, so the parent may have been
+    /// deleted since. A reader that cannot find it shows no lineage rather
+    /// than an error: a dangling id is an ordinary state, not a fault.
+    pub forked_from_conversation_id: Option<String>,
+
+    /// The parent's message the branch was taken at, when one was named.
+    /// `None` means the whole thread was copied.
+    pub forked_from_message_id: Option<String>,
 }
 
 /// Conversation message representation.
@@ -289,6 +300,14 @@ impl CompactionRecordDto {
 pub struct CompactConversationResponseDto {
     /// The compaction that was applied
     pub compaction: CompactionRecordDto,
+
+    /// Memory accounting for this pass.
+    ///
+    /// Not optional: every compaction goes through the one job, which always
+    /// commits a ledger alongside the summary. It was an `Option` while a
+    /// summary-only path still existed; that path is gone, and leaving the
+    /// `Option` would invite a caller to handle a case that cannot occur.
+    pub memory: crate::features::conversation::memory_dto::CompactionMemoryDto,
 }
 
 #[cfg(test)]
@@ -317,6 +336,8 @@ mod tests {
             archived_at: None,
             last_message_preview: None,
             compaction: None,
+            forked_from_conversation_id: None,
+            forked_from_message_id: None,
         };
 
         let json = serde_json::to_string(&conversation).unwrap();

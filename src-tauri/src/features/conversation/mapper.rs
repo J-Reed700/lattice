@@ -41,6 +41,10 @@ impl ConversationDtoMapper {
             archived_at: None,
             last_message_preview: None,
             compaction: None,
+            // The domain entity carries no lineage; the repository projection
+            // reads it from the row and fills these in.
+            forked_from_conversation_id: None,
+            forked_from_message_id: None,
         }
     }
 

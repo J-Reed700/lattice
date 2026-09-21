@@ -7,6 +7,7 @@ use crate::features::conversation::repository::ConversationRepository;
 async fn test_add_document_reference() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
+    seed_documents(&pool, &["doc-123"]).await;
     let repo = ConversationRepository::new(pool);
 
     let conversation = repo

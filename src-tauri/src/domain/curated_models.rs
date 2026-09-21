@@ -33,8 +33,8 @@ use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceT
 ///
 /// Returns models across size ranges:
 /// - Small (< 2GB): TinyLlama, Phi-3 Mini
-/// - Medium (2-8GB): Mistral 7B, Llama 3.2 7B, Qwen 2.5 7B
-/// - Large (8-16GB): Llama 3.1 13B, Mixtral 8x7B
+/// - Medium (2-8GB): Mistral 7B, Llama 3.1 8B, Qwen 3.5 4B and 9B
+/// - Large (8-16GB): Mixtral 8x7B
 ///
 /// All models are GGUF format with Q4_K_M quantization for optimal
 /// size/quality tradeoff.
@@ -98,10 +98,10 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             performance_tier: PerformanceTier::Fast,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q6_K".into()],
             capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "long-context".into()],
-            download_url: Some("https://huggingface.co/microsoft/Phi-3.5-mini-instruct-gguf".into()),
+            download_url: Some("https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF".into()),
             license: "MIT".into(),
             requires_auth: false,
-            model_id: Some("microsoft/Phi-3.5-mini-instruct-gguf".into()),
+            model_id: Some("bartowski/Phi-3.5-mini-instruct-GGUF".into()),
             default_filename: Some("Phi-3.5-mini-instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
@@ -134,22 +134,22 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
         ModelMetadata {
-            id: "llama-3.2-7b-instruct-q4_k_m".into(),
-            name: "Llama 3.2 7B Instruct".into(),
+            id: "llama-3.2-3b-instruct-q4_k_m".into(),
+            name: "Llama 3.2 3B Instruct".into(),
             category: ModelCategory::LLM,
-            description: "Meta's latest 7B model with improved reasoning and coding. Strong multilingual support.".into(),
-            size_gb: 4.7,
-            minimum_ram_gb: 8.0,
-            recommended_ram_gb: 12.0,
-            context_length: 8192,
+            description: "Meta's compact 3B model. Quick on modest hardware, with multilingual support and a long context.".into(),
+            size_gb: 1.9,
+            minimum_ram_gb: 4.0,
+            recommended_ram_gb: 8.0,
+            context_length: 131072,
             performance_tier: PerformanceTier::Balanced,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q6_K".into()],
             capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into()],
-            download_url: Some("https://huggingface.co/meta-llama/Llama-3.2-7B-Instruct-gguf".into()),
+            download_url: Some("https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF".into()),
             license: "Llama-3.2".into(),
-            requires_auth: true,
-            model_id: Some("meta-llama/Llama-3.2-7B-Instruct-gguf".into()),
-            default_filename: Some("Llama-3.2-7B-Instruct-Q4_K_M.gguf".into()),
+            requires_auth: false,
+            model_id: Some("bartowski/Llama-3.2-3B-Instruct-GGUF".into()),
+            default_filename: Some("Llama-3.2-3B-Instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
             embedding_dimensions: None,
@@ -157,22 +157,68 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
         ModelMetadata {
-            id: "qwen2.5-7b-instruct-q4_k_m".into(),
-            name: "Qwen 2.5 7B Instruct".into(),
+            id: "qwen3.5-2b-q4_k_m".into(),
+            name: "Qwen 3.5 2B".into(),
             category: ModelCategory::LLM,
-            description: "Alibaba's latest model with strong multilingual and coding capabilities. Excellent for Chinese language.".into(),
-            size_gb: 4.5,
-            minimum_ram_gb: 8.0,
-            recommended_ram_gb: 12.0,
-            context_length: 131072,
-            performance_tier: PerformanceTier::Balanced,
-            supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q6_K".into()],
+            description: "The smallest Qwen 3.5. Answers from your library on machines with little memory.".into(),
+            size_gb: 1.2,
+            minimum_ram_gb: 4.0,
+            recommended_ram_gb: 8.0,
+            context_length: 262144,
+            performance_tier: PerformanceTier::Fast,
+            supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
             capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
-            download_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF".into()),
+            download_url: Some("https://huggingface.co/unsloth/Qwen3.5-2B-GGUF".into()),
             license: "Apache-2.0".into(),
             requires_auth: false,
-            model_id: Some("Qwen/Qwen2.5-7B-Instruct-GGUF".into()),
-            default_filename: Some("qwen2.5-7b-instruct-q4_k_m.gguf".into()),
+            model_id: Some("unsloth/Qwen3.5-2B-GGUF".into()),
+            default_filename: Some("Qwen3.5-2B-Q4_K_M.gguf".into()),
+            files: vec![],
+            total_size_bytes: 0,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Gguf,
+        },
+        ModelMetadata {
+            id: "qwen3.5-4b-q4_k_m".into(),
+            name: "Qwen 3.5 4B".into(),
+            category: ModelCategory::LLM,
+            description: "A compact Qwen 3.5 that follows instructions and cites sources well for its size.".into(),
+            size_gb: 2.6,
+            minimum_ram_gb: 8.0,
+            recommended_ram_gb: 12.0,
+            context_length: 262144,
+            performance_tier: PerformanceTier::Balanced,
+            supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
+            download_url: Some("https://huggingface.co/unsloth/Qwen3.5-4B-GGUF".into()),
+            license: "Apache-2.0".into(),
+            requires_auth: false,
+            model_id: Some("unsloth/Qwen3.5-4B-GGUF".into()),
+            default_filename: Some("Qwen3.5-4B-Q4_K_M.gguf".into()),
+            files: vec![],
+            total_size_bytes: 0,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Gguf,
+        },
+        ModelMetadata {
+            id: "qwen3.5-9b-q4_k_m".into(),
+            name: "Qwen 3.5 9B".into(),
+            category: ModelCategory::LLM,
+            description: "The recommended chat model where memory allows: strong reasoning, tool use and grounding in retrieved passages.".into(),
+            size_gb: 5.3,
+            minimum_ram_gb: 16.0,
+            recommended_ram_gb: 24.0,
+            context_length: 262144,
+            performance_tier: PerformanceTier::Balanced,
+            supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
+            download_url: Some("https://huggingface.co/unsloth/Qwen3.5-9B-GGUF".into()),
+            license: "Apache-2.0".into(),
+            requires_auth: false,
+            model_id: Some("unsloth/Qwen3.5-9B-GGUF".into()),
+            default_filename: Some("Qwen3.5-9B-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
             embedding_dimensions: None,
@@ -181,22 +227,22 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
         },
 
         ModelMetadata {
-            id: "llama-3.1-13b-instruct-q4_k_m".into(),
-            name: "Llama 3.1 13B Instruct".into(),
+            id: "llama-3.1-8b-instruct-q4_k_m".into(),
+            name: "Llama 3.1 8B Instruct".into(),
             category: ModelCategory::LLM,
-            description: "Meta's 13B model with enhanced reasoning. Best-in-class for size, excellent code generation.".into(),
-            size_gb: 7.9,
-            minimum_ram_gb: 16.0,
-            recommended_ram_gb: 24.0,
+            description: "Meta's 8B model with strong reasoning and code generation, and a long context.".into(),
+            size_gb: 4.6,
+            minimum_ram_gb: 8.0,
+            recommended_ram_gb: 16.0,
             context_length: 131072,
             performance_tier: PerformanceTier::Accurate,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q6_K".into()],
             capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "long-context".into()],
-            download_url: Some("https://huggingface.co/meta-llama/Llama-3.1-13B-Instruct-gguf".into()),
+            download_url: Some("https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF".into()),
             license: "Llama-3.1".into(),
-            requires_auth: true,
-            model_id: Some("meta-llama/Llama-3.1-13B-Instruct-gguf".into()),
-            default_filename: Some("Llama-3.1-13B-Instruct-Q4_K_M.gguf".into()),
+            requires_auth: false,
+            model_id: Some("bartowski/Meta-Llama-3.1-8B-Instruct-GGUF".into()),
+            default_filename: Some("Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
             embedding_dimensions: None,
@@ -242,19 +288,20 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
 }
 
 /// First-run chat-model tier. `effective_ram_gb` = system RAM + discrete
-/// VRAM (or unified memory on Apple Silicon). 13B+ models are skipped
-/// because their cold-start on CPU ruins first impressions.
+/// VRAM (or unified memory on Apple Silicon). One family, sized to the
+/// machine: a model that does not fit swaps, and a first chat that swaps looks
+/// broken.
 ///
-/// - `< 8 GB`  → Phi-3 Mini Q4
-/// - `8–16 GB` → Mistral 7B Instruct Q4
-/// - `≥ 16 GB` → Qwen 2.5 7B Instruct Q4
+/// - `< 8 GB`  → Qwen 3.5 2B Q4
+/// - `8–16 GB` → Qwen 3.5 4B Q4
+/// - `≥ 16 GB` → Qwen 3.5 9B Q4
 pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
     if effective_ram_gb < 8.0 {
-        "phi-3-mini-4k-instruct-q4_k_m"
+        "qwen3.5-2b-q4_k_m"
     } else if effective_ram_gb < 16.0 {
-        "mistral-7b-instruct-v0.2-q4_k_m"
+        "qwen3.5-4b-q4_k_m"
     } else {
-        "qwen2.5-7b-instruct-q4_k_m"
+        "qwen3.5-9b-q4_k_m"
     }
 }
 
@@ -628,9 +675,31 @@ mod tests {
 
     #[test]
     fn test_llm_models_count() {
-        // The bundled llama.cpp sidecar supports the eight curated GGUF models.
         let models = get_curated_llm_models();
-        assert_eq!(models.len(), 8);
+        assert_eq!(models.len(), 10);
+    }
+
+    /// First run downloads whatever this names, so every tier has to be a real
+    /// catalog entry with a file to fetch.
+    #[test]
+    fn every_ram_tier_recommends_a_downloadable_catalog_entry() {
+        let models = get_curated_llm_models();
+        for ram in [4.0, 8.0, 15.9, 16.0, 64.0] {
+            let id = recommend_chat_model_for_ram(ram);
+            let entry = models.iter().find(|m| m.id == id).unwrap_or_else(|| {
+                panic!("{id} is recommended at {ram} GB but is not in the catalog")
+            });
+            assert!(entry.default_filename.is_some(), "{id} names no file");
+            assert!(
+                !entry.requires_auth,
+                "{id} cannot be fetched without a token"
+            );
+            assert!(
+                entry.minimum_ram_gb <= ram.max(4.0),
+                "{id} needs {} GB, more than the {ram} GB tier it is recommended for",
+                entry.minimum_ram_gb
+            );
+        }
     }
 
     #[test]
@@ -670,7 +739,7 @@ mod tests {
     #[test]
     fn test_get_by_category() {
         let llms = get_curated_models_by_category(ModelCategory::LLM);
-        assert_eq!(llms.len(), 8);
+        assert_eq!(llms.len(), 10);
 
         let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
         assert_eq!(embeddings.len(), 2);
@@ -763,7 +832,7 @@ mod tests {
             .iter()
             .filter(|m| m.format == ModelFormat::Gguf)
             .count();
-        assert_eq!(gguf_count, 8, "expected 8 GGUF entries unchanged");
+        assert_eq!(gguf_count, 10, "every curated chat model is GGUF");
     }
 
     #[test]

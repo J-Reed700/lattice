@@ -225,25 +225,11 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to move conversation: {}", e)))?;
 
-        sqlx::query(
-            r#"
-        INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
-        SELECT cd.document_id, ?, ?
-        FROM conversation_documents cd
-        WHERE cd.conversation_id = ?
-        "#,
-        )
-        .bind(&request.space_id)
-        .bind(&now)
-        .bind(&request.conversation_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            AppError::Database(format!(
-                "Failed to sync destination space memberships: {}",
-                e
-            ))
-        })?;
+        // Only the conversation moves. Filing the documents it once cited into
+        // the destination as well made every other chat there search them too:
+        // moving one chat out of a patent space put the patent library in front
+        // of the whole space it landed in. What a space holds is decided by
+        // filing documents, never as a side effect of moving a chat.
 
         tx.commit()
             .await

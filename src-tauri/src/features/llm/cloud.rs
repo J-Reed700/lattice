@@ -67,7 +67,8 @@ impl CloudLlm {
                 CompletionInput::ToolCall { id, name, arguments } => json!({"type":"function_call","call_id":id,"name":name,"arguments":arguments.to_string()}),
                 CompletionInput::ToolResult { id, output } => json!({"type":"function_call_output","call_id":id,"output":output}),
             }).collect();
-            let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":self.max_tokens});
+            let max_output = request.effective_max_output_tokens(self.max_tokens);
+            let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":max_output});
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
             }
@@ -101,7 +102,7 @@ impl CloudLlm {
                     },
                 }
             }
-            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":self.max_tokens,"stream":stream});
+            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":request.effective_max_output_tokens(self.max_tokens),"stream":stream});
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }

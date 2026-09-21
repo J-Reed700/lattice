@@ -1,0 +1,108 @@
+{
+  "family": "multi_turn_tool_work",
+  "capability": "Memory survives tool retries and growing tool output, and the final artifact still obeys the recorded requirements.",
+  "mode": "tool_work",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Two requirements for the report you are about to build: every figure must cite its source note, and the report must never exceed two pages."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood: every figure cites a source note, and the report stays within two pages."
+    },
+    {
+      "role": "user",
+      "content": "Start from note-104 and note-117."
+    },
+    {
+      "role": "assistant",
+      "content": "Read both notes."
+    },
+    {
+      "role": "user",
+      "content": "The first read of note-117 failed. Try again."
+    },
+    {
+      "role": "assistant",
+      "content": "Retried and read note-117 successfully."
+    },
+    {
+      "role": "user",
+      "content": "Add note-203, which is long."
+    },
+    {
+      "role": "assistant",
+      "content": "Read note-203; it is roughly nine thousand characters."
+    },
+    {
+      "role": "user",
+      "content": "Now build the report."
+    },
+    {
+      "role": "assistant",
+      "content": "Built a two-page report in which every figure cites its source note."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Separately, remind me what a p95 latency figure actually measures."
+    },
+    {
+      "role": "assistant",
+      "content": "It is the value below which 95 percent of observations fall."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 2,
+    "required_active_quotes": [
+      "every figure must cite its source note",
+      "never exceed two pages"
+    ],
+    "superseded_quotes": [],
+    "must_not_be_authoritative": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [
+      "publish_document"
+    ],
+    "allowed_tools": [
+      "read_note",
+      "list_notes"
+    ],
+    "questions": [
+      {
+        "ask": "Rebuild the report and tell me what constraints it has to satisfy.",
+        "must_quote": [
+          "cite its source note",
+          "two pages"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear"
+    ]
+  },
+  "cycles": [
+    1,
+    3
+  ],
+  "reload_after_cycles": [
+    1,
+    3
+  ]
+}

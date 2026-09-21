@@ -45,12 +45,24 @@ pub async fn extract_article(
         .map_err(ApiError::from)
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn read_web_page(
+    url: String,
+    container: State<'_, Container>,
+) -> Result<web_ingest::WebPageDto, ApiError> {
+    web_ingest::read_web_page(url, container)
+        .await
+        .map_err(ApiError::from)
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .invoke_handler(tauri::generate_handler![
             ingest_web_url,
             fetch_url_preview,
             extract_article,
+            read_web_page,
         ])
         .build()
 }

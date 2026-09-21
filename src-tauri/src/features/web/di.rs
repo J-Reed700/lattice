@@ -128,4 +128,11 @@ impl Container {
     pub fn article_extractor_service(&self) -> Arc<dyn ArticleExtractorServiceTrait> {
         Arc::clone(self.indexing.article_extractor_service())
     }
+
+    /// The web service the model's tools use, so the reader reads a cited page
+    /// through exactly the same path — and out of the same cache — as the turn
+    /// that cited it.
+    pub fn web_service(&self) -> Arc<crate::features::web::services::web::WebService> {
+        Arc::clone(&self.web_service)
+    }
 }

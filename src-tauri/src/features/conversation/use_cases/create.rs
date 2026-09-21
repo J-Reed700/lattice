@@ -209,16 +209,6 @@ mod tests {
         async fn update_message_status(&self, _message_id: &str, _status: String) -> Result<()> {
             unimplemented!()
         }
-
-        async fn compact_conversation(
-            &self,
-            _conversation_id: &str,
-            _summary_text: String,
-            _up_to_message_id: &str,
-            _summary_tokens: i64,
-        ) -> Result<crate::domain::conversation::CompactionRecord> {
-            unimplemented!()
-        }
     }
 
     #[tokio::test]

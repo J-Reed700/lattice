@@ -94,6 +94,8 @@ import type {
   ConversationLinkedDocumentDto,
   ConversationWebSourceDto,
   DocumentSpaceMembershipDto,
+  SpaceDocument,
+  WebPage,
   // Function calling types (Wave 2B)
   FunctionDefinition,
   FunctionResult,
@@ -260,6 +262,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   list_message_bookmarks: { domain: 'conversation', command: 'list_message_bookmarks' },
   list_conversations_explorer: { domain: 'conversation', command: 'list_conversations_explorer' },
   list_journal_conversations: { domain: 'conversation', command: 'list_journal_conversations' },
+  list_space_documents: { domain: 'conversation', command: 'list_space_documents' },
   list_conversation_linked_documents: { domain: 'conversation', command: 'list_conversation_linked_documents' },
   remove_conversation_linked_document: { domain: 'conversation', command: 'remove_conversation_linked_document' },
   add_conversation_web_source: { domain: 'conversation', command: 'add_conversation_web_source' },
@@ -273,6 +276,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
   compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
+  get_conversation_memory: { domain: 'conversation', command: 'get_conversation_memory' },
 
   // Passage references
   create_passage_reference: { domain: 'references', command: 'create_passage_reference' },
@@ -1822,12 +1826,13 @@ const VaultAPI = {
   checkLLMHealth: async (): Promise<ApiResult<LLMHealthStatus>> => apiCall<LLMHealthStatus>('check_llm_health'),
 
   /**
-   * Three corpus-derived questions for the Chat empty state.
+   * Three corpus-derived questions for the Chat empty state, drawn from the
+   * documents `spaceId` can see. A null space means General.
    * Returns an empty `starters` array when no model could produce them —
    * the empty state renders no questions rather than inventing any.
    */
-  generateChatStarters: async (): Promise<ApiResult<ChatStarters>> =>
-    apiCall<ChatStarters>('generate_chat_starters', {}),
+  generateChatStarters: async (spaceId?: string | null): Promise<ApiResult<ChatStarters>> =>
+    apiCall<ChatStarters>('generate_chat_starters', { spaceId: spaceId ?? null }),
 
   /**
    * Saves an excerpt from a document as a reference.
@@ -2668,6 +2673,32 @@ const VaultAPI = {
     }),
 
   /**
+   * The documents a chat in this space may read, newest first.
+   *
+   * `spaceId` of `null` means General. The backend answers from the same
+   * allow-list retrieval uses, so what this offers is exactly what a turn can
+   * search — never a superset. `limit` is clamped to 50 there.
+   */
+  listSpaceDocuments: async (
+    spaceId: string | null,
+    query: string,
+    limit: number
+  ): Promise<ApiResult<SpaceDocument[]>> =>
+    apiCall<Wire.SpaceDocumentDto[]>('list_space_documents', {
+      spaceId,
+      query,
+      limit,
+    }),
+
+  /**
+   * The article text of a web page a turn cited, from the page cache.
+   *
+   * Falls back to one validated fetch when the cache no longer holds it.
+   */
+  readWebPage: async (url: string): Promise<ApiResult<WebPage>> =>
+    apiCall<WebPage>('read_web_page', { url }),
+
+  /**
    * Lists documents currently linked to a conversation context.
    */
   listConversationLinkedDocuments: async (
@@ -2821,6 +2852,26 @@ const VaultAPI = {
   ): Promise<ApiResult<{ compaction: Wire.CompactionRecordDto }>> =>
     apiCall('compact_conversation', {
       request: { conversationId, keepRecentMessages: keepRecentMessages ?? null },
+    }),
+
+  /**
+   * Reads what the bounded memory layer currently holds for one conversation:
+   * the active items with the quotations behind them, the counts, and the
+   * `mode` that says whether any of it is usable.
+   *
+   * Read-only on purpose. There is no companion write command, because an
+   * editable memory item would be a requirement with no source behind it —
+   * exactly the failure this layer exists to prevent.
+   *
+   * `includeHistory` also returns superseded and resolved items, for "what was
+   * my original budget?".
+   */
+  getConversationMemory: async (
+    conversationId: string,
+    includeHistory?: boolean
+  ): Promise<ApiResult<Wire.ConversationMemoryDetailsDto>> =>
+    apiCall<Wire.ConversationMemoryDetailsDto>('get_conversation_memory', {
+      request: { conversationId, includeHistory: includeHistory ?? null },
     }),
 
   /**

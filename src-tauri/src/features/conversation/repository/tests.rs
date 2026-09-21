@@ -6,6 +6,7 @@ use sqlx::SqlitePool;
 mod conversations;
 mod document_references;
 mod fork;
+mod memory;
 mod messages;
 mod pruning;
 
@@ -13,99 +14,47 @@ async fn create_test_pool() -> SqlitePool {
     SqlitePoolOptions::new().connect(":memory:").await.unwrap()
 }
 
+/// Apply the real migration, not a hand-maintained copy of it.
+///
+/// These tests used to build their own abbreviated schema. That drifts: adding
+/// `conversations.next_message_sequence` broke every one of them while
+/// production was fine, and the reverse — a test passing against a schema
+/// production does not have — is the failure that actually costs something.
+/// The migration is small and the run is a few milliseconds.
 async fn setup_schema(pool: &SqlitePool) {
-    sqlx::query(
-        r#"
-            CREATE TABLE conversations (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                system_prompt TEXT,
-                space_id TEXT NOT NULL DEFAULT 'space_general',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                message_count INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE TABLE conversation_spaces (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL
-            );
-
-            INSERT INTO conversation_spaces (id, name) VALUES ('space_general', 'General');
-
-            CREATE TABLE conversation_messages (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-                content TEXT NOT NULL,
-                tokens INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT,
-                status TEXT NOT NULL DEFAULT 'completed',
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE conversation_message_bookmarks (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                title TEXT,
-                note TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (conversation_id, message_id)
-            );
-
-            CREATE TABLE conversation_web_sources (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                url TEXT NOT NULL,
-                normalized_url TEXT NOT NULL,
-                title TEXT,
-                excerpt TEXT,
-                relevance_score REAL,
-                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (conversation_id, normalized_url)
-            );
-
-            CREATE TABLE conversation_documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                chunk_id TEXT,
-                relevance_score REAL,
-                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                UNIQUE(conversation_id, chunk_id)
-            );
-
-            CREATE TABLE document_space_memberships (
-                document_id TEXT NOT NULL,
-                space_id TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (document_id, space_id)
-            );
-
-            CREATE TABLE conversation_summaries (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL UNIQUE,
-                summary_text TEXT NOT NULL,
-                up_to_message_id TEXT NOT NULL,
-                original_message_count INTEGER NOT NULL CHECK(original_message_count > 0),
-                original_tokens INTEGER NOT NULL CHECK(original_tokens > 0),
-                summary_tokens INTEGER NOT NULL CHECK(summary_tokens > 0),
-                compression_ratio REAL NOT NULL CHECK(compression_ratio > 0.0 AND compression_ratio <= 1.0),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY (up_to_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
-            );
-            "#,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::migrate!("./migrations").run(pool).await.unwrap();
+    // The memory-invalidation triggers depend on FK cascade behaviour, and the
+    // conversation/message relationship is what several of these tests assert.
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(pool)
+        .await
+        .unwrap();
 }
+
+/// Insert the `documents` rows a fixture is about to reference.
+///
+/// `conversation_documents.document_id` really does have a foreign key to
+/// `documents`, and these tests now run with enforcement on, so a linked
+/// document has to exist. Seeding it is also more honest than the old
+/// unenforced schema: a reference to a document that was never indexed is not
+/// a state the application can reach.
+async fn seed_documents(pool: &SqlitePool, ids: &[&str]) {
+    for id in ids {
+        sqlx::query(
+            "INSERT OR IGNORE INTO documents \
+                (id, file_path, file_name, size_bytes, modified_at, checksum) \
+             VALUES (?, ?, ?, 1, '2026-09-01T10:00:00Z', ?)",
+        )
+        .bind(id)
+        .bind(format!("/fixtures/{id}.md"))
+        .bind(format!("{id}.md"))
+        .bind(format!("checksum-{id}"))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
 /// Insert a message at a controlled `created_at` so ordering is testable.
 async fn seed_message(
     pool: &SqlitePool,
@@ -116,11 +65,20 @@ async fn seed_message(
     tokens: i64,
     created_at: &str,
 ) {
+    // Sequence and digest are written the way production writes them, so these
+    // fixtures are valid evidence sources and order by sequence like real rows.
+    let sequence: i64 =
+        sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
     sqlx::query(
         r#"
             INSERT INTO conversation_messages
-                (id, conversation_id, role, content, tokens, created_at, metadata, status)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 'completed')
+                (id, conversation_id, role, content, tokens, created_at, metadata, status,
+                 sequence, content_digest)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 'completed', ?, ?)
             "#,
     )
     .bind(id)
@@ -129,9 +87,17 @@ async fn seed_message(
     .bind(content)
     .bind(tokens)
     .bind(created_at)
+    .bind(sequence)
+    .bind(crate::domain::conversation_memory::compute_digest(content))
     .execute(pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE conversations SET next_message_sequence = ? WHERE id = ?")
+        .bind(sequence + 1)
+        .bind(conversation_id)
+        .execute(pool)
+        .await
+        .unwrap();
 
     sqlx::query(
         r#"
@@ -149,7 +115,7 @@ async fn seed_message(
 async fn message_ids(pool: &SqlitePool, conversation_id: &str) -> Vec<String> {
     sqlx::query_scalar::<_, String>(
         "SELECT id FROM conversation_messages WHERE conversation_id = ? \
-             ORDER BY created_at ASC, rowid ASC",
+             ORDER BY sequence ASC, created_at ASC, rowid ASC",
     )
     .bind(conversation_id)
     .fetch_all(pool)

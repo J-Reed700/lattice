@@ -4,6 +4,7 @@ export { ChatPanel } from './ChatPanel';
 export { ConversationSidebar } from './ConversationSidebar';
 export { ConversationSpotlight } from './ConversationSpotlight';
 export { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
+export { ConversationMemoryPanel } from './ConversationMemoryPanel';
 export { Message } from './Message';
 // Backwards-compat alias — downstream code may still import MessageBubble.
 export { Message as MessageBubble } from './Message';
@@ -17,7 +18,6 @@ export { ChatStarters } from './ChatStarters';
 export { FilePreviewModal } from './FilePreviewModal';
 export { MessageEditor } from './MessageEditor';
 export { ModelPickerPopover } from './ModelPickerPopover';
-export { RetrievalTrace } from './RetrievalTrace';
 export { useChatFileDrop } from './useChatFileDrop';
 export type { StagedFile } from './useChatFileDrop';
 export {

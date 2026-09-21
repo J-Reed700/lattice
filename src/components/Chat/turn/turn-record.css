@@ -1,0 +1,181 @@
+/*
+ * The turn record: one line at rest, a timeline when opened.
+ *
+ * Chrome, not prose — it sits above an answer and must never compete with it.
+ * Every colour is a token so the two themes are one definition.
+ */
+
+.turn-record {
+  margin-bottom: 0.5rem;
+}
+
+.turn-record-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  padding: 0.125rem 0.25rem 0.125rem 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: hsl(var(--text-muted));
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.turn-record-summary:hover {
+  color: hsl(var(--text-secondary));
+}
+
+.turn-record-summary:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+}
+
+.turn-record-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What a running turn is doing right now; the rest of the line is history. */
+.turn-record-live {
+  color: hsl(var(--text-secondary));
+}
+
+.turn-record-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-record-chevron {
+  flex: 0 0 auto;
+  width: 0.875rem;
+  height: 0.875rem;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.turn-record-chevron[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.turn-record-body {
+  margin-top: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: var(--radius-md);
+  background-color: hsl(var(--surface-sunken));
+}
+
+/* With research cards in it the body is a column, not a box: the cards are
+   the raised thing, and a frame around them would flatten them again. */
+.turn-record-body[data-deck='true'] {
+  padding: 0.125rem 0 0.25rem;
+  border: 0;
+  background: none;
+}
+
+.turn-record-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: hsl(var(--text-tertiary));
+}
+
+.turn-record-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn-record-step {
+  display: grid;
+  grid-template-columns: 0.5rem minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* One trip to the sources. The rule down the side is what groups it: a
+   heading alone reads as one more step. */
+.turn-record-round {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.125rem 0;
+  padding-left: 0.5rem;
+  border-left: 1px solid hsl(var(--border-default));
+}
+
+.turn-record-round-heading {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: hsl(var(--text-secondary));
+}
+
+/* A dot, not an icon: the state is a colour and nothing needs reading. */
+.turn-record-dot {
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: var(--radius-full);
+  align-self: center;
+  background-color: hsl(var(--text-muted));
+}
+
+.turn-record-step[data-state='running'] .turn-record-dot {
+  background-color: hsl(var(--accent));
+  animation: turn-record-pulse 1.4s var(--ease-in-out) infinite;
+}
+
+.turn-record-step[data-state='failed'] .turn-record-dot {
+  background-color: hsl(var(--danger));
+}
+
+@keyframes turn-record-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-record-step[data-state='running'] .turn-record-dot { animation: none; }
+  .turn-record-chevron { transition: none; }
+}
+
+.turn-record-label {
+  color: hsl(var(--text-secondary));
+}
+
+.turn-record-step[data-state='failed'] .turn-record-label {
+  color: hsl(var(--danger-fg));
+}
+
+.turn-record-detail,
+.turn-record-result {
+  color: hsl(var(--text-tertiary));
+}
+
+.turn-record-time {
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--text-muted));
+  white-space: nowrap;
+}
+
+.turn-record-rationale {
+  margin: 0.5rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid hsl(var(--border-subtle));
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: hsl(var(--text-tertiary));
+}

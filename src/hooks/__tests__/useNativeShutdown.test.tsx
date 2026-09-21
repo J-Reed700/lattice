@@ -15,6 +15,22 @@ beforeEach(() => {
   mocks.listen.mockImplementation(async (_name, handler) => { request = handler; return mocks.stop; });
 });
 describe('native shutdown', () => {
+  it('commits the focused field before flushing repository saves', async () => {
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    field.value = 'Unsaved page title';
+    let committed = '';
+    field.addEventListener('blur', () => { committed = field.value; });
+    const unregister = registerPendingSave(async () => committed === field.value);
+    const { result, unmount } = renderHook(useNativeShutdown);
+    try {
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      field.focus();
+      await act(async () => { await request({ payload: 11 }); });
+      expect(mocks.emit).toHaveBeenCalledWith('lattice:shutdown-response', { requestId: 11, saved: true });
+    } finally { unregister(); unmount(); field.remove(); }
+  });
+
   it('registers before reporting ready and waits for repository acknowledgement', async () => {
     let finish!: (saved: boolean) => void;
     const unregister = registerPendingSave(() => new Promise((resolve) => { finish = resolve; }));

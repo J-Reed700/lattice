@@ -1010,12 +1010,12 @@ async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
 }
 },
 /**
- * Corpus-derived opening questions for the Chat empty state
- * based on the current corpus.
+ * Corpus-derived opening questions for the Chat empty state, drawn from the
+ * documents one space can see. A blank `space_id` means General.
  */
-async generateChatStartersWrapper() : Promise<Result<ChatStartersDto, ApiError>> {
+async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatStartersDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_chat_starters_wrapper") };
+    return { status: "ok", data: await TAURI_INVOKE("generate_chat_starters_wrapper", { spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1067,6 +1067,14 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
     else return { status: "error", error: e  as any };
 }
 },
+async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Compact a conversation's oldest messages into an LLM summary.
  *
@@ -1075,9 +1083,9 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
  * a single context note. The original messages stay in the history for
  * display; only the LLM context switches to the summary.
  */
-async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
+async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<Result<ConversationMemoryDetailsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_conversation_memory", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2262,6 +2270,21 @@ async removeConversationFromJournal(request: RemoveConversationFromJournalReques
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The documents a chat in `space_id` is allowed to read, newest first.
+ *
+ * What the composer's `@` picker offers. Answered from the space's retrieval
+ * scope and nothing else, so it can never name a document the turn could not
+ * then search.
+ */
+async listSpaceDocuments(spaceId: string | null, query: string | null, limit: number | null) : Promise<Result<SpaceDocumentDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_space_documents", { spaceId, query, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listConversationLinkedDocuments(conversationId: string) : Promise<Result<ConversationLinkedDocumentDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_conversation_linked_documents", { conversationId }) };
@@ -2952,6 +2975,14 @@ async fetchUrlPreview(url: string) : Promise<Result<UrlPreview, ApiError>> {
 async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extract_article", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_web_page", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3709,17 +3740,17 @@ starters: ChatStarterDto[]; documentCount: number }
  * Every chat stream update identifies its conversation and generation. Other
  * producers share the event channel, so consumers must require both IDs.
  */
-export type ChatStreamEventDto = { conversationId: string; requestId: string; done: boolean; content?: string | null; status?: string | null; attempt?: number | null; retrieval?: RetrievalTraceDto | null;
+export type ChatStreamEventDto = { conversationId: string; requestId: string; done: boolean; content?: string | null; status?: string | null; retrieval?: RetrievalTraceDto | null;
 /**
- * What the turn is doing right now, in words meant for a person.
+ * One step of the turn, starting or finishing.
  *
  * A tool round emits no text at all while the model reasons and writes its
  * tool calls — on a slow model that is minutes of a spinner with nothing
- * behind it, which is indistinguishable from a hang. This is the only
- * signal the UI has during that stretch, so it is sent when a phase starts
- * and repeated on a heartbeat to show the turn is still alive.
+ * behind it, which is indistinguishable from a hang. This is what the UI
+ * has during that stretch, and unlike the sentence it replaces it is kept:
+ * the timeline under the finished answer is this same list.
  */
-detail?: string | null }
+step?: TurnStepDto | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -3801,7 +3832,41 @@ export type CompactConversationResponseDto = {
 /**
  * The compaction that was applied
  */
-compaction: CompactionRecordDto }
+compaction: CompactionRecordDto;
+/**
+ * Memory accounting for this pass.
+ *
+ * Not optional: every compaction goes through the one job, which always
+ * commits a ledger alongside the summary. It was an `Option` while a
+ * summary-only path still existed; that path is gone, and leaving the
+ * `Option` would invite a caller to handle a case that cannot occur.
+ */
+memory: CompactionMemoryDto }
+/**
+ * Memory accounting attached to a compaction response (§13).
+ *
+ * `summaryTokens` on the compaction record keeps meaning the summary alone.
+ * These are reported beside it rather than folded into it, because presenting
+ * a summary-only compression ratio as total prompt savings overstates what
+ * compaction achieved.
+ */
+export type CompactionMemoryDto = { memoryRevision: number; activeMandatoryCount: number; activeOptionalCount: number;
+/**
+ * `ready`, `rebuild_required`, `unsupported_schema` or `degraded`.
+ */
+mode: string;
+/**
+ * Tokens the active memory block costs, separate from the summary.
+ */
+memoryTokens: number;
+/**
+ * Source messages this pass actually submitted for extraction.
+ */
+processedMessageCount: number;
+/**
+ * True when a work cap stopped the pass short and more source remains.
+ */
+moreSourceRemains: boolean }
 /**
  * A compaction record as returned to the client.
  */
@@ -4004,10 +4069,85 @@ lastMessagePreview: string | null;
  * Active compaction summary, if the conversation's older messages have
  * been folded into one (see `conversation_summaries`).
  */
-compaction: CompactionRecordDto | null }
+compaction: CompactionRecordDto | null;
+/**
+ * The conversation this one was branched from, when it was.
+ *
+ * There is no foreign key behind this, so the parent may have been
+ * deleted since. A reader that cannot find it shows no lineage rather
+ * than an error: a dangling id is an ordinary state, not a fault.
+ */
+forkedFromConversationId: string | null;
+/**
+ * The parent's message the branch was taken at, when one was named.
+ * `None` means the whole thread was copied.
+ */
+forkedFromMessageId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number }
+/**
+ * What the memory layer can currently promise for a conversation.
+ */
+export type ConversationMemoryDetailsDto = { conversationId: string;
+/**
+ * `ready`, `rebuild_required`, or `unsupported_schema`.
+ *
+ * Three states rather than a boolean because they call for different UI:
+ * rebuilding is temporary and self-healing, an unsupported layout needs the
+ * app updated, and neither should be described as working memory.
+ */
+mode: string; schemaVersion: number; memoryRevision: number; transcriptRevision: number;
+/**
+ * Everything at or below this sequence has been submitted for extraction.
+ * Coverage of *processing*, not a claim that every fact was noticed.
+ */
+processedThroughSequence: number; activeMandatoryCount: number; activeOptionalCount: number;
+/**
+ * Active items whose interpretation is unsettled, plus any whose evidence
+ * no longer resolves. These are the ones worth a user's attention.
+ */
+conflictCount: number;
+/**
+ * The working summary. Generated and fallible; the UI labels it so.
+ */
+summary: string | null; items: ConversationMemoryItemDto[];
+/**
+ * Superseded and resolved items, when `includeHistory` asked for them.
+ */
+history: ConversationMemoryItemDto[]; lastErrorCode: string | null; extractorModelIdentity: string | null;
+/**
+ * False while the staged-rollout switch is off. The UI must not advertise
+ * reliable memory when this is false (§18).
+ */
+featureEnabled: boolean }
+/**
+ * One memory record.
+ */
+export type ConversationMemoryItemDto = { id: string;
+/**
+ * `constraint`, `goal`, `decision`, `user_fact`, `preference`,
+ * `open_question` or `unresolved_change`.
+ */
+kind: string;
+/**
+ * `active`, `superseded` or `resolved`.
+ */
+state: string;
+/**
+ * `supported` or `ambiguous`.
+ */
+review: string;
+/**
+ * Generated text for scanning the list. **Not** evidence: the UI must make
+ * it visually distinct from the quotations, or a generated sentence reads
+ * as something the user wrote.
+ */
+label: string;
+/**
+ * True when this item is loaded into every prompt while active.
+ */
+isMandatory: boolean; createdAtSequence: number; changedAtSequence: number; supersededBy: string | null; relatedItemIds: string[]; evidence: MemoryEvidenceDto[] }
 export type ConversationMessageBookmarkDto = { id: string; conversationId: string; conversationTitle: string; spaceId: string; messageId: string; messageRole: string; messagePreview: string; title: string | null; note: string | null; createdAt: string }
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
 export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
@@ -4685,6 +4825,15 @@ export type GetBatchJobStatusRequestDto = {
  */
 jobId: string }
 /**
+ * Request the memory details for one conversation.
+ */
+export type GetConversationMemoryRequestDto = { conversationId: string;
+/**
+ * Include superseded and resolved items, for "what was my original
+ * budget?". Defaults to false.
+ */
+includeHistory?: boolean | null }
+/**
  * Request to get conversation messages.
  */
 export type GetConversationMessagesRequestDto = {
@@ -4985,7 +5134,22 @@ externalModelDirectories: string[];
 /**
  * User-defined tool integrations exposed to LLM tool calling.
  */
-customTools: CustomToolSettingsDto[] }
+customTools: CustomToolSettingsDto[];
+/**
+ * Staged rollout switch for bounded, source-backed conversation memory.
+ *
+ * Off by default. The deterministic guarantees — quote provenance,
+ * ownership, atomicity, budget enforcement — hold whenever this runs, but
+ * whether the model reliably *finds* every constraint is a measured
+ * question, and the evaluation gate in the design document has to be met
+ * for a model configuration before it becomes the default for that
+ * configuration. This is a release default, not an allowlist: a user may
+ * turn it on with any model, and the UI must not describe memory as
+ * reliable while it is off or rebuilding.
+ *
+ * Design: `docs/design/2026-09-19-conversation-memory.md` §18.
+ */
+boundedConversationMemory: boolean }
 /**
  * Verification settings for response grounding checks.
  */
@@ -5052,6 +5216,26 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+/**
+ * One quoted passage behind a memory item.
+ */
+export type MemoryEvidenceDto = { messageId: string; sequence: number;
+/**
+ * `user`, `assistant` or `system`.
+ */
+role: string;
+/**
+ * `assertion`, `antecedent` or `transition`.
+ */
+purpose: string; startByte: number; endByte: number;
+/**
+ * The exact source text, resolved from the original message.
+ *
+ * `null` when the message was edited or deleted. The UI must render that
+ * absence rather than a cached quotation — a deleted passage does not come
+ * back through a details view.
+ */
+text: string | null }
 export type MentionDto = { id: string; name: string; mentionType: string; metadata: string | null; createdAt: string }
 export type MentionWithContextDto = { id: string; name: string; mentionType: string; documentId: string; context: string; position: number; createdAt: string }
 /**
@@ -5678,7 +5862,15 @@ kbPlannerSkipped?: boolean | null;
  * `low_term_coverage`, …), not prose, so the UI and tests can match on
  * them.
  */
-sufficiencyReasons?: string[] }
+sufficiencyReasons?: string[];
+/**
+ * How many documents this turn was pinned to, when it was pinned at all.
+ *
+ * The count after the intersection with the space scope, so `Some(0)`
+ * means the request named documents this chat cannot reach and the turn
+ * searched nothing — which is what fails closed looks like from outside.
+ */
+focusedDocuments?: number | null }
 /**
  * Retrieval pipeline tuning settings.
  */
@@ -6161,6 +6353,15 @@ chunkExcerpts?: SourceChunkExcerptDto[] | null;
 citationId?: number | null }
 export type SourceGroup = { id: string; title: string; edition: string | null; description: string | null; ordered: boolean; structure?: StructureMode }
 /**
+ * One document a chat in this space is allowed to read.
+ *
+ * This is what `@` offers in the composer, so it is derived from
+ * `space_document_scope` and nothing else: the picker must never name a
+ * document retrieval could not reach, or the user pins a chat to a file it
+ * then cannot answer from.
+ */
+export type SpaceDocumentDto = { documentId: string; fileName: string; category: string | null; modifiedAt: string | null }
+/**
  * Request to start a batch file import job.
  *
  * Accepts 1-100 file paths for batch processing.
@@ -6406,7 +6607,16 @@ getDocumentTemplate: string;
  * Template for semantic_search output
  */
 semanticSearchTemplate: string }
-export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null }
+export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
+/**
+ * Documents this chat is pinned to. Empty or absent means the whole space.
+ *
+ * A request may only ever narrow what the turn can read, so these ids are
+ * intersected with the conversation's space scope before anything uses
+ * them; ids from outside it are dropped. See `focus_scope` in the
+ * retrieval pipeline.
+ */
+focusDocumentIds?: string[] | null }
 /**
  * The transcript of one audio file.
  */
@@ -6469,6 +6679,89 @@ export type TruncateConversationAfterResponseDto = { conversationId: string; del
  * The conversation's remaining messages, oldest first.
  */
 messages: MessageDto[] }
+/**
+ * The model that answered **this** turn, which is not necessarily the one the
+ * conversation is filed under: a chat can be re-pointed between turns.
+ */
+export type TurnModelDto = { id: string; name: string }
+/**
+ * The whole record of one turn.
+ */
+export type TurnRecordDto = { model: TurnModelDto | null; steps: TurnStepDto[]; timing: TurnTimingDto; tokens: TurnTokensDto; router: TurnRouterDto | null }
+/**
+ * What the router decided, and how sure it was.
+ *
+ * `resolve_router_decision` used to throw both of these away the moment it had
+ * them, so an answer could be steered by a 0.31-confidence guess and say
+ * nothing about it.
+ */
+export type TurnRouterDto = { action: string; confidence: number; rationale: string | null }
+/**
+ * One thing the turn did, with how long it took and what came of it.
+ */
+export type TurnStepDto = {
+/**
+ * Stable within the turn. A finish event carries the id of its start, and
+ * the UI merges the two rather than appending a second row.
+ */
+id: string; kind: TurnStepKind;
+/**
+ * A human sentence — "Searching your documents", "Reading example.com".
+ */
+label: string; detail?: string | null; state: TurnStepState;
+/**
+ * Offset from the start of the turn, not a wall clock: a persisted record
+ * has to mean the same thing in a week.
+ */
+startedAtMs: number; durationMs?: number | null;
+/**
+ * What the step produced, in the register of the label: "8 passages from
+ * 3 files", "not enough support: low term coverage".
+ */
+result?: string | null;
+/**
+ * For a search, what it found; for a page read, the page. Known at the
+ * start of a read and only at the end of a search, so either event may
+ * carry it. Always on the wire, empty or not, so the generated binding's
+ * `links: TurnStepLinkDto[]` is true of every step.
+ */
+links: TurnStepLinkDto[] }
+/**
+ * What kind of work a step was. Stable codes, not prose — the label is what a
+ * person reads, this is what the UI groups and tests match on.
+ */
+export type TurnStepKind =
+/**
+ * The turn was asked to research rather than answer. Not work in itself:
+ * it is on the record so that what follows — several searches, several
+ * rounds, minutes of reading — is read as the request it was, live and in
+ * a week, without the UI having to remember how the composer was set.
+ */
+"deep_research" | "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" | "tool" | "generate" | "verify" | "retry"
+/**
+ * A page a step found or opened.
+ *
+ * A sentence like "10 results" says a search happened and nothing about where
+ * it led. On a research turn that runs for minutes, the addresses are the only
+ * evidence a reader has that the model is looking somewhere sensible.
+ */
+export type TurnStepLinkDto = { url: string; title?: string | null }
+export type TurnStepState = "running" | "done" | "failed"
+export type TurnTimingDto = {
+/**
+ * Time to the persisted answer, not to the last token.
+ */
+totalMs: number; routerMs: number; retrievalMs: number; generationMs: number; verificationMs: number;
+/**
+ * Time inside tool calls, which is part of `generation_ms`, not beside it.
+ */
+toolMs: number }
+/**
+ * Token counts, each absent when the provider did not report one. Absent is
+ * not zero: a local model that says nothing about its usage has not used no
+ * tokens.
+ */
+export type TurnTokensDto = { completion: number | null; contextUsed: number | null }
 /**
  * UI settings.
  */
@@ -6645,6 +6938,30 @@ author: string | null;
  * Estimated reading time in minutes
  */
 readingTimeMinutes: number | null }
+/**
+ * A web page as the reader shows it.
+ */
+export type WebPageDto = {
+/**
+ * The URL after redirects.
+ */
+url: string;
+/**
+ * Page title, when the page gave one.
+ */
+title: string | null;
+/**
+ * Extracted article text — the same text the model was given.
+ */
+text: string; wordCount: number;
+/**
+ * RFC 3339. When the text was actually fetched, not when it was served.
+ */
+fetchedAt: string;
+/**
+ * True when this came out of the page cache rather than off the network.
+ */
+fromCache: boolean }
 export type WikiLinkDto = { target: string; displayText: string | null; header: string | null; lineNumber: number }
 /**
  * One "word 7 was ___" answer.

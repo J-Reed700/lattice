@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { cloneElement, type ReactElement, useMemo, useState } from 'react';
 
 import {
   differenceInCalendarDays,
@@ -8,10 +8,11 @@ import {
   isYesterday,
   startOfMonth,
 } from 'date-fns';
-import { PanelLeft, Plus } from 'lucide-react';
+import { MessageCircle, PanelLeft, PenLine, Plus } from 'lucide-react';
 
+import { SpacePickerPopover, useOpenSpaces } from '@/components/Chat/SpacePickerPopover';
 import { IconButton } from '@/components/ui/IconButton';
-import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
+import { SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
@@ -30,7 +31,8 @@ interface EntryListProps {
   onCreateJournal: () => void;
   onRenameJournal: (nextName: string) => Promise<void> | void;
   onDeleteJournal: () => Promise<void> | void;
-  onNewEntry: () => void;
+  /** Start a chat filed under this journal, searching the given space. */
+  onNewEntry: (_spaceId?: string) => void;
   onRenameEntry: (entryId: string, title: string) => Promise<void> | void;
   onDeleteEntry: (entryId: string) => Promise<void> | void;
   onToggleCollapse: () => void;
@@ -39,6 +41,10 @@ interface EntryListProps {
   activePageId: string | null;
   onSelectPage: (noteId: string) => void;
   onNewPage: () => void;
+  onRenamePage: (noteId: string, title: string) => Promise<unknown> | void;
+  onDeletePage: (page: WorkspaceNote) => Promise<unknown> | void;
+  /** How a page is named in the list (the journal's first page has a legacy title). */
+  displayPageTitle: (page: WorkspaceNote) => string;
 }
 
 type GroupKey = 'pinned' | 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | string;
@@ -116,6 +122,37 @@ const FILTER_OPTIONS: Array<{ id: EntryFilter; label: string }> = [
  * picker, page list, search, filter chips, grouped entry list, footer.
  * Spec §4.
  */
+/**
+ * The way into a new chat from the journal. With more than one space it asks
+ * which documents the chat should search, because a journal is not a space and
+ * nothing on this screen implies one. These chats used to be filed into
+ * whatever space the Chat sidebar last had selected, so the same button
+ * searched a different library depending on a choice made on another screen.
+ */
+function NewConversationButton({
+  onNewEntry,
+  children,
+}: {
+  onNewEntry: (_spaceId?: string) => void;
+  children: ReactElement<{ onClick?: () => void }>;
+}) {
+  const spaces = useOpenSpaces();
+  // One space is no choice, and a menu with one row is a second click for nothing.
+  if (spaces.length <= 1) {
+    return cloneElement(children, { onClick: () => onNewEntry() });
+  }
+  return (
+    <SpacePickerPopover
+      heading="Which documents should it search?"
+      side="bottom"
+      align="end"
+      onSelect={(spaceId) => onNewEntry(spaceId)}
+    >
+      {children}
+    </SpacePickerPopover>
+  );
+}
+
 export function EntryList({
   entriesState,
   journals,
@@ -132,6 +169,9 @@ export function EntryList({
   activePageId,
   onSelectPage,
   onNewPage,
+  onRenamePage,
+  onDeletePage,
+  displayPageTitle,
 }: EntryListProps) {
   const {
     entries,
@@ -161,38 +201,12 @@ export function EntryList({
     setRenameDraft('');
   };
 
-  return (
-    <aside className="journal-index flex h-full w-[256px] 2xl:w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface">
-      <SidebarHeader
-        title="Journal"
-        actions={
-          <>
-            <IconButton label="New entry" shortcut="⌘N" onClick={onNewEntry}>
-              <Plus />
-            </IconButton>
-            <JournalCalendarPopover
-              entries={entries}
-              onJumpToEntry={(id) => setSelectedId(id)}
-            />
-            <IconButton label="Hide sidebar" shortcut="⌘\" onClick={onToggleCollapse}>
-              <PanelLeft />
-            </IconButton>
-          </>
-        }
-      />
+  const counts = `${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`;
 
-      <div className="notebook-cover mx-4 mb-4 mt-3 shrink-0 overflow-hidden rounded-xl p-5">
-        <div className="relative z-10 flex items-center justify-between text-[9px] font-medium uppercase tracking-[0.2em]">
-          <span>Personal notebook</span><span aria-hidden="true">✳</span>
-        </div>
-        <h2 className="relative z-10 mt-7 max-w-[180px] break-words font-serif text-[29px] leading-[1.12] tracking-tight">{currentJournal?.name || 'Your journal'}</h2>
-        <div className="relative z-10 mt-6 flex items-center justify-between border-t border-current/20 pt-3 text-[10px]">
-          <span>{pages.length} {pages.length === 1 ? 'page' : 'pages'} · {entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
-          <span aria-hidden="true">✳</span>
-        </div>
-      </div>
-      {/* Journal switcher */}
-      <div className="shrink-0 border-b border-border-subtle px-4 py-2">
+  return (
+    <aside className="journal-index flex h-full w-[264px] shrink-0 flex-col border-r border-border-subtle 2xl:w-[288px]">
+      {/* The notebook: its cover, its name, and the way to another one. */}
+      <div className="shrink-0 px-2.5 pb-2 pt-2.5">
         <JournalPickerMenu
           journals={journals}
           currentJournal={currentJournal}
@@ -200,45 +214,93 @@ export function EntryList({
           onCreate={onCreateJournal}
           onRenameCurrent={onRenameJournal}
           onDeleteCurrent={onDeleteJournal}
+          meta={counts}
         />
+        <div className="mt-2 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onNewPage}
+            className="journal-new-page pressable flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-ui font-medium shadow-action transition-[background-color,scale] duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+          >
+            <PenLine className="h-3.5 w-3.5" strokeWidth={1.75} />
+            New page
+          </button>
+          <JournalCalendarPopover
+            entries={entries}
+            onJumpToEntry={(id) => setSelectedId(id)}
+          />
+          <IconButton label="Hide sidebar" shortcut="⌘\" onClick={onToggleCollapse}>
+            <PanelLeft />
+          </IconButton>
+        </div>
       </div>
 
-      <button type="button" onClick={onNewPage} className="journal-new-page mx-4 my-4 flex shrink-0 items-center justify-between rounded-lg px-4 py-3 text-xs font-medium transition-colors">
-        Write a new page <Plus className="h-4 w-4" />
-      </button>
-      <PageList
-        pages={pages}
-        activePageId={activePageId}
-        onSelectPage={onSelectPage}
-        onNewPage={onNewPage}
-      />
+      {/* One scroll for both lists, so neither is trapped in a little window. */}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+        <PageList
+          pages={pages}
+          activePageId={activePageId}
+          onSelectPage={onSelectPage}
+          onNewPage={onNewPage}
+          showCreate={false}
+          displayTitle={displayPageTitle}
+          onRenamePage={onRenamePage}
+          onDeletePage={onDeletePage}
+        />
 
-      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 pb-2.5 pt-2">
-        {/* Named so the two lists in this sidebar are told apart at a glance. */}
-        <h3 className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-tertiary">Entries</h3>
-        <SidebarSearch value={search} onChange={setSearch} placeholder="Search this journal" />
-        <SidebarTabs value={filter} onChange={setFilter} options={FILTER_OPTIONS} />
-      </div>
+        <div className="mt-3 border-t border-border-subtle pt-2">
+          {/* Called what they are. "Entries" read as things you write; these are
+              AI conversations filed under the journal, and you write in Chat. */}
+          <div className="flex h-8 items-center justify-between pl-4 pr-2">
+            <h3 className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+              <MessageCircle className="h-3.5 w-3.5" strokeWidth={1.6} aria-hidden="true" />
+              Conversations{entries.length > 0 ? <span className="tabular-nums text-text-disabled">{entries.length}</span> : null}
+            </h3>
+            <NewConversationButton onNewEntry={onNewEntry}>
+              <IconButton label="Ask something in Chat, filed under this journal">
+                <Plus />
+              </IconButton>
+            </NewConversationButton>
+          </div>
+          <p className="px-4 pb-2 text-[11px] leading-snug text-text-muted">
+            Chats with your library, filed here. Pick one to read it beside your page.
+          </p>
+          {/* Finding tools only once there is something to find. */}
+          {entries.length > 0 || search.trim() || filter !== 'all' ? (
+            <div className="space-y-2 px-4 pb-1">
+              <SidebarSearch value={search} onChange={setSearch} placeholder="Search conversations" />
+              <SidebarTabs value={filter} onChange={setFilter} options={FILTER_OPTIONS} />
+            </div>
+          ) : null}
+        </div>
 
       {/* Entry list */}
-      <div className="flex-1 overflow-y-auto">
+      <div>
         {isLoading ? (
           <p className="px-4 py-6 text-sm text-text-muted">Loading…</p>
         ) : loadError ? (
           <p className="px-4 py-6 text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
         ) : entries.length === 0 ? (
           <div className="px-4 py-8">
-            <p className="text-sm font-medium text-text-secondary">{search.trim() || filter !== 'all' ? 'No matching entries' : 'Room for a new thought'}</p>
-            <p className="mt-2 text-xs leading-relaxed text-text-tertiary">{search.trim() || filter !== 'all' ? 'Try another search or view all entries.' : 'Start a conversation here, then bring what matters into your pages.'}</p>
-            <button type="button" onClick={search.trim() || filter !== 'all' ? () => { setSearch(''); setFilter('all'); } : onNewEntry} className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
-              {search.trim() || filter !== 'all' ? 'Clear filters' : 'Create an entry'}
-            </button>
+            <p className="text-sm font-medium text-text-secondary">{search.trim() || filter !== 'all' ? 'No matching conversations' : 'No conversations yet'}</p>
+            <p className="mt-2 text-xs leading-relaxed text-text-tertiary">{search.trim() || filter !== 'all' ? 'Try another search or view them all.' : 'Ask your library a question in Chat and it is filed here, ready to read beside a page.'}</p>
+            {search.trim() || filter !== 'all' ? (
+              <button type="button" onClick={() => { setSearch(''); setFilter('all'); }} className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
+                Clear filters
+              </button>
+            ) : (
+              <NewConversationButton onNewEntry={onNewEntry}>
+                <button type="button" className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
+                  Ask in Chat
+                </button>
+              </NewConversationButton>
+            )}
           </div>
         ) : (
           <div className="pb-2">
             {groups.map((group) => (
               <div key={group.key}>
-                <h3 className="px-4 pb-1 pt-4 text-[10px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+                <h3 className="px-4 pb-1 pt-3 text-[11px] font-medium text-text-muted">
                   {group.label}
                 </h3>
                 {group.entries.map((entry) => (
@@ -270,25 +332,6 @@ export function EntryList({
         )}
       </div>
 
-      {/* Footer */}
-      <div className="flex h-8 shrink-0 items-center justify-between border-t border-border-subtle px-4">
-        <button
-          type="button"
-          onClick={() => {
-            const today = entries.find((e) => {
-              const d = new Date(e.updatedAt);
-              return !Number.isNaN(d.getTime()) && isToday(d);
-            });
-            if (today) setSelectedId(today.id);
-          }}
-          className="text-xs text-text-muted transition-colors duration-fast hover:text-text-primary"
-          title="Jump to today"
-        >
-          Today
-        </button>
-        <span className="text-xs text-text-muted">
-          {entries.length} entr{entries.length === 1 ? 'y' : 'ies'}
-        </span>
       </div>
     </aside>
   );

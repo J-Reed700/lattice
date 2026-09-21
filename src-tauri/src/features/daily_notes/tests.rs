@@ -89,7 +89,7 @@ async fn capture_creates_todays_page_when_it_does_not_exist() {
 
     // The create branch: nothing with today's title is stored yet.
     assert!(repository
-        .find_by_title("Daily Notes · Saturday, September 6")
+        .find_by_title("Daily Notes · Saturday, September 6", None)
         .await
         .unwrap()
         .is_none());
@@ -105,7 +105,7 @@ async fn capture_creates_todays_page_when_it_does_not_exist() {
         .unwrap();
 
     let found = repository
-        .find_by_title("Daily Notes · Saturday, September 6")
+        .find_by_title("Daily Notes · Saturday, September 6", None)
         .await
         .unwrap()
         .expect("today's page");
@@ -143,7 +143,7 @@ async fn capture_appends_to_todays_page_and_ignores_a_newer_unrelated_page() {
     );
 
     let target = repository
-        .find_by_title("Daily Notes · Saturday, September 6")
+        .find_by_title("Daily Notes · Saturday, September 6", None)
         .await
         .unwrap()
         .expect("today's page");
@@ -185,11 +185,14 @@ async fn find_by_title_matches_exactly_and_lists_newest_first() {
         .await
         .unwrap();
 
-    let found = repository.find_by_title("Week of Sep 1").await.unwrap();
+    let found = repository
+        .find_by_title("Week of Sep 1", None)
+        .await
+        .unwrap();
     assert_eq!(found.unwrap().id, "b");
 
     assert!(repository
-        .find_by_title("week of sep 1 ")
+        .find_by_title("week of sep 1 ", None)
         .await
         .unwrap()
         .is_none());
@@ -206,8 +209,8 @@ async fn a_journal_lists_only_its_own_pages() {
     mine.journal_id = Some("journal_one".to_string());
     let mut theirs = record("theirs", "Their page", "", "2026-09-17T11:00:00.000Z");
     theirs.journal_id = Some("journal_two".to_string());
-    // Quick capture and vault imports arrive owned by nothing.
-    let unfiled = record("unfiled", "Quick capture", "", "2026-09-17T12:00:00.000Z");
+    // Vault imports arrive owned by nothing.
+    let unfiled = record("unfiled", "Imported note", "", "2026-09-17T12:00:00.000Z");
 
     for note in [&mine, &theirs, &unfiled] {
         repository.insert(note).await.unwrap();
@@ -235,7 +238,7 @@ async fn deleting_a_journal_deletes_the_pages_it_owns() {
     doomed.journal_id = Some("journal_one".to_string());
     let mut survivor = record("survivor", "Page", "", "2026-09-17T10:00:00.000Z");
     survivor.journal_id = Some("journal_two".to_string());
-    let unfiled = record("unfiled", "Quick capture", "", "2026-09-17T10:00:00.000Z");
+    let unfiled = record("unfiled", "Imported note", "", "2026-09-17T10:00:00.000Z");
 
     for note in [&doomed, &survivor, &unfiled] {
         repository.insert(note).await.unwrap();
@@ -261,4 +264,96 @@ async fn deleting_a_journal_deletes_the_pages_it_owns() {
     );
     assert!(remaining.contains(&"survivor".to_string()));
     assert!(remaining.contains(&"unfiled".to_string()));
+}
+
+/// The reported bug: a synthesis was "saved" to a page no journal owned, and
+/// the journal screen — which lists pages per journal and nothing else — had no
+/// way to show it.
+#[tokio::test]
+async fn a_capture_lands_in_the_journal_written_to_last() {
+    let pool = fresh_pool().await;
+    insert_journal(&pool, "journal_one", "Journal 1").await;
+    insert_journal(&pool, "journal_two", "Journal 2").await;
+    let repository = DailyNotesRepository::new(pool);
+
+    let mut older = record("older", "Page", "", "2026-09-17T10:00:00.000Z");
+    older.journal_id = Some("journal_one".to_string());
+    let mut newer = record("newer", "Page", "", "2026-09-18T10:00:00.000Z");
+    newer.journal_id = Some("journal_two".to_string());
+    // Newest of all, but owned by nothing: it must not make "nothing" the answer.
+    let unfiled = record("unfiled", "Imported note", "", "2026-09-19T10:00:00.000Z");
+    for note in [&older, &newer, &unfiled] {
+        repository.insert(note).await.unwrap();
+    }
+
+    assert_eq!(
+        repository.capture_journal_id().await.unwrap().as_deref(),
+        Some("journal_two")
+    );
+}
+
+#[tokio::test]
+async fn a_capture_prefers_any_open_journal_to_none_and_skips_archived_ones() {
+    let pool = fresh_pool().await;
+    let repository = DailyNotesRepository::new(pool.clone());
+    assert_eq!(repository.capture_journal_id().await.unwrap(), None);
+
+    insert_journal(&pool, "journal_archived", "Old").await;
+    sqlx::query("UPDATE journals SET is_archived = 1 WHERE id = 'journal_archived'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut page = record("page", "Page", "", "2026-09-18T10:00:00.000Z");
+    page.journal_id = Some("journal_archived".to_string());
+    repository.insert(&page).await.unwrap();
+    assert_eq!(repository.capture_journal_id().await.unwrap(), None);
+
+    // Empty, but open: better than a page nobody can reach.
+    insert_journal(&pool, "journal_open", "Open").await;
+    assert_eq!(
+        repository.capture_journal_id().await.unwrap().as_deref(),
+        Some("journal_open")
+    );
+}
+
+/// Each journal has its own "today": a capture bound for one journal must not
+/// be appended to another journal's page just because the titles match.
+#[tokio::test]
+async fn todays_page_is_looked_up_inside_one_journal() {
+    let pool = fresh_pool().await;
+    insert_journal(&pool, "journal_one", "Journal 1").await;
+    insert_journal(&pool, "journal_two", "Journal 2").await;
+    let repository = DailyNotesRepository::new(pool);
+
+    let title = "Daily Notes · Friday, September 18";
+    let mut theirs = record("theirs", title, "", "2026-09-18T10:00:00.000Z");
+    theirs.journal_id = Some("journal_two".to_string());
+    let unowned = record("unowned", title, "", "2026-09-18T11:00:00.000Z");
+    for note in [&theirs, &unowned] {
+        repository.insert(note).await.unwrap();
+    }
+
+    assert!(repository
+        .find_by_title(title, Some("journal_one"))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        repository
+            .find_by_title(title, Some("journal_two"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        "theirs"
+    );
+    assert_eq!(
+        repository
+            .find_by_title(title, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        "unowned"
+    );
 }

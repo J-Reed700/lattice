@@ -82,14 +82,14 @@ impl SparseSearchService {
             sql.push_bind(space).push(")");
         }
         if let Some(ids) = allowed_document_ids {
-            sql.push(" AND c.document_id IN (");
+            sql.push(" AND c.document_id IN (SELECT value FROM json_each(");
+            // One bind for the whole list. A bind per document runs into
+            // SQLite's 32,766-variable limit once a space is large enough, and
+            // every search in that space then fails.
             let mut sorted: Vec<_> = ids.iter().collect();
             sorted.sort();
-            let mut values = sql.separated(", ");
-            for id in sorted {
-                values.push_bind(id);
-            }
-            sql.push(")");
+            sql.push_bind(serde_json::json!(sorted).to_string());
+            sql.push("))");
         }
         sql.push(" GROUP BY c.id, c.document_id, c.content ORDER BY score DESC, c.id LIMIT ")
             .push_bind(top_k as i64);

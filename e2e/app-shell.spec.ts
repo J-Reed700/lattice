@@ -237,6 +237,106 @@ test.describe('Library collections', () => {
   });
 });
 
+for (const [cached, system, expected] of [
+  ['dark', 'light', 'dark'],
+  ['light', 'dark', 'light'],
+  ['system', 'dark', 'dark'],
+  ['invalid', 'light', 'light'],
+] as const) {
+  test(`applies startup theme ${cached}/${system} before React loads`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem('lattice-theme', value), cached);
+    await page.emulateMedia({ colorScheme: system });
+    // Hold back the production bundle: the blocking bootstrap must work alone.
+    await page.route('**/assets/*.js', route => route.abort());
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', expected);
+    await expect(page.locator('html')).toHaveCSS('color-scheme', expected);
+    await expect(page.locator('#root')).toBeEmpty();
+  });
+}
+
+test('theme text and destructive actions keep readable contrast', async ({ page }) => {
+  await page.goto('/settings');
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const ratios = await page.evaluate(() => {
+      const sample = document.createElement('span');
+      document.body.append(sample);
+      const color = (token: string) => {
+        sample.style.color = `hsl(var(--${token}))`;
+        return getComputedStyle(sample).color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+      };
+      const luminance = (rgb: number[]) => rgb.reduce((sum, channel, index) => {
+        const value = channel / 255;
+        return sum + [0.2126, 0.7152, 0.0722][index] * (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      }, 0);
+      const contrast = (fg: number[], bg: number[]) => {
+        const [low, high] = [luminance(fg), luminance(bg)].sort((a, b) => a - b);
+        return (high + 0.05) / (low + 0.05);
+      };
+      const results: Record<string, number> = {};
+      for (const surface of ['chrome', 'bg', 'surface', 'surface-raised', 'surface-overlay', 'surface-sunken']) {
+        results[`muted/${surface}`] = contrast(color('text-muted'), color(surface));
+        results[`destructive-hover/${surface}`] = contrast(
+          color('accent-fg').map((value, index) => value * 0.9 + color(surface)[index] * 0.1),
+          color('danger').map((value, index) => value * 0.9 + color(surface)[index] * 0.1),
+        );
+      }
+      results.destructive = contrast(color('accent-fg'), color('danger'));
+      results['destructive-brightness-hover'] = contrast(
+        color('accent-fg').map(value => Math.min(255, value * 1.1)),
+        color('danger').map(value => Math.min(255, value * 1.1)),
+      );
+      sample.remove();
+      return results;
+    });
+    for (const [pair, ratio] of Object.entries(ratios)) {
+      expect(ratio, `${theme} ${pair}`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
+test('HTML and code previews follow light and dark themes', async ({ page }, testInfo) => {
+  const fileRoot = `/home/test/.lattice/files/${'b'.repeat(64)}`;
+  await page.addInitScript(({ settings, fileRoot }) => {
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:file|list_all_documents') return ['article.html', 'example.ts'].map((fileName, index) => ({
+        id: `preview-${index}`, fileName, filePath: `${fileRoot}/${fileName}`, fileType: index ? 'ts' : 'html',
+        category: 'Document', language: 'en', wordCount: 100,
+        modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
+      }));
+      if (command === 'plugin:file|read_file_content') return (args as { path: string }).path.endsWith('.ts')
+        ? 'const answer = 42;'
+        : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>';
+      if (command === 'plugin:health|initialize_database') return undefined;
+      if (command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders' || command === 'plugin:conversation|list_conversation_spaces') return [];
+      throw new Error(`Unsupported theme preview fixture command: ${command}`);
+    };
+  }, { settings: makeAppSettings(), fileRoot });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/files');
+  await page.getByRole('button', { name: 'Tree view', exact: true }).click();
+  await page.getByRole('button').filter({ has: page.getByText('article.html', { exact: true }) }).press('Enter');
+  const article = page.frameLocator('iframe[title="article.html"]');
+  await expect(article.getByText('Readable article')).toBeVisible();
+  await expect(article.locator('html')).toHaveCSS('color-scheme', 'light');
+  const lightText = await article.locator('p').evaluate(element => getComputedStyle(element).color);
+  await page.screenshot({ path: testInfo.outputPath('article-light.png') });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(article.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await expect(article.locator('p')).not.toHaveCSS('color', lightText);
+  await page.screenshot({ path: testInfo.outputPath('article-dark.png') });
+  await page.keyboard.press('Escape');
+  await page.getByRole('button').filter({ has: page.getByText('example.ts', { exact: true }) }).press('Enter');
+  const code = page.getByRole('dialog', { name: 'example.ts' }).locator('pre');
+  await expect(code).toBeVisible();
+  const darkCodeBackground = await code.evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(code).not.toHaveCSS('background-color', darkCodeBackground);
+});
+
 // These tests exercise the real renderer/settings controls against a simulated
 // persistent IPC repository. They do not claim native desktop persistence.
 test('switches themes, remembers the choice on reload, and follows system changes', async ({ page }) => {
@@ -263,6 +363,7 @@ test('switches themes, remembers the choice on reload, and follows system change
   const dark = page.getByRole('radio', { name: 'Dark', exact: true });
   await dark.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await page.evaluate(() => localStorage.getItem('lattice-theme'))).toBe('dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: 'Display', exact: true }).click();
@@ -272,6 +373,7 @@ test('switches themes, remembers the choice on reload, and follows system change
   await dark.click();
   await expect(page.getByRole('alert')).toContainText("Couldn't save your theme");
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await page.evaluate(() => localStorage.getItem('lattice-theme'))).toBe('light');
   await page.evaluate(() => localStorage.removeItem('test:fail-save'));
   await page.getByRole('radio', { name: 'System', exact: true }).click();
   await page.emulateMedia({ colorScheme: 'dark' });

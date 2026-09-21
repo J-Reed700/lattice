@@ -795,6 +795,12 @@
           "markdownDescription": "Enables the chat_with_conversation_wrapper command without any pre-configured scope."
         },
         {
+          "description": "Enables the compact_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-compact-conversation",
+          "markdownDescription": "Enables the compact_conversation command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-create-conversation",
@@ -841,6 +847,12 @@
           "type": "string",
           "const": "conversation:allow-get-conversation",
           "markdownDescription": "Enables the get_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_conversation_memory command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-get-conversation-memory",
+          "markdownDescription": "Enables the get_conversation_memory command without any pre-configured scope."
         },
         {
           "description": "Enables the get_conversation_messages command without any pre-configured scope.",
@@ -907,6 +919,12 @@
           "type": "string",
           "const": "conversation:allow-list-message-bookmarks",
           "markdownDescription": "Enables the list_message_bookmarks command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_space_documents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-space-documents",
+          "markdownDescription": "Enables the list_space_documents command without any pre-configured scope."
         },
         {
           "description": "Enables the move_conversation_to_space command without any pre-configured scope.",
@@ -1065,6 +1083,12 @@
           "markdownDescription": "Denies the chat_with_conversation_wrapper command without any pre-configured scope."
         },
         {
+          "description": "Denies the compact_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-compact-conversation",
+          "markdownDescription": "Denies the compact_conversation command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-create-conversation",
@@ -1111,6 +1135,12 @@
           "type": "string",
           "const": "conversation:deny-get-conversation",
           "markdownDescription": "Denies the get_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_conversation_memory command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-get-conversation-memory",
+          "markdownDescription": "Denies the get_conversation_memory command without any pre-configured scope."
         },
         {
           "description": "Denies the get_conversation_messages command without any pre-configured scope.",
@@ -1177,6 +1207,12 @@
           "type": "string",
           "const": "conversation:deny-list-message-bookmarks",
           "markdownDescription": "Denies the list_message_bookmarks command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_space_documents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-space-documents",
+          "markdownDescription": "Denies the list_space_documents command without any pre-configured scope."
         },
         {
           "description": "Denies the move_conversation_to_space command without any pre-configured scope.",
@@ -4941,6 +4977,12 @@
           "markdownDescription": "Enables the batch_search command without any pre-configured scope."
         },
         {
+          "description": "Enables the download_reranker command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:allow-download-reranker",
+          "markdownDescription": "Enables the download_reranker command without any pre-configured scope."
+        },
+        {
           "description": "Enables the find_similar command without any pre-configured scope.",
           "type": "string",
           "const": "search:allow-find-similar",
@@ -4957,6 +4999,12 @@
           "type": "string",
           "const": "search:allow-hybrid-search",
           "markdownDescription": "Enables the hybrid_search command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reranker_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:allow-reranker-status",
+          "markdownDescription": "Enables the reranker_status command without any pre-configured scope."
         },
         {
           "description": "Enables the search_documents command without any pre-configured scope.",
@@ -4989,6 +5037,12 @@
           "markdownDescription": "Denies the batch_search command without any pre-configured scope."
         },
         {
+          "description": "Denies the download_reranker command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:deny-download-reranker",
+          "markdownDescription": "Denies the download_reranker command without any pre-configured scope."
+        },
+        {
           "description": "Denies the find_similar command without any pre-configured scope.",
           "type": "string",
           "const": "search:deny-find-similar",
@@ -5005,6 +5059,12 @@
           "type": "string",
           "const": "search:deny-hybrid-search",
           "markdownDescription": "Denies the hybrid_search command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reranker_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:deny-reranker-status",
+          "markdownDescription": "Denies the reranker_status command without any pre-configured scope."
         },
         {
           "description": "Denies the search_documents command without any pre-configured scope.",
@@ -5487,6 +5547,12 @@
           "markdownDescription": "Enables the ingest_web_url command without any pre-configured scope."
         },
         {
+          "description": "Enables the read_web_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-read-web-page",
+          "markdownDescription": "Enables the read_web_page command without any pre-configured scope."
+        },
+        {
           "description": "Denies the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-extract-article",
@@ -5503,6 +5569,12 @@
           "type": "string",
           "const": "web:deny-ingest-web-url",
           "markdownDescription": "Denies the ingest_web_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_web_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-read-web-page",
+          "markdownDescription": "Denies the read_web_page command without any pre-configured scope."
         }
       ]
     },

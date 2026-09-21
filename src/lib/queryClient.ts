@@ -46,8 +46,10 @@ export const queryClient = new QueryClient({
       // Refetch when network reconnects (important for multi-device sync)
       refetchOnReconnect: true,
 
-      // Don't refetch on mount if data is fresh
-      refetchOnMount: false,
+      // Revalidate stale or invalidated data when returning to a screen. Fresh
+      // data still uses the cache. `false` also suppresses invalidated queries,
+      // hiding changes completed in the background until the next poll.
+      refetchOnMount: true,
     },
     mutations: {
       // Retry mutations once on network errors

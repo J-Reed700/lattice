@@ -25,6 +25,17 @@ struct GeneratedCard {
     topic: String,
 }
 
+/// The text from the opening brace at `start` to the last closing brace. A
+/// reply cut off before its closing brace yields the unclosed tail, which the
+/// caller's JSON parse rejects as incomplete.
+fn json_object(raw: &str, start: usize) -> &str {
+    let end = raw
+        .rfind('}')
+        .filter(|end| *end > start)
+        .map_or(raw.len(), |end| end + 1);
+    raw.get(start..end).unwrap_or_default()
+}
+
 fn normalize(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -45,8 +56,7 @@ pub(super) fn parse_cards(
             "The model did not return study questions. Try generating again.".into(),
         )
     })?;
-    let end = raw.rfind('}').unwrap_or(start);
-    let parsed: GeneratedDeck = serde_json::from_str(&raw[start..=end]).map_err(|_| {
+    let parsed: GeneratedDeck = serde_json::from_str(json_object(raw, start)).map_err(|_| {
         AppError::InvalidInput(
             "The model returned incomplete study questions. Try generating fewer cards.".into(),
         )
@@ -116,9 +126,8 @@ pub(super) fn parse_conversation_cards(
     let start = raw.find('{').ok_or_else(|| {
         AppError::InvalidInput("The model did not return flashcards. Try again.".into())
     })?;
-    let end = raw.rfind('}').unwrap_or(start);
     let parsed: GeneratedConversationDeck =
-        serde_json::from_str(&raw[start..=end]).map_err(|_| {
+        serde_json::from_str(json_object(raw, start)).map_err(|_| {
             AppError::InvalidInput("The model returned incomplete flashcards. Try again.".into())
         })?;
     if parsed.cards.len() != claims.len() {

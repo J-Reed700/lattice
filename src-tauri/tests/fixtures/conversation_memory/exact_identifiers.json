@@ -1,0 +1,123 @@
+{
+  "family": "exact_identifiers",
+  "capability": "Case-sensitive paths, Unicode, version numbers, units and near-identical numbers survive byte-exact.",
+  "mode": "standard",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Write output to /srv/Data/Réservoir/tide_2026Q1.parquet — capital D, capital R, and the accent matters."
+    },
+    {
+      "role": "assistant",
+      "content": "Noted the exact path."
+    },
+    {
+      "role": "user",
+      "content": "Pin the reader to version 2.11.0-rc.1, not 2.1.10, and set the threshold to 0.0125 m, not 0.125 m."
+    },
+    {
+      "role": "assistant",
+      "content": "Pinned 2.11.0-rc.1 with a 0.0125 m threshold."
+    },
+    {
+      "role": "user",
+      "content": "The station code is ST-0042b, lowercase b. There is also a ST-0042B elsewhere in the fleet; they are different stations."
+    },
+    {
+      "role": "assistant",
+      "content": "Recorded ST-0042b as distinct from ST-0042B."
+    },
+    {
+      "role": "user",
+      "content": "Sampling interval is 6 min, and the gauge offset is −0.37 m using a Unicode minus."
+    },
+    {
+      "role": "assistant",
+      "content": "Recorded a 6 min interval and a −0.37 m offset."
+    },
+    {
+      "role": "user",
+      "content": "Confirm the whole configuration back to me later, exactly as written."
+    },
+    {
+      "role": "assistant",
+      "content": "I will keep every character as given."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Separately, remind me what a p95 latency figure actually measures."
+    },
+    {
+      "role": "assistant",
+      "content": "It is the value below which 95 percent of observations fall."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 2,
+    "required_active_quotes": [
+      "/srv/Data/Réservoir/tide_2026Q1.parquet",
+      "2.11.0-rc.1",
+      "0.0125 m",
+      "ST-0042b"
+    ],
+    "superseded_quotes": [],
+    "must_not_be_authoritative": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [],
+    "allowed_tools": [
+      "read_note"
+    ],
+    "questions": [
+      {
+        "ask": "Restate the output path, the pinned version, the threshold and the station code, exactly as I gave them.",
+        "must_quote": [
+          "/srv/Data/Réservoir/tide_2026Q1.parquet",
+          "2.11.0-rc.1",
+          "0.0125 m",
+          "ST-0042b"
+        ],
+        "must_not_contain": [
+          "Reader version: 2.1.10",
+          "Threshold: 0.125 m",
+          "Station code: ST-0042B",
+          "Output path: /srv/data/reservoir"
+        ],
+        "abstain": false
+      },
+      {
+        "ask": "What is the gauge offset?",
+        "must_quote": [
+          "−0.37 m"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear"
+    ]
+  },
+  "cycles": [
+    1,
+    3,
+    10
+  ],
+  "reload_after_cycles": [
+    1,
+    3
+  ]
+}

@@ -34,6 +34,7 @@ import verify_llama_binaries as vb  # noqa: E402
 SCRIPT = SCRIPT_DIR / "verify_llama_binaries.py"
 
 MAC = "llama-server-aarch64-apple-darwin"
+MAC_INTEL = "llama-server-x86_64-apple-darwin"
 WIN = "llama-server-x86_64-pc-windows-msvc.exe"
 WIN_CPU = "llama-server-cpu-x86_64-pc-windows-msvc.exe"
 LINUX = "llama-server-x86_64-unknown-linux-gnu"
@@ -279,6 +280,8 @@ def build_pe(*, imports=WIN_SYSTEM_IMPORTS, delay_imports=(), delay_va_form=Fals
 # Good synthetic binaries for every release file.
 GOOD_BLOBS = {
     MAC: lambda: build_macho(),
+    MAC_INTEL: lambda: build_macho(cputype=vb.CPU_TYPE_X86_64,
+                                  dylibs=tuple(p for p in SYSTEM_DYLIBS if "Metal.framework" not in p)),
     WIN: lambda: build_pe(imports=WIN_SYSTEM_IMPORTS + ("vulkan-1.dll",)),
     WIN_CPU: lambda: build_pe(),
     LINUX: lambda: build_elf(needed=("libvulkan.so.1", "libm.so.6", "libc.so.6")),
@@ -315,6 +318,30 @@ class TempDirTestCase(unittest.TestCase):
 
 
 class MachOTests(TempDirTestCase):
+    def test_intel_cpu_binary_needs_no_metal(self):
+        deps = tuple(path for path in SYSTEM_DYLIBS if "Metal.framework" not in path)
+        self.assertPasses(self.verify(MAC_INTEL, build_macho(
+            cputype=vb.CPU_TYPE_X86_64, dylibs=deps)))
+
+    def test_intel_rejects_arm_binary(self):
+        self.assertFailsWith(self.verify(MAC_INTEL, build_macho()), "needs a thin x86_64")
+
+    def test_intel_cpu_rejects_metal_build(self):
+        self.assertFailsWith(self.verify(MAC_INTEL, build_macho(
+            cputype=vb.CPU_TYPE_X86_64)), "CPU build unexpectedly links Metal.framework")
+
+    def test_intel_checks_its_own_universal_slice(self):
+        blob = build_universal([
+            (vb.CPU_TYPE_X86_64, 3, build_macho(cputype=vb.CPU_TYPE_X86_64, minos=(14, 0))),
+            (vb.CPU_TYPE_ARM64, 0, build_macho()),
+        ])
+        self.assertPasses(self.verify(MAC, blob))
+        self.assertFailsWith(self.verify(MAC_INTEL, blob), "minimum macOS 14.0")
+
+    def test_intel_rejects_unsigned_binary(self):
+        self.assertFailsWith(self.verify(MAC_INTEL, build_macho(
+            cputype=vb.CPU_TYPE_X86_64, sign=False)), "no code signature")
+
     def test_system_dependencies_pass(self):
         report = self.verify(MAC, build_macho())
         self.assertPasses(report)
@@ -614,7 +641,7 @@ class ExecutableBitTests(TempDirTestCase):
     """A sidecar without +x only fails when the app first spawns it."""
 
     def test_missing_executable_bit_fails(self):
-        for name in (MAC, LINUX_CPU):
+        for name in (MAC, MAC_INTEL, LINUX_CPU):
             with self.subTest(name=name):
                 path = self.write(name, GOOD_BLOBS[name](), mode=0o644)
                 self.assertFailsWith(vb.verify_file(path, LOCK), "not executable (mode -rw-r--r--)")
@@ -934,6 +961,31 @@ class RunIsolatedTests(TempDirTestCase):
 
 
 class CliTests(TempDirTestCase):
+    def test_pinned_selection_preserves_current_release_but_all_requires_intel(self):
+        names = [name for name in vb.EXPECTED_FILES if name != MAC_INTEL]
+        self.populate(names)
+        self.lock.write_text(LOCK_TEXT + "".join(
+            f"sha256 {hashlib.sha256((self.bin / name).read_bytes()).hexdigest()} {name}\n"
+            for name in names))
+        code, out = self.main("--lock", str(self.lock), "--pinned-only", "--require-hashes",
+                              "--expect-all", str(self.bin))
+        self.assertEqual(code, 0, out)
+        code, out = self.main("--lock", str(self.lock), "--require-hashes",
+                              "--expect-all", str(self.bin))
+        self.assertEqual(code, vb.EXIT_FAILED, out)
+        self.assertIn(f"missing release file(s): {MAC_INTEL}", out)
+        # An existing pin is still authoritative; filtering cannot bypass hashes.
+        (self.bin / MAC).write_bytes(build_macho(minos=(13, 0)))
+        code, out = self.main("--lock", str(self.lock), "--pinned-only", "--require-hashes",
+                              "--expect-all", str(self.bin))
+        self.assertEqual(code, vb.EXIT_FAILED, out)
+        self.assertIn("sha256 mismatch", out)
+
+    def test_pinned_selection_rejects_empty_lock(self):
+        code, out = self.main("--lock", str(self.lock), "--pinned-only", "--print-targets", "files")
+        self.assertEqual(code, vb.EXIT_USAGE, out)
+        self.assertIn("nonempty checksums", out)
+
     def setUp(self):
         super().setUp()
         self.lock = self.dir / "test.lock"
@@ -961,8 +1013,8 @@ class CliTests(TempDirTestCase):
         self.populate()
         code, out = self.main("--lock", str(self.lock), "--expect-all", str(self.bin))
         self.assertEqual(code, 0, out)
-        self.assertEqual(sum(line.startswith("PASS ") for line in out.splitlines()), 5, out)
-        self.assertIn("5 passed, 0 failed, 0 skipped", out)
+        self.assertEqual(sum(line.startswith("PASS ") for line in out.splitlines()), 6, out)
+        self.assertIn("6 passed, 0 failed, 0 skipped", out)
         self.assertIn("pins no sha256 hashes", out)
 
     def test_expect_all_reports_missing(self):

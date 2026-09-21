@@ -77,12 +77,13 @@ pub async fn check_llm_health_wrapper(
     })
 }
 
-/// Corpus-derived opening questions for the Chat empty state
-/// based on the current corpus.
+/// Corpus-derived opening questions for the Chat empty state, drawn from the
+/// documents one space can see. A blank `space_id` means General.
 #[tauri::command]
 #[specta::specta]
 pub async fn generate_chat_starters_wrapper(
     container: State<'_, Container>,
+    space_id: Option<String>,
 ) -> Result<ChatStartersDto, ApiError> {
-    crate::features::qa::starters::generate_chat_starters_impl(container.inner()).await
+    crate::features::qa::starters::generate_chat_starters_impl(container.inner(), space_id).await
 }

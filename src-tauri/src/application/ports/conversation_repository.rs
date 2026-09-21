@@ -1,7 +1,7 @@
 //! Persistence operations required by conversation orchestration.
 
 use crate::domain::conversation::{
-    CompactionRecord, Conversation, ConversationAggregate, ConversationMessage, MessageRole,
+    Conversation, ConversationAggregate, ConversationMessage, MessageRole,
 };
 use crate::shared::error::Result;
 
@@ -65,6 +65,4 @@ pub trait ConversationRepositoryPort: Send + Sync {
         status: &str,
     ) -> Result<ConversationMessage>;
     async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()>;
-    /// Persist (upsert) the active compaction summary for a conversation.
-    async fn save_compaction(&self, record: &CompactionRecord) -> Result<()>;
 }

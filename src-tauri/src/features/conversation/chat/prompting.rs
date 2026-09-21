@@ -630,6 +630,7 @@ mod thin_evidence_tests {
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,
+            closed_book: false,
         }
     }
 

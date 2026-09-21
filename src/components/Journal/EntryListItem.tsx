@@ -66,26 +66,26 @@ export function EntryListItem({
           onSelect();
         }
       }}
-      className={`group relative w-full cursor-pointer px-4 py-2.5 transition-colors duration-fast ${
-        isActive ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+      className={`group relative mx-2 flex h-8 w-[calc(100%-16px)] cursor-pointer items-center rounded-md px-2.5 ${
+        isActive ? 'bg-[hsl(var(--text-primary)/0.07)]' : 'row-hover'
       }`}
     >
       {isActive &&
         (prefersReducedMotion ? (
           <span
-            className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+            className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
             aria-hidden="true"
           />
         ) : (
           <motion.span
             layoutId="journal-sidebar-active-bar"
-            className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+            className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
             aria-hidden="true"
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           />
         ))}
 
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         {isPinned && (
           <Pin
             className="h-3 w-3 shrink-0 text-accent"
@@ -115,14 +115,14 @@ export function EntryListItem({
         ) : (
           <>
             <span
-              className={`min-w-0 flex-1 truncate text-sm text-text-primary ${
-                isActive ? 'font-medium' : ''
+              className={`min-w-0 flex-1 truncate text-ui ${
+                isActive ? 'font-medium text-text-primary' : 'text-text-secondary'
               }`}
               title={entry.title}
             >
               {entry.title}
             </span>
-            <time className="shrink-0 text-xs tabular-nums text-text-muted">
+            <time className="shrink-0 text-[11px] tabular-nums text-text-muted">
               {formatTime(entry.updatedAt)}
             </time>
           </>
@@ -132,7 +132,7 @@ export function EntryListItem({
       {/* Hover-revealed actions — overlay, reserves no width */}
       {!isRenaming && (
         <div
-          className={`absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-sm bg-surface-raised pl-2 transition-opacity duration-fast ${
+          className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-surface-overlay pl-1 shadow-control transition-opacity duration-fast ${
             isHovering ? 'opacity-100' : 'pointer-events-none opacity-0'
           }`}
           onClick={(e) => e.stopPropagation()}

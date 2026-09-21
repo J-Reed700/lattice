@@ -6,10 +6,12 @@ import { useSearchParams } from 'react-router';
 import { ChatPanel } from './ChatPanel';
 import { ConversationSidebar } from './ConversationSidebar';
 import { ConversationSpotlight } from './ConversationSpotlight';
+import { ChatReaderPane } from './reader/ChatReaderPane';
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { toast } from '../../stores/toastStore';
+import { scrollToMessage } from '../../utils/chatMessageNavigation';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 import { NEW_ITEM_EVENT } from '../RootLayout';
 import { IconButton } from '../ui';
@@ -62,6 +64,15 @@ export function ChatView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectingConversationRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  /**
+   * How much room the chat and the docked reader have between them.
+   *
+   * Measured from the row rather than the window because that is what the two
+   * of them actually share: collapsing the sidebar hands the reader 200-odd
+   * pixels the viewport knows nothing about.
+   */
+  const [row, setRow] = useState({ width: 0, available: 0 });
   /** A `?documentId=` request waiting for the conversation it belongs to. */
   const [pendingDocumentLink, setPendingDocumentLink] = useState<{
     documentId: string;
@@ -79,6 +90,30 @@ export function ChatView() {
 
   useEffect(() => {
     writeSidebarCollapsed(sidebarCollapsed);
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const element = rowRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+
+    const measure = () => {
+      const width = element.clientWidth;
+      // The sidebar is the first child; the rest is the chat plus the reader.
+      const sidebar = element.firstElementChild?.getBoundingClientRect().width ?? 0;
+      const available = Math.max(0, width - sidebar);
+      setRow((current) =>
+        current.width === width && current.available === available
+          ? current
+          : { width, available }
+      );
+    };
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    // Collapsing the sidebar does not resize the row, so the effect re-runs on
+    // it and measures again.
+    measure();
+    return () => observer.disconnect();
   }, [sidebarCollapsed]);
 
   const handleNewConversation = useCallback(async () => {
@@ -247,52 +282,21 @@ export function ChatView() {
     if (!requestedConversationId || !requestedMessageId) return;
     if (activeConversationId !== requestedConversationId) return;
 
-    let attempts = 0;
-    const maxAttempts = 16;
-    const selector = `message-${requestedMessageId}`;
-    let retryTimeoutId: number | undefined;
-    let highlightTimeoutId: number | undefined;
-    let highlightedTarget: HTMLElement | null = null;
-
-    const clearRequestedLocation = () => {
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('conversationId');
-      nextParams.delete('messageId');
-      setSearchParams(nextParams, { replace: true });
-    };
-
-    const tryScroll = () => {
-      const target = document.getElementById(selector);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        target.classList.add('chat-message-highlighted');
-        highlightedTarget = target;
-        highlightTimeoutId = window.setTimeout(() => {
-          target.classList.remove('chat-message-highlighted');
-          clearRequestedLocation();
-        }, 1500);
-        return;
-      }
-
-      attempts += 1;
-      if (attempts < maxAttempts) {
-        retryTimeoutId = window.setTimeout(tryScroll, 120);
-      } else {
-        clearRequestedLocation();
-      }
-    };
-
-    retryTimeoutId = window.setTimeout(tryScroll, 80);
-
-    return () => {
-      if (retryTimeoutId !== undefined) window.clearTimeout(retryTimeoutId);
-      if (highlightTimeoutId !== undefined) window.clearTimeout(highlightTimeoutId);
-      highlightedTarget?.classList.remove('chat-message-highlighted');
-    };
+    // The deep link is consumed either way: left in the URL, a back-navigation
+    // or a re-render would jump the reader away from wherever they have since
+    // scrolled to.
+    return scrollToMessage(requestedMessageId, {
+      onSettled: () => {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('conversationId');
+        nextParams.delete('messageId');
+        setSearchParams(nextParams, { replace: true });
+      },
+    });
   }, [activeConversationId, searchParams, setSearchParams]);
 
   return (
-    <div className="flex h-full w-full min-w-0 overflow-hidden">
+    <div ref={rowRef} className="flex h-full w-full min-w-0 overflow-hidden">
       {sidebarCollapsed ? (
         <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface py-2">
           <IconButton label="Show sidebar" shortcut="⌘\" tooltipSide="right" onClick={() => setSidebarCollapsed(false)}>
@@ -306,6 +310,7 @@ export function ChatView() {
         <ConversationSidebar onCollapse={() => setSidebarCollapsed(true)} />
       )}
       <ChatPanel />
+      <ChatReaderPane rowWidth={row.width} availableWidth={row.available} />
       <ConversationSpotlight isOpen={isSpotlightOpen} onClose={() => setIsSpotlightOpen(false)} />
     </div>
   );

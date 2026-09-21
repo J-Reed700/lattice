@@ -20,6 +20,8 @@
 //! manifest *after*, so a write that lands during a save makes the manifest
 //! look stale and buys a rebuild. The opposite order would let a manifest
 //! vouch for vectors the index never received.
+//! A commit that precedes the stamp can still await publication, so startup
+//! additionally compares source counts and key membership with the snapshot.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,8 +42,8 @@ const FLUSH_TICK: Duration = Duration::from_secs(5);
 /// Quiet time after the last mutation that counts as "the run has finished".
 const QUIET_PERIOD: Duration = Duration::from_secs(30);
 /// A bulk import of tens of thousands of files never goes quiet for half an
-/// hour, and losing all of it to a crash would mean re-embedding all of it.
-/// Check it in periodically regardless.
+/// hour. Checkpoint periodically to reduce graph rebuilding after a crash;
+/// embeddings themselves are already committed to SQLite.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(300);
 /// Rows per page when refilling chunk text from SQLite.
 const HYDRATE_PAGE: i64 = 512;
@@ -88,24 +90,30 @@ where
     let stamp = read_source_stamp(pool, identity, dimension).await?;
     let config = index.index_config();
 
-    let mismatch = match read_manifest(index_path) {
+    let mut mismatch = match read_manifest(index_path) {
         Some(manifest) => manifest.mismatch(generation, &config, index.count(), &stamp),
         None => Some(ManifestMismatch::Missing),
     };
 
     if mismatch.is_none() {
-        let hydrated = hydrate_content(index, pool).await?;
-        let path = StartupPath::Reused {
-            vectors: index.count(),
-            hydrated,
-        };
-        tracing::info!(
-            vectors = index.count(),
-            hydrated,
-            took_ms = started.elapsed().as_millis(),
-            "Vector index reused: the persisted graph still matches SQLite"
-        );
-        return Ok(path);
+        let hydrated = hydrate_content(index, pool, identity, dimension).await?;
+        if hydrated == index.count() {
+            let path = StartupPath::Reused {
+                vectors: index.count(),
+                hydrated,
+            };
+            tracing::info!(
+                vectors = index.count(),
+                hydrated,
+                took_ms = started.elapsed().as_millis(),
+                "Vector index reused: the persisted graph still matches SQLite"
+            );
+            return Ok(path);
+        }
+        // A delete followed by an insert can keep the count unchanged while
+        // publication is still pending. Every key must belong to the source
+        // generation, not merely to a chunk that still exists in the library.
+        mismatch = Some(ManifestMismatch::SourceMembership);
     }
 
     let reason = mismatch.unwrap_or(ManifestMismatch::Missing);
@@ -145,13 +153,28 @@ where
 ///
 /// Paged rather than loaded whole: a large library's chunk text is hundreds of
 /// megabytes, and there is no reason for two copies of it to exist at once.
-async fn hydrate_content(index: &Arc<USearchVectorIndex>, pool: &SqlitePool) -> Result<usize> {
+async fn hydrate_content(
+    index: &Arc<USearchVectorIndex>,
+    pool: &SqlitePool,
+    identity: &str,
+    dimension: usize,
+) -> Result<usize> {
     let mut cursor = String::new();
     let mut filled = 0;
     loop {
         let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, content FROM text_chunks WHERE id > ? ORDER BY id LIMIT ?")
+            sqlx::query_as(
+                "SELECT tc.id, tc.content FROM text_chunks tc \
+                 WHERE tc.id > ? AND (\
+                   EXISTS (SELECT 1 FROM text_embeddings te WHERE te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ?) \
+                   OR EXISTS (SELECT 1 FROM embedding_generation_vectors eg WHERE eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ?)\
+                 ) ORDER BY tc.id LIMIT ?",
+            )
                 .bind(&cursor)
+                .bind(identity)
+                .bind(dimension as i64)
+                .bind(identity)
+                .bind(dimension as i64)
                 .bind(HYDRATE_PAGE)
                 .fetch_all(pool)
                 .await?;
@@ -177,6 +200,7 @@ pub struct IndexPersistence {
     generation: String,
     dimension: usize,
     index_path: PathBuf,
+    flush_lock: tokio::sync::Mutex<()>,
 }
 
 impl IndexPersistence {
@@ -195,12 +219,16 @@ impl IndexPersistence {
             generation,
             dimension,
             index_path,
+            flush_lock: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Write the index and the manifest that vouches for it. Does nothing when
     /// the index and the file already agree.
     pub async fn flush_if_dirty(&self) -> Result<bool> {
+        // The background checkpoint and shutdown may overlap. Serialize the
+        // whole operation, including its source stamp and manifest write.
+        let _flush = self.flush_lock.lock().await;
         if !self.index.is_dirty() {
             return Ok(false);
         }
@@ -210,13 +238,12 @@ impl IndexPersistence {
         let config = self.index.index_config();
 
         let index = Arc::clone(&self.index);
-        tokio::task::spawn_blocking(move || index.save_to_disk())
+        let vectors = tokio::task::spawn_blocking(move || index.save_snapshot())
             .await
             .map_err(|e| {
                 AppError::InternalError(format!("Vector index save task failed: {e}"))
             })??;
 
-        let vectors = self.index.count();
         write_manifest(
             &self.index_path,
             &IndexManifest::new(self.generation.clone(), config, vectors, stamp),
@@ -433,6 +460,79 @@ mod tests {
                 reason: ManifestMismatch::Stamp
             }
         );
+    }
+
+    /// Simulate process death after a flush reads a committed database change
+    /// but before that change reaches the in-memory vector index.
+    #[tokio::test]
+    async fn a_flush_before_publication_cannot_certify_missing_or_swapped_vectors() {
+        for swap in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("index.usearch");
+            let pool = database().await;
+            add_chunk(&pool, 0).await;
+            let (index, _) = start(&pool, &path).await;
+
+            add_chunk(&pool, 1).await;
+            index
+                .publish_embeddings(vec![VectorIndexEntry {
+                    id: "emb_chunk1".into(),
+                    embedding: vector(1),
+                    content: "passage 1".into(),
+                    chunk_id: "chunk1".into(),
+                    document_id: "doc".into(),
+                }])
+                .unwrap();
+            if swap {
+                // Keep the chunk itself: hydration must check generation
+                // membership, rather than the existence of the text alone.
+                sqlx::query("DELETE FROM text_embeddings WHERE chunk_id = 'chunk0'")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            add_chunk(&pool, 2).await; // committed, deliberately not published
+            persistence(&index, &pool, &path)
+                .flush_if_dirty()
+                .await
+                .unwrap();
+            let saved = read_manifest(&path).unwrap();
+            assert_eq!(saved.vector_count, 2);
+            assert_eq!(
+                saved.stamp,
+                read_source_stamp(&pool, GENERATION, DIM).await.unwrap()
+            );
+            drop(index); // no graceful shutdown/publication
+
+            let (recovered, outcome) = start(&pool, &path).await;
+            assert!(outcome.rebuilt(), "stale snapshot reused: {outcome:?}");
+            assert_eq!(recovered.count(), if swap { 2 } else { 3 });
+            let hits = VectorSearchPort::search(recovered.as_ref(), &vector(2), 10, 0.0).unwrap();
+            assert!(hits.iter().any(|hit| hit.chunk_id == "chunk2"));
+            if swap {
+                assert!(hits.iter().all(|hit| hit.chunk_id != "chunk0"));
+            }
+            drop(recovered);
+            let (_, outcome) = start(&pool, &path).await;
+            assert!(!outcome.rebuilt(), "repaired snapshot should be reusable");
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_snapshot_has_no_old_manifest_to_certify_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.usearch");
+        let pool = database().await;
+        add_chunk(&pool, 0).await;
+        let (index, _) = start(&pool, &path).await;
+        assert!(read_manifest(&path).is_some());
+
+        // Stop after writing the snapshot, before its new manifest is written.
+        assert_eq!(index.save_snapshot().unwrap(), 1);
+        assert!(read_manifest(&path).is_none());
+        drop(index);
+        let (_, outcome) = start(&pool, &path).await;
+        assert!(outcome.rebuilt());
     }
 
     /// A delete and an insert between two launches leave the row count alone.
@@ -753,3 +853,7 @@ mod tests {
         assert!(persistence.flush_if_dirty().await.unwrap());
     }
 }
+
+#[cfg(test)]
+#[path = "persistence_smoke_tests.rs"]
+mod smoke_tests;

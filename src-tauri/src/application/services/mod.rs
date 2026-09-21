@@ -1,6 +1,8 @@
 pub mod completion_input;
+pub mod context_assembler;
 pub mod context_window_builder;
 pub mod conversation_context;
+pub mod conversation_memory;
 pub mod file_type_detector;
 pub mod model_selection;
 

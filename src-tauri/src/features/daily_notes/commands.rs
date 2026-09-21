@@ -375,7 +375,8 @@ pub(super) fn appended_capture(existing: &str, snippet: &str) -> String {
     }
 }
 
-/// Today's page, created when it does not exist yet.
+/// Today's page in the journal captures belong to, created when it does not
+/// exist yet.
 ///
 /// Captures used to append to whichever page was written to last, which put a
 /// thought captured today onto a page about something else entirely (a week
@@ -386,15 +387,18 @@ async fn resolve_capture_target(
     repository: &DailyNotesRepository,
 ) -> Result<(WorkspaceNoteDto, bool)> {
     let title = today_daily_title();
-    if let Some(row) = repository.find_by_title(&title).await? {
+    let journal_id = repository.capture_journal_id().await?;
+    if let Some(row) = repository
+        .find_by_title(&title, journal_id.as_deref())
+        .await?
+    {
         return Ok((row_to_dto(row)?, false));
     }
     let created = create_workspace_note_impl(
         container,
         CreateWorkspaceNoteRequestDto {
             title: Some(title),
-            // Quick capture arrives with no journal context.
-            journal_id: None,
+            journal_id,
         },
     )
     .await?;

@@ -155,6 +155,7 @@ fn main() {
             lattice::features::conversation::plugin::truncate_conversation_after,
             lattice::features::conversation::plugin::fork_conversation,
             lattice::features::conversation::plugin::compact_conversation,
+            lattice::features::conversation::plugin::get_conversation_memory,
             lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
             lattice::features::settings::plugin::set_cloud_api_key,
             // Additional public IPC contracts (use the same signatures as runtime).
@@ -264,6 +265,7 @@ fn main() {
             lattice::features::conversation::plugin::move_conversation_to_space,
             lattice::features::conversation::plugin::add_conversation_to_journal,
             lattice::features::conversation::plugin::remove_conversation_from_journal,
+            lattice::features::conversation::plugin::list_space_documents,
             lattice::features::conversation::plugin::list_conversation_linked_documents,
             lattice::features::conversation::plugin::remove_conversation_linked_document,
             lattice::features::conversation::plugin::add_conversation_web_source,
@@ -355,6 +357,7 @@ fn main() {
             lattice::features::web::plugin::ingest_web_url,
             lattice::features::web::plugin::fetch_url_preview,
             lattice::features::web::plugin::extract_article,
+            lattice::features::web::plugin::read_web_page,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,
@@ -372,6 +375,9 @@ fn main() {
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        // Persisted in `metadata.turn` rather than returned by a command, so it
+        // reaches no signature on its own and has to be named here.
+        .typ::<lattice::features::conversation::chat::TurnRecordDto>()
         .typ::<lattice::features::conversation::chat::ToolPreferences>();
 
     // Export bindings to file

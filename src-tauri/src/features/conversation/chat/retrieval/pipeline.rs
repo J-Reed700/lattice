@@ -1,6 +1,10 @@
 use super::*;
 use crate::features::conversation::chat::cancellation::is_cancel_requested;
 use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
+use crate::features::conversation::chat::turn_record::{
+    TurnRecorder, TurnStepKind, TurnStepLinkDto,
+};
+use crate::features::conversation::chat::web_steps::{self, result_count_line};
 use std::time::Duration;
 
 use crate::domain::qa::hyde::HyDEInterpretation;
@@ -62,39 +66,10 @@ pub(super) async fn run_retrieval_pipeline(
     max_tokens: usize,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
+    focus: &crate::features::conversation::chat::focus::FocusScope,
+    recorder: &TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     let retrieval_start = Instant::now();
-
-    // Held until `outcome` exists below. This is the single honest source for
-    // the "answered without your documents" line: the frontend must never
-    // infer it.
-    let mut embedding_unavailable_reason: Option<String> = None;
-    if let Err(e) = container.get_or_load_embedding().await {
-        debug!(error = %e, "Embedding model not available for RAG — search will be skipped");
-        embedding_unavailable_reason = Some("the embedding model is not ready".to_string());
-    }
-
-    let utility_llm: Arc<dyn crate::application::ports::LLMPort> =
-        match container.get_or_load_utility_llm().await {
-            Ok(Some(util)) => {
-                tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
-                util
-            }
-            Ok(None) => {
-                tracing::debug!(
-                    "No utility LLM configured — external search rewriting may use the chat LLM \
-                 (set one in Settings → Model Catalog to speed up retrieval)"
-                );
-                Arc::clone(llm)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Utility LLM load failed — external search rewriting may use the chat LLM"
-                );
-                Arc::clone(llm)
-            }
-        };
 
     const RESPONSE_TOKEN_BUDGET_RATIO: f64 = 0.25;
     const PROMPT_OVERHEAD_TOKENS: usize = 200;
@@ -131,6 +106,44 @@ pub(super) async fn run_retrieval_pipeline(
         sufficiency: None,
         pages_read: FetchMemory::default(),
     };
+    // A closed-book turn stops here, before a model is loaded or a scope is
+    // resolved. Gating each search below instead would leave the next path
+    // added to this function open by default.
+    if search_flags.closed_book {
+        return outcome;
+    }
+
+    // Held until KB retrieval has reported. This is the single honest source for
+    // the "answered without your documents" line: the frontend must never
+    // infer it.
+    let mut embedding_unavailable_reason: Option<String> = None;
+    if let Err(e) = container.get_or_load_embedding().await {
+        debug!(error = %e, "Embedding model not available for RAG — search will be skipped");
+        embedding_unavailable_reason = Some("the embedding model is not ready".to_string());
+    }
+
+    let utility_llm: Arc<dyn crate::application::ports::LLMPort> =
+        match container.get_or_load_utility_llm().await {
+            Ok(Some(util)) => {
+                tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
+                util
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    "No utility LLM configured — external search rewriting may use the chat LLM \
+                 (set one in Settings → Model Catalog to speed up retrieval)"
+                );
+                Arc::clone(llm)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Utility LLM load failed — external search rewriting may use the chat LLM"
+                );
+                Arc::clone(llm)
+            }
+        };
+
     let tuning = &search_settings.retrieval_tuning;
     // The embedding and utility models may both have been cold.
     if is_cancel_requested(request_id) {
@@ -182,6 +195,7 @@ pub(super) async fn run_retrieval_pipeline(
         page_budget_chars: super::page_budget::page_budget_chars(available_for_rag),
         wiki_planned: retrieval_plan.should_search_wiki,
         web_planned: retrieval_plan.should_search_web,
+        recorder,
     };
     let kb_search = async {
         let kb_retrieval_start = Instant::now();
@@ -198,6 +212,8 @@ pub(super) async fn run_retrieval_pipeline(
             search_settings.enable_reranking,
             search_settings.similarity_threshold,
             tuning,
+            focus,
+            recorder,
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
@@ -424,6 +440,8 @@ struct ExternalLookup<'a> {
     page_budget_chars: usize,
     wiki_planned: bool,
     web_planned: bool,
+    /// Every lookup below says what it is doing and what came of it.
+    recorder: &'a TurnRecorder,
 }
 
 /// What the wiki/web phase produced, merged into the outcome by the caller.
@@ -667,6 +685,11 @@ impl ExternalLookup<'_> {
             followup_anchor_terms,
             tuning,
         );
+        let step = self.recorder.begin_guarded(
+            TurnStepKind::Wiki,
+            "Checking Wikipedia",
+            Some(wiki_query.clone()),
+        );
 
         let executor = self.container.function_executor();
         let call = crate::features::function_calling::domain::FunctionCall::new(
@@ -678,6 +701,7 @@ impl ExternalLookup<'_> {
             }),
         );
 
+        let mut failure: Option<String> = None;
         match executor.execute(call).await {
             Ok(result) if result.success => {
                 if let Some(data) = result.data {
@@ -733,6 +757,7 @@ impl ExternalLookup<'_> {
                         }
                         Err(error) => {
                             warn!(error = %error, "Failed to parse wiki search output");
+                            failure = Some(format!("unreadable result: {error}"));
                         }
                     }
                 }
@@ -743,10 +768,16 @@ impl ExternalLookup<'_> {
                     .clone()
                     .unwrap_or_else(|| "Wiki search tool execution failed".to_string());
                 warn!(error = reason.as_str(), "Wiki search failed");
+                failure = Some(reason);
             }
             Err(error) => {
                 warn!(error = %error, "Wiki search failed");
+                failure = Some(error.to_string());
             }
+        }
+        match failure {
+            Some(reason) => step.failed(Some(reason)),
+            None => step.done(Some(result_count_line(searched.sources.len()))),
         }
         searched.elapsed_ms = elapsed_ms(wiki_search_start);
         searched
@@ -764,6 +795,28 @@ impl ExternalLookup<'_> {
 
     /// Read one page, or say why not.
     async fn fetch_one_page(
+        &self,
+        url: String,
+    ) -> std::result::Result<crate::features::function_calling::dto::FetchUrlContentOutput, String>
+    {
+        // Named by host, because "Reading thereviewgeek.com" is the difference
+        // between visible progress and a spinner, and a blocked site is then
+        // obvious rather than mysterious.
+        let step = self.recorder.begin_guarded_with_links(
+            TurnStepKind::ReadPage,
+            format!("Reading {}", host_of(&url)),
+            Some(url.clone()),
+            vec![TurnStepLinkDto::new(url.clone(), None)],
+        );
+        let outcome = self.fetch_one_page_inner(url.clone()).await;
+        match &outcome {
+            Ok(page) => web_steps::finish_page(step, &url, page),
+            Err(reason) => step.failed(Some(reason.clone())),
+        }
+        outcome
+    }
+
+    async fn fetch_one_page_inner(
         &self,
         url: String,
     ) -> std::result::Result<crate::features::function_calling::dto::FetchUrlContentOutput, String>
@@ -944,6 +997,13 @@ impl ExternalLookup<'_> {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
         let mut searched = ExternalSearchResult::default();
+        // Held as an option because a search that succeeds is finished before
+        // its pages are read, not after.
+        let mut step = Some(self.recorder.begin_guarded(
+            TurnStepKind::WebSearch,
+            "Searching the web",
+            Some(web_query.to_string()),
+        ));
 
         let deep_research_enabled = self.search_flags.deep_research_mode;
         let web_depth = if deep_research_enabled {
@@ -1000,6 +1060,13 @@ impl ExternalLookup<'_> {
                                 result_count = output.result_count,
                                 "Forced web search completed"
                             );
+                            // Said now, before the pages are read: reading is
+                            // the slow part, and a list of addresses that only
+                            // appears once every one of them has been fetched
+                            // tells a waiting reader nothing.
+                            if let Some(step) = step.take() {
+                                web_steps::finish_search(step, self.recorder, &output);
+                            }
                             if deep_research_enabled {
                                 let llm_context_domains = output
                                     .results
@@ -1097,6 +1164,7 @@ impl ExternalLookup<'_> {
                         }
                         Err(e) => {
                             warn!(error = %e, "Failed to parse web search output");
+                            searched.error = Some(format!("unreadable results: {e}"));
                         }
                     }
                 }
@@ -1114,11 +1182,28 @@ impl ExternalLookup<'_> {
                 searched.error = Some(e.to_string());
             }
         }
+        if let Some(step) = step {
+            match &searched.error {
+                Some(reason) => step.failed(Some(reason.clone())),
+                None => step.done(Some(result_count_line(searched.sources.len()))),
+            }
+        }
         searched.elapsed_ms = elapsed_ms(web_search_start);
         searched
     }
 }
 
+/// The host a URL names, or the URL itself when it will not parse.
+fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "a web page".to_string())
+}
+
+/// How many results a search came back with, in the register of the step's
+/// label. Zero is said outright: a search that found nothing is not the same as
+/// a search that did not run.
 /// Merge wiki results first: citations are appended, and the wiki context is
 /// used only while no web context exists.
 pub(super) fn attach_wiki_results(

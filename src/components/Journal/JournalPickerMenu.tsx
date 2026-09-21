@@ -18,6 +18,8 @@ interface JournalPickerMenuProps {
   journals: ConversationJournalDto[];
   currentJournal: ConversationJournalDto | null;
   onSwitch: (journalId: string) => void;
+  /** One quiet line under the name, e.g. "4 pages · 3 entries". */
+  meta?: string;
   onCreate: () => void;
   onRenameCurrent: (nextName: string) => Promise<void> | void;
   onDeleteCurrent: () => Promise<void> | void;
@@ -35,6 +37,7 @@ export function JournalPickerMenu({
   journals,
   currentJournal,
   onSwitch,
+  meta,
   onCreate,
   onRenameCurrent,
   onDeleteCurrent,
@@ -88,14 +91,26 @@ export function JournalPickerMenu({
           disabled={journals.length === 0 && !currentJournal}
         >
           <SelectTrigger
-            className="h-7 rounded-sm border-0 px-1 py-0.5 text-sm transition-colors duration-fast hover:bg-surface-raised"
+            className="row-hover h-auto rounded-lg border-0 bg-transparent px-1.5 py-1.5 shadow-none hover:bg-transparent [&>span]:line-clamp-none"
             aria-label="Switch journal"
           >
             <SelectValue placeholder="Select journal">
               {currentJournal && (
-                <span className="flex items-center gap-2 truncate">
-                  <span className="shrink-0">{currentJournal.icon || '📓'}</span>
-                  <span className="truncate">{currentJournal.name}</span>
+                <span className="flex min-w-0 items-center gap-2.5 text-left">
+                  {/* The notebook, at the size of a thing you pick up. */}
+                  <span
+                    aria-hidden="true"
+                    className="notebook-swatch flex h-10 w-8 shrink-0 items-center justify-center rounded-[5px] text-[13px]"
+                    style={currentJournal.accentColor ? { backgroundColor: currentJournal.accentColor } : undefined}
+                  >
+                    {currentJournal.icon || '📓'}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-serif text-[16px] font-medium leading-tight tracking-[-0.01em] text-text-primary">
+                      {currentJournal.name}
+                    </span>
+                    {meta ? <span className="mt-0.5 block truncate text-[11px] text-text-muted">{meta}</span> : null}
+                  </span>
                 </span>
               )}
             </SelectValue>

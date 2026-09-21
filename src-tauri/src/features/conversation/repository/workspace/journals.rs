@@ -368,6 +368,8 @@ impl ConversationRepository {
             c.bookmarked_at,
             c.pinned_at,
             c.archived_at,
+            c.forked_from_conversation_id,
+            c.forked_from_message_id,
             (
                 SELECT m.content
                 FROM conversation_messages m
@@ -457,6 +459,8 @@ impl ConversationRepository {
                 archived_at: row.archived_at,
                 last_message_preview: row.last_message_preview,
                 compaction: None,
+                forked_from_conversation_id: row.forked_from_conversation_id,
+                forked_from_message_id: row.forked_from_message_id,
             })
             .collect::<Vec<_>>();
 

@@ -55,6 +55,21 @@ pub(in crate::features::conversation::chat) mod reason {
     pub const TOO_FEW_RESULTS: &str = "too_few_results";
     pub const NO_RERANKER: &str = "no_reranker";
     pub const ORDERED_READING: &str = "ordered_reading";
+
+    /// A code as the reader of a turn record meets it. The codes stay what
+    /// tests and the trace match on; this is only what gets shown.
+    pub fn readable(code: &str) -> &str {
+        match code {
+            NO_RESULTS => "nothing came back",
+            LOW_TOP_SCORE => "nothing scored well",
+            FLAT_RERANK_SPREAD => "no passage stood out from the rest",
+            LOW_TERM_COVERAGE => "the passages missed most of the question's terms",
+            TOO_FEW_RESULTS => "too few passages came back",
+            NO_RERANKER => "no reranker to tell the passages apart",
+            ORDERED_READING => "the question wants the document read in order",
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

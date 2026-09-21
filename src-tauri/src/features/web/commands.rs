@@ -40,6 +40,23 @@ use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+/// A web page as the reader shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WebPageDto {
+    /// The URL after redirects.
+    pub url: String,
+    /// Page title, when the page gave one.
+    pub title: Option<String>,
+    /// Extracted article text — the same text the model was given.
+    pub text: String,
+    pub word_count: u32,
+    /// RFC 3339. When the text was actually fetched, not when it was served.
+    pub fetched_at: String,
+    /// True when this came out of the page cache rather than off the network.
+    pub from_cache: bool,
+}
+
 /// Response from web ingestion command
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -362,6 +379,73 @@ pub async fn ingest_web_url(
         site_name: result.site_name,
         author: result.author,
         reading_time_minutes: result.reading_time_minutes,
+    })
+}
+
+/// Read a web page for the reader pane
+///
+/// Goes through the same fetch path the model's `fetch_url_content` tool uses,
+/// which means a page the turn already read is answered from the page cache
+/// without touching the network — the point of the reader is to show the text
+/// the model actually read, and asking the site again could return something
+/// else. A page nobody has read yet costs one validated fetch.
+///
+/// Deliberately not rate limited, unlike the ingest and preview commands: this
+/// is one page per click, most of them free, and the shared web-ingest limiter
+/// allows five a minute — a user reading through a turn's citations would hit
+/// it in seconds. The fetch underneath is still SSRF-validated and paced per
+/// site.
+///
+/// # Arguments
+///
+/// * `url` - Web URL to read (http/https only)
+/// * `container` - Service container with dependencies
+///
+/// # Returns
+///
+/// * `Ok(WebPageDto)` - The page text, with when it was read and whether it
+///   came from the cache
+/// * `Err(AppError)` - Invalid or blocked URL, or the fetch failed
+#[tracing::instrument(skip(container), fields(url = %url))]
+pub async fn read_web_page(
+    url: String,
+    container: State<'_, Container>,
+) -> Result<WebPageDto, AppError> {
+    let read = match container.web_service().read_page(&url).await {
+        Ok(read) => read,
+        Err(e) => {
+            let audit_logger = get_audit_logger();
+            let event = AuditEvent::new(
+                AuditAction::WebContentAccessed,
+                AuditResult::failure(e.to_string()),
+            )
+            .with_resource_id(&url)
+            .with_metadata("operation", "read_web_page")
+            .with_metadata("error", e.to_string());
+            if let Err(log_err) = audit_logger.log(event).await {
+                tracing::warn!("Failed to write audit log: {}", log_err);
+            }
+            return Err(e);
+        }
+    };
+
+    let audit_logger = get_audit_logger();
+    let event = AuditEvent::new(AuditAction::WebContentAccessed, AuditResult::success())
+        .with_resource_id(&url)
+        .with_metadata("operation", "read_web_page")
+        .with_metadata("from_cache", read.output.from_cache.to_string())
+        .with_metadata("word_count", read.output.word_count.to_string());
+    if let Err(e) = audit_logger.log(event).await {
+        tracing::warn!("Failed to write audit log: {}", e);
+    }
+
+    Ok(WebPageDto {
+        url: read.output.url,
+        title: read.output.title,
+        text: read.output.content,
+        word_count: u32::try_from(read.output.word_count).unwrap_or(u32::MAX),
+        fetched_at: read.fetched_at.to_rfc3339(),
+        from_cache: read.output.from_cache,
     })
 }
 

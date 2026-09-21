@@ -1203,6 +1203,19 @@ pub struct SnapshotInfo {
     pub table_count: u64,
     pub document_count: u64,
     pub conversation_count: u64,
+    /// Whether the snapshot carries the conversation-memory ledger at all.
+    ///
+    /// `false` means the backup predates bounded memory. That is restorable —
+    /// the ledger is derived and rebuilds from the transcript — and is a
+    /// different situation from a ledger this build cannot read.
+    pub memory_tables_present: bool,
+    /// Highest `conversation_memory_state.schema_version` in the snapshot.
+    ///
+    /// Checked separately from `migration_version` because the schema is one
+    /// squashed migration that is edited in place: two builds can share a
+    /// migration version and still disagree about the memory layout, so the
+    /// migration number alone cannot tell them apart.
+    pub memory_schema_version: Option<i64>,
 }
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> Result<u64, ArchiveError> {
@@ -1272,11 +1285,27 @@ async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveErro
         .await
         .map_err(db_err)?;
 
+    let memory_tables_present = table_exists(pool, "conversation_memory_state").await?
+        && table_exists(pool, "conversation_memory_items").await?
+        && table_exists(pool, "conversation_memory_evidence").await?;
+    let memory_schema_version = if memory_tables_present {
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(schema_version) FROM conversation_memory_state",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(db_err)?
+    } else {
+        None
+    };
+
     Ok(SnapshotInfo {
         migration_version,
         table_count: u64::try_from(tables).unwrap_or(0),
         document_count: count_rows(pool, "documents").await?,
         conversation_count: count_rows(pool, "conversations").await?,
+        memory_tables_present,
+        memory_schema_version,
     })
 }
 
@@ -2090,6 +2119,77 @@ mod tests {
         assert!(
             validate_snapshot(&truncated).await.is_err(),
             "a truncated database must not validate"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("lattice.db");
+        let pool = migrated_pool(&live).await;
+
+        // A conversation with memory state written by *this* build.
+        sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c1', 'T', 'm')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO conversation_memory_state (conversation_id, schema_version) \
+             VALUES ('c1', ?)",
+        )
+        .bind(crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dest = dir.path().join("current.db");
+        snapshot_database(&pool, &dest).await.unwrap();
+        let info = validate_snapshot(&dest).await.unwrap();
+        assert!(info.memory_tables_present);
+        assert_eq!(
+            info.memory_schema_version,
+            Some(crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION)
+        );
+
+        // Now a snapshot a *newer* build would have written. The migration
+        // version is identical — the schema is one squashed migration edited in
+        // place — so this is the only signal that distinguishes the two layouts.
+        sqlx::query("UPDATE conversation_memory_state SET schema_version = 99")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let future = dir.path().join("future.db");
+        snapshot_database(&pool, &future).await.unwrap();
+        pool.close().await;
+
+        let future_info = validate_snapshot(&future).await.unwrap();
+        assert_eq!(future_info.memory_schema_version, Some(99));
+        assert_eq!(
+            future_info.migration_version, info.migration_version,
+            "the migration number cannot tell these two layouts apart, which is why \
+             memory_schema_version exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_backup_without_a_memory_ledger_is_restorable_rather_than_rejected() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("lattice.db");
+        let pool = migrated_pool(&live).await;
+        // No memory rows at all: the state every conversation is in before its
+        // first compaction, and the state every pre-feature backup is in.
+        let dest = dir.path().join("empty-memory.db");
+        snapshot_database(&pool, &dest).await.unwrap();
+        pool.close().await;
+
+        let info = validate_snapshot(&dest).await.unwrap();
+        assert!(
+            info.memory_tables_present,
+            "the tables exist even when empty"
+        );
+        assert_eq!(
+            info.memory_schema_version, None,
+            "an absent ledger must not read as an unsupported one"
         );
     }
 

@@ -1,11 +1,10 @@
 import { BookOpen, Database, Globe, Telescope, Wrench } from 'lucide-react';
 
+import { formatToolLabel, WEB_TOOL_NAMES, WIKI_TOOL_NAMES } from './composer/toolNames';
+
 import type { CustomToolSettings, ToolPreferences } from '../../types';
 
 export type TurnMode = 'auto' | 'followup' | 'query';
-
-const WEB_TOOL_NAMES = ['web_search', 'fetch_url_content'] as const;
-const WIKI_TOOL_NAMES = ['wiki_search', 'wiki_summary'] as const;
 
 const DEEP_RESEARCH_WARNING_MESSAGE =
   'Deep research runs multiple rounds of search. Expect a longer wait.';
@@ -22,13 +21,6 @@ interface ComposerControlsProps {
   enabledToolSet: Set<string>;
   onToggleCustomTool: (toolName: string) => void;
 }
-
-const formatToolLabel = (name: string): string =>
-  name
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ');
 
 export function ComposerControls({
   turnMode,

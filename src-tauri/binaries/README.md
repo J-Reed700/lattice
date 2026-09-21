@@ -20,6 +20,7 @@ Each guarantee has a check that fails loudly when it breaks:
 | File | Platform | Backend |
 |---|---|---|
 | `llama-server-aarch64-apple-darwin` | macOS Apple Silicon | Metal |
+| `llama-server-x86_64-apple-darwin` | macOS Intel (candidate; not in current release) | CPU |
 | `llama-server-x86_64-pc-windows-msvc.exe` | Windows x64 | Vulkan |
 | `llama-server-cpu-x86_64-pc-windows-msvc.exe` | Windows x64 | CPU (AVX2), fallback |
 | `llama-server-x86_64-unknown-linux-gnu` | Linux x64 | Vulkan |
@@ -36,10 +37,17 @@ bash src-tauri/scripts/fetch-llama-binaries.sh --check  # verify only
 
 Files that already match the lock are not downloaded again.
 
+The fetcher's install/check modes use the currently pinned release set. Intel
+macOS is included in the build matrix but not in `llama/b8981-r2`; it becomes
+downloadable after the next six-file release is published and pinned. For local
+Intel development and native CI qualification, see
+[platform support](../../docs/development/platform-support.md). Release guards
+continue to reject Intel packages until their sidecar checksum is pinned.
+
 ## Bumping llama.cpp or rebuilding
 
 1. In `scripts/llama-server.lock`, set `llama_cpp_tag` (for a rebuild, keep it), set `release` to `llama/<llama_cpp_tag>-r<N>` with a new `N`, and delete the `sha256` lines.
-2. Optional dry run: run **Build llama-server sidecar binaries** from the Actions tab on your branch. It builds and verifies all five binaries without publishing. Pull requests that touch the pipeline do the same automatically.
+2. Optional dry run: run **Build llama-server sidecar binaries** from the Actions tab on your branch. It builds and verifies all six binaries without publishing. Pull requests that touch the pipeline do the same automatically.
 3. Commit the lock, then push the matching tag: `git tag llama/<llama_cpp_tag>-r<N> && git push origin llama/<llama_cpp_tag>-r<N>`. The workflow checks that the tag equals the lock's `release` and publishes the release.
 4. Pin it: `bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock`. This downloads the release, checks it against its `SHA256SUMS.txt`, verifies every binary, prints the pins it is about to change and writes the `sha256` lines. It pins only binaries it actually ran, and it refuses to overwrite a hash that is already in the lock: a published release is immutable, so a changed hash means something is wrong. Re-pinning anyway takes `--repin`.
 5. Commit the updated lock. Until then CI's `sidecar-binaries` job and release builds fail on purpose.

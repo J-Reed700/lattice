@@ -1,6 +1,7 @@
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { PrismSyntaxHighlighter as SyntaxHighlighter } from './prism';
+import { useEffectiveTheme } from '../../../hooks/useApplyTheme';
 
 interface CodeViewerProps {
   content: string;
@@ -8,11 +9,12 @@ interface CodeViewerProps {
 }
 
 export function CodeViewer({ content, language = 'text' }: CodeViewerProps) {
+  const theme = useEffectiveTheme();
   return (
     <div className="h-full overflow-auto">
       <SyntaxHighlighter
         language={language}
-        style={vscDarkPlus}
+        style={theme === 'dark' ? oneDark : oneLight}
         showLineNumbers
         customStyle={{
           margin: 0,

@@ -65,8 +65,8 @@ export function CorpusRow({
           onToggleSelect();
         }
       }}
-      className={`group flex cursor-pointer items-center gap-3 border-b border-border-subtle pr-3 transition-colors duration-fast ${
-        isSelected ? 'bg-surface-raised' : 'hover:bg-surface'
+      className={`group flex cursor-pointer items-center gap-3 rounded-lg pr-3 ${
+        isSelected ? 'bg-accent-muted' : 'row-hover'
       }`}
       style={{ height: ROW_HEIGHT, paddingLeft: 12 + indent }}
     >
@@ -102,7 +102,7 @@ export function CorpusRow({
       <FileIcon file={doc} size={16} className="shrink-0" />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm text-text-primary">{doc.fileName}</span>
+        <span className="truncate text-ui font-medium text-text-primary">{doc.fileName}</span>
         <span className="truncate text-xs tabular-nums text-text-muted">{metaLine(doc)}</span>
       </div>
 

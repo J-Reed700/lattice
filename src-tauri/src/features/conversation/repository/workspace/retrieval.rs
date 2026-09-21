@@ -233,15 +233,26 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Option<(String, HashSet<String>)>, AppError> {
-        let mut tx = self.pool.begin().await?;
         let space_id: Option<String> =
             sqlx::query_scalar("SELECT space_id FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&self.pool)
                 .await?;
         let Some(space_id) = space_id.filter(|id| !id.trim().is_empty()) else {
             return Ok(None);
         };
+        let ids = self.space_document_scope(&space_id).await?;
+        Ok(Some((space_id, ids)))
+    }
+
+    /// The same rule, asked by space instead of by conversation.
+    ///
+    /// The chat starters need a space's documents before any conversation is
+    /// involved — they used to read the whole vault, so a Movies chat opened
+    /// with questions about a patent library filed somewhere else. Rather than
+    /// let that caller write its own membership SQL and drift, the rule stays
+    /// in this one statement and `retrieval_document_scope` reads it too.
+    pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>, AppError> {
         let ids = sqlx::query_scalar::<_, String>(
             "SELECT d.id FROM documents d
              WHERE EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)
@@ -256,12 +267,83 @@ impl ConversationRepository {
                  ))
                )",
         )
-        .bind(&space_id)
-        .bind(&space_id)
-        .fetch_all(&mut *tx)
+        .bind(space_id)
+        .bind(space_id)
+        .fetch_all(&self.pool)
         .await?;
-        tx.commit().await?;
-        Ok(Some((space_id, ids.into_iter().collect())))
+        Ok(ids.into_iter().collect())
+    }
+
+    /// The documents a chat in `space_id` may name, newest first.
+    ///
+    /// Derived from [`Self::space_document_scope`] and then narrowed — never
+    /// widened — by a case-insensitive substring match on the file name. The
+    /// composer's `@` picker is the one place the user is told "these are the
+    /// documents this chat can use", so it has to be exactly the set retrieval
+    /// would search. A blank or unknown space means General, matching the
+    /// conversation default.
+    pub async fn space_documents(
+        &self,
+        space_id: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SpaceDocumentDto>, AppError> {
+        /// Ids bound per statement. SQLite's oldest variable ceiling is 999 and
+        /// a General space in a real vault is far larger than that.
+        const ID_BIND_BATCH: usize = 900;
+        const MAX_RESULTS: usize = 50;
+
+        let space_id = space_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .unwrap_or(DEFAULT_SPACE_ID);
+        let limit = limit.clamp(1, MAX_RESULTS);
+        let allowed = self.space_document_scope(space_id).await?;
+        if allowed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let needle = query.trim().to_lowercase();
+        let mut ids: Vec<_> = allowed.into_iter().collect();
+        ids.sort();
+
+        let mut rows: Vec<(String, String, Option<String>, Option<String>)> = Vec::new();
+        for batch in ids.chunks(ID_BIND_BATCH) {
+            let mut qb = QueryBuilder::<Sqlite>::new(
+                "SELECT d.id, d.file_name, d.category, d.modified_at FROM documents d WHERE d.id IN (",
+            );
+            let mut separated = qb.separated(", ");
+            for id in batch {
+                separated.push_bind(id);
+            }
+            qb.push(")");
+            if !needle.is_empty() {
+                qb.push(" AND INSTR(LOWER(d.file_name), ")
+                    .push_bind(needle.clone())
+                    .push(") > 0");
+            }
+            // Newest first, then by name so an unset or shared timestamp still
+            // gives a stable order rather than whatever SQLite happens to emit.
+            qb.push(" ORDER BY d.modified_at DESC, d.file_name ASC LIMIT ")
+                .push_bind(limit as i64);
+            rows.extend(qb.build_query_as().fetch_all(&self.pool).await?);
+        }
+
+        // Each batch was ordered and capped on its own, so the batches are
+        // merged and capped again here.
+        rows.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.1.cmp(&b.1)));
+        rows.truncate(limit);
+        Ok(rows
+            .into_iter()
+            .map(
+                |(document_id, file_name, category, modified_at)| SpaceDocumentDto {
+                    document_id,
+                    file_name,
+                    category,
+                    modified_at,
+                },
+            )
+            .collect())
     }
 }
 
@@ -379,6 +461,22 @@ mod tests {
         assert!(!scope_of(&repo, "patent").await.contains("unindexed"));
     }
 
+    /// The chat starters ask by space, with no conversation to ask through.
+    /// Both doors must open on the same room.
+    #[tokio::test]
+    async fn asking_by_space_gives_the_same_scope_as_asking_through_a_conversation() {
+        let repo = scope_fixture().await;
+
+        assert_eq!(
+            repo.space_document_scope("patent").await.unwrap(),
+            scope_of(&repo, "patent").await
+        );
+        assert_eq!(
+            repo.space_document_scope("space_general").await.unwrap(),
+            scope_of(&repo, "general").await
+        );
+    }
+
     #[tokio::test]
     async fn an_empty_space_and_a_missing_conversation_are_distinguishable() {
         let repo = scope_fixture().await;
@@ -389,5 +487,149 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    /// The `@` picker reads whole document rows, not just ids, so it needs a
+    /// documents table with the columns it shows.
+    async fn picker_fixture() -> ConversationRepository {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE documents (id TEXT, file_name TEXT, category TEXT, modified_at TEXT);
+            CREATE TABLE text_chunks (document_id TEXT);
+            CREATE TABLE document_space_memberships (document_id TEXT, space_id TEXT);
+            INSERT INTO documents VALUES
+                ('general_old', 'Halvorsen 2019.pdf', 'PDF Document', '2019-01-01T00:00:00Z'),
+                ('general_new', 'HALVORSEN 2024.pdf', 'PDF Document', '2024-01-01T00:00:00Z'),
+                ('general_other', 'Thesis outline.md', 'Markdown', '2023-01-01T00:00:00Z'),
+                ('filed_movies', 'Halvorsen at the movies.pdf', 'PDF Document', '2026-01-01T00:00:00Z'),
+                ('unindexed', 'Halvorsen scan.pdf', 'PDF Document', '2026-06-01T00:00:00Z');
+            INSERT INTO text_chunks VALUES
+                ('general_old'), ('general_new'), ('general_other'), ('filed_movies');
+            INSERT INTO document_space_memberships VALUES ('filed_movies', 'movies');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        ConversationRepository::new(pool)
+    }
+
+    /// The picker says "these are the documents this chat can use". It has to
+    /// be the same set retrieval would search, or the user pins a chat to a
+    /// file it then cannot answer from.
+    #[tokio::test]
+    async fn the_picker_offers_only_what_the_space_can_search() {
+        let repo = picker_fixture().await;
+
+        let general: Vec<_> = repo
+            .space_documents(None, "halvorsen", 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|document| document.document_id)
+            .collect();
+
+        assert_eq!(general, vec!["general_new", "general_old"]);
+        assert!(!general.contains(&"filed_movies".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_named_space_offers_only_its_own_documents() {
+        let repo = picker_fixture().await;
+
+        let movies: Vec<_> = repo
+            .space_documents(Some("movies"), "", 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|document| document.document_id)
+            .collect();
+
+        assert_eq!(movies, vec!["filed_movies"]);
+    }
+
+    /// Case is not a filter. Typing "HALV" and typing "halv" name the same
+    /// files.
+    #[tokio::test]
+    async fn the_name_match_ignores_case() {
+        let repo = picker_fixture().await;
+
+        let upper = repo.space_documents(None, "HALVORSEN", 8).await.unwrap();
+        let lower = repo.space_documents(None, "halvorsen", 8).await.unwrap();
+
+        assert_eq!(upper.len(), 2);
+        assert_eq!(
+            upper.iter().map(|d| &d.document_id).collect::<Vec<_>>(),
+            lower.iter().map(|d| &d.document_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_query_offers_the_whole_space_newest_first() {
+        let repo = picker_fixture().await;
+
+        let all: Vec<_> = repo
+            .space_documents(None, "   ", 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|document| document.document_id)
+            .collect();
+
+        assert_eq!(all, vec!["general_new", "general_other", "general_old"]);
+    }
+
+    /// A blank space id means General, matching the conversation default.
+    #[tokio::test]
+    async fn a_blank_space_is_general() {
+        let repo = picker_fixture().await;
+
+        assert_eq!(
+            repo.space_documents(Some("   "), "halvorsen", 8)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    /// A document with no extracted text cannot be evidence, so offering it
+    /// would pin a chat to a file it can never cite.
+    #[tokio::test]
+    async fn a_document_without_searchable_text_is_never_offered() {
+        let repo = picker_fixture().await;
+
+        assert!(repo
+            .space_documents(None, "scan", 8)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_limit_is_honoured_and_clamped() {
+        let repo = picker_fixture().await;
+
+        assert_eq!(repo.space_documents(None, "", 1).await.unwrap().len(), 1);
+        // 5,000 asked for, 50 the most the command will ever return, 3 that
+        // exist.
+        assert_eq!(
+            repo.space_documents(None, "", 5_000).await.unwrap().len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_space_offers_nothing() {
+        let repo = picker_fixture().await;
+
+        assert!(repo
+            .space_documents(Some("no-such-space"), "", 8)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

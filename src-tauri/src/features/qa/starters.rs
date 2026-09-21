@@ -11,17 +11,30 @@
 //! that question is not answerable and pretends to knowledge nothing has read.
 //! The frontend renders one plain line instead.
 
+use std::collections::{HashMap, HashSet};
+
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
+use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::starters_dto::{ChatStarterDto, ChatStartersDto};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use crate::shared::error::{AppError, Result};
 
 /// Bump when the fingerprint algorithm changes so old rows auto-invalidate.
-const FINGERPRINT_VERSION: &str = "starters-v1";
+const FINGERPRINT_VERSION: &str = "starters-v2";
+
+/// The space an unscoped request belongs to, matching the conversation default.
+const DEFAULT_SPACE_ID: &str = "space_general";
+
+/// How many document ids one statement binds at a time.
+///
+/// SQLite's oldest variable ceiling is 999 and a General space in a real vault
+/// is far larger than that, so the id list is bound in batches and the
+/// aggregates are merged here rather than in SQL.
+const ID_BIND_BATCH: usize = 900;
 
 /// Hard ceiling on a starter question, enforced after generation.
 const MAX_QUESTION_CHARS: usize = 90;
@@ -41,9 +54,11 @@ const CACHE_KEEP_ROWS: i64 = 8;
 /// changed shape, so the questions are regenerated; an unchanged one means
 /// zero LLM calls and a stable empty state.
 ///
-/// It also owns the two aggregate reads the starter prompt needs (type mix and
-/// the newest `indexed_at`), because no document port exposes a `GROUP BY
-/// file_type`. Keeping them here keeps SQL out of the command implementation.
+/// It also owns the aggregate reads the starter prompt needs (type mix, recent
+/// titles and the newest `indexed_at`), because no document port exposes a
+/// `GROUP BY file_type`. Keeping them here keeps SQL out of the command
+/// implementation. Each of them is scoped to a caller-supplied set of document
+/// ids: the prompt may only ever see the documents the chat's space can see.
 pub struct ChatStarterCacheRepository {
     pool: SqlitePool,
 }
@@ -127,52 +142,127 @@ impl ChatStarterCacheRepository {
         Ok(())
     }
 
-    /// `(file_type, count)` over the whole corpus, most common first.
+    /// `(file_type, count)` over `allowed_ids`, most common first.
     ///
     /// Documents with no `file_type` are reported as `"other"` so the mix always
     /// sums to the document count.
-    pub async fn type_mix(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT COALESCE(NULLIF(TRIM(LOWER(file_type)), ''), 'other') AS kind,
-                   COUNT(*) AS n
-            FROM documents
-            GROUP BY kind
-            ORDER BY n DESC, kind ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to read corpus type mix: {}", e)))?;
+    pub async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>> {
+        let mut totals: HashMap<String, i64> = HashMap::new();
+        for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT COALESCE(NULLIF(TRIM(LOWER(file_type)), ''), 'other') AS kind, COUNT(*) AS n FROM documents WHERE id IN (",
+            );
+            let mut separated = query.separated(", ");
+            for id in batch {
+                separated.push_bind(*id);
+            }
+            query.push(") GROUP BY kind");
 
-        let mut mix = Vec::with_capacity(rows.len());
-        for row in rows {
-            let kind: String = row
-                .try_get("kind")
-                .map_err(|e| AppError::Database(format!("Malformed type mix row: {}", e)))?;
-            let n: i64 = row
-                .try_get("n")
-                .map_err(|e| AppError::Database(format!("Malformed type mix row: {}", e)))?;
-            mix.push((kind, n));
+            let rows: Vec<(String, i64)> = query
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to read corpus type mix: {}", e))
+                })?;
+            for (kind, n) in rows {
+                *totals.entry(kind).or_default() += n;
+            }
         }
+
+        let mut mix: Vec<(String, i64)> = totals.into_iter().collect();
+        mix.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         Ok(mix)
     }
 
-    /// Newest `indexed_at` in the corpus, or an empty string when there is none.
-    pub async fn latest_indexed_at(&self) -> Result<String> {
-        let value: Option<String> = sqlx::query_scalar("SELECT MAX(indexed_at) FROM documents")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to read latest indexed_at: {}", e)))?;
-        Ok(value.unwrap_or_default())
+    /// The newest document titles in `allowed_ids`, newest `indexed_at` first.
+    ///
+    /// Blank names are dropped in SQL so a batch never spends its limit on
+    /// titles the prompt would discard anyway.
+    pub async fn recent_titles(
+        &self,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let mut rows: Vec<(String, String, String)> = Vec::new();
+        for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT indexed_at, id, file_name FROM documents WHERE TRIM(file_name) <> '' AND id IN (",
+            );
+            let mut separated = query.separated(", ");
+            for id in batch {
+                separated.push_bind(*id);
+            }
+            query
+                .push(") ORDER BY indexed_at DESC, id ASC LIMIT ")
+                .push_bind(limit as i64);
+
+            let batch_rows: Vec<(String, String, String)> = query
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to read recent document titles: {}", e))
+                })?;
+            rows.extend(batch_rows);
+        }
+
+        // Each batch is ordered on its own, so the batches are merged here.
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        Ok(rows
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, file_name)| file_name)
+            .collect())
+    }
+
+    /// Newest `indexed_at` in `allowed_ids`, or an empty string when there is none.
+    pub async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String> {
+        let mut latest = String::new();
+        for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
+            let mut query =
+                QueryBuilder::<Sqlite>::new("SELECT MAX(indexed_at) FROM documents WHERE id IN (");
+            let mut separated = query.separated(", ");
+            for id in batch {
+                separated.push_bind(*id);
+            }
+            query.push(")");
+
+            let value: Option<String> = query
+                .build_query_scalar()
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to read latest indexed_at: {}", e))
+                })?;
+            if let Some(value) = value {
+                if value > latest {
+                    latest = value;
+                }
+            }
+        }
+        Ok(latest)
     }
 }
 
-/// Hash of (document count, latest `indexed_at`, sorted type mix).
+/// A stable bind order, so the same scope always produces the same statements.
+fn sorted_ids(allowed_ids: &HashSet<String>) -> Vec<&String> {
+    let mut ids: Vec<&String> = allowed_ids.iter().collect();
+    ids.sort();
+    ids
+}
+
+/// Hash of (space, document count, latest `indexed_at`, sorted type mix).
+///
+/// The space is part of the key because two spaces can hold the same *shape* of
+/// corpus while holding entirely different documents: without it one cached row
+/// was shown in every space, so a Movies chat opened with questions drawn from
+/// a patent library filed elsewhere.
 ///
 /// Order-independent in the type mix: the caller may hand it any ordering and
 /// get the same hash, so a `GROUP BY` reshuffle never costs an LLM call.
 pub fn corpus_fingerprint(
+    space_id: &str,
     document_count: i64,
     latest_indexed_at: &str,
     type_mix: &[(String, i64)],
@@ -182,6 +272,8 @@ pub fn corpus_fingerprint(
 
     let mut hasher = Sha256::new();
     hasher.update(FINGERPRINT_VERSION.as_bytes());
+    hasher.update(b"|");
+    hasher.update(space_id.as_bytes());
     hasher.update(b"|");
     hasher.update(document_count.to_string().as_bytes());
     hasher.update(b"|");
@@ -281,15 +373,31 @@ Rules:\n\
 }
 
 /// Build the starter payload, using the cache when the corpus has not changed shape.
+///
+/// `space_id` is the space of the chat the questions are for; a blank one means
+/// General. Everything the prompt and the fingerprint see is drawn from that
+/// space's documents. Reading the whole vault instead was the bug: a chat in a
+/// Movies space suggested questions about documents it is not allowed to read.
 pub async fn generate_chat_starters_impl(
     container: &Container,
+    space_id: Option<String>,
 ) -> std::result::Result<ChatStartersDto, ApiError> {
     let now = Utc::now().to_rfc3339();
-    let documents = container.document_repository();
+    let space_id = space_id
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| DEFAULT_SPACE_ID.to_string());
 
-    let document_count = documents.count_documents().await.map_err(ApiError::from)?;
+    // The same allow-list every retrieval path uses, so the questions can only
+    // be about documents this chat could actually answer from.
+    let allowed_ids = ConversationRepository::new(container.db_pool().clone())
+        .space_document_scope(&space_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let document_count = allowed_ids.len() as i64;
     if document_count == 0 {
-        // Nothing indexed: no LLM call, no cache row, no invented questions.
+        // Nothing readable here: no LLM call, no cache row, no invented questions.
         return Ok(ChatStartersDto {
             fingerprint: "empty".to_string(),
             generated_at: now,
@@ -299,9 +407,12 @@ pub async fn generate_chat_starters_impl(
     }
 
     let cache = ChatStarterCacheRepository::new(container.db_pool().clone());
-    let type_mix = cache.type_mix().await.map_err(ApiError::from)?;
-    let latest_indexed_at = cache.latest_indexed_at().await.map_err(ApiError::from)?;
-    let fingerprint = corpus_fingerprint(document_count, &latest_indexed_at, &type_mix);
+    let type_mix = cache.type_mix(&allowed_ids).await.map_err(ApiError::from)?;
+    let latest_indexed_at = cache
+        .latest_indexed_at(&allowed_ids)
+        .await
+        .map_err(ApiError::from)?;
+    let fingerprint = corpus_fingerprint(&space_id, document_count, &latest_indexed_at, &type_mix);
 
     if let Ok(Some((starters_json, created_at))) = cache.get(&fingerprint).await {
         if let Ok(starters) = serde_json::from_str::<Vec<ChatStarterDto>>(&starters_json) {
@@ -314,15 +425,10 @@ pub async fn generate_chat_starters_impl(
         }
     }
 
-    let recent = documents
-        .find_all_paginated(RECENT_TITLE_LIMIT)
+    let titles = cache
+        .recent_titles(&allowed_ids, RECENT_TITLE_LIMIT)
         .await
         .unwrap_or_default();
-    let titles: Vec<String> = recent
-        .iter()
-        .map(|doc| doc.file_name().to_string())
-        .filter(|title| !title.trim().is_empty())
-        .collect();
 
     let llm = match container.get_or_load_utility_llm().await {
         Ok(Some(util)) => Some(util),
@@ -376,11 +482,13 @@ mod tests {
     #[test]
     fn test_corpus_fingerprint_is_stable_and_order_independent() {
         let a = corpus_fingerprint(
+            "space_general",
             412,
             "2026-09-01T00:00:00Z",
             &[("pdf".to_string(), 412), ("md".to_string(), 88)],
         );
         let b = corpus_fingerprint(
+            "space_general",
             412,
             "2026-09-01T00:00:00Z",
             &[("md".to_string(), 88), ("pdf".to_string(), 412)],
@@ -388,6 +496,7 @@ mod tests {
         assert_eq!(a, b, "type-mix ordering must not change the fingerprint");
 
         let same_again = corpus_fingerprint(
+            "space_general",
             412,
             "2026-09-01T00:00:00Z",
             &[("pdf".to_string(), 412), ("md".to_string(), 88)],
@@ -395,6 +504,7 @@ mod tests {
         assert_eq!(a, same_again, "same inputs must hash identically");
 
         let changed_count = corpus_fingerprint(
+            "space_general",
             413,
             "2026-09-01T00:00:00Z",
             &[("pdf".to_string(), 412), ("md".to_string(), 88)],
@@ -402,11 +512,24 @@ mod tests {
         assert_ne!(a, changed_count, "a changed count must change the hash");
 
         let changed_indexed_at = corpus_fingerprint(
+            "space_general",
             412,
             "2026-09-02T00:00:00Z",
             &[("pdf".to_string(), 412), ("md".to_string(), 88)],
         );
         assert_ne!(a, changed_indexed_at);
+    }
+
+    /// The reported bug: one cached row was shown in every space, so a Movies
+    /// chat opened with questions about a patent library. Identical shape is
+    /// exactly the case where that happened.
+    #[test]
+    fn test_two_spaces_of_the_same_shape_never_share_a_cache_row() {
+        let mix = [("pdf".to_string(), 412), ("md".to_string(), 88)];
+        let movies = corpus_fingerprint("movies", 500, "2026-09-01T00:00:00Z", &mix);
+        let patents = corpus_fingerprint("patents", 500, "2026-09-01T00:00:00Z", &mix);
+
+        assert_ne!(movies, patents, "the space must be part of the cache key");
     }
 
     #[tokio::test]
@@ -533,13 +656,18 @@ mod tests {
         assert_eq!(rows, 0);
     }
 
+    /// Everything the prompt sees is drawn from the space's documents, so a
+    /// document filed in another space changes neither the mix, nor the newest
+    /// timestamp, nor the titles the model is shown.
     #[tokio::test]
-    async fn test_type_mix_and_latest_indexed_at() {
+    async fn test_the_aggregate_reads_see_only_the_allowed_documents() {
         let repo = fresh_repository().await;
         for (i, (kind, indexed)) in [
             ("pdf", "2026-09-01T00:00:00Z"),
             ("pdf", "2026-09-03T00:00:00Z"),
             ("md", "2026-09-02T00:00:00Z"),
+            // Filed into another space: invisible to everything below.
+            ("epub", "2026-09-09T00:00:00Z"),
         ]
         .iter()
         .enumerate()
@@ -563,13 +691,39 @@ mod tests {
             .unwrap();
         }
 
-        let mix = repo.type_mix().await.unwrap();
-        assert_eq!(mix[0], ("pdf".to_string(), 2));
-        assert_eq!(mix[1], ("md".to_string(), 1));
+        let allowed: HashSet<String> = ["doc-0", "doc-1", "doc-2"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+
+        let mix = repo.type_mix(&allowed).await.unwrap();
+        assert_eq!(mix, [("pdf".to_string(), 2), ("md".to_string(), 1)]);
 
         assert_eq!(
-            repo.latest_indexed_at().await.unwrap(),
+            repo.latest_indexed_at(&allowed).await.unwrap(),
             "2026-09-03T00:00:00Z"
         );
+
+        // Newest first, and the out-of-space document is not among them.
+        assert_eq!(
+            repo.recent_titles(&allowed, RECENT_TITLE_LIMIT)
+                .await
+                .unwrap(),
+            ["doc-1.pdf", "doc-2.md", "doc-0.pdf"]
+        );
+        assert_eq!(
+            repo.recent_titles(&allowed, 1).await.unwrap(),
+            ["doc-1.pdf"]
+        );
+
+        // And an empty scope reads nothing at all.
+        let empty = HashSet::new();
+        assert!(repo.type_mix(&empty).await.unwrap().is_empty());
+        assert!(repo.latest_indexed_at(&empty).await.unwrap().is_empty());
+        assert!(repo
+            .recent_titles(&empty, RECENT_TITLE_LIMIT)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

@@ -4,38 +4,45 @@
 
 @layer base {
   :root {
-    /* Surfaces — light mode (§2.1) */
-    --bg: 40 20% 96%;
-    --surface: 40 100% 98%;
-    --surface-raised: 40 18% 94%;
+    color-scheme: light;
 
-    /* Borders — light mode (§2.2) */
-    --border-subtle: 35 14% 89%;
-    --border-default: 35 12% 82%;
-    --border-strong: 220 14% 72%;
+    /* Surfaces — light mode (§2.1). A ladder, dimmest first: the chrome
+       recedes, the page is the brightest thing in the window. */
+    --chrome: 38 18% 92.5%;
+    --bg: 40 26% 96.5%;
+    --surface: 42 45% 98.6%;
+    --surface-raised: 38 16% 92.5%;
+    --surface-overlay: 40 40% 99.4%;
+    --surface-sunken: 38 16% 94%;
+
+    /* Borders — ink at low alpha, so a hairline reads the same on every
+       rung of the ladder (§2.2) */
+    --border-subtle: 30 18% 18% / 0.09;
+    --border-default: 30 18% 18% / 0.15;
+    --border-strong: 30 14% 20% / 0.3;
 
     /* Text — light mode (§2.3) */
-    --text-primary: 220 30% 10%;
-    --text-secondary: 220 15% 30%;
-    --text-tertiary: 220 12% 44%;
-    --text-muted: 220 8% 46%;
-    --text-disabled: 220 10% 70%;
+    --text-primary: 30 12% 10%;
+    --text-secondary: 30 8% 26%;
+    --text-tertiary: 30 6% 40%;
+    --text-muted: 30 5% 41%;
+    --text-disabled: 30 6% 68%;
 
     /* Accent — light mode (§2.4) */
-    --accent: 12 48% 40%;
-    --accent-hover: 12 48% 33%;
-    --accent-muted: 20 45% 91%;
-    --accent-fg: 40 30% 97%;
+    --accent: 12 52% 40%;
+    --accent-hover: 12 54% 33%;
+    --accent-muted: 18 52% 92%;
+    --accent-fg: 40 30% 98%;
 
-    --action: 216 28% 21%;
-    --action-hover: 217 23% 31%;
-    --action-fg: 35 100% 95%;
+    --action: 30 10% 12%;
+    --action-hover: 30 8% 22%;
+    --action-fg: 40 40% 97%;
 
     /* Semantic state — light mode (§2.5) */
     --success-muted: 152 45% 93%;
-    --success-fg: 152 62% 30%;
+    --success-fg: 152 62% 28%;
     --success: 152 66% 37%;
-    --warning-muted: 28 85% 90%;
+    --warning-muted: 34 85% 90%;
     --warning-fg: 28 88% 29%;
     --warning: 28 92% 40%;
     --danger-muted: 0 72% 95%;
@@ -43,18 +50,25 @@
     --danger: 0 63% 47%;
 
     /* Utility — light mode */
-    --ring: 12 48% 40%;
-    --overlay: 222 17% 9% / 0.45;
+    --ring: 12 52% 40%;
+    --overlay: 30 20% 8% / 0.32;
+    --highlight: 42 95% 62% / 0.38;
 
-    /* Shadows — light mode (§6) */
+    /* Shadows — light mode (§6). Always two layers: contact + ambient. */
     --shadow-none: none;
-    --shadow-sm: 0 1px 2px rgba(15, 20, 30, 0.06), 0 1px 1px rgba(15, 20, 30, 0.04);
-    --shadow-md: 0 8px 24px rgba(15, 20, 30, 0.12), 0 2px 6px rgba(15, 20, 30, 0.06);
+    --shadow-sm: 0 1px 1px rgb(40 28 16 / 0.04), 0 1px 3px rgb(40 28 16 / 0.06);
+    --shadow-md: 0 1px 2px rgb(40 28 16 / 0.05), 0 6px 16px -4px rgb(40 28 16 / 0.1), 0 16px 32px -12px rgb(40 28 16 / 0.08);
+    --shadow-lg: 0 0 0 1px rgb(40 28 16 / 0.07), 0 2px 4px rgb(40 28 16 / 0.05), 0 12px 28px -6px rgb(40 28 16 / 0.16), 0 32px 64px -16px rgb(40 28 16 / 0.18);
+    --shadow-sheet: 0 0 0 1px rgb(40 28 16 / 0.07), 0 1px 2px rgb(40 28 16 / 0.04), 0 8px 24px -12px rgb(40 28 16 / 0.1);
+    --shadow-control: 0 1px 1px rgb(40 28 16 / 0.05), inset 0 1px 0 rgb(255 255 255 / 0.6);
+    --shadow-action: 0 1px 2px rgb(20 14 8 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.14);
 
-    /* Radius — single scale (§5) */
-    --radius-sm: 4px;
+    /* Radius — concentric: a child is its parent minus the padding (§5) */
+    --radius-xs: 3px;
+    --radius-sm: 5px;
     --radius-md: 8px;
     --radius-lg: 12px;
+    --radius-xl: 16px;
     --radius-full: 9999px;
     --radius: 8px;
 
@@ -64,83 +78,109 @@
     --space-px: 1px;
 
     /* Motion — durations (§7.1) */
+    --duration-instant: 80ms;
     --duration-fast: 120ms;
     --duration-base: 180ms;
     --duration-slow: 280ms;
 
-    /* Motion — easings (§7.2) */
-    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    /* Motion — easings (§7.2). `out` for anything arriving, `in-out` for
+       things that move while staying on screen, `drawer` for panes. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
     --ease-linear: linear;
 
-    /* Typography — stacks (§3.1) */
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --font-mono: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
-    --font-serif: 'Source Serif 4', 'Charter', 'Iowan Old Style', 'Apple Garamond', Georgia, Cambria, 'Times New Roman', serif;
+    /* Typography — stacks (§3.1). Self-hosted: the app is offline-first
+       and its CSP refuses remote stylesheets. */
+    --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
+    --font-serif: 'Source Serif 4 Variable', 'Source Serif 4', 'Charter', 'Iowan Old Style', 'Apple Garamond', Georgia, Cambria, 'Times New Roman', serif;
+
+    /* Window chrome: room for the macOS traffic lights under an overlay
+       title bar. Zero everywhere else. */
+    --titlebar-inset: 0px;
 
     /* Chart palette — stubbed pending charting phase (§10) */
-    --chart-1: 12 48% 40%;
+    --chart-1: 12 52% 40%;
     --chart-2: 152 66% 37%;
     --chart-3: 28 92% 40%;
     --chart-4: 0 63% 47%;
-    --chart-5: 220 15% 30%;
+    --chart-5: 30 8% 26%;
   }
 
   /* Dark mode — applied via both `.dark` class and `[data-theme="dark"]` attribute (§9.2) */
   .dark,
   [data-theme="dark"] {
-    /* Surfaces — dark mode (§1.1) */
-    --bg: 220 10% 13%;
-    --surface: 220 9% 16%;
-    --surface-raised: 220 9% 20%;
+    color-scheme: dark;
 
-    /* Borders — dark mode (§1.2) */
-    --border-subtle: 220 7% 25%;
-    --border-default: 220 7% 30%;
-    --border-strong: 220 7% 40%;
+    /* Surfaces — dark mode (§1.1). Elevation is lightness: each rung up is
+       a little lighter, and a little warm so copper belongs to it. */
+    --chrome: 30 6% 7.5%;
+    --bg: 30 5% 10.5%;
+    --surface: 30 5% 13%;
+    --surface-raised: 30 5% 16.5%;
+    --surface-overlay: 30 5% 15.5%;
+    --surface-sunken: 30 6% 8.5%;
+
+    /* Borders — paper at low alpha (§1.2) */
+    --border-subtle: 36 30% 92% / 0.07;
+    --border-default: 36 30% 92% / 0.12;
+    --border-strong: 36 24% 90% / 0.24;
 
     /* Text — dark mode (§1.3) */
-    --text-primary: 36 16% 88%;
-    --text-secondary: 35 9% 76%;
-    --text-tertiary: 220 6% 66%;
-    --text-muted: 220 6% 66%;
-    --text-disabled: 220 10% 32%;
+    --text-primary: 36 18% 91%;
+    --text-secondary: 35 9% 74%;
+    --text-tertiary: 32 6% 58%;
+    --text-muted: 32 5% 57%;
+    --text-disabled: 30 5% 34%;
 
     /* Accent — dark mode (§1.4) */
-    --accent: 23 45% 73%;
-    --accent-hover: 23 48% 80%;
-    --accent-muted: 24 12% 23%;
-    --accent-fg: 220 10% 13%;
+    --accent: 22 58% 72%;
+    --accent-hover: 22 62% 79%;
+    --accent-muted: 22 28% 18%;
+    --accent-fg: 30 8% 9%;
 
-    --action: 27 28% 64%;
-    --action-hover: 27 34% 71%;
-    --action-fg: 220 10% 13%;
+    --action: 36 22% 90%;
+    --action-hover: 0 0% 100%;
+    --action-fg: 30 8% 9%;
 
     /* Semantic state — dark mode (§1.5) */
-    --success-muted: 152 40% 18%;
-    --success-fg: 152 60% 70%;
-    --success: 152 60% 50%;
-    --warning-muted: 28 45% 20%;
-    --warning-fg: 28 85% 68%;
-    --warning: 28 85% 55%;
-    --danger-muted: 0 45% 22%;
-    --danger-fg: 0 75% 72%;
-    --danger: 0 72% 55%;
+    --success-muted: 152 36% 15%;
+    --success-fg: 152 55% 68%;
+    --success: 152 55% 48%;
+    --warning-muted: 32 45% 16%;
+    --warning-fg: 32 85% 68%;
+    --warning: 32 85% 55%;
+    --danger-muted: 0 42% 18%;
+    --danger-fg: 0 78% 74%;
+    --danger: 0 68% 65%;
 
     /* Utility — dark mode */
-    --ring: 23 45% 73%;
-    --overlay: 222 40% 3% / 0.6;
+    --ring: 22 58% 72%;
+    --overlay: 30 20% 3% / 0.62;
+    --highlight: 40 90% 60% / 0.26;
 
-    /* Shadows — dark mode (§6) */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25), 0 1px 1px rgba(0, 0, 0, 0.18);
-    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.30);
+    /* Shadows — dark mode (§6). A lit top edge does what a drop shadow
+       cannot on a dark ground. */
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-md: inset 0 1px 0 rgb(255 245 230 / 0.04), 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -6px rgb(0 0 0 / 0.5);
+    --shadow-lg: 0 0 0 1px rgb(255 245 230 / 0.08), inset 0 1px 0 rgb(255 245 230 / 0.05), 0 2px 4px rgb(0 0 0 / 0.4), 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 40px 80px -20px rgb(0 0 0 / 0.5);
+    --shadow-sheet: 0 0 0 1px rgb(255 245 230 / 0.06), inset 0 1px 0 rgb(255 245 230 / 0.03), 0 8px 24px -8px rgb(0 0 0 / 0.5);
+    --shadow-control: inset 0 1px 0 rgb(255 245 230 / 0.05), 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-action: 0 1px 2px rgb(0 0 0 / 0.5), inset 0 -1px 0 rgb(0 0 0 / 0.12);
 
     /* Chart palette — dark mode stub */
-    --chart-1: 23 45% 73%;
-    --chart-2: 152 60% 50%;
-    --chart-3: 28 85% 55%;
-    --chart-4: 0 72% 55%;
-    --chart-5: 220 12% 76%;
+    --chart-1: 22 58% 72%;
+    --chart-2: 152 55% 48%;
+    --chart-3: 32 85% 55%;
+    --chart-4: 0 68% 56%;
+    --chart-5: 35 9% 74%;
+  }
+
+  /* macOS draws its traffic lights over the top-left of the window. */
+  [data-platform="macos"] {
+    --titlebar-inset: 28px;
   }
 }
 
@@ -152,13 +192,18 @@
   html,
   body {
     margin: 0;
-    background-color: hsl(var(--bg));
+    background-color: hsl(var(--chrome));
     color: hsl(var(--text-primary));
     accent-color: hsl(var(--accent));
     font-family: var(--font-sans);
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'calt';
+    font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* A desktop app, not a page: no rubber-banding, no text cursor on chrome. */
+    overscroll-behavior: none;
+    cursor: default;
   }
 
   #root {
@@ -168,9 +213,20 @@
     box-sizing: border-box;
   }
 
+  h1, h2, h3, h4 { text-wrap: balance; }
+  p, li, blockquote, figcaption { text-wrap: pretty; }
+
+  /* Labels and controls are not selectable; content is. */
+  button, label, nav, summary, [role="tab"], [role="menuitem"], [role="option"], kbd {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  button:not(:disabled), a[href], summary, [role="tab"], [role="menuitem"], [role="option"], label[for] { cursor: pointer; }
+  input, textarea, [contenteditable="true"] { cursor: text; }
+
   /* Focus — single treatment, everywhere (§8) */
   :focus-visible {
-    outline: 2px solid hsl(var(--ring));
+    outline: 2px solid hsl(var(--ring) / 0.9);
     outline-offset: 2px;
     box-shadow: none;
   }
@@ -204,9 +260,179 @@
 }
 
 @layer base {
-  ::selection { background: hsl(var(--accent) / 0.18); }
-  * { scrollbar-width: thin; scrollbar-color: hsl(var(--border-strong) / 0.55) transparent; }
+  ::selection { background: hsl(var(--accent) / 0.22); }
+  * { scrollbar-width: thin; scrollbar-color: hsl(var(--text-primary) / 0.16) transparent; }
   button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
+  select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 26px !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    cursor: pointer;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; }
+  mark { background: hsl(var(--highlight)); color: inherit; border-radius: 2px; padding: 0 1px; }
+}
+
+/* Floating surfaces. They grow out of whatever opened them (Radix supplies
+   the origin) and leave faster than they arrive. Dialogs centre with the
+   individual `translate` property so these keyframes own `scale` alone. */
+@layer components {
+  @keyframes surface-in { from { opacity: 0; scale: 0.96; } }
+  @keyframes surface-out { to { opacity: 0; scale: 0.98; } }
+  @keyframes overlay-in { from { opacity: 0; } }
+  @keyframes overlay-out { to { opacity: 0; } }
+  @keyframes sheet-in { from { opacity: 0; translate: 0 6px; } }
+
+  .surface-pop {
+    transform-origin: var(--radix-popover-content-transform-origin, var(--radix-dropdown-menu-content-transform-origin, var(--radix-select-content-transform-origin, var(--radix-tooltip-content-transform-origin, center))));
+  }
+  .surface-pop[data-state='open'],
+  .surface-pop[data-state='delayed-open'],
+  .surface-pop[data-state='instant-open'] { animation: surface-in 150ms var(--ease-out); }
+  .surface-pop[data-state='instant-open'] { animation-duration: 0ms; }
+  .surface-pop[data-state='closed'] { animation: surface-out 90ms var(--ease-in) forwards; }
+
+  .overlay-fade[data-state='open'] { animation: overlay-in 180ms var(--ease-out); }
+  .overlay-fade[data-state='closed'] { animation: overlay-out 120ms var(--ease-in) forwards; }
+
+  /* Citation chip. The text node still reads `[3]` (copy and export keep it);
+     the brackets are collapsed and the number redrawn as a chip. */
+  .cite-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    margin: 0 1.5px;
+    padding: 0 4px;
+    font-size: 0;
+    vertical-align: 0.18em;
+    border-radius: 5px;
+    background: hsl(var(--accent) / 0.14);
+    color: hsl(var(--accent));
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+  }
+  .cite-chip::after {
+    content: attr(data-cite);
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-style: normal;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .cite-chip:hover { background: hsl(var(--accent)); color: hsl(var(--accent-fg)); }
+  .cite-chip.is-lit { background: hsl(var(--accent)); color: hsl(var(--accent-fg)); }
+
+  /* A checked sentence. Only doubt is drawn at rest: a backed sentence looks
+     like prose until the pointer asks about it. */
+  .claim { border-radius: 3px; transition: background-color var(--duration-fast) var(--ease-out); }
+  .claim.is-lit { background: hsl(var(--text-primary) / 0.06); }
+  .claim-unsupported {
+    text-decoration: underline dotted hsl(var(--warning-fg) / 0.85);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 5px;
+  }
+  .claim-unsupported.is-lit { background: hsl(var(--warning-muted) / 0.55); }
+  .claim-contradicted {
+    text-decoration: underline wavy hsl(var(--danger-fg) / 0.9);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 5px;
+    background: hsl(var(--danger-muted) / 0.35);
+  }
+  .claim-contradicted.is-lit { background: hsl(var(--danger-muted) / 0.7); }
+
+  /* The chat thread: a page, and where the panel is wide enough, a margin
+     beside it that holds each answer's evidence. The margin exists only once
+     there is a thread, so an empty chat stays centred. */
+  .chat-panel { container: chat-panel / inline-size; }
+  .chat-column { max-width: clamp(680px, 72vw, 900px); }
+  .evidence-margin { display: none; }
+  .evidence-margin-notes {
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+    padding-left: 10px;
+    border-left: 1px solid hsl(var(--border-subtle));
+    scrollbar-width: none;
+  }
+  .evidence-note {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    text-align: left;
+    border-radius: 8px;
+    transition: background-color 150ms var(--ease-out);
+  }
+  .evidence-note:hover,
+  .evidence-note:focus-visible,
+  .evidence-note[data-active] { background: hsl(var(--text-primary) / 0.055); outline: none; }
+  .evidence-note-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    flex-shrink: 0;
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    border-radius: 5px;
+    background: hsl(var(--accent) / 0.14);
+    color: hsl(var(--accent));
+    transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+  }
+  .evidence-note:hover .evidence-note-number,
+  .evidence-note[data-active] .evidence-note-number { background: hsl(var(--accent)); color: hsl(var(--accent-fg)); }
+
+  @container chat-panel (min-width: 1100px) {
+    .chat-panel[data-thread] .chat-column { max-width: 1180px; }
+    .chat-panel[data-thread] .chat-turn-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 272px;
+      column-gap: 32px;
+    }
+    .chat-panel[data-thread] .chat-beside-margin { padding-right: 328px; }
+    .chat-panel[data-thread] .evidence-margin { display: block; }
+    .chat-panel[data-thread] .chat-turn:has(.evidence-margin) .evidence-inline { display: none; }
+  }
+
+  /* Keyboard hint. One look everywhere a shortcut is shown. */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    color: hsl(var(--text-tertiary));
+    background: hsl(var(--text-primary) / 0.06);
+    border-radius: 4px;
+    box-shadow: inset 0 -1px 0 hsl(var(--text-primary) / 0.08);
+  }
+
+  /* Pressable things give a little under the pointer. */
+  .pressable { transition: scale var(--duration-fast) var(--ease-out); }
+  .pressable:active:not(:disabled) { scale: 0.97; }
+
+  /* Hover arrives at once and leaves gently, so sweeping a list never lags. */
+  .row-hover { transition: background-color 150ms var(--ease-out); }
+  @media (hover: hover) and (pointer: fine) {
+    .row-hover:hover { background-color: hsl(var(--text-primary) / 0.045); transition-duration: 0ms; }
+  }
 }
 
 @layer components {
@@ -215,42 +441,29 @@
 }
 
 
-/* The notebook: an ink spine, a cloth cover, and a warm sheet on the desk. */
-.lattice-navigation {
-  --text-primary: 40 30% 94%;
-  --text-muted: 224 17% 72%;
-  --text-tertiary: 224 15% 65%;
-  --surface-raised: 226 23% 22%;
-  --border-subtle: 226 20% 26%;
-  --accent: 24 88% 76%;
-  --accent-muted: 226 22% 26%;
-  background: #202738;
-  border-color: #202738;
-}
-.lattice-navigation button[aria-current="page"] { color: #ffcdab; background: #353c4e; }
+/* The notebook: a cloth cover and a warm sheet on the desk. */
 .journal-index { background: hsl(var(--bg)); }
-.notebook-cover {
-  position: relative;
-  color: #fff0df;
-  background: #a74b39;
-  box-shadow: inset 5px 0 0 #00000018, inset 7px 0 0 #ffffff12, 0 7px 15px #552b2014;
+/* The page sizes its own type: a narrow column (rail open, small window) gets a
+   smaller title and tighter margins without anyone passing a prop. */
+.journal-paper { container-type: inline-size; }
+@container (max-width: 700px) {
+  .journal-page-header h1 textarea { font-size: 30px; }
 }
-.notebook-cover::after {
-  content: '';
-  position: absolute;
-  width: 190px;
-  height: 190px;
-  right: -90px;
-  top: 20px;
-  border: 1px solid #ffd0af45;
-  border-radius: 50%;
-  box-shadow: 0 0 0 17px #ffd0af12, 0 0 0 34px #ffd0af12, 0 0 0 51px #ffd0af0c;
-  pointer-events: none;
+/* Replies read beside the page, so they are set a size down from it. */
+.journal-insight-body .tiptap-viewer { font-size: inherit; line-height: inherit; }
+.journal-insight-body .tiptap-viewer :is(h1, h2, h3) { font-size: 1.05em; margin-top: 1.2em; margin-bottom: 0.4em; }
+.journal-insight-body .tiptap-viewer table { font-size: 0.8em; }
+
+/* The same cloth, at picker size: spine shadow on the left, a lit top edge. */
+.notebook-swatch {
+  background-color: #a74b39;
+  box-shadow: inset 3px 0 0 #00000022, inset 4px 0 0 #ffffff14, inset 0 1px 0 #ffffff22, 0 1px 2px #00000030;
 }
+.dark .notebook-swatch { filter: saturate(0.75) brightness(0.82); }
 .journal-new-page { background: hsl(var(--action)); color: hsl(var(--action-fg)); }
 .journal-new-page:hover { background: hsl(var(--action-hover)); }
 .journal-desk {
-  background-color: #e9e6df;
+  background-color: hsl(var(--surface-sunken));
   background-image: radial-gradient(#94877925 .6px, transparent .6px);
   background-size: 6px 6px;
   padding: 28px 32px 0;
@@ -272,61 +485,24 @@
   border-left: 1px solid #b76c4f18;
   pointer-events: none;
 }
-.journal-date-number { color: #aa503d; }
-.journal-page-tag { border: 1px solid #b5aa9755; border-radius: 3px; padding: 5px 8px; white-space: nowrap; }
 .journal-writing-surface blockquote { border-left-color: #ac5941; font-style: italic; color: hsl(var(--text-secondary)); }
-/* Dark mode uses a shared charcoal scale rather than separate blue/black panels. */
-.dark .lattice-navigation {
-  --surface-raised: 220 10% 19%;
-  --border-subtle: 220 8% 23%;
-  --accent: 23 45% 73%;
-  background: #191c21;
-  border-color: #2c3036;
-}
-.dark .lattice-navigation button[aria-current="page"] { color: #e6c1a5; background: #30343b; }
-.dark .journal-index {
-  --bg: 220 10% 13%;
-  --surface: 220 10% 13%;
-  --surface-raised: 220 9% 18%;
-  --border-subtle: 220 8% 23%;
-  --text-muted: 220 7% 66%;
-  --text-tertiary: 220 7% 66%;
-  background: #1e2126;
-}
-.dark .journal-desk { background: #1b1e23; }
+/* Dark mode: the desk is the sunken rung, the page sits one above the canvas. */
+.dark .journal-index { background: hsl(var(--bg)); }
+.dark .journal-desk { background: hsl(var(--surface-sunken)); }
 .dark .journal-paper {
-  --surface: 220 9% 16%;
-  --text-primary: 36 16% 88%;
-  --text-secondary: 35 9% 76%;
-  --text-tertiary: 220 6% 66%;
-  --text-muted: 220 6% 66%;
-  --border-subtle: 220 7% 25%;
-  background: #25292f;
-  border-color: #31363d;
-  box-shadow: 0 10px 32px #00000018;
+  background: hsl(var(--surface));
+  border-color: hsl(var(--border-subtle));
+  box-shadow: var(--shadow-sheet);
 }
 .dark .journal-paper::before { border-color: #c69c7610; }
-.dark .journal-date-number { color: #c9a88e; }
-.dark .journal-page-tag { border-color: #414449; }
-.dark .notebook-cover {
-  color: #eddbcc;
-  background: #62483f;
-  box-shadow: inset 5px 0 0 #00000018, inset 7px 0 0 #ffffff08;
+@media (max-width: 1500px) {
+  .journal-desk { padding: 20px 20px 0; }
+  .journal-paper { padding-left: 40px; padding-right: 36px; }
 }
-.dark .notebook-cover::after { opacity: .45; }
-.dark .notebook-cover > div:last-child { border-color: #eddbcc26; }
-
 @media (max-width: 1100px) {
   .journal-desk { padding: 16px 16px 0; }
   .journal-paper { padding-left: 28px; padding-right: 24px; }
   .journal-paper::before { left: 12px; }
-}
-
-@media (max-height: 800px) {
-  .notebook-cover { padding-top: 16px; padding-bottom: 16px; }
-  .notebook-cover h2 { margin-top: 16px; font-size: 24px; }
-  .notebook-cover > div:last-child { margin-top: 16px; }
-  .journal-new-page { margin-top: 10px; margin-bottom: 10px; }
 }
 
 /* Reading surfaces share the journal's material and retain a visible workspace. */
@@ -354,12 +530,64 @@
 .source-reader--pane[data-state='closed'] { animation: reader-leave var(--duration-base) var(--ease-in); }
 .source-reader--focused { width: calc(100vw - 24px); }
 .source-reader--dialog { inset: 4vh 2vw; }
-.source-reader--pane:not(.source-reader--focused) .source-reader-body { flex-direction: column; }
-.source-reader--pane:not(.source-reader--focused) .source-reader-body > div { min-height: 160px; }
-.source-reader--pane .source-reader-body > aside {
+
+/* The reader docked as the chat's third pane. Same material as the overlay,
+   without the shadow and the rounded corners: it is part of the window now,
+   not a sheet lying on top of it. */
+.chat-reader-pane {
+  position: relative;
   display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  color: hsl(var(--text-primary));
+  background: hsl(var(--surface));
+  border-left: 1px solid hsl(var(--border-default));
+  outline: none;
+  animation: reader-arrive var(--duration-base) var(--ease-out);
 }
-.source-reader--pane:not(.source-reader--focused) .source-reader-body > aside {
+/* A dragged edge follows the pointer; every other width change eases. */
+.chat-reader-pane:not(.chat-reader-pane--dragging) {
+  transition: width var(--duration-slow) var(--ease-out);
+}
+/* The grab area is wider than the line it draws, so the edge is easy to catch. */
+.chat-reader-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.chat-reader-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.chat-reader-handle:hover::after,
+.chat-reader-handle:focus-visible::after,
+.chat-reader-pane--dragging .chat-reader-handle::after {
+  background: hsl(var(--accent) / 0.75);
+}
+
+/* Where the citation rail sits. Both narrow forms of the reader — the overlay
+   sheet and the docked pane — stack it under the document until the reader is
+   expanded; the full-screen dialog always has room for it beside. */
+.source-reader-body[data-rail] > aside { display: flex; }
+.source-reader-body[data-rail] > aside button { min-height: 28px; }
+.source-reader-body[data-rail='stacked'] { flex-direction: column; }
+.source-reader-body[data-rail='stacked'] > div { min-height: 160px; }
+.source-reader-body[data-rail='stacked'] > aside {
   width: auto;
   max-height: 210px;
   border-left: 0;
@@ -368,23 +596,40 @@
   gap: 10px;
   background: hsl(var(--bg));
 }
-.source-reader--pane:not(.source-reader--focused) .source-reader-body > aside blockquote {
+.source-reader-body[data-rail='stacked'] > aside blockquote {
   display: none;
 }
-.source-reader--pane:not(.source-reader--focused) .source-reader-body > aside > div:last-child {
+.source-reader-body[data-rail='stacked'] > aside > div:last-child {
   flex-direction: row;
   flex-wrap: wrap;
   gap: 16px;
   padding-top: 8px;
 }
-.source-reader--pane .source-reader-body > aside button { min-height: 28px; }
+/* A passage of a web article whose wording an answer's cited sentence matches.
+   The same accent pair the citation chip is lit with, at reading strength: the
+   marks are the page's own text, and a louder colour would read as the app
+   shouting over the article. */
+.source-reader-passage {
+  color: inherit;
+  background: hsl(var(--accent) / 0.13);
+  border-radius: 2px;
+  box-shadow: inset 2px 0 0 hsl(var(--accent) / 0.5);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.source-reader-passage.is-lit {
+  background: hsl(var(--accent) / 0.26);
+  box-shadow: inset 2px 0 0 hsl(var(--accent));
+}
+
 @keyframes reader-arrive { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes reader-leave { to { opacity: 0; transform: translateX(24px); } }
 @media (max-width: 760px) {
   .source-reader--pane { inset: 8px; width: auto; }
-  .source-reader--focused .source-reader-body { flex-direction: column; }
-  .source-reader--focused .source-reader-body > aside { width: auto; max-height: 180px; }
+  /* No room to set anything beside anything. */
+  .source-reader-body[data-rail='beside'] { flex-direction: column; }
+  .source-reader-body[data-rail='beside'] > aside { width: auto; max-height: 180px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .source-reader { animation: none !important; transition: none !important; }
+  .source-reader,
+  .chat-reader-pane { animation: none !important; transition: none !important; }
 }

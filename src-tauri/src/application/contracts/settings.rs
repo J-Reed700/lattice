@@ -360,6 +360,21 @@ pub struct LLMSettingsDto {
     /// User-defined tool integrations exposed to LLM tool calling.
     #[serde(default)]
     pub custom_tools: Vec<CustomToolSettingsDto>,
+
+    /// Staged rollout switch for bounded, source-backed conversation memory.
+    ///
+    /// Off by default. The deterministic guarantees — quote provenance,
+    /// ownership, atomicity, budget enforcement — hold whenever this runs, but
+    /// whether the model reliably *finds* every constraint is a measured
+    /// question, and the evaluation gate in the design document has to be met
+    /// for a model configuration before it becomes the default for that
+    /// configuration. This is a release default, not an allowlist: a user may
+    /// turn it on with any model, and the UI must not describe memory as
+    /// reliable while it is off or rebuilding.
+    ///
+    /// Design: `docs/design/2026-09-19-conversation-memory.md` §18.
+    #[serde(default)]
+    pub bounded_conversation_memory: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -1066,6 +1081,8 @@ impl Default for LLMSettingsDto {
             router: RouterSettingsDto::default(),
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
+            // Off until the evaluation gate is met for a model configuration.
+            bounded_conversation_memory: false,
         }
     }
 }

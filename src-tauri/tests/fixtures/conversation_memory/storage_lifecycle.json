@@ -1,0 +1,106 @@
+{
+  "family": "storage_lifecycle",
+  "capability": "Reload, fork and source deletion each leave exactly the memory the surviving sources support.",
+  "mode": "storage_lifecycle",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Standing rule: never overwrite the Ellesmere baseline file."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood: the Ellesmere baseline is never overwritten."
+    },
+    {
+      "role": "user",
+      "content": "The baseline lives at /data/ellesmere/baseline-2025.nc."
+    },
+    {
+      "role": "assistant",
+      "content": "Noted the baseline path."
+    },
+    {
+      "role": "user",
+      "content": "Compute the 2026 anomaly against that baseline."
+    },
+    {
+      "role": "assistant",
+      "content": "Computed a +0.42 anomaly against the 2025 baseline."
+    },
+    {
+      "role": "user",
+      "content": "Also record that the anomaly threshold for alerting is 0.50."
+    },
+    {
+      "role": "assistant",
+      "content": "Recorded an alerting threshold of 0.50."
+    },
+    {
+      "role": "user",
+      "content": "Summarise where we are."
+    },
+    {
+      "role": "assistant",
+      "content": "Baseline pinned, anomaly computed, threshold recorded."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Separately, remind me what a p95 latency figure actually measures."
+    },
+    {
+      "role": "assistant",
+      "content": "It is the value below which 95 percent of observations fall."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 1,
+    "required_active_quotes": [
+      "never overwrite the Ellesmere baseline file"
+    ],
+    "superseded_quotes": [],
+    "must_not_be_authoritative": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [
+      "write_file"
+    ],
+    "allowed_tools": [
+      "read_note"
+    ],
+    "questions": [
+      {
+        "ask": "May the Ellesmere baseline be overwritten with the 2026 file?",
+        "must_quote": [
+          "never",
+          "Ellesmere baseline"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear"
+    ]
+  },
+  "cycles": [
+    1,
+    3
+  ],
+  "reload_after_cycles": [
+    1,
+    3
+  ]
+}

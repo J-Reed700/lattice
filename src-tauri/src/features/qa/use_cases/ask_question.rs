@@ -56,11 +56,12 @@ fn validate_file_name(name: &str, document_id: &str) -> String {
     const MAX_FILE_NAME_LENGTH: usize = 255;
     if trimmed.len() > MAX_FILE_NAME_LENGTH {
         warn!(
-            "Document {} has oversized file_name: {} chars",
+            "Document {} has oversized file_name: {} bytes",
             document_id,
             trimmed.len()
         );
-        return format!("{}...", &trimmed[..MAX_FILE_NAME_LENGTH]);
+        let end = crate::shared::text_utils::floor_char_boundary(trimmed, MAX_FILE_NAME_LENGTH);
+        return format!("{}...", trimmed.get(..end).unwrap_or(trimmed));
     }
 
     trimmed.to_string()
@@ -924,6 +925,14 @@ mod tests {
     fn test_validate_file_name_empty() {
         let result = validate_file_name("", "test-doc");
         assert!(result.starts_with("document_"));
+    }
+
+    #[test]
+    fn an_oversized_multibyte_file_name_is_cut_on_a_character_boundary() {
+        // 254 ASCII bytes, then a three-byte character straddling the 255 limit.
+        let name = format!("{}時{}", "a".repeat(254), "b".repeat(20));
+        let result = validate_file_name(&name, "test-doc");
+        assert_eq!(result, format!("{}...", "a".repeat(254)));
     }
 
     #[test]

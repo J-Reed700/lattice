@@ -216,6 +216,10 @@ jobs:
             cp llama.cpp/build/bin/llama-server "staging/$FILE"
             chmod +x "staging/$FILE"
           fi
+          # Intel's linker does not always ad-hoc sign, unlike arm64's.
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            codesign --force --sign - "staging/$FILE"
+          fi
           {
             echo "file $FILE"
             echo "llama_cpp_tag ${{ needs.pin.outputs.llama_cpp_tag }}"

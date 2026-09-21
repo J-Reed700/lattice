@@ -45,7 +45,8 @@ serde_json = "1.0"
 sha2 = "0.10"
 
 [dependencies]
-tauri = { version = "=2.9.5", features = ["protocol-asset"] }
+tauri = { version = "=2.10.0", features = ["protocol-asset"] }
+tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
 tauri-plugin-shell = "2.0"
 tauri-plugin-dialog = "2.6.0"
 
@@ -187,10 +188,12 @@ base64 = "0.23"
 # handled by the bundled `llama-server`
 # sidecar (see binaries/, scripts/fetch-llama-binaries.sh, and the
 # llama-build.yml CI workflow) — no Rust-side LLM crate is needed.
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.10.2", features = ["metal"] }
 candle-nn = { version = "=0.10.2", features = ["metal"] }
 candle-transformers = { version = "=0.10.2", features = ["metal"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 # Drains the Objective-C objects Candle's Metal dispatches autorelease
 # (see shared/utils/autorelease.rs). Already in the tree through `metal`.
 objc = "0.2"
@@ -232,6 +235,7 @@ indexing = []     # Document processing and chunking
 qa = []           # Question-answering and LLM integration
 extraction = []   # Content extraction from documents
 test-utils = []   # Testing utilities and mocks
+desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only
 
 
 # Quarantine features for temporarily disabled tests

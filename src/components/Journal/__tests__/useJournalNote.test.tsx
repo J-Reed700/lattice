@@ -8,13 +8,14 @@ import { useJournalNote } from '../useJournalNote';
 const listWorkspaceNotes = vi.fn();
 const createWorkspaceNote = vi.fn();
 const updateWorkspaceNote = vi.fn();
+const deleteWorkspaceNote = vi.fn();
 
 vi.mock('@/lib/api', () => {
   const api = {
     listWorkspaceNotes: () => listWorkspaceNotes(),
     createWorkspaceNote: (...args: unknown[]) => createWorkspaceNote(...args),
     updateWorkspaceNote: (...args: unknown[]) => updateWorkspaceNote(...args),
-    deleteWorkspaceNote: (...args: unknown[]) => args,
+    deleteWorkspaceNote: (...args: unknown[]) => deleteWorkspaceNote(...args),
   };
   return { VaultAPI: api, default: api };
 });
@@ -65,6 +66,7 @@ describe('useJournalNote pages', () => {
       ok: true,
       data: { ...next, updatedAt: '2026-09-06T21:00:00.000Z' },
     }));
+    deleteWorkspaceNote.mockResolvedValue({ ok: true, data: null });
   });
 
   it('lists every page, most recently updated first', async () => {
@@ -188,6 +190,56 @@ describe('useJournalNote pages', () => {
     await act(async () => { expect(await result.current.createPage('New page')).toBeNull(); });
     expect(createWorkspaceNote).not.toHaveBeenCalled();
     expect(result.current.activeNote?.content).toBe('unsaved work');
+  });
+
+  it('opens the newest page rather than minting another when none carries the journal’s name', async () => {
+    // Renaming the journal, or its first page, used to leave no title match —
+    // and every such load added one more "Journal · …" page to the list.
+    listWorkspaceNotes.mockResolvedValue({ ok: true, data: { notes: [weekPage] } });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.activeNote?.id).toBe('note_week'));
+    expect(createWorkspaceNote).not.toHaveBeenCalled();
+  });
+
+  it('starts an empty journal with one untitled page', async () => {
+    listWorkspaceNotes.mockResolvedValue({ ok: true, data: { notes: [] } });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.activeNote?.id).toBe('note_new'));
+    expect(createWorkspaceNote).toHaveBeenCalledWith('Untitled page', 'space_1');
+  });
+
+  it('renames the open page through its own save, and another page directly', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.isLoadingNote).toBe(false));
+
+    await act(async () => { expect(await result.current.renamePage('note_journal', 'Field log')).toBe(true); });
+    expect(result.current.activeNote?.title).toBe('Field log');
+    expect(updateWorkspaceNote).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'note_journal', title: 'Field log' }));
+
+    await act(async () => { expect(await result.current.renamePage('note_week', 'Week one')).toBe(true); });
+    expect(updateWorkspaceNote).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'note_week', title: 'Week one' }));
+    expect(result.current.pages.find((page) => page.id === 'note_week')?.title).toBe('Week one');
+    // Renaming a page that is not open must not pull the reader onto it.
+    expect(result.current.activeNote?.id).toBe('note_journal');
+  });
+
+  it('deletes a page, and opens the next one when it was the page being read', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.activeNote?.id).toBe('note_journal'));
+
+    await act(async () => { expect(await result.current.deletePage('note_journal')).toBe(true); });
+    expect(deleteWorkspaceNote).toHaveBeenCalledWith('note_journal');
+    expect(result.current.pages.map((page) => page.id)).toEqual(['note_week']);
+    expect(result.current.activeNote?.id).toBe('note_week');
+  });
+
+  it('keeps the page when the delete is refused', async () => {
+    deleteWorkspaceNote.mockResolvedValue({ ok: false, error: 'Locked' });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.isLoadingNote).toBe(false));
+    await act(async () => { expect(await result.current.deletePage('note_week')).toBe(false); });
+    expect(result.current.pages).toHaveLength(2);
+    expect(result.current.saveError).toBe('Locked');
   });
 
 });

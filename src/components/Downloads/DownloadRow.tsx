@@ -12,6 +12,7 @@ import {
   STATE_TEXT_CLASS,
 } from './downloadFormat';
 import { DownloadProgressBar } from './DownloadProgressBar';
+import { fileNameWithinModel } from '../../hooks/useDownloads';
 import { showErrorToast } from '../../utils/toast';
 
 import type { DownloadStatus } from '../../types/downloads';
@@ -97,7 +98,11 @@ export function DownloadRow({ storeKey, download, actions, nested = false }: Dow
     download.bytes_downloaded,
     download.total_bytes
   );
-  const name = download.model_name || basename(download.destination);
+  // Inside a model's group the header already names the model, so a row says
+  // which of its files it is.
+  const name = nested
+    ? fileNameWithinModel(download)
+    : download.model_name || basename(download.destination);
 
   const canPause = state === 'Downloading' || state === 'Pending';
   const canResume = state === 'Paused';

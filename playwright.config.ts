@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
-import path from 'path';
 
-const WEB_DEV_PORT = 5173;
+const WEB_PREVIEW_PORT = 4173;
+const SMOKE_BUILD_DIR = 'e2e-results/renderer';
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +16,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: `http://127.0.0.1:${WEB_DEV_PORT}`,
+    baseURL: `http://127.0.0.1:${WEB_PREVIEW_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -34,15 +34,24 @@ export default defineConfig({
         viewport: { width: 1280, height: 720 },
       },
     },
+    {
+      name: 'webkit-smoke',
+      use: {
+        ...devices['Desktop Safari'],
+        viewport: { width: 1280, height: 720 },
+      },
+    },
   ],
   outputDir: 'e2e-results/artifacts',
   webServer: {
     // Browser smoke tests exercise the renderer. Full Tauri IPC integration
     // remains covered by Rust command/integration tests; tauri-driver is not
     // available on macOS.
-    command: 'npx vite --host 127.0.0.1',
-    url: `http://127.0.0.1:${WEB_DEV_PORT}`,
+    // Exercise the shipped renderer bundle, including lazy chunks and workers.
+    // A separate, strict port prevents silently testing a developer's server.
+    command: `npx vite build --outDir ${SMOKE_BUILD_DIR} && npx vite preview --outDir ${SMOKE_BUILD_DIR} --host 127.0.0.1 --port ${WEB_PREVIEW_PORT} --strictPort`,
+    url: `http://127.0.0.1:${WEB_PREVIEW_PORT}`,
     timeout: 120000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
   },
 });

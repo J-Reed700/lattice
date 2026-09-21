@@ -100,6 +100,8 @@ fn test_conversation_dto_complete() {
         archived_at: None,
         last_message_preview: Some("Most recent content".to_string()),
         compaction: None,
+        forked_from_conversation_id: None,
+        forked_from_message_id: None,
     };
 
     assert_eq!(dto.id, "conv-111");

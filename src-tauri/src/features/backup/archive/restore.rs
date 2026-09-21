@@ -19,6 +19,7 @@ use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use crate::application::ports::SettingsRepositoryPort;
+use crate::features::backup::adapter::roll_back_database;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -26,6 +27,7 @@ use super::format::{self, ArchiveError, STREAM_NONCE_LEN};
 use super::key_store::MasterKeyStore;
 use super::placeholder::{self, FileAvailability};
 use super::snapshot::{self, ExtractedPayload, ProgressEvent};
+use crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION;
 
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 
@@ -183,10 +185,27 @@ impl ArchiveRestorer {
                 )));
             }
         }
+        // The migration number cannot settle this on its own: the schema is one
+        // squashed migration edited in place, so a newer build can write a
+        // memory layout this one does not understand while both report the same
+        // version. Checked here, against the scratch copy, because discovering
+        // it after the swap means discovering it on the next turn with the
+        // user's real database already replaced.
+        if let Some(memory_version) = info.memory_schema_version {
+            if memory_version > MEMORY_SCHEMA_VERSION {
+                return Err(ArchiveError::Corrupt(format!(
+                    "backup stores conversation memory in layout {memory_version}, which this \
+                     version of Lattice cannot read (it understands {MEMORY_SCHEMA_VERSION}); \
+                     update Lattice and try again"
+                )));
+            }
+        }
         info!(
             documents = info.document_count,
             conversations = info.conversation_count,
             migration_version = ?info.migration_version,
+            memory_tables_present = info.memory_tables_present,
+            memory_schema_version = ?info.memory_schema_version,
             "snapshot validated"
         );
 
@@ -290,8 +309,9 @@ impl ArchiveRestorer {
         if let Err(e) = tokio::fs::copy(snapshot_path, &temp_path).await {
             // repository-barrier-allow: rolling back the live database file.
             if safety.exists() && !self.db_path.exists() {
-                let _ = tokio::fs::rename(&safety, &self.db_path).await;
-                info!("rolled back to the original database");
+                if let Some(note) = roll_back_database(&safety, &self.db_path).await {
+                    return Err(ArchiveError::Other(format!("{e}.{note}")));
+                }
             }
             return Err(ArchiveError::Io(e));
         }
@@ -303,12 +323,16 @@ impl ArchiveRestorer {
             }
             Err(e) => {
                 // repository-barrier-allow: rolling back the live database file.
-                if safety.exists() {
-                    let _ = tokio::fs::rename(&safety, &self.db_path).await;
-                    info!("rolled back to the original database");
-                }
+                let note = if safety.exists() {
+                    roll_back_database(&safety, &self.db_path).await
+                } else {
+                    None
+                };
                 let _ = tokio::fs::remove_file(&temp_path).await;
-                Err(ArchiveError::Io(e))
+                match note {
+                    Some(note) => Err(ArchiveError::Other(format!("{e}.{note}"))),
+                    None => Err(ArchiveError::Io(e)),
+                }
             }
         }
     }

@@ -77,11 +77,10 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       try {
         if (role === 'chat') {
           if (modelId === null) {
-            // No public "clear chat" — assigning a different model implicitly clears the old.
-            toast.info('To change the chat model, pick a replacement.');
-            return;
+            await invoke('plugin:model|clear_active_chat_model');
+          } else {
+            await setActiveChatModel(modelId);
           }
-          await setActiveChatModel(modelId);
         } else if (role === 'embedding') {
           if (modelId === null) {
             await invoke('plugin:model|clear_active_embedding_model');

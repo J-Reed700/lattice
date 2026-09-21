@@ -57,9 +57,9 @@ const HNSW_EXPANSION_ADD: usize = 256;
 const HNSW_EXPANSION_SEARCH: usize = 256;
 
 /// Up to this many vectors a query is answered by an exact scan instead of the
-/// graph. A personal library is usually this small, the scan costs under a
-/// microsecond per vector, and it cannot miss; the graph is still built and
-/// saved, so crossing the line needs no rebuild.
+/// graph. This removes graph traversal misses in the stored vector space;
+/// compressed candidate selection can still differ from full-vector cosine.
+/// The graph is still built and saved, so crossing the line needs no rebuild.
 const EXACT_SEARCH_MAX_VECTORS: usize = 20_000;
 
 /// When to write the index to disk.
@@ -702,11 +702,29 @@ impl USearchVectorIndex {
     /// snapshot is written by the caller afterwards — see
     /// [`super::manifest`] — because only it knows what SQLite looked like.
     pub fn save_to_disk(&self) -> Result<()> {
+        self.save_snapshot().map(|_| ())
+    }
+
+    /// Return the count under the snapshot lock, before any later mutation.
+    pub(crate) fn save_snapshot(&self) -> Result<usize> {
         let _snapshot = self.persistence.lock();
         // Hold the same read lock used by searches while saving the vectors
         // and metadata, so additions cannot split the two snapshots.
         let state = self.state.read();
         if let Some(ref path) = self.index_path {
+            // The graph and keymap are separate files. Invalidate the old
+            // manifest before replacing either, so an interrupted save cannot
+            // leave it certifying a mixture of snapshots with equal counts.
+            let manifest = super::manifest::manifest_path_for(path);
+            match std::fs::remove_file(&manifest) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(AppError::FileStorage(format!(
+                        "Failed to invalidate vector index manifest: {e}"
+                    )))
+                }
+            }
             // Ensure parent directory exists
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
@@ -734,7 +752,7 @@ impl USearchVectorIndex {
 
         *self.dirty.lock() = DirtyState::default();
 
-        Ok(())
+        Ok(self.index.size())
     }
 
     /// Remove temporaries a crashed save left behind.
@@ -1714,6 +1732,75 @@ mod tests {
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(CmpOrdering::Equal));
         scored.into_iter().map(|(id, _)| id).collect()
+    }
+
+    #[test]
+    #[ignore = "builds a 20,001-vector index to exercise the actual production threshold"]
+    fn recall_across_the_production_exact_to_graph_boundary() {
+        const DIM: usize = 64;
+        const TOP_K: usize = 10;
+        let corpus: Vec<_> = (0..=EXACT_SEARCH_MAX_VECTORS)
+            .map(|i| (format!("chunk{i}"), synthetic_vector(i as u64, DIM, 0.98)))
+            .collect();
+        let index = USearchVectorIndex::new(DIM, None).unwrap();
+        let build_started = std::time::Instant::now();
+        for (id, vector) in corpus.iter().take(EXACT_SEARCH_MAX_VECTORS) {
+            index
+                .add_embedding_with_content(
+                    id.clone(),
+                    vector.clone(),
+                    id.clone(),
+                    id.clone(),
+                    id.clone(),
+                )
+                .unwrap();
+        }
+        let queries: Vec<_> = (0..32)
+            .map(|i| synthetic_vector(100_000 + i, DIM, 0.98))
+            .collect();
+        let started = std::time::Instant::now();
+        for query in &queries {
+            let expected = exact_cosine_ranking(query, &corpus[..EXACT_SEARCH_MAX_VECTORS]);
+            let hits = VectorSearchPort::search(&index, query, TOP_K, 0.0).unwrap();
+            assert_eq!(
+                hits.iter().map(|h| &h.chunk_id).collect::<Vec<_>>(),
+                expected.iter().take(TOP_K).collect::<Vec<_>>()
+            );
+        }
+        let exact_elapsed = started.elapsed();
+        let (id, vector) = corpus.last().unwrap();
+        index
+            .add_embedding_with_content(
+                id.clone(),
+                vector.clone(),
+                id.clone(),
+                id.clone(),
+                id.clone(),
+            )
+            .unwrap();
+        assert!(index.count() > index.exact_search_max);
+        let mut found = 0;
+        let mut search_elapsed = std::time::Duration::ZERO;
+        for query in &queries {
+            let expected: HashSet<_> = exact_cosine_ranking(query, &corpus)
+                .into_iter()
+                .take(TOP_K)
+                .collect();
+            let started = std::time::Instant::now();
+            let hits = VectorSearchPort::search(&index, query, TOP_K, 0.0).unwrap();
+            search_elapsed += started.elapsed();
+            assert_eq!(hits.len(), TOP_K);
+            found += hits
+                .iter()
+                .filter(|h| expected.contains(&h.chunk_id))
+                .count();
+        }
+        let recall = found as f64 / (queries.len() * TOP_K) as f64;
+        eprintln!("20,001 vectors, 64 dims, {} held-out synthetic queries: recall@10={recall:.4}, mean graph query={:?}, exact checks including oracle={exact_elapsed:?}, total={:?}", queries.len(), search_elapsed / queries.len() as u32, build_started.elapsed());
+        assert!(
+            recall >= 0.95,
+            "graph recall below the fixture's regression floor: {recall}"
+        );
     }
 
     #[test]

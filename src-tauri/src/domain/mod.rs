@@ -61,6 +61,7 @@ pub mod services;
 pub mod value_objects;
 
 pub mod conversation;
+pub mod conversation_memory;
 pub mod curated_models;
 pub mod download;
 pub mod download_snapshot;

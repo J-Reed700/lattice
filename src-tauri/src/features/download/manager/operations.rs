@@ -129,6 +129,8 @@ impl DownloadManager for DownloadManagerService {
         let (file_size, _final_url) = self.engine.get_file_size(&request.url).await?;
         info!(url = %request.url, file_size = ?file_size, "✓ File size retrieved");
 
+        self.supersede_sessions_for(&request.destination).await?;
+
         let id = Uuid::new_v4().to_string();
         let mut session = DownloadSession::new(
             id.clone(),
@@ -412,5 +414,38 @@ impl DownloadManager for DownloadManagerService {
     /// Arc<RwLock<Option<UnboundedReceiver<DownloadEvent>>>> - Shared receiver for download events
     fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>> {
         Arc::clone(&self.event_rx)
+    }
+}
+
+impl DownloadManagerService {
+    /// A destination holds one file, so an earlier session for it that this
+    /// manager is neither running nor holding in its queue is history: a
+    /// finished or failed attempt, or one a previous launch left behind. Left
+    /// in place it is reported beside the new session as a second row for the
+    /// same file, and that row never moves. The partial file stays where it is;
+    /// the new session resumes from its length.
+    async fn supersede_sessions_for(
+        &self,
+        destination: &std::path::Path,
+    ) -> Result<(), DownloadError> {
+        let earlier: Vec<String> = self
+            .repository
+            .list()
+            .await?
+            .into_iter()
+            .filter(|session| session.destination() == destination)
+            .map(|session| session.id().to_string())
+            .collect();
+        for id in earlier {
+            let running = self.active_downloads.read().await.contains_key(&id);
+            let queued = self.download_queue.read().await.contains(&id);
+            if running || queued {
+                continue;
+            }
+            self.repository.delete(&id).await?;
+            self.auth_tokens.write().await.remove(&id);
+            info!(download_id = %id, "Superseded an earlier session for the same destination");
+        }
+        Ok(())
     }
 }

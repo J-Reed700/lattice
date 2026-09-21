@@ -77,6 +77,7 @@ pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
 pub mod conversation_context;
 pub mod conversation_history_port;
+pub mod conversation_memory;
 pub mod conversation_repository;
 pub mod credentials_port;
 pub mod database_stats_port;
@@ -122,6 +123,11 @@ pub use content_addressed_storage_port::{
 };
 pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
 pub use conversation_history_port::ConversationHistoryPort;
+pub use conversation_memory::{
+    CommittedMemorySnapshot, ConversationMemoryPort, ConversationMemoryReadPort,
+    MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions, RecallCandidate,
+    RecallCandidates, ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef, SummaryUpdate,
+};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
