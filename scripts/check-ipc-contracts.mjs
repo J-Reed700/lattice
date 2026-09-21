@@ -16,6 +16,8 @@ invoke<null>('remove_tag_from_document', { request: { documentId: 'doc', tagId: 
 invoke<null>('remove_tag_from_document', { request: { document_id: 'doc', tag_id: 'tag' } });
 invoke<null>('command_without_a_generated_contract');
 invoke<null>('delete_model', { modelId: 'model' });
+declare function apiCall<T>(command: string, args?: unknown): Promise<T>;
+apiCall<null>('command_without_a_route');
 `;
 if (process.argv.includes('--self-test')) {
     host.getSourceFile = (file, ...args) => file === probePath
@@ -44,7 +46,7 @@ visit(api, node => {
     for (const p of node.initializer.properties)
         routes.set(p.name.getText(api).replaceAll("'", ''), p.initializer.properties.find(q => q.name.getText(api) === 'command').initializer.text);
 });
-const report = { generatedCommands: contracts.size, checked: 0, mismatches: [], uncovered: [], argumentNames: [] };
+const report = { generatedCommands: contracts.size, checked: 0, mismatches: [], uncovered: [], unrouted: [], argumentNames: [] };
 function nullable(type) { return Boolean(type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) || type.isUnion() && type.types.some(nullable); }
 function checkObject(expression, expected, context, prefix = '') {
     expected = checker.getNonNullableType(expected);
@@ -84,6 +86,12 @@ for (const source of program.getSourceFiles()) {
             return;
         const inputName = call.arguments[0].text, command = (routes.get(inputName) ?? inputName).replace(/^plugin:[^|]+\|/, '');
         const location = `${path.relative(root, source.fileName)}:${source.getLineAndCharacterOfPosition(call.getStart(source)).line + 1}`;
+        // `apiCall` throws at runtime on a command COMMAND_DOMAIN_MAP does not
+        // name, so an unrouted call site is a dead feature, not a fallback.
+        if (call.expression.getText(source) === 'apiCall' && !routes.has(inputName)) {
+            report.unrouted.push({ command: inputName, location });
+            return;
+        }
         const contract = contracts.get(command);
         let declared = call.typeArguments?.[0] ? checker.getTypeFromTypeNode(call.typeArguments[0]) : checker.getAwaitedType(checker.getTypeAtLocation(call));
         if (!call.typeArguments?.[0] && call.expression.getText(source) === 'apiCall') {
@@ -133,21 +141,22 @@ for (const source of program.getSourceFiles()) {
 if (process.argv.includes('--self-test')) {
     const isProbe = item => item.location.startsWith('src/__contract_probe__.ts:');
     if (report.mismatches.filter(isProbe).length !== 1 || report.uncovered.filter(isProbe).length !== 1
+        || report.unrouted.filter(isProbe).length !== 1
         || !report.argumentNames.some(item => isProbe(item) && item.unexpected === 'request.documentId')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'request.document_id')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'deleteFile'))
         throw new Error('IPC guard failed to detect intentionally broken contracts');
-    for (const key of ['mismatches', 'uncovered', 'argumentNames']) report[key] = report[key].filter(item => !isProbe(item));
+    for (const key of ['mismatches', 'uncovered', 'unrouted', 'argumentNames']) report[key] = report[key].filter(item => !isProbe(item));
     report.checked -= 4;
-    console.log('IPC guard rejects stale responses, missing contracts, and incorrect nested request fields.');
+    console.log('IPC guard rejects stale responses, missing contracts, unrouted commands, and incorrect nested request fields.');
 }
 if (process.argv.includes('--json'))
     console.log(JSON.stringify(report, null, 2));
 else {
     console.log(`Checked ${report.checked} IPC response boundaries against ${report.generatedCommands} generated command contracts.`);
-    for (const item of [...report.mismatches, ...report.argumentNames])
+    for (const item of [...report.mismatches, ...report.unrouted.map(item => ({ ...item, unrouted: true })), ...report.argumentNames])
         console.error(JSON.stringify(item));
     console.log(`${report.uncovered.length} call sites require explicit contracts (see --json).`);
 }
-if (report.mismatches.length || report.argumentNames.length || report.uncovered.length)
+if (report.mismatches.length || report.argumentNames.length || report.uncovered.length || report.unrouted.length)
     process.exitCode = 1;
