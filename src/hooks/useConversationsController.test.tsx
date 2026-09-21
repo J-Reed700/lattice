@@ -264,4 +264,51 @@ describe('useConversationsController optimistic cleanup', () => {
     await waitFor(() => expect(result.current.sidebar.data).toEqual(bookmarks));
   });
 
+  describe('opening a conversation', () => {
+    beforeEach(() => {
+      api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, spaceId: 'food-research' } } });
+      api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+      api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
+      api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
+    });
+
+    it('moves the sidebar to the space the conversation lives in', async () => {
+      // "All spaces" is selected; the chat opened belongs to Food Research.
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.selectConversation('conversation-1'); });
+
+      expect(conversationUiStore.getState().selectedSpaceId).toBe('food-research');
+      expect(api.listConversationsExplorer).toHaveBeenLastCalledWith(expect.objectContaining({ spaceId: 'food-research' }));
+    });
+
+    it('leaves the space alone when the conversation is already in it', async () => {
+      conversationUiStore.setState({ selectedSpaceId: 'food-research' });
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await waitFor(() => expect(api.listConversationsExplorer).toHaveBeenCalled());
+      const before = api.listConversationsExplorer.mock.calls.length;
+      await act(async () => { await result.current.selectConversation('conversation-1'); });
+
+      expect(conversationUiStore.getState().selectedSpaceId).toBe('food-research');
+      expect(api.listConversationsExplorer.mock.calls.length).toBe(before);
+    });
+
+    it('does not drag the sidebar to a chat the reader has already left', async () => {
+      // The open chat's own detail query asks too, so every caller is answered.
+      const waiting: ((_value: unknown) => void)[] = [];
+      const resolveDetail = (value: unknown) => waiting.splice(0).forEach(resolve => resolve(value));
+      api.getConversation = vi.fn().mockImplementation(() => new Promise(resolve => { waiting.push(resolve); }));
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      let opening!: Promise<void>;
+      act(() => { opening = result.current.selectConversation('conversation-1'); });
+      await waitFor(() => expect(api.getConversation).toHaveBeenCalled());
+      act(() => { conversationUiStore.setState({ activeConversationId: 'conversation-2' }); });
+      await act(async () => {
+        resolveDetail({ ok: true, data: { conversation: { ...conversation, spaceId: 'food-research' } } });
+        await opening;
+      });
+
+      expect(conversationUiStore.getState().selectedSpaceId).toBeNull();
+    });
+  });
+
 });
