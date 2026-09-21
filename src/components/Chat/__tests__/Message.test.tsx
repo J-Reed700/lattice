@@ -15,12 +15,14 @@ const DEFAULT_SUMMARY: MessageVerificationSummary = {
 };
 
 let verificationSummary: MessageVerificationSummary = DEFAULT_SUMMARY;
+const regenerateResponse = vi.fn().mockResolvedValue('answered');
 
 vi.mock('../../../stores/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
     messageVerification: new Map([['answer', verificationSummary]]),
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
     liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [],
+    regenerateResponse,
   }),
 }));
 vi.mock('react-router', async () => {
@@ -215,5 +217,31 @@ describe('opening the source reader from an answer', () => {
 
     expect(useChatReaderStore.getState().session?.occurrence).toBe(0);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([true, false]);
+  });
+});
+
+describe('a question that failed to send', () => {
+  const question = (isLastTurn: boolean) =>
+    render(
+      <Message
+        isLastTurn={isLastTurn}
+        message={{ id: 'question', role: 'user', content: 'Why radishes?', status: 'failed', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+  it('offers to ask it again', () => {
+    regenerateResponse.mockClear();
+    question(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(regenerateResponse).toHaveBeenCalledWith('conversation');
+  });
+
+  it('does not offer it further up the thread, where asking again would re-ask a different question', () => {
+    question(false);
+
+    expect(screen.getByText("Message didn't send")).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 });
