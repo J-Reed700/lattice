@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
@@ -623,6 +624,18 @@ export function Message({
                 <AlertCircle className="h-3 w-3" />
                 {errorMessage || "Message didn't send"}
               </span>
+            )}
+            {/* Only the last question: regenerate re-asks whatever came last. */}
+            {isFailed && isUser && isLastTurn && conversationId && (
+              <button
+                type="button"
+                onClick={() => void handleRegenerate()}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] disabled:opacity-50"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Try again
+              </button>
             )}
             {verificationBadge && (
               <button

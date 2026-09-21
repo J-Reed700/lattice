@@ -376,6 +376,26 @@ fn sse_handles_split_utf8_and_rejects_failed_or_truncated_streams() {
 }
 
 #[test]
+fn sse_error_names_the_servers_error_type_and_never_its_message() {
+    let failure = |event: &str| {
+        streaming::Decoder::default()
+            .push(format!("data: {event}\n\n").as_bytes())
+            .unwrap_err()
+            .to_string()
+    };
+
+    let named = failure(
+        r#"{"error":{"code":400,"type":"exceed_context_size_error","message":"private"}}"#,
+    );
+    assert!(named.contains("(400 exceed_context_size_error)"), "{named}");
+    assert!(!named.contains("private"));
+
+    // A type that is not an identifier is free text, and is dropped like one.
+    let unnamed = failure(r#"{"error":{"type":"The prompt said: private"}}"#);
+    assert!(!unnamed.contains("private"));
+}
+
+#[test]
 fn connections_reject_unsafe_urls_and_partial_auth() {
     for (url, valid) in [
         ("https://example.com", true),
