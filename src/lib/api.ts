@@ -386,6 +386,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   ingest_web_url: { domain: 'web', command: 'ingest_web_url' },
   fetch_url_preview: { domain: 'web', command: 'fetch_url_preview' },
   extract_article: { domain: 'web', command: 'extract_article' },
+  read_web_page: { domain: 'web', command: 'read_web_page' },
   check_for_updates: { domain: 'updates', command: 'check_for_updates' },
   execute_function: { domain: 'functions', command: 'execute_function' },
   list_available_functions: { domain: 'functions', command: 'list_available_functions' },
