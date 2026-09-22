@@ -267,6 +267,25 @@ pub trait ConversationServiceTrait: Send + Sync {
         status: String,
     ) -> Result<crate::domain::conversation::ConversationMessage>;
 
+    /// Add a message with a specific status and a metadata payload.
+    ///
+    /// The default ignores `metadata` and delegates to
+    /// [`Self::add_message_with_status`], so test doubles that never read
+    /// metadata need no change. The real service overrides it.
+    async fn add_message_with_metadata(
+        &self,
+        conversation_id: &str,
+        role: crate::domain::conversation::MessageRole,
+        content: String,
+        tokens: i64,
+        status: String,
+        metadata: Option<String>,
+    ) -> Result<crate::domain::conversation::ConversationMessage> {
+        let _ = metadata;
+        self.add_message_with_status(conversation_id, role, content, tokens, status)
+            .await
+    }
+
     /// Update the status of a message (for two-phase commit)
     ///
     /// # Arguments

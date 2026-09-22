@@ -967,7 +967,8 @@ export function useConversationsController(): ConversationsState {
   const sendMessage = useCallback(async (
     content: string,
     conversationId?: string | null,
-    toolPreferences?: ToolPreferences
+    toolPreferences?: ToolPreferences,
+    attachmentNames?: string[]
   ) => {
     const state = conversationUiStore.getState();
     const requestConversationId = conversationId ?? state.activeConversationId ?? conversations[0]?.id ?? null;
@@ -983,7 +984,8 @@ export function useConversationsController(): ConversationsState {
         requestConversationId,
         content,
         toolPreferences,
-        requestId
+        requestId,
+        attachmentNames
       ),
     });
   }, [conversations, runGeneration]);

@@ -457,6 +457,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
@@ -812,8 +813,14 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     flow_metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
 
     let persist_user_message_start = Instant::now();
-    let (user_message_id, message_tokens) =
-        persist_user_message_pending(&conv_service, &conv_id, &validated_message, &llm).await?;
+    let (user_message_id, message_tokens) = persist_user_message_pending(
+        &conv_service,
+        &conv_id,
+        &validated_message,
+        &attachment_names.unwrap_or_default(),
+        &llm,
+    )
+    .await?;
     flow_metrics.persist_user_message_ms = elapsed_ms(persist_user_message_start);
 
     let tool_prep_start = Instant::now();

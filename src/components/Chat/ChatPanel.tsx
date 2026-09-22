@@ -533,11 +533,6 @@ export function ChatPanel() {
     if (isChatUnavailable) return;
 
     const message = input.trim();
-    setInput('');
-
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
 
     // A message that is nothing but a command runs the command instead of being
     // sent. /compact was the first of these — a bare regex here that nothing on
@@ -545,11 +540,31 @@ export function ChatPanel() {
     // same door, typed or picked.
     const typedCommand = parseSlashSubmission(message);
     if (typedCommand) {
+      setInput('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
       runSlashCommand(typedCommand);
       return;
     }
 
-    await sendMessage(message, activeConversationId, resolveEffectiveToolPreferences());
+    // Staged files join the conversation *with* this message: import them
+    // first so the turn can already draw on them, and let the message carry
+    // their names. A total import failure aborts the send with the draft
+    // intact — sending without the files would answer the wrong question.
+    let attachmentNames: string[] | undefined;
+    if (staged.length > 0) {
+      const names = await handleImportStagedFiles();
+      if (names === null) return;
+      if (names.length > 0) attachmentNames = names;
+    }
+
+    setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    await sendMessage(message, activeConversationId, resolveEffectiveToolPreferences(), attachmentNames);
   };
 
   const handleCancel = async () => {
@@ -627,14 +642,23 @@ export function ChatPanel() {
     [handleChangeSpace]
   );
 
-  const handleImportStagedFiles = useCallback(async () => {
-    if (!activeConversationId || staged.length === 0 || isImportingFiles) return;
+  /**
+   * Import the staged files into the vault and link them to this conversation.
+   *
+   * Returns the staged names when the send may proceed — including the
+   * still-indexing case, where the documents are linked and the next turn
+   * catches up — and `null` when nothing made it in, so the caller can abort
+   * with the composer's draft and the staged files both intact.
+   */
+  const handleImportStagedFiles = useCallback(async (): Promise<string[] | null> => {
+    if (!activeConversationId || staged.length === 0 || isImportingFiles) return null;
+    const stagedNames = staged.map((file) => file.name);
     setIsImportingFiles(true);
     try {
       const started = await VaultAPI.startBatchFileImport(staged.map((file) => file.path));
       if (!started.ok) {
         toast.error("Couldn't add these files", { message: started.error });
-        return;
+        return null;
       }
 
       const jobId = started.data;
@@ -676,24 +700,29 @@ export function ChatPanel() {
       void loadConversationLinkedDocuments(activeConversationId);
 
       const requested = staged.length;
-      clearStaged();
       // Report what the job actually did. Saying "Added 4 files" after the
       // batch failed, or after we stopped waiting, is a claim we cannot make.
+      // Files stay staged on a total failure so the send can be retried.
       if (addedCount === null) {
+        clearStaged();
         toast.info(`Still adding ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
+        return stagedNames;
       } else if (addedCount === 0) {
         toast.error("Couldn't add these files", {
           message: `${failedCount || requested} failed to import.`,
         });
+        return null;
       } else {
+        clearStaged();
         toast.success(`Added ${addedCount} file${addedCount !== 1 ? 's' : ''}`, {
           message:
             failedCount > 0
               ? `${failedCount} couldn't be read. The rest are indexing now.`
               : "They're indexing now.",
         });
+        return stagedNames;
       }
     } finally {
       setIsImportingFiles(false);
@@ -1212,7 +1241,6 @@ export function ChatPanel() {
           staged={staged}
           isImporting={isImportingFiles}
           onRemove={removeStaged}
-          onImport={() => void handleImportStagedFiles()}
           onClear={clearStaged}
         />
 

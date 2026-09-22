@@ -634,6 +634,33 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
             .await
     }
 
+    async fn add_message_with_metadata(
+        &self,
+        conversation_id: &str,
+        role: MessageRole,
+        content: String,
+        tokens: i64,
+        status: String,
+        metadata: Option<String>,
+    ) -> Result<ConversationMessage> {
+        if content.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "Message content cannot be empty".into(),
+            ));
+        }
+
+        self.repository
+            .add_message_with_status(
+                conversation_id,
+                role,
+                &content,
+                tokens,
+                metadata.as_deref(),
+                &status,
+            )
+            .await
+    }
+
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.update_message_status(message_id, status).await
     }

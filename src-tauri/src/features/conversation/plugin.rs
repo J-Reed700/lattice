@@ -104,6 +104,7 @@ pub async fn chat_with_conversation_wrapper(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_wrapper_impl(
@@ -113,6 +114,7 @@ pub async fn chat_with_conversation_wrapper(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
         window,
     )
     .await
@@ -127,6 +129,7 @@ pub async fn chat_with_conversation(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_impl(
@@ -136,6 +139,7 @@ pub async fn chat_with_conversation(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
         window,
     )
     .await
