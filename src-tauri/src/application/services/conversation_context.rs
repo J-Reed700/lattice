@@ -74,8 +74,17 @@ async fn build_linked_web_sources_prompt_context(
         return Ok(None);
     }
 
+    // Spelled out because these entries carry no passage numbers while the RAG
+    // template, which renders them, instructs the model to cite numerically.
+    // Left implicit, a model handed a titled URL and told to cite will invent a
+    // number for it, and an invented number is worse than an uncited sentence.
     Ok(Some(format!(
-        "User-linked web sources for this conversation (context links, not necessarily indexed):\n{}",
+        "Web sources on record for this conversation (links and short excerpts \
+that earlier turns cited or the user attached — background, not numbered \
+evidence):\n{}\n\nThese have no citation numbers, so do not cite them with \
+brackets. Use them to stay consistent with what this conversation has already \
+established. To rely on one for a new claim, open it with fetch_url_content \
+first and cite what you read.",
         entries.join("\n")
     )))
 }
@@ -257,7 +266,19 @@ mod tests {
             .unwrap();
             assert_eq!(context, vec![expected, "User: hello"]);
             assert_eq!(history.reads.load(Ordering::SeqCst), 1);
-            assert!(links.unwrap().contains("- source (https://example.com)"));
+            let links = links.unwrap();
+            assert!(links.contains("- source (https://example.com)"));
+            // These entries carry no passage numbers, but the template that
+            // renders them orders numeric citations. Without saying so, a model
+            // handed a titled URL and told to cite invents a number for it.
+            assert!(
+                links.contains("do not cite them with brackets"),
+                "carried sources must be marked uncitable:\n{links}"
+            );
+            assert!(
+                links.contains("fetch_url_content"),
+                "and must name the way to make one citable:\n{links}"
+            );
         }
     }
 

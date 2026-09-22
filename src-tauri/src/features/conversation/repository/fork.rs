@@ -197,11 +197,15 @@ impl ConversationRepository {
             excerpt: Option<String>,
             relevance_score: Option<f64>,
             added_at: String,
+            content: Option<String>,
+            content_fetched_at: Option<String>,
+            content_truncated: bool,
         }
 
         let web_sources = sqlx::query_as::<_, WebSourceRow>(
             r#"
-            SELECT url, normalized_url, title, excerpt, relevance_score, added_at
+            SELECT url, normalized_url, title, excerpt, relevance_score, added_at,
+                   content, content_fetched_at, content_truncated
             FROM conversation_web_sources
             WHERE conversation_id = ?
             "#,
@@ -216,8 +220,9 @@ impl ConversationRepository {
                 r#"
                 INSERT OR IGNORE INTO conversation_web_sources
                     (id, conversation_id, url, normalized_url, title, excerpt,
-                     relevance_score, added_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     relevance_score, added_at, content, content_fetched_at,
+                     content_truncated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(uuid::Uuid::new_v4().to_string())
@@ -228,6 +233,9 @@ impl ConversationRepository {
             .bind(&source.excerpt)
             .bind(source.relevance_score)
             .bind(&source.added_at)
+            .bind(&source.content)
+            .bind(&source.content_fetched_at)
+            .bind(source.content_truncated)
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to copy web source: {}", e)))?;
