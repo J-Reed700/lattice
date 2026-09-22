@@ -57,8 +57,8 @@ pub mod history_tools;
 pub mod memory_context;
 mod persistence;
 mod prompting;
-// Public so the retrieval evaluation harness can reuse the pipeline's own
-// sufficiency judgement instead of reimplementing it.
+mod source_snapshots; // Public so the retrieval evaluation harness can reuse the pipeline's own
+                      // sufficiency judgement instead of reimplementing it.
 pub mod retrieval;
 mod tool_loop;
 pub mod turn_record;
@@ -830,6 +830,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &llm,
         tool_preferences.as_ref(),
         &settings.llm.custom_tools,
+        retrieval_web_context || has_linked_web_sources_context,
     );
     let force_tools_for_turn = tool_preferences
         .as_ref()
@@ -1619,11 +1620,32 @@ fn build_optional_tool_allowlist(
         })
 }
 
+/// Whether an optional built-in tool may be offered this turn.
+///
+/// `fetch_url_content` gets one exception to the explicit-allowlist rule:
+/// opening a page the turn already knows about — cited by an earlier turn and
+/// carried as conversation context, or returned by this turn's own search — is
+/// not a web search. The prompt names it as the way to re-read such a page, so
+/// withholding the tool behind the web-search toggle hands the model an
+/// instruction it cannot follow and it either errors on the call or searches
+/// the web again for a page it already had.
+fn optional_builtin_tool_allowed(
+    tool_name: &str,
+    allowlist: Option<&HashSet<String>>,
+    allow_url_fetch: bool,
+) -> bool {
+    if tool_name == "fetch_url_content" && allow_url_fetch {
+        return true;
+    }
+    allowlist.is_some_and(|list| list.contains(tool_name))
+}
+
 fn build_llm_tool_definitions(
     container: &Container,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     custom_tools: &[CustomToolSettingsDto],
+    allow_url_fetch: bool,
 ) -> Vec<crate::application::ports::ToolDefinition> {
     if !llm.supports_tool_calling() {
         return Vec::new();
@@ -1649,9 +1671,11 @@ fn build_llm_tool_definitions(
             }
 
             if OPTIONAL_BUILTIN_TOOL_NAMES.contains(&tool_name) {
-                return optional_allowlist
-                    .as_ref()
-                    .is_some_and(|allowlist| allowlist.contains(tool_name));
+                return optional_builtin_tool_allowed(
+                    tool_name,
+                    optional_allowlist.as_ref(),
+                    allow_url_fetch,
+                );
             }
 
             if !enabled_custom_tools.contains_key(tool_name) {
@@ -2069,6 +2093,31 @@ mod tests {
         assert!(flags.force_kb_search);
         assert!(flags.force_web_search);
         assert!(!flags.force_followup_mode);
+    }
+
+    #[test]
+    fn fetch_url_content_is_offered_when_the_turn_already_knows_the_page() {
+        let no_allowlist: Option<HashSet<String>> = None;
+        // No allowlist at all: still offered, because the conversation carries
+        // the page as context and the prompt names this tool for re-reading it.
+        assert!(optional_builtin_tool_allowed(
+            "fetch_url_content",
+            no_allowlist.as_ref(),
+            true
+        ));
+        // The exception covers only re-reading a known page — searching the
+        // web stays behind the explicit toggle.
+        assert!(!optional_builtin_tool_allowed(
+            "web_search",
+            no_allowlist.as_ref(),
+            true
+        ));
+        // And without carried pages the old rule applies unchanged.
+        assert!(!optional_builtin_tool_allowed(
+            "fetch_url_content",
+            no_allowlist.as_ref(),
+            false
+        ));
     }
 
     #[test]

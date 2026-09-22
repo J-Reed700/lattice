@@ -636,6 +636,31 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     call,
                                 )
                                 .await
+                            } else if resolved_tool == "fetch_url_content" {
+                                // A page this conversation already read is served
+                                // from its permanent archive — the citation's
+                                // snapshot, not another network request.
+                                match fetch_memory::fetch_target(&tc.arguments) {
+                                    Some(url) => match super::source_snapshots::archived_page(
+                                        container, conv_id, url,
+                                    )
+                                    .await
+                                    {
+                                        Some(page) => Ok(
+                                            crate::features::function_calling::domain::FunctionResult::success(
+                                                serde_json::to_value(page).unwrap_or_default(),
+                                            ),
+                                        ),
+                                        None => {
+                                            scoped_document_tools::execute(container, conv_id, focus, call)
+                                                .await
+                                        }
+                                    },
+                                    None => {
+                                        scoped_document_tools::execute(container, conv_id, focus, call)
+                                            .await
+                                    }
+                                }
                             } else {
                                 scoped_document_tools::execute(container, conv_id, focus, call)
                                     .await
@@ -780,6 +805,15 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                                 Delivery::Clipped { shown_chars: room }
                                             };
                                             fetch_memory.record_page(url, text, delivery);
+                                            // A live read becomes the
+                                            // conversation's permanent archive;
+                                            // an archived one already is.
+                                            if !page.from_cache {
+                                                super::source_snapshots::archive_page(
+                                                    container, conv_id, &page,
+                                                )
+                                                .await;
+                                            }
                                         }
                                     }
                                     if !result.success {

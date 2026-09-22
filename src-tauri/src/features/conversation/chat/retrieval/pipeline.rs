@@ -808,7 +808,29 @@ impl ExternalLookup<'_> {
             Some(url.clone()),
             vec![TurnStepLinkDto::new(url.clone(), None)],
         );
-        let outcome = self.fetch_one_page_inner(url.clone()).await;
+        // The conversation's own archive comes first: a page it already read is
+        // answered from the citation's permanent snapshot, not the network.
+        let outcome = match super::super::source_snapshots::archived_page(
+            self.container,
+            self.conversation_id,
+            &url,
+        )
+        .await
+        {
+            Some(page) => Ok(page),
+            None => {
+                let outcome = self.fetch_one_page_inner(url.clone()).await;
+                if let Ok(page) = &outcome {
+                    super::super::source_snapshots::archive_page(
+                        self.container,
+                        self.conversation_id,
+                        page,
+                    )
+                    .await;
+                }
+                outcome
+            }
+        };
         match &outcome {
             Ok(page) => web_steps::finish_page(step, &url, page),
             Err(reason) => step.failed(Some(reason.clone())),

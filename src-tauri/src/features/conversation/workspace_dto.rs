@@ -41,6 +41,17 @@ pub struct ConversationWebSourceDto {
     pub added_at: String,
 }
 
+/// The archived text of a cited page — the permanent per-conversation record,
+/// as opposed to the short `excerpt` prompt pointer. Internal to the chat
+/// pipeline; never handed to the frontend wholesale.
+#[derive(Debug, Clone)]
+pub struct ConversationWebSourceSnapshotDto {
+    pub title: Option<String>,
+    pub content: String,
+    pub fetched_at: Option<String>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentSpaceMembershipDto {
