@@ -92,26 +92,68 @@ const SITE_ALIASES: &[(&str, &str)] = &[
 ///
 /// Two kinds. Function words, which say nothing about any topic; and the
 /// vocabulary pages use about themselves rather than about their subject —
-/// listicle words every second headline carries ("best", "tips"), and the
-/// furniture a snippet picks up off the page around it ("html" comes in off a
-/// URL). Both are shared by enough results to pass for the topic's own
-/// vocabulary, and a search sent after them lands nowhere in particular.
+/// the listicle words every second headline carries ("best", "tips",
+/// "ultimate"). Both are shared by enough results to pass for the topic's own
+/// vocabulary, and a search sent after them lands nowhere in particular. The
+/// furniture a snippet picks up off an address is dropped a step earlier, by
+/// [`is_address_like`]; the URL words here predate that rule and cost nothing.
 const FOLLOWUP_STOPWORDS: &[&str] = &[
     "about", "after", "also", "been", "before", "best", "click", "could", "does", "each", "email",
-    "every", "find", "from", "have", "here", "html", "http", "https", "index", "into", "just",
-    "know", "like", "login", "look", "make", "many", "more", "most", "much", "need", "only",
-    "other", "over", "page", "pages", "posted", "read", "same", "share", "should", "site", "some",
-    "such", "take", "than", "that", "their", "them", "then", "there", "these", "they", "this",
-    "guide", "those", "tips", "used", "using", "very", "want", "well", "were", "website", "what",
-    "when", "where", "which", "while", "will", "with", "would", "your",
+    "even", "every", "find", "from", "have", "here", "html", "http", "https", "index", "into",
+    "just", "know", "like", "login", "look", "make", "many", "more", "most", "much", "need",
+    "only", "other", "over", "page", "pages", "posted", "read", "same", "share", "should", "site",
+    "some", "such", "take", "than", "that", "their", "them", "then", "there", "these", "they",
+    "this", "guide", "those", "tips", "ultimate", "used", "using", "very", "want", "well", "were",
+    "website", "what", "when", "where", "which", "while", "will", "with", "would", "your",
 ];
 
+/// Whether `chunk` is an address rather than a word: a URL, a bare host, or
+/// anything else written with a dot inside it.
+///
+/// Search engines print a result's URL in with its snippet, so a site's own
+/// name arrives in the text as a word. One site with two pages in a set of
+/// results has it in two of them, which is all the shared-vocabulary rule in
+/// `derive_followup_queries` asks of a term, and a live turn went out
+/// searching for "vegetables Chicago spring thegardeningdad". The date
+/// printed against the URL is machine text of the same kind:
+/// "2025-04-25T00:00:00.0000000" is one chunk, and none of it is vocabulary.
+fn is_address_like(chunk: &str) -> bool {
+    if chunk.contains("://") {
+        return true;
+    }
+    chunk.char_indices().any(|(index, ch)| {
+        ch == '.'
+            && chunk[..index].ends_with(|before: char| before.is_ascii_alphanumeric())
+            && chunk[index + 1..].starts_with(|after: char| after.is_ascii_alphanumeric())
+    })
+}
+
+/// Whether `token` reads as a word: letters, optionally with digits on the
+/// end, as in "broccolini" or "zone5".
+///
+/// A token that opens with a digit, or that mixes the two any other way, is a
+/// piece of something that was never prose. A timestamp written without a
+/// fractional second escapes [`is_address_like`], and splitting
+/// "2026-09-29T00:00:00" on its punctuation leaves "29t00" — long enough to
+/// keep, not a bare number, and in every snippet carrying that date, so it
+/// reads as shared vocabulary. What went out was "vegetables Chicago 29t00
+/// growing". Content hashes and ids break up the same way.
+fn is_word_like(token: &str) -> bool {
+    let digits_at = token
+        .find(|ch: char| ch.is_ascii_digit())
+        .unwrap_or(token.len());
+    digits_at > 0 && token[digits_at..].bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// The words of `text` that could usefully extend a search query: lowercased,
-/// long enough to mean something, not a bare number, not a function word.
+/// long enough to mean something, shaped like a word, off prose rather than
+/// off an address, not a function word.
 fn followup_terms(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+    text.split_whitespace()
+        .filter(|chunk| !is_address_like(chunk))
+        .flat_map(|chunk| chunk.split(|ch: char| !ch.is_ascii_alphanumeric()))
         .filter(|token| token.len() >= 4)
-        .filter(|token| !token.chars().all(|ch| ch.is_ascii_digit()))
+        .filter(|token| is_word_like(token))
         .map(str::to_ascii_lowercase)
         .filter(|token| !FOLLOWUP_STOPWORDS.contains(&token.as_str()))
 }
@@ -2188,19 +2230,83 @@ mod tests {
     }
 
     /// Words only one result uses are that site's name or its headline, not the
-    /// topic's vocabulary. "ultimate" and "breakdown" are in exactly one title
+    /// topic's vocabulary. "finale" and "breakdown" are in exactly one title
     /// here, and neither is a stopword — it is the counting that drops them.
     #[test]
     fn a_word_only_one_result_uses_does_not_steer_the_search() {
         let root = "Silo recap";
         let results = vec![
-            found("Silo Ultimate Breakdown", "Juliette and Bernard."),
+            found("Silo Finale Breakdown", "Juliette and Bernard."),
             found("Silo explained", "Juliette and Bernard again."),
         ];
         let mut used: HashSet<String> = followup_terms(root).collect();
         let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
 
         assert_eq!(followups, vec!["Silo recap juliette bernard".to_string()]);
+    }
+
+    /// From the greens turn in the log, which searched for "vegetables Chicago
+    /// 29t00 growing". Splitting a publish date like "2026-09-29T00:00:00" on
+    /// its punctuation leaves "29t00": long enough to keep, not a bare number,
+    /// and in every snippet that carries the same date, so it reads as the
+    /// vocabulary those pages share.
+    #[test]
+    fn a_followup_never_searches_for_a_piece_of_a_timestamp() {
+        let root = "Chicago vegetables";
+        let results = vec![
+            found(
+                "Cold Hardy Greens",
+                "2026-09-29T00:00:00 Kale and spinach overwinter in raised beds.",
+            ),
+            found(
+                "Planting Calendar",
+                "2026-09-29T00:00:00 Kale and spinach overwinter in raised beds.",
+            ),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
+
+        assert_eq!(
+            followups,
+            vec![
+                "Chicago vegetables kale spinach".to_string(),
+                "Chicago vegetables overwinter raised".to_string(),
+                "Chicago vegetables beds".to_string(),
+            ]
+        );
+    }
+
+    /// Also from the greens turn. The engines print a result's URL in with its
+    /// snippet, and a site with two pages among the results has its own name
+    /// in two of them — which is all a term needs to pass for the topic's
+    /// shared vocabulary. The search that went out was "vegetables Chicago
+    /// spring thegardeningdad".
+    #[test]
+    fn a_followup_never_searches_for_the_site_that_printed_it() {
+        let root = "Chicago vegetables";
+        let results = vec![
+            found(
+                "Best Vegetables to Grow in Illinois",
+                "thegardeningdad.com/best-vegetables-to-grow-in-illinois Lettuce radish arugula \
+                 sprout indoors.",
+            ),
+            found(
+                "Fall Garden Planting",
+                "https://thegardeningdad.com/fall-garden-illinois Lettuce radish arugula sprout \
+                 indoors.",
+            ),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
+
+        assert_eq!(
+            followups,
+            vec![
+                "Chicago vegetables lettuce radish".to_string(),
+                "Chicago vegetables arugula sprout".to_string(),
+                "Chicago vegetables indoors".to_string(),
+            ]
+        );
     }
 
     /// The second level used to extend the first level's query, so its suffix
