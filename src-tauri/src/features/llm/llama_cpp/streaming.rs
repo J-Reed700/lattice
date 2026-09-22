@@ -22,14 +22,11 @@ pub(super) struct Decoder {
 /// an identifier, so anything that does not look like one is dropped.
 fn error_kind(error: &Value) -> String {
     let code = error.get("code").and_then(Value::as_u64);
-    let kind = error
-        .get("type")
-        .and_then(Value::as_str)
-        .filter(|kind| {
-            !kind.is_empty()
-                && kind.len() <= 48
-                && kind.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-        });
+    let kind = error.get("type").and_then(Value::as_str).filter(|kind| {
+        !kind.is_empty()
+            && kind.len() <= 48
+            && kind.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+    });
     match (code, kind) {
         (Some(code), Some(kind)) => format!(" ({code} {kind})"),
         (Some(code), None) => format!(" ({code})"),
