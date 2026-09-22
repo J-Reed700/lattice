@@ -196,6 +196,51 @@ async fn a_commit_makes_ledger_summary_watermark_and_revision_durable_together()
 }
 
 #[tokio::test]
+async fn an_established_fact_round_trips_through_the_schema() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    let id = MemoryId::new();
+    // The authority for an established fact is the sourced passage itself,
+    // which here lives in an assistant message.
+    let span = whole_message_span(&pool, "mm2", EvidencePurpose::Assertion).await;
+    let commit = MemoryCommit {
+        inserts: vec![item(
+            &id,
+            &conversation_id,
+            MemoryKind::EstablishedFact,
+            span,
+        )],
+        updates: Vec::new(),
+        summary: None,
+        processed_through_sequence: 2,
+    };
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.clone(),
+            expected_transcript_revision: before.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-fact".into(),
+        },
+        &candidate(commit, before.transcript_revision, None),
+    )
+    .await
+    .expect("the widened CHECK accepts established_fact");
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    let stored = after
+        .active_items
+        .iter()
+        .find(|item| item.id == id)
+        .expect("the fact survived the round trip");
+    assert_eq!(stored.kind, MemoryKind::EstablishedFact);
+    assert_eq!(stored.evidence[0].role, SourceRole::Assistant);
+}
+
+#[tokio::test]
 async fn recompacting_updates_the_one_summary_row_in_place() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

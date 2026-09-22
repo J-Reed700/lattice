@@ -4127,7 +4127,7 @@ featureEnabled: boolean }
 export type ConversationMemoryItemDto = { id: string;
 /**
  * `constraint`, `goal`, `decision`, `user_fact`, `preference`,
- * `open_question` or `unresolved_change`.
+ * `open_question`, `established_fact` or `unresolved_change`.
  */
 kind: string;
 /**
