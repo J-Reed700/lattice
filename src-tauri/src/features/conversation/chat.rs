@@ -36,6 +36,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,
 };
+use crate::infrastructure::services::intent::{IntentClassifier, IntentInput, TurnIntent};
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -613,6 +614,19 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     // Pages linked to the conversation are outside material too.
     let linked_web_sources_context =
         linked_web_sources_context.filter(|_| !search_flags.closed_book);
+
+    // The utility model infers what an unflagged turn needs (vault search, web,
+    // follow-up) so an obvious case retrieves even with every toggle on its
+    // default. Enable-only: it can add retrieval, never take any away.
+    let search_flags = infer_turn_intent_flags(
+        container,
+        &llm,
+        tool_preferences.as_ref(),
+        search_flags,
+        &validated_message,
+        &context,
+    )
+    .await;
 
     let router_start = Instant::now();
     let (router_decision, router_record) = resolve_router_decision(
@@ -1363,6 +1377,102 @@ fn stable_prompt_signature(input: &str) -> u64 {
         })
 }
 
+/// Recent turns handed to the intent classifier, most recent last.
+const INTENT_CONTEXT_TURNS: usize = 4;
+
+/// Ask the utility model what an unflagged turn needs, and fold the answer
+/// into the search flags. Skipped the moment the user said anything explicit —
+/// a toggle, a turn mode, a closed book — because inference exists to fill in
+/// defaults, not to second-guess a decision.
+async fn infer_turn_intent_flags(
+    container: &Container,
+    chat_llm: &Arc<dyn crate::application::ports::LLMPort>,
+    tool_preferences: Option<&ToolPreferences>,
+    search_flags: SearchFlags,
+    validated_message: &str,
+    context: &[String],
+) -> SearchFlags {
+    if !should_infer_turn_intent(tool_preferences, search_flags) {
+        return search_flags;
+    }
+
+    // Resolved the way the grounding judge below resolves its model: the
+    // utility LLM when one is configured, the chat LLM otherwise, and no
+    // classification at all when loading one fails.
+    let classifier_llm = match container.get_or_load_utility_llm().await {
+        Ok(Some(utility)) => utility,
+        Ok(None) => Arc::clone(chat_llm),
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Utility LLM load failed — skipping turn-intent classification"
+            );
+            return search_flags;
+        }
+    };
+
+    let recent_context: Vec<String> = context
+        .iter()
+        .skip(context.len().saturating_sub(INTENT_CONTEXT_TURNS))
+        .cloned()
+        .collect();
+    let intent = IntentClassifier::new(classifier_llm)
+        .classify(&IntentInput {
+            message: validated_message.to_string(),
+            recent_context,
+        })
+        .await;
+
+    info!(
+        needs_knowledge_base = intent.needs_knowledge_base,
+        needs_web = intent.needs_web,
+        is_followup = intent.is_followup,
+        confidence = intent.confidence,
+        "chat_with_conversation: inferred turn intent"
+    );
+
+    apply_turn_intent(search_flags, &intent)
+}
+
+/// Inference runs only when every routing control is on its default. Any
+/// forced flag — including the ones `from_preferences` derives from an
+/// explicit turn mode — means the user already decided this turn.
+fn should_infer_turn_intent(
+    tool_preferences: Option<&ToolPreferences>,
+    search_flags: SearchFlags,
+) -> bool {
+    if search_flags.closed_book
+        || search_flags.force_kb_search
+        || search_flags.force_web_search
+        || search_flags.force_wiki_search
+        || search_flags.force_followup_mode
+        || search_flags.deep_research_mode
+    {
+        return false;
+    }
+    let turn_mode = tool_preferences
+        .and_then(|preferences| preferences.turn_mode.as_deref())
+        .map(str::trim)
+        .filter(|mode| !mode.is_empty())
+        .map(|mode| mode.to_ascii_lowercase());
+    matches!(turn_mode.as_deref(), None | Some("auto"))
+}
+
+/// Enable-only: inference may add retrieval to a turn, never take away what
+/// the user or the focus scope asked for. A closed book stays closed — the
+/// gate already skips it, and the merge refuses to reopen it.
+fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
+    if search_flags.closed_book {
+        return search_flags;
+    }
+    SearchFlags {
+        force_kb_search: search_flags.force_kb_search || intent.needs_knowledge_base,
+        force_web_search: search_flags.force_web_search || intent.needs_web,
+        force_followup_mode: search_flags.force_followup_mode || intent.is_followup,
+        ..search_flags
+    }
+}
+
 /// Route the turn, and keep what the router said about it.
 ///
 /// The decision used to be reduced to its `action` the moment it arrived, so an
@@ -1970,5 +2080,142 @@ mod tests {
         assert!(explicit
             .as_ref()
             .is_some_and(|allowlist| allowlist.contains("fetch_url_content")));
+    }
+
+    #[test]
+    fn intent_inference_runs_when_everything_is_on_defaults() {
+        let flags = SearchFlags::from_preferences(None);
+        assert!(should_infer_turn_intent(None, flags));
+        assert!(should_infer_turn_intent(
+            Some(&ToolPreferences::default()),
+            flags
+        ));
+
+        // "auto" (and an empty string) mean the same as unset.
+        let auto = ToolPreferences {
+            turn_mode: Some("auto".to_string()),
+            ..ToolPreferences::default()
+        };
+        assert!(should_infer_turn_intent(Some(&auto), flags));
+        let blank = ToolPreferences {
+            turn_mode: Some("  ".to_string()),
+            ..ToolPreferences::default()
+        };
+        assert!(should_infer_turn_intent(Some(&blank), flags));
+    }
+
+    #[test]
+    fn intent_inference_is_skipped_when_anything_is_explicit() {
+        // An explicit turn mode, even one that forces no flag by itself.
+        for mode in ["followup", "query"] {
+            let prefs = ToolPreferences {
+                turn_mode: Some(mode.to_string()),
+                ..ToolPreferences::default()
+            };
+            assert!(!should_infer_turn_intent(
+                Some(&prefs),
+                SearchFlags::from_preferences(Some(&prefs))
+            ));
+        }
+
+        // Any single toggle set is enough to stand down.
+        for prefs in [
+            ToolPreferences {
+                knowledge_base: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                web_search: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                deep_research_mode: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                followup_mode: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                enabled_tools: Some(vec!["wiki_search".to_string()]),
+                ..ToolPreferences::default()
+            },
+        ] {
+            assert!(!should_infer_turn_intent(
+                Some(&prefs),
+                SearchFlags::from_preferences(Some(&prefs))
+            ));
+        }
+
+        // A closed book is absolute, and a focus pin counts as an explicit ask.
+        let closed = ToolPreferences {
+            closed_book: true,
+            ..ToolPreferences::default()
+        };
+        assert!(!should_infer_turn_intent(
+            Some(&closed),
+            SearchFlags::from_preferences(Some(&closed))
+        ));
+        let focused = SearchFlags {
+            force_kb_search: true,
+            ..SearchFlags::from_preferences(None)
+        };
+        assert!(!should_infer_turn_intent(None, focused));
+    }
+
+    #[test]
+    fn turn_intent_merge_enables_inferred_retrieval() {
+        let flags = SearchFlags::from_preferences(None);
+        let intent = TurnIntent {
+            needs_knowledge_base: true,
+            needs_web: false,
+            is_followup: true,
+            confidence: 0.9,
+        };
+
+        let merged = apply_turn_intent(flags, &intent);
+
+        assert!(merged.force_kb_search);
+        assert!(merged.force_followup_mode);
+        assert!(!merged.force_web_search);
+        assert!(!merged.force_wiki_search);
+        assert!(!merged.deep_research_mode);
+        assert!(!merged.closed_book);
+    }
+
+    #[test]
+    fn turn_intent_merge_never_clears_a_set_flag() {
+        let every_flag_set = SearchFlags {
+            force_kb_search: true,
+            force_web_search: true,
+            force_wiki_search: true,
+            deep_research_mode: true,
+            force_followup_mode: true,
+            closed_book: false,
+        };
+
+        let merged = apply_turn_intent(every_flag_set, &TurnIntent::fallback());
+
+        assert!(merged.force_kb_search);
+        assert!(merged.force_web_search);
+        assert!(merged.force_wiki_search);
+        assert!(merged.deep_research_mode);
+        assert!(merged.force_followup_mode);
+
+        // Closed book stays exactly as it was, whatever the model said.
+        let closed = SearchFlags {
+            closed_book: true,
+            ..SearchFlags::from_preferences(None)
+        };
+        let eager = TurnIntent {
+            needs_knowledge_base: true,
+            needs_web: true,
+            is_followup: true,
+            confidence: 1.0,
+        };
+        let merged = apply_turn_intent(closed, &eager);
+        assert!(merged.closed_book);
+        assert!(!merged.force_kb_search);
+        assert!(!merged.force_web_search);
     }
 }
