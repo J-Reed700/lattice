@@ -109,7 +109,7 @@ function PlainRound({ round, numbered }: { round: DeckRound; numbered: boolean }
 
 function Thinking({ item, deepResearch }: { item: DeckThinking; deepResearch: boolean }) {
   const { step, wentBack } = item;
-  const elapsed = useElapsedSeconds(step.state === 'running' ? step.id : null);
+  const elapsed = useElapsedSeconds(step.state === 'running' ? step : null);
   return (
     <>
       {step.state === 'running' ? (

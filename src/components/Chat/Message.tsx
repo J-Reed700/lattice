@@ -210,6 +210,21 @@ export function Message({
     return messageId ? messageRetrieval.get(messageId) ?? null : null;
   }, [isUser, isPending, conversationId, liveRetrieval, messageId, messageRetrieval]);
 
+  /**
+   * When this turn began, for the clocks on its running steps.
+   *
+   * A step records only its offset from the start of the turn, and the pending
+   * bubble was created at that start — so its timestamp is the origin the
+   * offsets are measured from. Reading it from the message rather than from
+   * the moment a row is drawn is what lets a clock survive the record being
+   * folded and opened again.
+   */
+  const turnStartedAt = useMemo(() => {
+    if (isUser || !isPending) return null;
+    const started = Date.parse(message.createdAt);
+    return Number.isNaN(started) ? null : started;
+  }, [isUser, isPending, message.createdAt]);
+
   const claimsEvaluated = verificationSummary?.claimsEvaluated ?? 0;
   const supportedClaims = verificationSummary?.supportedClaimNotes ?? [];
   // Memoized because the `?? []` fallback is a fresh array on every render,
@@ -794,6 +809,7 @@ export function Message({
           trace={retrievalTrace}
           record={messageId ? messageTurn.get(messageId) ?? null : null}
           liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
+          turnStartedAt={turnStartedAt}
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
