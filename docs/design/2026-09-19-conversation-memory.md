@@ -154,6 +154,7 @@ enum MemoryKind {
     UserFact,                        // optional/retrievable
     Preference,                      // optional unless explicitly framed as a requirement
     OpenQuestion,                    // optional; summary also tracks unresolved work
+    EstablishedFact,                 // optional/retrievable; sourced world fact (added 2026-09-21)
     UnresolvedChange,                // host-created; mandatory until clarified/resolved
 }
 
@@ -176,6 +177,8 @@ Do not expose model-generated confidence as a correctness guarantee. A numeric c
 An active `UnresolvedChange`, or any active item with `review = Ambiguous`, is also mandatory. It records exact evidence and related item IDs without claiming a settled interpretation. The host creates this form when valid source text cannot support a confident semantic transition. Cap related IDs at 8 and validate ownership/acyclic supersession separately from conflict links; a conflict relation is not a supersession. An unresolved record is resolved only by a later validated user clarification or a supported re-review that retains all applicable evidence.
 
 Store labels for search, but render evidence quotations as the authoritative content. Labels and inferred relationships must be visually and structurally distinct from quotations.
+
+`EstablishedFact` (added 2026-09-21) is the one carve-out to the user-authority rule. It records a fact about the world the conversation established from an explicit source — a cited URL, a bracketed citation, a named document — so later turns can rely on it without fetching the source again. Its assertion evidence may quote an assistant passage, because that passage carries the provenance with it; the source must appear in the quoted span or an accompanying antecedent, and the label keeps the source name or URL. Unsourced assistant claims, opinions, and general knowledge never qualify. A later sourced passage may correct an established fact, so transition evidence targeting this kind may also come from the assistant; every other kind remains user-words-only for both assertions and transitions. Schema: migration `20260921000000_established_fact_kind.sql` widens the `kind` CHECK by rebuilding the table in place.
 
 Evidence may include an assistant antecedent for short user replies such as "yes, option B," but a user-asserted memory requires a user-source assertion. An assistant antecedent explains context; it is not independent evidence of user permission. Prefer preserving both passages with role labels to inventing a self-contained paraphrase.
 

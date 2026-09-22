@@ -48,7 +48,7 @@ pub struct MemoryEvidenceDto {
 pub struct ConversationMemoryItemDto {
     pub id: String,
     /// `constraint`, `goal`, `decision`, `user_fact`, `preference`,
-    /// `open_question` or `unresolved_change`.
+    /// `open_question`, `established_fact` or `unresolved_change`.
     pub kind: String,
     /// `active`, `superseded` or `resolved`.
     pub state: String,
