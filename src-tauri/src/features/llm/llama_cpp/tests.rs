@@ -384,9 +384,8 @@ fn sse_error_names_the_servers_error_type_and_never_its_message() {
             .to_string()
     };
 
-    let named = failure(
-        r#"{"error":{"code":400,"type":"exceed_context_size_error","message":"private"}}"#,
-    );
+    let named =
+        failure(r#"{"error":{"code":400,"type":"exceed_context_size_error","message":"private"}}"#);
     assert!(named.contains("(400 exceed_context_size_error)"), "{named}");
     assert!(!named.contains("private"));
 
