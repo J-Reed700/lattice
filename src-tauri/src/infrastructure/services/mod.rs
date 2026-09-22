@@ -3,6 +3,7 @@ pub mod article_extractor;
 pub mod context_manager;
 pub mod file_cleanup;
 pub mod file_type_detector;
+pub mod intent;
 pub mod metadata_extraction;
 pub mod model_manager;
 pub mod router;
@@ -23,6 +24,7 @@ pub mod traits;
 #[cfg(test)]
 pub mod tests;
 
+pub use intent::IntentClassifier;
 pub use metadata_extraction::MetadataExtractor;
 pub use router::RouterService;
 
