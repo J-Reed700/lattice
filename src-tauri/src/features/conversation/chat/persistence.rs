@@ -17,16 +17,23 @@ pub(super) async fn persist_user_message_pending(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     user_message: &str,
+    attachment_names: &[String],
     llm: &Arc<dyn crate::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
+    // The files this turn brought into the conversation, stamped on the message
+    // so history shows where they entered. Names only: the documents themselves
+    // are reachable through the conversation's linked sources.
+    let metadata = (!attachment_names.is_empty())
+        .then(|| serde_json::json!({ "attachments": attachment_names }).to_string());
     let user_msg = conv_service
-        .add_message_with_status(
+        .add_message_with_metadata(
             conversation_id,
             crate::domain::conversation::MessageRole::User,
             user_message.to_string(),
             message_tokens as i64,
             "pending".to_string(),
+            metadata,
         )
         .await?;
 

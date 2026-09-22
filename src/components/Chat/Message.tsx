@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Paperclip,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -126,6 +127,21 @@ export function Message({
 
   const citationMap = useMemo(() => createCitationMap(sources), [sources]);
   const isAssistantWithSources = !isUser && sources.length > 0;
+
+  // The files this message brought into the conversation, stamped on it when
+  // it was sent. Absent metadata or a parse failure is "no attachments",
+  // never an error — older messages simply have no record.
+  const attachmentNames = useMemo(() => {
+    if (!isUser || !('metadata' in message) || !message.metadata) return [] as string[];
+    try {
+      const parsed: unknown = JSON.parse(message.metadata);
+      const names = (parsed as { attachments?: unknown })?.attachments;
+      if (!Array.isArray(names)) return [] as string[];
+      return names.filter((name): name is string => typeof name === 'string');
+    } catch {
+      return [] as string[];
+    }
+  }, [isUser, message]);
 
   // The ordered list behind the citation numbers — what `[` / `]` travel over.
   const citationSources = useMemo(
@@ -819,6 +835,21 @@ export function Message({
             </span>
           )}
         </div>
+        )}
+
+        {/* The files this message brought into the conversation. */}
+        {isUser && attachmentNames.length > 0 && (
+          <div className="mt-1.5 ml-auto flex w-fit max-w-[85%] flex-wrap justify-end gap-1.5">
+            {attachmentNames.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-[hsl(var(--text-secondary))] shadow-sheet"
+              >
+                <Paperclip className="h-3 w-3" strokeWidth={1.6} />
+                {name}
+              </span>
+            ))}
+          </div>
         )}
 
         {/* The narrow form of the evidence; the margin replaces it where there is room. */}

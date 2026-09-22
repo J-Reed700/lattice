@@ -7,16 +7,14 @@ import type { StagedFile } from './useChatFileDrop';
 /**
  * The staged-files row above the composer.
  *
- * The scope line lives in the linked-documents footer instead: this row only
- * exists while files are staged, and the narrowing it used to announce outlives
- * the staging by the whole conversation.
+ * Staged files join the conversation when the message is sent — there is no
+ * separate "add" step to forget. This row says what is queued and offers the
+ * ways out: remove one file, or cancel them all.
  */
-
 export interface ChatDropStagingProps {
   staged: StagedFile[];
   isImporting: boolean;
   onRemove: (_path: string) => void;
-  onImport: () => void;
   onClear: () => void;
 }
 
@@ -24,7 +22,6 @@ export function ChatDropStaging({
   staged,
   isImporting,
   onRemove,
-  onImport,
   onClear,
 }: ChatDropStagingProps) {
   if (staged.length === 0) return null;
@@ -38,7 +35,7 @@ export function ChatDropStaging({
           <span className="shrink-0">
             {isImporting
               ? `Adding ${staged.length} file${staged.length !== 1 ? 's' : ''}…`
-              : `${staged.length} file${staged.length !== 1 ? 's' : ''} ready`}
+              : `${staged.length} file${staged.length !== 1 ? 's' : ''} — added when you send`}
           </span>
           <span className="min-w-0 truncate text-[hsl(var(--text-muted))]">
             {preview.map((file, index) => (
@@ -66,14 +63,6 @@ export function ChatDropStaging({
             className="text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onImport}
-            disabled={isImporting}
-            className="text-[hsl(var(--accent))] underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Add to this conversation
           </button>
         </div>
       </div>

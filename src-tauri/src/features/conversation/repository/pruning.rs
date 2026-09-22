@@ -90,7 +90,7 @@ impl ConversationRepository {
     pub async fn take_last_user_turn(
         &self,
         conversation_id: &str,
-    ) -> Result<Option<(String, i64)>> {
+    ) -> Result<Option<(String, i64, Option<String>)>> {
         let mut tx = self.pool.begin().await.map_err(|e| {
             AppError::Database(format!("Failed to begin take_last_user_turn: {}", e))
         })?;
@@ -100,13 +100,14 @@ impl ConversationRepository {
             id: String,
             content: String,
             tokens: i64,
+            metadata: Option<String>,
             created_at: String,
             rowid: i64,
         }
 
         let row = sqlx::query_as::<_, LastUserRow>(
             r#"
-            SELECT id, content, tokens, created_at, rowid
+            SELECT id, content, tokens, metadata, created_at, rowid
             FROM conversation_messages
             WHERE conversation_id = ? AND role = 'user'
             ORDER BY created_at DESC, rowid DESC
@@ -136,7 +137,7 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to commit take_last_user_turn: {}", e))
         })?;
 
-        Ok(Some((row.content, row.tokens)))
+        Ok(Some((row.content, row.tokens, row.metadata)))
     }
     /// `(created_at, rowid)` of one message, scoped to its conversation.
     pub(super) async fn load_message_position(

@@ -109,7 +109,7 @@ pub async fn regenerate_response_impl(
 ) -> Result<ChatResponse, ApiError> {
     let repo = ConversationRepository::new(container.db_pool().clone());
 
-    let (content, _tokens) = repo
+    let (content, _tokens, metadata) = repo
         .take_last_user_turn(&conversation_id)
         .await
         .map_err(ApiError::from)?
@@ -119,6 +119,22 @@ pub async fn regenerate_response_impl(
             ))
         })?;
 
+    // The lifted message's attachment record travels with it, so a regenerate
+    // shows the same files the original turn brought in.
+    let attachment_names = metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| {
+            value.get("attachments").and_then(|items| {
+                items.as_array().map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| entry.as_str().map(str::to_string))
+                        .collect::<Vec<String>>()
+                })
+            })
+        });
+
     let fut = run_chat_with_conversation_impl(
         container,
         Some(conversation_id.clone()),
@@ -126,6 +142,7 @@ pub async fn regenerate_response_impl(
         tool_preferences,
         None,
         request_id,
+        attachment_names,
         window,
     );
 
@@ -135,12 +152,13 @@ pub async fn regenerate_response_impl(
             // Put the question back on the thread before surfacing the failure.
             if let Err(persist_error) = container
                 .conversation_service()
-                .add_message_with_status(
+                .add_message_with_metadata(
                     &conversation_id,
                     crate::domain::conversation::MessageRole::User,
                     content,
                     0,
                     "failed".to_string(),
+                    metadata,
                 )
                 .await
             {

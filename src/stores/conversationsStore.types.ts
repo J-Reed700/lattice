@@ -124,7 +124,8 @@ export interface ConversationsState {
   sendMessage: (
     _content: string,
     _conversationId?: string | null,
-    _toolPreferences?: ToolPreferences
+    _toolPreferences?: ToolPreferences,
+    _attachmentNames?: string[]
   ) => Promise<void>;
   /**
    * Re-run the last user message. Resolves with how the turn ended; only

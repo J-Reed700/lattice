@@ -1021,9 +1021,9 @@ async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatS
     else return { status: "error", error: e  as any };
 }
 },
-async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null) : Promise<Result<ChatResponse, ApiError>> {
+async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

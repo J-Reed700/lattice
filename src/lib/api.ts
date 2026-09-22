@@ -2421,12 +2421,14 @@ const VaultAPI = {
     conversationId: string | null,
     message: string,
     toolPreferences?: ToolPreferences,
-    requestId?: string
+    requestId?: string,
+    attachmentNames?: string[]
   ): Promise<ApiResult<Wire.ChatResponse>> => apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
       message,
       requestId,
       toolPreferences,
+      attachmentNames,
     }),
 
   /**

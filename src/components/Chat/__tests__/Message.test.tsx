@@ -245,3 +245,35 @@ describe('a question that failed to send', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 });
+
+describe('the files a message brought in', () => {
+  const userMessage = (metadata?: string) =>
+    ({
+      id: 'user-1',
+      role: 'user',
+      content: 'What does this say?',
+      createdAt: new Date().toISOString(),
+      conversationId: 'conversation',
+      ...(metadata ? { metadata } : {}),
+    }) as Parameters<typeof Message>[0]['message'];
+
+  it('shows the attachment names stamped on the message when it was sent', () => {
+    render(
+      <Message
+        message={userMessage(JSON.stringify({ attachments: ['Transect.md', 'notes.txt'] }))}
+      />
+    );
+
+    expect(screen.getByText('Transect.md')).toBeInTheDocument();
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+  });
+
+  it('shows nothing when there is no record, and survives a broken one', () => {
+    const { unmount } = render(<Message message={userMessage()} />);
+    expect(screen.queryByText('Transect.md')).not.toBeInTheDocument();
+    unmount();
+
+    render(<Message message={userMessage('not json')} />);
+    expect(screen.queryByText('Transect.md')).not.toBeInTheDocument();
+  });
+});

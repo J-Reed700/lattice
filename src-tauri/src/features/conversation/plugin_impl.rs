@@ -163,6 +163,7 @@ pub async fn chat_with_conversation_wrapper_impl(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     let convo_id_for_log = conversation_id.clone().unwrap_or_else(|| "NEW".to_string());
@@ -180,6 +181,7 @@ pub async fn chat_with_conversation_wrapper_impl(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
         window,
     );
     match Box::pin(fut).await {
@@ -209,6 +211,7 @@ pub async fn chat_with_conversation_impl(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     chat_with_conversation_wrapper_impl(
@@ -218,6 +221,7 @@ pub async fn chat_with_conversation_impl(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
         window,
     )
     .await
