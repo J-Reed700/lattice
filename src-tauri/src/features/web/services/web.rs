@@ -89,11 +89,21 @@ const SITE_ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Words too common to steer a search, at the length [`followup_terms`] keeps.
+///
+/// Two kinds. Function words, which say nothing about any topic; and the
+/// vocabulary pages use about themselves rather than about their subject —
+/// listicle words every second headline carries ("best", "tips"), and the
+/// furniture a snippet picks up off the page around it ("html" comes in off a
+/// URL). Both are shared by enough results to pass for the topic's own
+/// vocabulary, and a search sent after them lands nowhere in particular.
 const FOLLOWUP_STOPWORDS: &[&str] = &[
-    "about", "after", "also", "been", "before", "could", "every", "from", "have", "here", "into",
-    "just", "more", "most", "only", "over", "should", "some", "such", "than", "that", "their",
-    "them", "then", "there", "these", "they", "this", "those", "were", "what", "when", "where",
-    "which", "while", "will", "with", "would", "your",
+    "about", "after", "also", "been", "before", "best", "click", "could", "does", "each", "email",
+    "every", "find", "from", "have", "here", "html", "http", "https", "index", "into", "just",
+    "know", "like", "login", "look", "make", "many", "more", "most", "much", "need", "only",
+    "other", "over", "page", "pages", "posted", "read", "same", "share", "should", "site", "some",
+    "such", "take", "than", "that", "their", "them", "then", "there", "these", "they", "this",
+    "guide", "those", "tips", "used", "using", "very", "want", "well", "were", "website", "what",
+    "when", "where", "which", "while", "will", "with", "would", "your",
 ];
 
 /// The words of `text` that could usefully extend a search query: lowercased,
@@ -1067,6 +1077,84 @@ impl WebService {
         results
     }
 
+    /// The part of `root_query` every follow-up keeps: what it is about.
+    ///
+    /// A follow-up that carries the whole query differs from it in two words
+    /// out of eleven, and an engine ranks the two almost alike — seven
+    /// searches come back with one search's pages, which is what the deck
+    /// showed. What has to survive into a follow-up is the subject. The rest
+    /// of the query is one phrasing of one angle on it, and the follow-ups
+    /// exist to take other angles; carrying "varieties most beneficial" into
+    /// each of them only pins every angle back to the first.
+    ///
+    /// The results say which words are the subject, and their *titles* say it
+    /// best: a title names what a page is about, where a snippet is prose and
+    /// carries whatever words prose carries. Both were tried against the turn
+    /// in the deck. Counting snippets as well, the best three words came out
+    /// "frost varieties purple" — "varieties" is in five of those ten pages,
+    /// in phrases like "cold-hardy varieties", and it crowded out the word the
+    /// search was actually for. Counting titles alone gives "frost broccolini
+    /// purple"; no title anywhere says "varieties".
+    ///
+    /// So the query's own words are ranked by how many result titles use them,
+    /// the best three kept, and those put back in the order the query had
+    /// them.
+    ///
+    /// `None` when fewer than two of the query's words come back at all, which
+    /// leaves the caller on the whole root. One word is not a subject: anchor
+    /// a search on "frost" alone and it finds a bank of that name, as this
+    /// turn's own results did.
+    fn search_anchor(root_query: &str, results: &[WebSearchResult]) -> Option<String> {
+        const RESULTS_CONSIDERED: usize = 8;
+        const MAX_ANCHOR_WORDS: usize = 3;
+        const MIN_ANCHOR_WORDS: usize = 2;
+
+        let per_result: Vec<HashSet<String>> = results
+            .iter()
+            .take(RESULTS_CONSIDERED)
+            .map(|result| followup_terms(&result.title).collect())
+            .collect();
+
+        // Each of the query's words, where it sat, and how many titles use
+        // it. A word the query says twice is weighed once.
+        let mut scored: Vec<(usize, &str, usize)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for (position, word) in root_query.split_whitespace().enumerate() {
+            let bare = word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+            let terms: Vec<String> = followup_terms(bare).collect();
+            if terms.is_empty() {
+                continue;
+            }
+            let repeated = terms.iter().any(|term| seen.contains(term));
+            seen.extend(terms.iter().cloned());
+            if repeated {
+                continue;
+            }
+            let echoes = per_result
+                .iter()
+                .filter(|result_terms| terms.iter().any(|term| result_terms.contains(term)))
+                .count();
+            if echoes > 0 {
+                scored.push((position, bare, echoes));
+            }
+        }
+
+        // Stable, so words the results echo equally often stay in query order.
+        scored.sort_by_key(|(_, _, echoes)| std::cmp::Reverse(*echoes));
+        scored.truncate(MAX_ANCHOR_WORDS);
+        if scored.len() < MIN_ANCHOR_WORDS {
+            return None;
+        }
+        scored.sort_by_key(|(position, _, _)| *position);
+        Some(
+            scored
+                .iter()
+                .map(|(_, word, _)| *word)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
     /// Follow-up queries that look somewhere the searches so far did not.
     ///
     /// The vocabulary comes from the results themselves: a word several of
@@ -1075,9 +1163,9 @@ impl WebService {
     /// terms are ranked by how many results mention them, and a term has to
     /// appear in at least two to count.
     ///
-    /// Every follow-up extends `root_query`, never an earlier follow-up, and
-    /// never with a term in `used_terms` — which holds the root's own words and
-    /// everything already tried. The previous version took the first words of
+    /// Every follow-up extends the root's subject ([`Self::search_anchor`]),
+    /// never an earlier follow-up, and never with a term in `used_terms` —
+    /// which holds the root's own words and everything already tried. The previous version took the first words of
     /// the top result's title whatever they were and appended them to the last
     /// query, so a search for a Silo recap went out as "… recap silo ultimate
     /// guide" and then "… recap silo ultimate guide silo ultimate guide": the
@@ -1085,6 +1173,16 @@ impl WebService {
     ///
     /// Returns nothing when the results offer no new shared vocabulary. Not
     /// searching is better than searching for noise.
+    ///
+    /// A root too long to sharpen gets no follow-ups either. Two terms only
+    /// change what an engine matches when the query is short enough for them
+    /// to weigh; appended to a twenty-four word root they change nothing, and
+    /// a level of "the same search, two words longer" costs a request apiece
+    /// and brings back the pages the root already found. What happened in the
+    /// log: a rewrite that had copied out a reader's whole list of crops went
+    /// out seven times over, each time with two more mined words on the end.
+    /// How the root got that long is the caller's to fix — this only declines
+    /// to multiply it.
     fn derive_followup_queries(
         root_query: &str,
         used_terms: &mut HashSet<String>,
@@ -1094,6 +1192,18 @@ impl WebService {
         const RESULTS_CONSIDERED: usize = 8;
         const MIN_RESULTS_SHARING_A_TERM: usize = 2;
         const TERMS_PER_FOLLOWUP: usize = 2;
+        /// The longest root that two more terms can still steer.
+        const MAX_ROOT_WORDS: usize = 12;
+
+        let root_words = root_query.split_whitespace().count();
+        if root_words > MAX_ROOT_WORDS {
+            debug!(
+                root_words,
+                root_preview = %crate::shared::text_utils::safe_truncate(root_query.trim(), 120),
+                "No follow-up searches: the query is too long for two more terms to change it"
+            );
+            return Vec::new();
+        }
 
         // How many results mention each term, and the order terms were first
         // met in, so that ties break the same way on every run.
@@ -1116,6 +1226,11 @@ impl WebService {
         // Stable, so equally common terms stay in first-met order.
         ranked.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
 
+        // What every follow-up is a search for. Without an anchor the results
+        // never named the subject back, and the whole query stands in for it.
+        let anchor = Self::search_anchor(root_query, results);
+        let base = anchor.as_deref().unwrap_or(root_query).trim();
+
         let mut queries = Vec::new();
         for pair in ranked.chunks(TERMS_PER_FOLLOWUP) {
             if queries.len() >= branch_queries {
@@ -1129,7 +1244,7 @@ impl WebService {
             for (term, _) in pair {
                 used_terms.insert(term.clone());
             }
-            queries.push(format!("{} {suffix}", root_query.trim()));
+            queries.push(format!("{base} {suffix}"));
         }
         queries
     }
@@ -2005,26 +2120,81 @@ mod tests {
         );
         let root_terms: HashSet<String> = followup_terms(root).collect();
         for followup in &followups {
-            let suffix = followup
-                .strip_prefix(root)
-                .expect("extends the root")
-                .trim();
-            for word in suffix.split_whitespace() {
-                assert!(
-                    !root_terms.contains(word),
-                    "{followup:?} repeats {word:?} from the query it extends"
-                );
-            }
+            let words: Vec<String> = followup_terms(followup).collect();
+            let distinct: HashSet<&String> = words.iter().collect();
+            assert_eq!(
+                words.len(),
+                distinct.len(),
+                "{followup:?} says a word twice"
+            );
+            assert!(
+                words.iter().any(|word| !root_terms.contains(word)),
+                "{followup:?} asks nothing the query did not already ask"
+            );
+            // Only the subject is carried over; the rest of the query is not.
+            assert!(
+                words
+                    .iter()
+                    .filter(|word| root_terms.contains(*word))
+                    .count()
+                    <= 3,
+                "{followup:?} carries more of the query than its subject"
+            );
+        }
+    }
+
+    /// Seven searches that differ in two words out of eleven come back with
+    /// one search's pages. The subject reaches every follow-up; the reader's
+    /// phrasing of it does not — no page calls broccolini "varieties most
+    /// beneficial", so searching for that only pins each follow-up back to the
+    /// query it was supposed to look past.
+    #[test]
+    fn a_followup_keeps_the_subject_and_drops_the_phrasing() {
+        let root = "frost tolerant broccolini varieties purple most beneficial nutrients";
+        let results = vec![
+            found(
+                "Is Broccoli Frost Tolerant?",
+                "Purple sprouting broccoli survives a hard frost.",
+            ),
+            found(
+                "Purple Broccoli: Description, Flavor, Benefits",
+                "Purple sprouting broccoli, an heirloom vegetable.",
+            ),
+            found(
+                "How to Grow Broccolini in Containers",
+                "Broccolini seedlings in a container garden.",
+            ),
+            found(
+                "10 Impressive Broccolini Nutrition Facts",
+                "Broccolini is rich in vitamins.",
+            ),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
+
+        assert!(!followups.is_empty(), "the results share new vocabulary");
+        for followup in &followups {
+            assert!(
+                !followup.starts_with(root),
+                "{followup:?} carries the whole query"
+            );
+            // The words no title used. Dropping them widens the search.
+            assert!(!followup.contains("varieties"), "{followup:?}");
+            assert!(!followup.contains("beneficial"), "{followup:?}");
+            assert!(!followup.contains("nutrients"), "{followup:?}");
+            // What the pages do call it, stays.
+            assert!(followup.contains("broccolini"), "{followup:?}");
         }
     }
 
     /// Words only one result uses are that site's name or its headline, not the
-    /// topic's vocabulary. "ultimate" and "guide" are in exactly one title here.
+    /// topic's vocabulary. "ultimate" and "breakdown" are in exactly one title
+    /// here, and neither is a stopword — it is the counting that drops them.
     #[test]
     fn a_word_only_one_result_uses_does_not_steer_the_search() {
         let root = "Silo recap";
         let results = vec![
-            found("Silo Ultimate Guide", "Juliette and Bernard."),
+            found("Silo Ultimate Breakdown", "Juliette and Bernard."),
             found("Silo explained", "Juliette and Bernard again."),
         ];
         let mut used: HashSet<String> = followup_terms(root).collect();
@@ -2048,6 +2218,150 @@ mod tests {
 
         assert_eq!(first, vec!["Silo recap juliette bernard".to_string()]);
         assert_eq!(second, vec!["Silo recap solo safeguard".to_string()]);
+    }
+
+    /// A query too long to steer is not the place to add words. The one in the
+    /// log had the reader's whole list of crops copied into it, and went out
+    /// seven times over, each time with two more mined terms on the end — the
+    /// same search, seven requests, the same pages.
+    #[test]
+    fn an_over_long_root_gets_no_followups() {
+        let root = "indoor vegetable garden list supplement existing crops spinach chard kale \
+                    sage dill basil tomatoes thyme oregano golden beets beets bell peppers";
+        let results = vec![
+            found(
+                "Best Vegetables to Grow Indoors",
+                "Lettuce and herbs grow indoors year round.",
+            ),
+            found(
+                "15 Best Vegetables That Can Grow Indoors",
+                "Lettuce and herbs grow indoors year round.",
+            ),
+        ];
+
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        assert!(Service::derive_followup_queries(root, &mut used, &results, 3).is_empty());
+
+        // The same results, off a query short enough for two terms to weigh,
+        // still earn their follow-ups: it is the root's length that stopped it.
+        let short_root = "indoor vegetables";
+        let mut used: HashSet<String> = followup_terms(short_root).collect();
+        assert!(!Service::derive_followup_queries(short_root, &mut used, &results, 3).is_empty());
+    }
+
+    /// The turn in the deck, replayed against the results the engines actually
+    /// returned for it — titles and snippets as they came back, URLs and all.
+    ///
+    /// What went out that day was the query seven times over, two words apart
+    /// each time: "… broccoli growing", "… benefits nutrition", "… html
+    /// health", "… cold tips", "… need cool". "html" came off the end of three
+    /// of these URLs; "need", "tips" and "cool" are words any ten gardening
+    /// pages share. Ten results, twenty-six unique URLs between all seven.
+    ///
+    /// A live turn feeds each branch its own results, so the second level's
+    /// terms come from what the first level found; replaying one result set
+    /// through both levels is the pessimistic case, and still splits.
+    #[test]
+    fn the_broccolini_turn_searches_for_different_things_now() {
+        let root = "frost tolerant broccolini varieties purple most beneficial nutrients";
+        let results = vec![
+            found(
+                "The Amazing Purple Broccoli: Nutrition, Growing Tips, and Delicious ...",
+                "www.colorfood.org/en/Foodcategory/purplecategory/Purple-broccoli.html Discover the \
+                 health benefits, growing methods, and tasty recipes featuring purple broccoli, a \
+                 colorful superfood packed with antioxidants.",
+            ),
+            found(
+                "Is Broccoli Frost Tolerant? (Everything You Need To Know)",
+                "backyardgardenersnetwork.org/broccoli-frost-tolerant/ You may wonder if broccoli is \
+                 frost tolerant. Broccoli plants can tolerate periods of cold weather. Here is what you \
+                 need to know to help your broccoli plants manage those temperatures. Is Broccoli Frost \
+                 Tolerant? Yes, broccoli is frost tolerant. It is considered frost-hardy. Broccoli can \
+                 survive temperatures down to 26 degrees F.",
+            ),
+            found(
+                "Purple Broccoli: Description, Flavor, Benefits, And Uses",
+                "gardenersmag.com/purple-broccoli/ 2025-04-25T00:00:00.0000000 The purple variety is a \
+                 relatively recent addition to the Brassica oleracea family, including cauliflower, \
+                 brussels sprouts, and kale. This variety was created by crossing two traditional \
+                 broccoli plants - the green Calabrese and Purple Sprouting varieties.",
+            ),
+            found(
+                "Growing Purple Sprouting Broccoli In Usda Zone 4: Tips For Cold-Climate ...",
+                "shuncy.com/article/growing-purple-sprouting-broccoli-in-zone-4 \
+                 2026-06-27T00:00:00.0000000 Yes, you can grow purple sprouting broccoli in USDA zone 4 \
+                 by selecting cold‑hardy varieties and timing planting to avoid the worst frost, though \
+                 success depends on choosing the right cultivars and proper scheduling. This guide will \
+                 cover how to pick suitable cold‑tolerant types, when to sow seeds and transplant to \
+                 sidestep frost, soil preparation and microclimate management for purple ...",
+            ),
+            found(
+                "How to Grow Broccolini in Containers and Gardens: Complete Easy Guide ...",
+                "greentomorrow2026.blogspot.com/2026/05/how-to-grow-broccolini-in-containers.html \
+                 2026-05-26T00:00:00.0000000 The complete guide to growing broccolini in the USA and \
+                 Canada — from seed to harvest, containers to raised beds, NPK nutrition, best \
+                 varieties, cooking recipes, and a full regional planting calendar.",
+            ),
+            found(
+                "10 Impressive Broccolini Nutrition facts and Health benefits",
+                "www.nutrition-and-you.com/broccolini.html Broccolini is renowned for its asparagus \
+                 -like long, tender stalks and loose clusters of florets reminiscent of broccoli rabe. \
+                 This much sought-after leafy vegetable has gained popularity among chefs for its \
+                 subtly sweet flavor paired with a hint of pepperiness. Broccolini is a fast-growing, \
+                 upright plant. While it thrives in cool seasons, it is sensitive to frost and prefers \
+                 milder summers ...",
+            ),
+            found(
+                "Top 10 Heirloom Broccoli to Grow in 2025 | The Homestead Guide",
+                "thehomesteadguide.com/best-heirloom-broccoli/ In this article, we go through the 10 \
+                 best heirloom broccoli varieties to grow in your garden. There are cold tolerant- \
+                 broccoli varieties, slow-bolting broccoli varieties, and more. Come check it out and \
+                 pick out a couple of your favorites!",
+            ),
+            found(
+                "Broccoli Beyond Basics: 5 Types of Broccoli and Their Benefits",
+                "seniorfitness.org/types-of-broccoli-and-their-benefits/ 2026-04-22T00:00:00.0000000 \
+                 You will check out the health benefits of various broccoli types, from antioxidant- \
+                 rich purple cauliflower to versatile broccolini and nutrient-packed Calabrese.",
+            ),
+            found(
+                "Broccoli's frost-defying prowess: a horticultural enigma revealed",
+                "cooknight.net/can-broccoli-handle-frost/ 2025-05-02T00:00:00.0000000 Understanding how \
+                 broccoli handles frost empowers gardeners to extend the growing season and enjoy \
+                 fresh, homegrown broccoli throughout the winter months. By choosing cold-hardy \
+                 varieties, protecting plants from frost, and monitoring for signs of damage, gardeners \
+                 can reap the benefits of this nutritious vegetable even in challenging climates.",
+            ),
+            found(
+                "Online Banking Services Login | Frost",
+                "www.frostbank.com/online-banking Sign in to your Frost online accounts through \
+                 our online banking feature.",
+            ),
+        ];
+
+        // Depth 3, three branches a level, as deep research asks for it.
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let mut executed = vec![root.to_string()];
+        for _ in 0..2 {
+            executed.extend(Service::derive_followup_queries(
+                root, &mut used, &results, 3,
+            ));
+        }
+
+        assert_eq!(
+            executed,
+            vec![
+                // The rewrite of the question, searched as it stands.
+                "frost tolerant broccolini varieties purple most beneficial nutrients",
+                // Then the same subject, six other ways.
+                "frost broccolini purple broccoli growing",
+                "frost broccolini purple benefits nutrition",
+                "frost broccolini purple health cold",
+                "frost broccolini purple grow recipes",
+                "frost broccolini purple packed plants",
+                "frost broccolini purple hardy flavor",
+            ]
+        );
     }
 
     /// Searching for noise is worse than not searching.
