@@ -310,10 +310,15 @@ export function WebArticleView({
       if (start > cursor) {
         nodes.push(<Fragment key={`text-${cursor}`}>{pageText.slice(cursor, start)}</Fragment>);
       }
+      // A passage that runs over a paragraph break is drawn once per paragraph,
+      // and only the first of those is where it begins. Registering them all
+      // would leave the last one as the scroll target and open the reader at
+      // the passage's end, several paragraphs past the sentence it matched.
+      const opensHere = passage.start >= paragraph.start;
       nodes.push(
         <mark
           key={`mark-${index}`}
-          ref={(element) => registerMark(index, element)}
+          ref={opensHere ? (element) => registerMark(index, element) : undefined}
           className={
             index === activeIndex
               ? 'source-reader-passage is-lit'

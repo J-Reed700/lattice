@@ -94,6 +94,8 @@ interface PageSentence {
   start: number;
   end: number;
   tokens: Set<string>;
+  /** True when this "sentence" is the heading a section opens with. */
+  heading: boolean;
 }
 
 /** A sentence span, as offsets into the text it came from. */
@@ -129,6 +131,63 @@ export function sentenceSpans(text: string): SentenceSpan[] {
   }
   push(cursor, text.length);
   return spans;
+}
+
+/**
+ * A heading is no longer than this. Past it, a line with no full stop is a
+ * paragraph that ran out of punctuation rather than a title.
+ */
+const MAX_HEADING_LENGTH = 80;
+
+/** A line ending like this is prose, however short it is. */
+const SENTENCE_TAIL = /[.!?…,;:]$/;
+
+/**
+ * Whether a line is titled: every word carrying meaning starts with a capital.
+ *
+ * Without this, any short line that forgot its full stop would end a section —
+ * "Seed to harvest: 24 to 30 days" is the last line of one, not the first line
+ * of the next. Function words are left alone because a title lowercases them
+ * on purpose ("Broccoli For Strong Spring Crops" either way).
+ */
+function isTitled(line: string): boolean {
+  return line.split(/\s+/).every((word) => {
+    const bare = word.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
+    const first = bare[0];
+    if (first === undefined || !/\p{L}/u.test(first)) return true;
+    return STOPWORDS.has(bare.toLowerCase()) || first === first.toUpperCase();
+  });
+}
+
+/**
+ * Where each section of the page begins.
+ *
+ * Extracted text keeps almost nothing of a page's structure, but it keeps
+ * this: a short titled line standing alone between blank lines and ending in
+ * no punctuation — "Broccoli For Strong Spring Crops", "Bok Choy". It is the
+ * page saying it has changed subject, and both halves of this module take it
+ * at its word: a window never reaches past a heading, and two spans either
+ * side of one stay two spans.
+ */
+function sectionStarts(pageText: string): number[] {
+  const starts: number[] = [];
+  const lines = pageText.split('\n');
+  let offset = 0;
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    const alone =
+      (index === 0 || !lines[index - 1]!.trim()) &&
+      (index === lines.length - 1 || !lines[index + 1]!.trim());
+    const titled =
+      trimmed.length <= MAX_HEADING_LENGTH && !SENTENCE_TAIL.test(trimmed) && isTitled(trimmed);
+    if (trimmed && alone && titled) {
+      starts.push(offset + (line.length - line.trimStart().length));
+    }
+    offset += line.length + 1;
+  });
+
+  return starts;
 }
 
 /** The text with `[n]` markers taken out, so they cannot count as content. */
@@ -181,10 +240,12 @@ function pageTokens(text: string): Set<string> {
 }
 
 function splitPage(pageText: string): PageSentence[] {
+  const headings = new Set(sectionStarts(pageText));
   return sentenceSpans(pageText).map(({ start, end }) => ({
     start,
     end,
     tokens: pageTokens(pageText.slice(start, end)),
+    heading: headings.has(start),
   }));
 }
 
@@ -202,13 +263,18 @@ export function mergePassages(
 ): SourcedPassage[] {
   const sorted = [...passages].sort((a, b) => a.start - b.start || a.end - b.end);
   const merged: SourcedPassage[] = [];
+  const sections = pageText === undefined ? [] : sectionStarts(pageText);
   const touches = (end: number, start: number) =>
     start < end ||
     (pageText !== undefined && start >= end && !pageText.slice(end, start).trim());
+  // Two spans with a heading between them are in two sections of the page,
+  // however little text separates them — the blank line before a heading is
+  // the same blank line as any other.
+  const parted = (end: number, start: number) => sections.some((at) => at >= end && at <= start);
 
   for (const passage of sorted) {
     const last = merged[merged.length - 1];
-    if (last && touches(last.end, passage.start)) {
+    if (last && touches(last.end, passage.start) && !parted(last.end, passage.start)) {
       last.end = Math.max(last.end, passage.end);
       if (passage.score > last.score) {
         last.score = passage.score;
@@ -252,11 +318,20 @@ function bestWindow(
         if (considered.has(key)) continue;
         considered.add(key);
 
+        // A heading opens a section, so a window that reached past one would
+        // be pointing at two of them, and the answer sentence was written off
+        // at most one. A window may still begin at a heading: a title and what
+        // it introduces are one place on the page.
         const matched = new Set<string>();
+        let reachedPastHeading = false;
         for (let i = start; i < start + size; i += 1) {
+          if (i > start && page[i]!.heading) {
+            reachedPastHeading = true;
+            break;
+          }
           for (const token of hits.get(i) ?? []) matched.add(token);
         }
-        if (matched.size < MIN_SHARED_TOKENS) continue;
+        if (reachedPastHeading || matched.size < MIN_SHARED_TOKENS) continue;
 
         let weight = 0;
         for (const token of matched) weight += weightOf.get(token) ?? 0;
