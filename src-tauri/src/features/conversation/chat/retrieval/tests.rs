@@ -166,6 +166,7 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         web_context: None,
         web_search_error: None,
         kb_unavailable_reason: None,
+        kb_attempted: false,
         sources: Vec::new(),
         available_for_rag: 0,
         sub_timings: RetrievalSubTimingMetrics::default(),

@@ -149,6 +149,13 @@ pub(super) struct RetrievalPipelineOutcome {
     pub(super) web_context: Option<String>,
     pub(super) web_search_error: Option<String>,
     pub(super) kb_unavailable_reason: Option<String>,
+    /// Whether the knowledge base was actually searched this turn.
+    ///
+    /// Distinct from "found nothing". A turn that never reached the vault and a
+    /// turn that read it and came back empty are two different facts, and a
+    /// prompt that reports the second when the first happened tells the reader
+    /// their documents were consulted when they were not.
+    pub(super) kb_attempted: bool,
     pub(super) sources: Vec<SourceDto>,
     pub(super) available_for_rag: usize,
     pub(super) sub_timings: RetrievalSubTimingMetrics,

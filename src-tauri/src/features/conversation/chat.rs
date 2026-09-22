@@ -808,6 +808,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     .with_web_context(retrieval.web_context.clone())
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
+    .with_kb_attempted(retrieval.kb_attempted)
     .with_kb_sufficiency(retrieval.sufficiency.as_ref())
     .build();
     flow_metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
@@ -1316,9 +1317,10 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     const LEGACY_GREETING_TEMPLATE_SIGNATURE: u64 = 0xa8c8_948b_d572_9258;
     const UPDATED_GREETING_TEMPLATE: &str =
         "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.";
-    const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURE: u64 = 0x5384_8234_c2d7_4254;
+    const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES: [u64; 2] =
+        [0x5384_8234_c2d7_4254, 0x4de7_593e_1cc6_dd55];
     const UPDATED_NO_CONTEXT_TEMPLATE: &str =
-        "The user asked: \"{question}\"\n\nNo relevant documents were found in local documents for this turn. Respond helpfully using general knowledge when appropriate, and suggest web search or adding documents if they want sourced evidence.";
+        "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
     const UPDATED_RAG_TEMPLATE: &str =
         "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
@@ -1330,9 +1332,9 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     {
         prompt_settings.greeting_prompt_template = UPDATED_GREETING_TEMPLATE.to_string();
     }
-    if stable_prompt_signature(&prompt_settings.no_context_prompt_template)
-        == LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURE
-    {
+    if LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES.contains(&stable_prompt_signature(
+        &prompt_settings.no_context_prompt_template,
+    )) {
         prompt_settings.no_context_prompt_template = UPDATED_NO_CONTEXT_TEMPLATE.to_string();
     }
     if stable_prompt_signature(&prompt_settings.rag_prompt_template)

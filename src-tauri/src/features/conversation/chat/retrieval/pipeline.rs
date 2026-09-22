@@ -98,6 +98,7 @@ pub(super) async fn run_retrieval_pipeline(
         web_context: None,
         web_search_error: None,
         kb_unavailable_reason: None,
+        kb_attempted: false,
         sources: Vec::new(),
         available_for_rag,
         sub_timings: RetrievalSubTimingMetrics::default(),
@@ -252,6 +253,7 @@ pub(super) async fn run_retrieval_pipeline(
 
     if let Some((kb_outcome, kb_total_ms)) = kb_result {
         kb_attempted = true;
+        outcome.kb_attempted = true;
         outcome.interpretation = kb_outcome.interpretation;
         outcome.search_response = kb_outcome.search_response;
         outcome.sources = kb_outcome.sources;
