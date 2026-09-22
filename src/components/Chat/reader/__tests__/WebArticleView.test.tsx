@@ -127,6 +127,47 @@ describe('a page the answer cites from more than one sentence', () => {
     expect(article.scrollTop).toBe(0);
   });
 
+  it('opens a passage at its first paragraph, not its last', async () => {
+    // One answer sentence off two paragraphs. The mark is drawn once in each,
+    // and only the first of them is where the passage begins.
+    const page = [
+      'For calories, potatoes grown in deep fabric bags give the most food for the floor space they take up.',
+      'Airflow matters more than most people expect; a small fan keeps mould off damp compost.',
+      'Herbs are forgiving and will grow on almost any windowsill.',
+      'Dwarf tomato varieties set fruit indoors, but they need at least eight hours of strong light every day.',
+    ].join('\n\n');
+    mocks.readWebPage.mockResolvedValue({
+      ok: true,
+      data: { url: URL, title: 'Indoor vegetables', text: page, wordCount: 70, fetchedAt: '2026-09-20T00:00:00.000Z', fromCache: true },
+    });
+    setAnswer(
+      `${ANSWER}\n\nHerbs grow on almost any windowsill, and dwarf tomato varieties set fruit indoors given at least eight hours of strong light [6].`
+    );
+
+    const reader = renderReader(0);
+    await litPassage();
+
+    // The potato passage, then the herb-and-tomato one twice: once per paragraph.
+    const marks = [...document.querySelectorAll('.source-reader-passage')] as HTMLElement[];
+    expect(marks).toHaveLength(3);
+
+    const article = marks[0]!.closest('.overflow-y-auto') as HTMLElement;
+    const scrollTo = vi.fn();
+    article.scrollTo = scrollTo as unknown as HTMLElement['scrollTo'];
+    Object.defineProperty(article, 'scrollHeight', { value: 2000, configurable: true });
+    Object.defineProperty(article, 'clientHeight', { value: 300, configurable: true });
+    article.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    marks.forEach((mark, index) => {
+      mark.getBoundingClientRect = () => ({ top: 100 + index * 400 }) as DOMRect;
+    });
+
+    reader.click(2);
+
+    // The mark that opens in the third paragraph, a third of the pane down —
+    // not the one closing in the fourth, which is where the passage ends.
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 400 })));
+  });
+
   it('lights nothing, and says so, when the page has nothing like the clicked sentence', async () => {
     setAnswer(
       `${ANSWER}\n\nA quarterly budget of forty dollars covers seed, compost and replacement bulbs [6].`

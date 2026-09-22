@@ -184,7 +184,74 @@ describe('an answer sentence that credits two sources', () => {
   });
 });
 
+describe('a page that changes subject at a heading', () => {
+  // From the greens turn: the lettuce sentence's highlight ran through the
+  // heading under it and lit the whole broccoli section, because "well" is a
+  // word the section below happened to share with it.
+  const SECTIONED = [
+    'Lettuce For Cut-And-Come-Again Harvests',
+    '',
+    'Varieties like Red Oak Leaf, Buttercrunch, and Salad Bowl offer different colors, textures and flavors.',
+    '',
+    'Broccoli For Strong Spring Crops',
+    '',
+    'Broccoli needs a long growing season but does not tolerate heat well, which is why Illinois gardeners start the seeds indoors.',
+  ].join('\n');
+
+  it('stops a passage at the heading below it', () => {
+    const [passage, ...rest] = findSourcedPassages(SECTIONED, [
+      'Varieties like Red Oak Leaf and Buttercrunch work well [2][7].',
+    ]);
+
+    expect(rest).toEqual([]);
+    const text = SECTIONED.slice(passage!.start, passage!.end);
+    expect(text).toContain('Red Oak Leaf');
+    expect(text).not.toContain('Broccoli');
+  });
+
+  it('lets a passage begin at a heading, which is the section saying what it is about', () => {
+    const [passage] = findSourcedPassages(SECTIONED, [
+      'Broccoli needs a long season and does not tolerate heat, so Illinois gardeners start it indoors [2].',
+    ]);
+
+    expect(SECTIONED.slice(passage!.start, passage!.end)).toContain('long growing season');
+  });
+
+  it('reads a short line that is not titled as the prose it is', () => {
+    // "Seed to harvest: 24 to 30 days" ends a section rather than opening one.
+    const page = [
+      'Radishes',
+      '',
+      'Sow seeds every 2 weeks for a continuous harvest of roots and leaves.',
+      '',
+      'Seed to harvest: 24 to 30 days',
+    ].join('\n');
+
+    const [passage] = findSourcedPassages(page, [
+      'Radishes — sow every 2 weeks for a continuous harvest; 24 to 30 days [1].',
+    ]);
+    const text = page.slice(passage!.start, passage!.end);
+
+    expect(text).toContain('Sow seeds every 2 weeks');
+    expect(text).toContain('24 to 30 days');
+  });
+});
+
 describe('merging passages', () => {
+  it('keeps a mark either side of a heading apart, though only blank lines divide them', () => {
+    const page = 'Salad Bowl lettuce is mild.\n\nBroccoli For Strong Spring Crops\n\nBroccoli needs a long season.';
+    const passages = mergePassages(
+      [
+        { start: 0, end: 27, sentenceIndex: 0, score: 0.8 },
+        { start: 29, end: page.length, sentenceIndex: 1, score: 0.7 },
+      ],
+      page
+    );
+
+    expect(passages).toHaveLength(2);
+    expect(page.slice(passages[0]!.start, passages[0]!.end)).toBe('Salad Bowl lettuce is mild.');
+  });
+
   it('folds overlapping spans together and keeps the stronger match', () => {
     expect(
       mergePassages([
