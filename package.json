@@ -136,6 +136,7 @@
     "webdriverio": "9.31.9"
   },
   "overrides": {
-    "picomatch": "4.0.5"
+    "picomatch": "4.0.5",
+    "@puppeteer/browsers": "^3.2.3"
   }
 }
