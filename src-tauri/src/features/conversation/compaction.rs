@@ -34,15 +34,14 @@ pub async fn build_job(
     container: &Container,
     keep_recent_messages: Option<i64>,
 ) -> Result<Option<CompactionJob>> {
-    let Some(utility_llm) = container.get_or_load_utility_llm().await? else {
-        return Ok(None);
-    };
+    let utility = container.get_or_load_utility_llm().await?;
 
     // The candidate summary has to fit its pool in the **continuation** model's
     // prompt, so both the counter and the budget come from that model rather than
     // the utility one. Recomputed per call because switching model changes both,
     // and a stale budget accepts a summary the next turn cannot carry.
     let continuation_llm = container.get_or_load_llm().await?;
+    let utility_llm = utility.unwrap_or_else(|| Arc::clone(&continuation_llm));
     let count_tokens: TokenCounter = {
         let llm = Arc::clone(&continuation_llm);
         Arc::new(move |text: &str| llm.count_tokens(text))
@@ -118,4 +117,48 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
     );
 
     Ok(())
+}
+
+/// Consolidation follows a committed answer and cannot change its success.
+/// The shared job slots coalesce queued requests through the durable watermark.
+pub fn consolidate_after_turn(container: Container, conversation_id: String) {
+    tokio::spawn(async move {
+        static MAINTENANCE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let Ok(_permit) = MAINTENANCE.acquire().await else {
+            return;
+        };
+        let result: Result<()> = async {
+            if !container
+                .get_settings_use_case()
+                .execute()
+                .await?
+                .llm
+                .bounded_conversation_memory
+            {
+                return Ok(());
+            }
+            let job = build_job(&container, None).await?.ok_or_else(|| {
+                AppError::ServiceNotAvailable(
+                    "No utility model available for memory consolidation".into(),
+                )
+            })?;
+            job.run(
+                &conversation_id,
+                CompactionRequest {
+                    trigger: CompactionTrigger::Maintenance,
+                    ..Default::default()
+                },
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(conversation_id, %error, "Memory consolidation deferred; answer remains saved");
+            let _ = container
+                .conversation_memory()
+                .record_memory_error(&conversation_id, "maintenance_deferred")
+                .await;
+        }
+    });
 }

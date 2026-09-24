@@ -27,6 +27,11 @@ pub struct ConversationLinkedDocumentDto {
     pub indexed_at: String,
     pub last_referenced_at: String,
     pub reference_count: i64,
+    /// True when this file was attached to this chat rather than filed in the
+    /// library. It is then the chat's alone — not listed in the library, not
+    /// searchable from anywhere else, and deleted with the conversation — until
+    /// "Add to library" releases it.
+    pub attached_to_conversation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { ChevronDown, ChevronRight, ExternalLink, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Library, Trash2 } from 'lucide-react';
 
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
@@ -47,6 +47,7 @@ export function ConversationLinkedDocumentsPanel({
   const [removingSourceId, setRemovingSourceId] = useState<string | null>(null);
   const [isIngestingAllSources, setIsIngestingAllSources] = useState(false);
   const [ingestedSourceKeys, setIngestedSourceKeys] = useState<Set<string>>(new Set());
+  const [filingDocumentId, setFilingDocumentId] = useState<string | null>(null);
 
   const linkedDocuments = useMemo(
     () => linkedDocumentsByConversationId.get(conversationId) ?? [],
@@ -138,13 +139,33 @@ export function ConversationLinkedDocumentsPanel({
     }
   };
 
-  const handleRemoveDocument = async (documentId: string) => {
+  const handleRemoveDocument = async (documentId: string, attached: boolean) => {
     setRemovingDocumentId(documentId);
     try {
       await removeConversationLinkedDocument(conversationId, documentId);
-      toast.success('Removed linked document');
+      // An attachment has nowhere else to be, so removing it from this chat is
+      // a deletion. Saying "removed the link" would imply a file that is still
+      // somewhere.
+      toast.success(attached ? 'Deleted attachment' : 'Removed linked document');
     } finally {
       setRemovingDocumentId(null);
+    }
+  };
+
+  const handleAddToLibrary = async (documentId: string, fileName: string) => {
+    setFilingDocumentId(documentId);
+    try {
+      const result = await VaultAPI.addDocumentsToLibrary([documentId]);
+      if (!result.ok) {
+        toast.error("Couldn't add this to the library", { message: result.error });
+        return;
+      }
+      await loadConversationLinkedDocuments(conversationId);
+      toast.success(`Added ${fileName} to the library`, {
+        message: 'It now shows up in your library and in search.',
+      });
+    } finally {
+      setFilingDocumentId(null);
     }
   };
 
@@ -335,16 +356,43 @@ export function ConversationLinkedDocumentsPanel({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleRemoveDocument(document.documentId)}
+                      onClick={() =>
+                        void handleRemoveDocument(
+                          document.documentId,
+                          document.attachedToConversation
+                        )
+                      }
                       disabled={removingDocumentId === document.documentId}
                       className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
                     >
                       <Trash2 className="h-3 w-3" />
-                      Remove
+                      {document.attachedToConversation ? 'Delete' : 'Remove'}
                     </button>
                   </div>
                 </div>
 
+                {/* An attachment is in no space, so the space checkboxes below
+                    would be a control with nothing to control. Say what it
+                    actually is, and offer the one thing that changes it. */}
+                {document.attachedToConversation ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-subtle bg-surface-raised px-2 py-1.5">
+                    <p className="text-xs text-[hsl(var(--text-muted))]">
+                      Attached to this chat. Not in your library, and deleted with this
+                      conversation.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleAddToLibrary(document.documentId, document.fileName)
+                      }
+                      disabled={filingDocumentId === document.documentId}
+                      className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:opacity-60"
+                    >
+                      <Library className="h-3 w-3" />
+                      Add to library
+                    </button>
+                  </div>
+                ) : (
                 <details
                   className="mt-3"
                   onToggle={(event) => {
@@ -390,6 +438,7 @@ export function ConversationLinkedDocumentsPanel({
                     })}
                   </div>
                 </details>
+                )}
               </article>
             );
           })}

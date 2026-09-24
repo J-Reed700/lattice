@@ -323,6 +323,45 @@ impl ConversationMemoryPort for FakePort {
         })
     }
 
+    async fn page_recent_source_messages(
+        &self,
+        _conversation_id: &str,
+        after_sequence: i64,
+        through_sequence: i64,
+        limits: SourceReadLimits,
+    ) -> Result<SourcePage> {
+        let inner = self.inner.lock();
+        let mut rows: Vec<SourceMessage> = inner
+            .messages
+            .iter()
+            .filter(|message| {
+                message.sequence > after_sequence && message.sequence <= through_sequence
+            })
+            .cloned()
+            .collect();
+        rows.sort_by_key(|message| std::cmp::Reverse(message.sequence));
+
+        let mut messages: Vec<SourceMessage> = Vec::new();
+        let mut bytes = 0usize;
+        let mut truncated = false;
+        for row in rows {
+            if messages.len() >= limits.max_messages
+                || (!messages.is_empty() && bytes + row.content.len() > limits.max_bytes)
+            {
+                truncated = true;
+                break;
+            }
+            bytes += row.content.len();
+            messages.push(row);
+        }
+        messages.reverse();
+        Ok(SourcePage {
+            messages,
+            has_more: truncated,
+            next_after_sequence: after_sequence,
+        })
+    }
+
     async fn read_source_spans(
         &self,
         _conversation_id: &str,
@@ -1388,4 +1427,37 @@ async fn the_fake_port_enforces_the_revision_compare_and_swap() {
         .await
         .expect_err("a stale memory revision must be refused");
     assert_eq!(error.code(), "memory_conflict");
+}
+
+#[tokio::test]
+async fn maintenance_consolidates_the_first_completed_turn_without_waiting_for_overflow() {
+    let messages = four_turns()[..2].to_vec();
+    let port = FakePort::new(messages, Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![proposed_constraint(
+                "c1",
+                "Approval required",
+                "m1",
+                "Do not deploy until I approve.",
+            )],
+            vec![],
+            &["m1:s0", "m2:s0"],
+        ))],
+        vec![Ok(verdict_response(&[("addition:c1", "supported")]))],
+        vec![Ok("Deployment discussed.".into())],
+    );
+    let outcome = job(port.clone(), llm, small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                trigger: super::CompactionTrigger::Maintenance,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(port.watermark(), 2);
+    assert_eq!(outcome.commit.inserts.len(), 1);
 }

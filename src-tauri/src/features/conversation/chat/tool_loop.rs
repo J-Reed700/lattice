@@ -9,7 +9,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text_utils::{build_excerpt, safe_truncate};
 use futures::StreamExt;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -158,6 +158,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // promoted into system instructions by string parsing, and raw user bytes
     // are never trimmed on the way in.
     memory_plan: Option<&crate::application::services::context_assembler::ContextPlan>,
+    // Room reserved for the answer, the same figure the prompt was budgeted
+    // against. Sent with the request so the provider holds exactly that back.
+    response_token_budget: usize,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
@@ -213,9 +216,19 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         tools: tools_ref.unwrap_or(&[]).to_vec(),
         // Reserving output room and then not enforcing it is only bookkeeping:
         // the model could generate past what the budget set aside and overrun
-        // the window the prompt was measured against.
-        max_output_tokens: memory_plan
-            .map(|plan| u32::try_from(plan.max_output_tokens).unwrap_or(u32::MAX)),
+        // the window the prompt was measured against. Without a memory plan the
+        // turn used to ask for the provider's whole limit instead — on
+        // llama.cpp, which reserves prompt *plus* answer in one slot, that is
+        // what turned a large prompt into a failed batch rather than a short
+        // answer.
+        max_output_tokens: Some(
+            u32::try_from(match memory_plan {
+                Some(plan) => plan.max_output_tokens.min(response_token_budget),
+                None => response_token_budget,
+            })
+            .unwrap_or(u32::MAX),
+        )
+        .filter(|budget| *budget > 0),
         ..Default::default()
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
@@ -231,7 +244,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // point it at another thread.
     let history_port = crate::features::conversation::repository::ConversationRepository::new(
         container.db_pool().clone(),
-    );
+    )
+    .with_memory_embedding(container.get_or_load_embedding().await.ok());
     // One memo for the whole turn: a repeated read of a range already exhausted
     // answers with a reference instead of paying for the same text twice.
     let mut history_memo = super::history_tools::HistoryToolMemo::default();
@@ -300,14 +314,14 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     }
                 }
             }?;
-            if matches!(
-                response.finish_reason.as_str(),
-                "incomplete" | "max_tokens" | "length" | "failed"
-            ) {
-                return Err(AppError::InvalidState(format!(
-                    "Model stopped before completion: {}",
-                    response.finish_reason
-                )));
+            let mut response = response;
+            if answer_was_cut_short(
+                &response.finish_reason,
+                &response.text,
+                !response.tool_calls.is_empty(),
+            )? {
+                emitter.content(CUT_SHORT_NOTE)?;
+                response.text.push_str(CUT_SHORT_NOTE);
             }
             if response.text.trim().is_empty() && response.tool_calls.is_empty() {
                 return Err(AppError::InvalidState(
@@ -940,6 +954,10 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Preview length for a page the model fetched itself, matching the preview a
+/// vault passage gets.
+const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
+
 fn collect_tool_sources(
     tool_name: &str,
     result: &crate::features::function_calling::domain::FunctionResult,
@@ -1000,7 +1018,15 @@ fn collect_tool_sources(
                     category: "Web Article".to_string(),
                     file_size_bytes: output.word_count as i64,
                     modified_at,
-                    excerpt: Some(content),
+                    // The card's short preview, not the page: the UI refuses an
+                    // excerpt over 2000 characters, and a whole-page excerpt here
+                    // dropped the source — its `[n]` chip went dead and it was
+                    // missing from the list under the answer.
+                    excerpt: Some(build_excerpt(
+                        &output.content,
+                        highlight_terms,
+                        FETCHED_PAGE_EXCERPT_CHARS,
+                    )),
                     highlights,
                     section: None,
                     chunk_index: Some(1),
@@ -1122,6 +1148,27 @@ fn thinking_label(iteration: usize) -> &'static str {
     }
 }
 
+/// Appended to an answer the model stopped writing at its output limit. The
+/// grounding check knows it by this text: it is the app's line, not a claim.
+pub(in crate::features::conversation::chat) const CUT_SHORT_NOTE: &str =
+    "\n\n_(The answer was cut short: the model reached its output limit.)_";
+
+/// Whether a round's answer stopped at the output limit, or an error when
+/// the round has nothing worth keeping.
+///
+/// A cut-short answer is still an answer: failing the turn threw away
+/// everything the user had watched stream in. A cut-short tool round has
+/// nothing to keep — its calls are truncated — so it still fails.
+fn answer_was_cut_short(finish_reason: &str, text: &str, has_tool_calls: bool) -> Result<bool> {
+    let cut_short = matches!(finish_reason, "incomplete" | "max_tokens" | "length");
+    if finish_reason == "failed" || (cut_short && (text.trim().is_empty() || has_tool_calls)) {
+        return Err(AppError::InvalidState(format!(
+            "Model stopped before completion: {finish_reason}"
+        )));
+    }
+    Ok(cut_short)
+}
+
 /// What one generation round came to.
 ///
 /// A round that only asked for tools wrote no answer, and saying "0 words"
@@ -1144,7 +1191,7 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
 fn tool_step_kind(tool: &str) -> TurnStepKind {
     match tool {
         "semantic_search" => TurnStepKind::SearchDocuments,
-        "get_document" | "list_documents" => TurnStepKind::OpenDocument,
+        "get_document" | "list_documents" | "list_attachments" => TurnStepKind::OpenDocument,
         "web_search" => TurnStepKind::WebSearch,
         "fetch_url_content" => TurnStepKind::ReadPage,
         "wiki_search" | "wiki_summary" => TurnStepKind::Wiki,
@@ -1261,6 +1308,7 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
         "wiki_search" | "wiki_summary" => "Checking Wikipedia".to_string(),
         "semantic_search" => "Searching your documents".to_string(),
         "list_documents" => "Looking through your documents".to_string(),
+        "list_attachments" => "Checking what you attached".to_string(),
         "get_document" => "Opening a document".to_string(),
         "search_conversation_history" | "read_conversation_history" => {
             "Looking back through this conversation".to_string()
@@ -1290,6 +1338,19 @@ fn emit_cancelled_stream<R: tauri::Runtime>(
 mod tests {
     use super::*;
     use crate::application::ports::llm_port::CompletionInput;
+
+    #[test]
+    fn an_answer_stopped_at_the_output_limit_is_kept_not_failed() {
+        for reason in ["length", "max_tokens", "incomplete"] {
+            assert!(answer_was_cut_short(reason, "half an answer", false).unwrap());
+            // Nothing written, or a tool call cut mid-arguments: nothing to keep.
+            assert!(answer_was_cut_short(reason, "  ", false).is_err());
+            assert!(answer_was_cut_short(reason, "", true).is_err());
+        }
+        assert!(answer_was_cut_short("failed", "", false).is_err());
+        assert!(!answer_was_cut_short("stop", "done", false).unwrap());
+        assert!(!answer_was_cut_short("tool_calls", "", true).unwrap());
+    }
 
     /// Four page fetches in one round on a 32k-token model. At the configured
     /// 50,000 characters each they are ~200,000 characters — several times the

@@ -120,12 +120,15 @@ pub async fn regenerate_response_impl(
         })?;
 
     // The lifted message's attachment record travels with it, so a regenerate
-    // shows the same files the original turn brought in.
-    let attachment_names = metadata
+    // shows the same files the original turn brought in — and, through the
+    // ids, reads them again rather than answering the same question with the
+    // files missing.
+    let attachment_metadata = metadata
         .as_deref()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| {
-            value.get("attachments").and_then(|items| {
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+    let string_list = |value: Option<&serde_json::Value>, key: &str| {
+        value.and_then(|value| {
+            value.get(key).and_then(|items| {
                 items.as_array().map(|entries| {
                     entries
                         .iter()
@@ -133,7 +136,20 @@ pub async fn regenerate_response_impl(
                         .collect::<Vec<String>>()
                 })
             })
-        });
+        })
+    };
+    let attachment_names = string_list(attachment_metadata.as_ref(), "attachments");
+    let attachment_document_ids =
+        string_list(attachment_metadata.as_ref(), "attachmentDocumentIds");
+
+    // How long the thread is without the question, so a failure can tell
+    // whether the turn got as far as saving it again.
+    // Unreadable means unknown, and an unknown thread gets the question back.
+    let baseline = repo
+        .get_messages(&conversation_id)
+        .await
+        .map(|messages| messages.len())
+        .ok();
 
     let fut = run_chat_with_conversation_impl(
         container,
@@ -143,32 +159,130 @@ pub async fn regenerate_response_impl(
         None,
         request_id,
         attachment_names,
+        attachment_document_ids,
         window,
     );
 
     match Box::pin(fut).await {
         Ok(response) => Ok(response),
         Err(error) => {
-            // Put the question back on the thread before surfacing the failure.
-            if let Err(persist_error) = container
-                .conversation_service()
-                .add_message_with_metadata(
-                    &conversation_id,
-                    crate::domain::conversation::MessageRole::User,
-                    content,
-                    0,
-                    "failed".to_string(),
-                    metadata,
-                )
-                .await
-            {
-                tracing::error!(
-                    error = %persist_error,
-                    conversation_id = conversation_id.as_str(),
-                    "Failed to restore the user message after a failed regenerate"
-                );
-            }
+            restore_lifted_question(
+                &repo,
+                &conversation_id,
+                baseline,
+                &content,
+                metadata.as_deref(),
+            )
+            .await;
             Err(ApiError::from(error))
         }
+    }
+}
+
+/// Put a lifted question back on the thread after a failed regenerate.
+///
+/// The chat turn persists the question itself once retrieval is done and marks
+/// it failed when generation fails, so restoring it unconditionally left two
+/// failed copies. Only a turn that failed before that point — the thread no
+/// longer than it was when the question was lifted — needs it put back.
+async fn restore_lifted_question(
+    repo: &ConversationRepository,
+    conversation_id: &str,
+    baseline: Option<usize>,
+    content: &str,
+    metadata: Option<&str>,
+) {
+    let Some(baseline) = baseline else {
+        return insert_failed_question(repo, conversation_id, content, metadata).await;
+    };
+    let saved = match repo.get_messages(conversation_id).await {
+        Ok(messages) => messages.len() > baseline,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                conversation_id,
+                "Could not read the thread after a failed regenerate; restoring the question"
+            );
+            false
+        }
+    };
+    if !saved {
+        insert_failed_question(repo, conversation_id, content, metadata).await;
+    }
+}
+
+async fn insert_failed_question(
+    repo: &ConversationRepository,
+    conversation_id: &str,
+    content: &str,
+    metadata: Option<&str>,
+) {
+    if let Err(persist_error) = repo
+        .add_message_with_status(
+            conversation_id,
+            crate::domain::conversation::MessageRole::User,
+            content,
+            0,
+            metadata,
+            "failed",
+        )
+        .await
+    {
+        tracing::error!(
+            error = %persist_error,
+            conversation_id,
+            "Failed to restore the user message after a failed regenerate"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn thread() -> (ConversationRepository, String) {
+        let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let repo = ConversationRepository::new(pool);
+        let id = repo
+            .create("Thread", "model", None)
+            .await
+            .unwrap()
+            .id
+            .to_string();
+        (repo, id)
+    }
+
+    #[tokio::test]
+    async fn a_question_the_failed_turn_already_saved_is_not_restored_twice() {
+        let (repo, id) = thread().await;
+        // What the chat turn leaves behind when generation fails.
+        repo.add_message_with_status(
+            &id,
+            crate::domain::conversation::MessageRole::User,
+            "why?",
+            0,
+            None,
+            "failed",
+        )
+        .await
+        .unwrap();
+
+        restore_lifted_question(&repo, &id, Some(0), "why?", None).await;
+
+        assert_eq!(repo.get_messages(&id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_question_lost_before_the_turn_saved_it_is_put_back_failed() {
+        let (repo, id) = thread().await;
+
+        restore_lifted_question(&repo, &id, Some(0), "why?", None).await;
+
+        let messages = repo.get_messages(&id).await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "why?");
+        assert_eq!(messages[0].status, "failed");
     }
 }

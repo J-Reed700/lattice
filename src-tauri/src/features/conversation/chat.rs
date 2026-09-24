@@ -48,14 +48,18 @@ use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tracing::{info, warn};
 
+mod attachments;
 mod cancellation;
+mod document_text;
 mod fetch_memory;
 mod focus;
+mod prior_evidence;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
 pub mod memory_context;
 mod persistence;
+pub(crate) use persistence::index_memory_note;
 mod prompting;
 mod source_snapshots; // Public so the retrieval evaluation harness can reuse the pipeline's own
                       // sufficiency judgement instead of reimplementing it.
@@ -65,6 +69,11 @@ pub mod turn_record;
 mod verification;
 mod web_steps;
 
+use self::attachments::{attachment_token_budget, build_turn_attachments, TurnAttachments};
+
+/// How much of an attachment the web-query rewriter is shown. Enough to name
+/// the subject, small enough that the utility model stays fast.
+const ATTACHMENT_DIGEST_CHARS: usize = 900;
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
 use self::focus::FocusScope;
 use self::persistence::{
@@ -74,8 +83,9 @@ use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptM
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::WEB_SOURCE_PREFIX;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
-    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, available_rag_budget, citation_ids_by_chunk, confine_document_context,
+    deduplicate_sources, load_recent_document_metadata, response_token_budget,
+    run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
@@ -458,6 +468,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     cancel_only: Option<bool>,
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
@@ -599,7 +610,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
     let max_tokens = llm.max_context_tokens();
     let context_build_start = Instant::now();
-    let (context, conversation_document_context, linked_web_sources_context) =
+    let (context, conversation_document_context, linked_web_sources_context, system_prompt) =
         build_conversation_context(
             container.conversation_context(),
             container.conversation_history(),
@@ -610,6 +621,9 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         )
         .await?;
     flow_metrics.context_build_ms = elapsed_ms(context_build_start);
+    // Conversation prompt, else the space's, else the global one. The memory
+    // plan takes it as a typed policy rather than the `System:` context entry.
+    let system_prompt = system_prompt.unwrap_or_default();
     let conversation_document_context =
         confine_document_context(container, &conv_id, conversation_document_context).await;
     // Pages linked to the conversation are outside material too.
@@ -628,6 +642,83 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &context,
     )
     .await;
+
+    // The files this turn brought in are read, not searched for. Retrieval can
+    // miss them, and on a forced-web turn the vault is not searched at all, so
+    // carrying them is the only way an attachment reliably reaches the model.
+    // `closed_book` still wins: that turn carries its own material by
+    // definition and reads nothing else.
+    let question_tokens = llm.count_tokens(&validated_message);
+    let context_history_tokens: usize = context.iter().map(|entry| llm.count_tokens(entry)).sum();
+    // With bounded memory on, the plan — not this string context — carries the
+    // history, and it spends at most its own history pools on it.
+    let context_history_tokens = if settings.llm.bounded_conversation_memory {
+        memory_context::history_tokens_for_rag_budget(
+            llm.as_ref(),
+            &system_prompt,
+            question_tokens,
+            context_history_tokens,
+        )
+    } else {
+        context_history_tokens
+    };
+    let attachment_names = attachment_names.unwrap_or_default();
+    let attachment_ids = attachment_document_ids.unwrap_or_default();
+    let attachments = if search_flags.closed_book {
+        TurnAttachments::default()
+    } else if attachment_ids.is_empty() {
+        // Files that never made it into the library — an import still running
+        // when the message was sent, or one that failed. The chip is on the
+        // message either way, so the turn says the file arrived and could not
+        // be read rather than denying it.
+        TurnAttachments::still_importing(&attachment_names)
+    } else {
+        build_turn_attachments(
+            container,
+            &conv_service,
+            &conv_id,
+            &attachment_ids,
+            attachment_token_budget(available_rag_budget(
+                max_tokens,
+                question_tokens,
+                context_history_tokens,
+                0,
+            )),
+            &llm,
+            &highlight_terms,
+            tool_output_settings.excerpt_chars as usize,
+        )
+        .await
+    };
+    let attachment_tokens = attachments.prompt_tokens(&llm);
+    if !attachments.is_empty() {
+        let carried = attachments.carried_count();
+        let unreadable = attachments.unreadable_names().len();
+        recorder.note(
+            turn_record::TurnStepKind::OpenDocument,
+            if carried == 1 && unreadable == 0 {
+                "Read the attached file".to_string()
+            } else {
+                "Read the attached files".to_string()
+            },
+            None,
+            Some(match (carried, unreadable) {
+                (0, _) => "attached, but no readable text yet".to_string(),
+                (_, 0) => format!("{carried} file{}", if carried == 1 { "" } else { "s" }),
+                _ => format!("{carried} read, {unreadable} unreadable"),
+            }),
+        );
+    }
+    let available_for_rag = available_rag_budget(
+        max_tokens,
+        question_tokens,
+        context_history_tokens,
+        attachment_tokens,
+    );
+    // A message that only points at a file ("reference the chat I attached")
+    // has no subject of its own, so the web-query rewrite has to read one off
+    // the attachment or it searches for the request instead of the question.
+    let attachment_digest = attachments.subject_digest(ATTACHMENT_DIGEST_CHARS);
 
     let router_start = Instant::now();
     let (router_decision, router_record) = resolve_router_decision(
@@ -652,6 +743,33 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         "chat_with_conversation: Context built, starting LLM generation"
     );
 
+    // Evidence recall runs independently of web/KB search toggles. Forced web
+    // research supplements a conversation; it does not reset its source set.
+    let mut allowed_prior_documents: HashSet<String> = conversation_document_context
+        .iter()
+        .map(|reference| reference.document_id.clone())
+        .collect();
+    focus.confine(&mut allowed_prior_documents);
+    let prior_sources = if search_flags.closed_book {
+        Vec::new()
+    } else {
+        prior_evidence::recall(
+            container,
+            &conv_id,
+            &validated_message,
+            &allowed_prior_documents,
+            &attachments.sources(),
+            (available_for_rag / 4).min(4000),
+            &llm,
+        )
+        .await?
+    };
+    let prior_evidence_tokens = prior_evidence::render(&prior_sources)
+        .as_deref()
+        .map(|text| llm.count_tokens(text))
+        .unwrap_or(0);
+    let available_for_rag = available_for_rag.saturating_sub(prior_evidence_tokens);
+
     let retrieval_start = Instant::now();
     let mut retrieval = run_retrieval_pipeline(
         container,
@@ -665,8 +783,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         search_flags,
         &conversation_document_context,
         &highlight_terms,
-        &context,
-        max_tokens,
+        available_for_rag,
+        attachment_digest.as_deref(),
         &tool_output_settings,
         &settings.search,
         &focus,
@@ -680,14 +798,28 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     }
 
     let prompt_build_start = Instant::now();
+    // An attachment is in the prompt whole, so the same document coming back
+    // as search passages is a second copy of text the model already has and a
+    // footnote pointing at the same file twice.
+    let carried_attachment_ids = attachments.carried_document_ids();
+    if !carried_attachment_ids.is_empty() {
+        retrieval.search_response.results.retain(|result| {
+            result
+                .document_id
+                .as_deref()
+                .map(|id| !carried_attachment_ids.contains(id))
+                .unwrap_or(true)
+        });
+    }
     // Fetched web pages are carried whole where the window allows, so they are
     // no longer small enough to ignore: what they fill is not there for the
     // user's own passages.
-    let web_context_tokens = retrieval
+    // Counted before the numbers exist; a label is a token or two either way.
+    let web_context_tokens: usize = retrieval
         .web_context
-        .as_deref()
-        .map(|text| llm.count_tokens(text))
-        .unwrap_or(0);
+        .iter()
+        .map(|item| llm.count_tokens(&item.render(0)))
+        .sum();
     let budgeted_results = budget_search_results_for_prompt(
         &retrieval.search_response.results,
         retrieval
@@ -708,24 +840,74 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             "RAG context truncated by token budget"
         );
     }
+    retrieval::drop_unbudgeted_sources(
+        &mut retrieval.sources,
+        &retrieval.search_response.results,
+        &budgeted_results,
+    );
 
-    let followup_context_text =
-        if let Some((context_text, followup_sources)) = retrieval.followup_context.take() {
+    let followup_document = match retrieval.followup_context.take() {
+        // The document under discussion and the file just attached are the
+        // same document: it is already carried whole, and reusing it as well
+        // would put the same text in the prompt twice under two headings.
+        Some((_, followup_sources))
+            if !followup_sources.is_empty()
+                && followup_sources
+                    .iter()
+                    .all(|source| carried_attachment_ids.contains(&source.document_id)) =>
+        {
+            None
+        }
+        Some((document, mut followup_sources)) => {
             info!(
                 conversation_id = conv_id.as_str(),
                 "Follow-up detected: reusing conversation document context"
             );
+            // Ahead of any web results the turn also fetched, which stay: the
+            // prompt shows them, so the list has to number them.
+            followup_sources.append(&mut retrieval.sources);
             retrieval.sources = deduplicate_sources(followup_sources);
-            Some(context_text)
-        } else {
-            None
-        };
+            Some(document)
+        }
+        None => None,
+    };
+
+    // Attachments lead the list: they are the reader's own material. Whatever
+    // is left pointing at a carried document goes: the whole text is already
+    // there.
+    if !attachments.is_empty() {
+        retrieval
+            .sources
+            .retain(|source| !carried_attachment_ids.contains(&source.document_id));
+        let mut sources = attachments.sources();
+        sources.append(&mut retrieval.sources);
+        retrieval.sources = deduplicate_sources(sources);
+    }
+
+    let prior_start = retrieval.sources.len();
+    let existing_prior_keys: HashSet<_> = retrieval
+        .sources
+        .iter()
+        .map(prior_evidence::source_key)
+        .collect();
+    retrieval
+        .sources
+        .extend(prior_sources.into_iter().filter(|source| {
+            !carried_attachment_ids.contains(&source.document_id)
+                && !existing_prior_keys.contains(&prior_evidence::source_key(source))
+        }));
 
     // Number the sources *after* every step that can reorder or replace the
     // list (including the follow-up swap above), then build the prompt from
     // those same numbers. Assigning earlier would let the follow-up path
     // renumber behind the prompt's back.
     assign_citation_ids(&mut retrieval.sources);
+    let attachment_context = attachments.render(&retrieval.sources);
+    let followup_context_text =
+        followup_document.and_then(|document| document.render(&retrieval.sources));
+    let web_context = retrieval::render_web_context(&retrieval.web_context, &retrieval.sources);
+    let prior_evidence_context =
+        prior_evidence::render(retrieval.sources.get(prior_start..).unwrap_or_default());
 
     // Emitted before generation so the frontend can show retrieval progress.
     // so the UI can show its reading before its writing, and persisted into the
@@ -790,11 +972,13 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &citation_ids_by_chunk(&retrieval.sources),
     );
     let has_linked_web_sources_context = linked_web_sources_context.is_some();
-    let retrieval_web_context = retrieval.web_context.is_some();
-    let has_grounded_context = followup_context_text.is_some()
+    let retrieval_web_context = web_context.is_some();
+    let has_grounded_context = attachment_context.is_some()
+        || followup_context_text.is_some()
         || kb_context.is_some()
         || retrieval_web_context
-        || has_linked_web_sources_context;
+        || has_linked_web_sources_context
+        || prior_evidence_context.is_some();
 
     let enhanced_message = PromptMessageBuilder::new(
         &prompt_settings,
@@ -802,10 +986,12 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         retrieval.interpretation.query_type == QueryType::Greeting,
         search_flags,
     )
+    .with_prior_evidence_context(prior_evidence_context)
+    .with_attachment_context(attachment_context)
     .with_followup_context(followup_context_text)
     .with_kb_context(kb_context)
     .with_linked_web_sources_context(linked_web_sources_context)
-    .with_web_context(retrieval.web_context.clone())
+    .with_web_context(web_context)
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
     .with_kb_attempted(retrieval.kb_attempted)
@@ -818,7 +1004,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &conv_service,
         &conv_id,
         &validated_message,
-        &attachment_names.unwrap_or_default(),
+        &attachment_names,
+        &attachment_ids,
         &llm,
     )
     .await?;
@@ -891,7 +1078,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let memory_plan_start = Instant::now();
     let repository = crate::features::conversation::repository::ConversationRepository::new(
         container.db_pool().clone(),
-    );
+    )
+    .with_memory_embedding(container.get_or_load_embedding().await.ok());
     let tool_schema_tokens: usize = tools_ref
         .map(|tools| {
             tools
@@ -902,16 +1090,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         .unwrap_or(0);
     let memory_turn = memory_context::prepare_memory_turn(
         || async {
-            let turn = memory_context::build_memory_plan(
+            let turn = memory_context::build_memory_plan_for_query(
                 &repository,
                 &repository,
                 &llm,
                 &conv_id,
-                &prompt_settings.system_prompt,
+                &system_prompt,
                 &enhanced_message,
                 tool_schema_tokens,
                 Vec::new(),
                 settings.llm.bounded_conversation_memory,
+                &validated_message,
             )
             .await?;
 
@@ -938,6 +1127,21 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     )
     .await;
 
+    let memory_usage = memory_turn.as_ref().ok().and_then(|turn| turn.as_ref()).map(|turn| {
+        let mut ids = std::collections::BTreeSet::new();
+        for input in &turn.plan.messages {
+            if let crate::application::ports::llm_port::CompletionInput::Message { content, .. } = input {
+                if content.starts_with("[recorded requirements") || content.starts_with("[supporting material retrieved") {
+                    for line in content.lines() {
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                            if let Some(id) = value.get("memory_id").and_then(|id|id.as_str()) { ids.insert(id.to_string()); }
+                        }
+                    }
+                }
+            }
+        }
+        serde_json::json!({"items":ids,"revision":turn.plan.memory_revision,"recallPassages":turn.plan.retrieval.passages_selected})
+    });
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
@@ -972,6 +1176,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     &focus,
                     &recorder,
                     memory_turn.as_ref().map(|turn| &turn.plan),
+                    response_token_budget(max_tokens),
                 )
                 .await
                 {
@@ -1034,8 +1239,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                         None
                     }
                 };
+                let evidence =
+                    source_snapshots::with_archived_page_text(container, &conv_id, &sources).await;
                 GroundingVerifier::new(judge_llm)
-                    .verify(&assistant_response, &sources)
+                    .verify(&assistant_response, &evidence)
                     .await
             } else {
                 GroundingReport::default()
@@ -1104,6 +1311,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 context.len(),
                 sources,
                 verification_metadata,
+                memory_usage,
                 retrieval_trace.clone(),
                 Some(turn_record),
                 message_tokens,
@@ -1284,10 +1492,7 @@ async fn validate_and_guard_chat_request(container: &Container, message: &str) -
     let validated_message = container
         .security_context()
         .input_validator()
-        .validate_search_query(message)?;
-    if validated_message.trim().is_empty() {
-        return Err(AppError::InvalidInput("Message cannot be empty".into()));
-    }
+        .validate_chat_message(message)?;
 
     Ok(validated_message)
 }

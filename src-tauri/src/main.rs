@@ -21,6 +21,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
             setup::renderer_shutdown::install(app.handle())?;
 
+            // Lets a page that refuses the HTTP client be read in a hidden
+            // window of the app's own browser engine.
+            lattice::features::web::services::browser_reader::install(app.handle().clone());
+
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via
             // `app.try_state::<SidecarRegistry>()` when starting a
@@ -75,7 +79,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                     ..
                 } => {
                     use tauri::Manager;
-                    if app_handle.webview_windows().is_empty() {
+                    let user_windows_left = app_handle.webview_windows().keys().any(|label| {
+                        !lattice::features::web::services::browser_reader::is_reader_window(label)
+                    });
+                    if !user_windows_left {
                         tracing::info!("Last window destroyed on macOS; triggering app shutdown");
                         setup::graceful_shutdown(app_handle);
                         app_handle.exit(0);

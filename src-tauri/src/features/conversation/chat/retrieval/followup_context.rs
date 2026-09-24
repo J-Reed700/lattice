@@ -11,7 +11,36 @@ use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::{build_excerpt, safe_truncate};
 
+use super::super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::{infer_category, select_informative_terms, tokenize_keyword_terms};
+
+/// The document an earlier turn discussed, reopened for a follow-up.
+///
+/// Rendered only once the turn's sources are numbered, under the number its
+/// source was given: an attachment on the same message goes first in the list,
+/// so the document is not necessarily `[1]`.
+#[derive(Debug)]
+pub struct FollowupDocument {
+    document_id: String,
+    file_name: String,
+    content: String,
+}
+
+impl FollowupDocument {
+    pub(in crate::features::conversation::chat) fn render(
+        &self,
+        sources: &[SourceDto],
+    ) -> Option<String> {
+        let label = sources
+            .iter()
+            .find(|source| source.document_id == self.document_id)?
+            .citation_id?;
+        Some(format!(
+            "[{label}] Document: {}\nDocument ID: {}\nContent: {}",
+            self.file_name, self.document_id, self.content
+        ))
+    }
+}
 
 pub(super) async fn build_followup_context(
     container: &Container,
@@ -22,8 +51,8 @@ pub(super) async fn build_followup_context(
     token_budget: usize,
     llm: &Arc<dyn LLMPort>,
     excerpt_chars: usize,
-) -> Option<(String, Vec<SourceDto>)> {
-    let last_ref = document_context.last()?;
+) -> Option<(FollowupDocument, Vec<SourceDto>)> {
+    let last_ref = super::conversation_helpers::followup_reference(document_context)?;
     let doc_id = last_ref.document_id.clone();
     let followup_anchor_terms =
         load_followup_turn_anchor_terms(conv_service, conversation_id).await;
@@ -77,13 +106,6 @@ pub(super) async fn build_followup_context(
         truncate_to_token_budget(&content, token_budget, llm)
     };
 
-    let context_text = format!(
-        "[1] Document: {}\nDocument ID: {}\nContent: {}",
-        document.file_name(),
-        doc_id,
-        trimmed_content
-    );
-
     let mut sources = build_followup_sources(&document, last_ref, highlight_terms, excerpt_chars);
     if let Some(source) = sources.first_mut() {
         source.content = trimmed_content.to_string();
@@ -109,7 +131,12 @@ pub(super) async fn build_followup_context(
         );
     }
 
-    Some((context_text, sources))
+    let followup = FollowupDocument {
+        document_id: doc_id,
+        file_name: document.file_name().to_string(),
+        content: trimmed_content,
+    };
+    Some((followup, sources))
 }
 
 pub(super) fn extract_turn_anchor_terms(user_text: &str, assistant_text: &str) -> HashSet<String> {
@@ -174,56 +201,6 @@ pub(super) async fn load_followup_turn_anchor_terms(
     };
 
     extract_turn_anchor_terms(&user.content, &assistant.content)
-}
-
-fn assemble_document_text(document: &Document) -> String {
-    let chunks = document.chunks();
-    if chunks.is_empty() {
-        return document.content().to_string();
-    }
-
-    let mut sorted_chunks: Vec<_> = chunks.iter().collect();
-    sorted_chunks.sort_by_key(|c| c.index());
-    sorted_chunks
-        .iter()
-        .map(|c| c.content())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn truncate_to_token_budget(content: &str, token_budget: usize, llm: &Arc<dyn LLMPort>) -> String {
-    if token_budget == 0 {
-        return String::new();
-    }
-
-    let token_count = llm.count_tokens(content);
-    if token_count <= token_budget {
-        return content.to_string();
-    }
-
-    let total_chars = content.chars().count();
-    if total_chars == 0 {
-        return String::new();
-    }
-
-    let ratio = token_budget as f64 / token_count as f64;
-    let mut target_chars = ((total_chars as f64) * ratio).floor() as usize;
-    if target_chars == 0 {
-        target_chars = 1;
-    }
-
-    let mut truncated = safe_truncate(content, target_chars);
-    let mut attempts = 0;
-    while llm.count_tokens(&truncated) > token_budget && attempts < 3 && target_chars > 1 {
-        target_chars = ((target_chars as f64) * 0.8).floor() as usize;
-        if target_chars == 0 {
-            break;
-        }
-        truncated = safe_truncate(content, target_chars);
-        attempts += 1;
-    }
-
-    truncated
 }
 
 fn build_followup_sources(
@@ -298,4 +275,53 @@ fn build_followup_sources(
         chunk_excerpts: None,
         citation_id: None,
     }]
+}
+
+#[cfg(test)]
+mod followup_label_tests {
+    use super::*;
+
+    fn source(document_id: &str) -> SourceDto {
+        SourceDto {
+            page_number: None,
+            document_id: document_id.to_string(),
+            chunk_id: format!("{document_id}-chunk"),
+            content: String::new(),
+            score: 1.0,
+            path: None,
+            position: None,
+            file_name: document_id.to_string(),
+            file_path: document_id.to_string(),
+            mime_type: "text/plain".to_string(),
+            category: "Text".to_string(),
+            file_size_bytes: 0,
+            modified_at: String::new(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            chunk_excerpts: None,
+            citation_id: None,
+        }
+    }
+
+    /// The follow-up text was hardcoded as [1]; with a file attached to the
+    /// same message the attachment is [1] and the document is [2].
+    #[test]
+    fn a_followup_behind_an_attachment_is_labelled_two() {
+        let mut sources = vec![source("attached"), source("earlier")];
+        super::super::assign_citation_ids(&mut sources);
+        let document = FollowupDocument {
+            document_id: "earlier".to_string(),
+            file_name: "earlier.md".to_string(),
+            content: "text".to_string(),
+        };
+
+        let rendered = document.render(&sources).unwrap_or_default();
+
+        assert!(
+            rendered.starts_with("[2] Document: earlier.md\n"),
+            "{rendered}"
+        );
+    }
 }

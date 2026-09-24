@@ -112,7 +112,8 @@ pub fn init_otel_tracing(
     let tracer = provider.tracer("lattice-desktop");
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())
@@ -143,12 +144,18 @@ pub fn init_otel_tracing(
     Ok(true)
 }
 
+/// `tokenizers` warns once per added token when it loads the Qwen3 tokenizer
+/// (IDs it expected but the file leaves implicit) — two dozen lines on every
+/// startup for a tokenizer that loads and works.
+const DEFAULT_FILTER: &str = "info,tokenizers=error";
+const DEBUG_FILTER: &str = "info,lattice=debug,lattice_desktop=debug,tokenizers=error";
+
 /// Initialize regular tracing (stdout + file, no OTEL).
 ///
 /// Called as fallback when OTEL is disabled or fails to initialize.
 pub fn init_regular_tracing() {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,lattice=debug,lattice_desktop=debug"));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEBUG_FILTER));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())

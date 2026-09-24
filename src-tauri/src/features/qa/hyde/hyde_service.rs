@@ -171,6 +171,20 @@ impl HyDEService {
             .await
     }
 
+    /// Further searches on the subject of `root` for deep research, each from
+    /// a different angle. See [`HyDEGenerator::generate_research_followups`].
+    pub async fn generate_research_followups_with_context(
+        &self,
+        root: &str,
+        query: &str,
+        conversation_context: Option<&str>,
+        count: usize,
+    ) -> Result<Vec<String>> {
+        self.generator
+            .generate_research_followups(root, query, conversation_context, count)
+            .await
+    }
+
     /// Decide what kind of turn this is, without writing anything for it.
     ///
     /// When a query appears referential (e.g., "what do those do?") and recent

@@ -52,42 +52,44 @@ export interface SourceChunkExcerpt {
 }
 
 /**
- * Zod validation schema for SourceWithMetadata
- * Validates JSON-deserialized metadata to prevent state corruption and XSS
+ * Zod validation schema for SourceWithMetadata: checks the shape of
+ * JSON-deserialized metadata so a malformed entry cannot corrupt state.
  */
 export const SourceWithMetadataSchema = z.object({
-  documentId: z.string().min(1).max(255),
-  chunkId: z.string().min(1).max(255),
-  fileName: z.string().min(1).max(512),
-  filePath: z.string().min(1).max(2048),
-  mimeType: z.string().min(1).max(255),
-  category: z.string().min(1).max(100),
-  content: z.string().max(10000), // Limit preview content
-  excerpt: z.string().max(2000).optional(),
-  highlights: z.array(z.string().max(64)).max(12).optional(),
-  section: z.string().max(1000).optional(),
-  chunkIndex: z.number().min(0).max(1_000_000).optional(),
+  documentId: z.string().min(1),
+  chunkId: z.string().min(1),
+  fileName: z.string().min(1),
+  filePath: z.string().min(1),
+  mimeType: z.string().min(1),
+  category: z.string().min(1),
+  // No length caps: this is our own backend's output and React escapes text
+  // at any length. A cap here never protected anything — it silently dropped
+  // any source that exceeded it, leaving its `[n]` chip dead in the answer.
+  content: z.string(),
+  excerpt: z.string().optional(),
+  highlights: z.array(z.string()).optional(),
+  section: z.string().optional(),
+  chunkIndex: z.number().min(0).optional(),
   pageNumber: z.number().int().min(1).optional(),
   chunkExcerpts: z.array(z.object({
-    chunkId: z.string().min(1).max(255),
-    excerpt: z.string().min(1).max(4000),
-    section: z.string().max(1000).optional(),
-    chunkIndex: z.number().min(0).max(1_000_000).optional(),
-  pageNumber: z.number().int().min(1).optional(),
+    chunkId: z.string().min(1),
+    excerpt: z.string().min(1),
+    section: z.string().optional(),
+    chunkIndex: z.number().min(0).optional(),
+    pageNumber: z.number().int().min(1).optional(),
     score: z.number().finite().min(0),
-    highlights: z.array(z.string().max(64)).max(12).optional(),
-  })).max(24).optional(),
+    highlights: z.array(z.string()).optional(),
+  })).optional(),
   score: z.number().finite().min(0),
   fileSizeBytes: z.number().min(0),
   modifiedAt: z.string(), // ISO 8601
-  citationId: z.number().int().min(1).max(1000).optional(),
+  citationId: z.number().int().min(1).optional(),
 }).strict(); // Reject unknown properties
 
 /**
- * Validate array of sources with max limit to prevent DoS
+ * Validate an array of sources.
  */
-export const SourcesArraySchema = z.array(SourceWithMetadataSchema)
-  .max(100); // Limit max sources to prevent DoS
+export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
 
 /**
  * One claim and how it was checked.

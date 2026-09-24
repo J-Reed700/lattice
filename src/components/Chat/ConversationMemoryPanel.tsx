@@ -1,10 +1,8 @@
 /**
  * What bounded conversation memory holds for one chat, read-only.
  *
- * Read-only is the design, not an omission: an editable item would be a
- * requirement with no source behind it, which is the exact failure this layer
- * exists to prevent. Every item here can be traced to a quotation, or says
- * plainly that its quotation is gone.
+ * Scope and correction controls preserve source evidence; the existing ledger
+ * view keeps generated labels distinct from the original quotations.
  *
  * Three things this view has to get right, each guarding a specific
  * misreading:
@@ -27,8 +25,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as Dialog from '@radix-ui/react-dialog';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, X } from 'lucide-react';
 
+import { KnowledgePanel } from './KnowledgePanel';
 import { VaultAPI } from '../../lib/api';
 import {
   decodeValidatedSpan,
@@ -46,6 +46,7 @@ interface ConversationMemoryPanelProps {
   conversationId: string | null;
   isOpen: boolean;
   onClose: () => void;
+  onOpenConversation?: (id: string) => void;
   /**
    * Stored content of the messages currently in the thread, by message id.
    *
@@ -248,10 +249,8 @@ export function ConversationMemoryPanel({
   isOpen,
   onClose,
   messageContentById,
+  onOpenConversation,
 }: ConversationMemoryPanelProps) {
-  const [details, setDetails] = useState<ConversationMemoryDetailsDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [includeHistory, setIncludeHistory] = useState(false);
   const [unreachableMessageId, setUnreachableMessageId] = useState<string | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -262,34 +261,25 @@ export function ConversationMemoryPanel({
     } else {
       // A fresh open re-reads rather than showing the previous conversation's
       // items while the request is in flight.
-      setDetails(null);
-      setError(null);
       setIncludeHistory(false);
       setUnreachableMessageId(null);
     }
   }, [isOpen]);
 
-  const load = useCallback(
-    async (withHistory: boolean) => {
-      if (!conversationId) return;
-      setIsLoading(true);
-      const result = await VaultAPI.getConversationMemory(conversationId, withHistory);
-      if (result.ok) {
-        setDetails(result.data);
-        setError(null);
-      } else {
-        setDetails(null);
-        setError(result.error);
-      }
-      setIsLoading(false);
+  const memoryQuery = useQuery({
+    queryKey: ['conversationMemory', conversationId, includeHistory],
+    enabled: isOpen && !!conversationId,
+    refetchInterval: isOpen ? 5000 : false,
+    retry: false,
+    queryFn: async () => {
+      const result = await VaultAPI.getConversationMemory(conversationId!, includeHistory);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
     },
-    [conversationId]
-  );
-
-  useEffect(() => {
-    if (!isOpen || !conversationId) return;
-    void load(includeHistory);
-  }, [conversationId, includeHistory, isOpen, load]);
+  });
+  const details = isOpen ? memoryQuery.data ?? null : null;
+  const error = memoryQuery.error?.message ?? null;
+  const isLoading = memoryQuery.isFetching;
 
   /**
    * Take the reader to the message a quotation came from and mark the span.
@@ -378,7 +368,7 @@ export function ConversationMemoryPanel({
                 <p className="mt-1 text-xs leading-relaxed text-text-secondary">{error}</p>
                 <button
                   type="button"
-                  onClick={() => void load(includeHistory)}
+                  onClick={() => void memoryQuery.refetch()}
                   className="pressable mt-2 inline-flex h-7 items-center rounded-md bg-action px-2.5 text-xs font-medium text-action-fg"
                 >
                   Try again
@@ -455,14 +445,16 @@ export function ConversationMemoryPanel({
                   )}
                 </section>
 
+                {conversationId && <KnowledgePanel key={conversationId} conversationId={conversationId} onOpenConversation={onOpenConversation} />}
+
                 <section className="mt-5">
                   <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
                     Items
                   </h3>
                   <p className="mt-1 text-xs leading-relaxed text-text-muted">
                     The line in plain type under each label is generated for
-                    scanning. The indented quotations are your own words, taken
-                    from the messages they name.
+                    scanning. The indented quotations come from the original messages;
+                    each names its author and source.
                   </p>
                   {details.items.length === 0 ? (
                     <p className="mt-2 text-xs italic text-text-muted">

@@ -183,6 +183,8 @@ fn main() {
                     "regenerate_response",
                     "compact_conversation",
                     "get_conversation_memory",
+                    "manage_knowledge",
+                    "add_documents_to_library",
                 ]),
             )
             .plugin(

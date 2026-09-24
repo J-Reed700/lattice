@@ -62,26 +62,14 @@ pub(super) async fn run_retrieval_pipeline(
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     highlight_terms: &[String],
-    context: &[String],
-    max_tokens: usize,
+    available_for_rag: usize,
+    attachment_digest: Option<&str>,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
     focus: &crate::features::conversation::chat::focus::FocusScope,
     recorder: &TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     let retrieval_start = Instant::now();
-
-    const RESPONSE_TOKEN_BUDGET_RATIO: f64 = 0.25;
-    const PROMPT_OVERHEAD_TOKENS: usize = 200;
-
-    let response_budget = (max_tokens as f64 * RESPONSE_TOKEN_BUDGET_RATIO) as usize;
-    let question_tokens = llm.count_tokens(validated_message);
-    let context_history_tokens: usize = context.iter().map(|c| llm.count_tokens(c)).sum();
-    let available_for_rag = max_tokens
-        .saturating_sub(response_budget)
-        .saturating_sub(PROMPT_OVERHEAD_TOKENS)
-        .saturating_sub(question_tokens)
-        .saturating_sub(context_history_tokens);
 
     let mut outcome = RetrievalPipelineOutcome {
         short_circuit_response: None,
@@ -95,7 +83,7 @@ pub(super) async fn run_retrieval_pipeline(
             query_time_ms: 0,
         },
         followup_context: None,
-        web_context: None,
+        web_context: Vec::new(),
         web_search_error: None,
         kb_unavailable_reason: None,
         kb_attempted: false,
@@ -196,6 +184,7 @@ pub(super) async fn run_retrieval_pipeline(
         page_budget_chars: super::page_budget::page_budget_chars(available_for_rag),
         wiki_planned: retrieval_plan.should_search_wiki,
         web_planned: retrieval_plan.should_search_web,
+        attachment_digest,
         recorder,
     };
     let kb_search = async {
@@ -442,6 +431,11 @@ struct ExternalLookup<'a> {
     page_budget_chars: usize,
     wiki_planned: bool,
     web_planned: bool,
+    /// What this turn's attached files are about, when it has any. The web
+    /// query is rewritten from the reader's words, and a message that only
+    /// points at an attachment ("reference this chat I attached") carries no
+    /// subject of its own.
+    attachment_digest: Option<&'a str>,
     /// Every lookup below says what it is doing and what came of it.
     recorder: &'a TurnRecorder,
 }
@@ -462,8 +456,8 @@ struct ExternalPhaseOutcome {
 #[derive(Debug, Default)]
 pub(super) struct ExternalSearchResult {
     pub(super) sources: Vec<SourceDto>,
-    /// Prompt context. `None` when the search returned nothing usable.
-    pub(super) context: Option<String>,
+    /// Prompt context, numbered only once the turn's sources are final.
+    pub(super) context: Vec<WebContextItem>,
     /// Surfaced to the prompt. Web search only: wiki failures are just logged.
     pub(super) error: Option<String>,
     pub(super) elapsed_ms: u64,
@@ -494,8 +488,19 @@ impl ExternalLookup<'_> {
         let hyde_service =
             crate::features::qa::hyde::HyDEService::new(Arc::clone(self.utility_llm));
         let hyde_context = if interpret || search_web {
-            build_hyde_context_window_for_conversation(self.conv_service, self.conversation_id)
-                .await
+            let conversation = build_hyde_context_window_for_conversation(
+                self.conv_service,
+                self.conversation_id,
+                self.validated_message,
+            )
+            .await;
+            // The attachment leads: it is this turn's subject, and on a first
+            // message there is no conversation window at all.
+            match (self.attachment_digest, conversation) {
+                (Some(digest), Some(window)) => Some(format!("{digest}\n{window}")),
+                (Some(digest), None) => Some(digest.to_string()),
+                (None, window) => window,
+            }
         } else {
             None
         };
@@ -563,6 +568,28 @@ impl ExternalLookup<'_> {
                 followup_anchor_terms.as_ref(),
             )
         });
+        // Deep research searches the subject from several angles after the
+        // main query. The utility model writes them from the same reading of
+        // the turn; a failure means one search, not a mined guess.
+        let research_followups = match web_query.as_deref() {
+            Some(root) if self.search_flags.deep_research_mode => {
+                let count = (self.tuning.deep_research_depth.clamp(1, 4) as usize - 1)
+                    * self.tuning.deep_research_branch_queries.clamp(1, 4) as usize;
+                hyde_service
+                    .generate_research_followups_with_context(
+                        root,
+                        self.validated_message,
+                        hyde_context.as_deref(),
+                        count,
+                    )
+                    .await
+                    .unwrap_or_else(|error| {
+                        warn!(%error, "Deep research runs the main search alone");
+                        Vec::new()
+                    })
+            }
+            _ => Vec::new(),
+        };
         let query_prep_ms = elapsed_ms(prep_start);
 
         let (wiki, web) = tokio::join!(
@@ -577,7 +604,7 @@ impl ExternalLookup<'_> {
             },
             async {
                 let query = web_query.as_deref()?;
-                Some(self.web_search(query).await)
+                Some(self.web_search(query, &research_followups).await)
             },
         );
 
@@ -732,29 +759,23 @@ impl ExternalLookup<'_> {
                                     self.excerpt_chars,
                                 );
 
-                                let wiki_context = output
+                                searched.context = output
                                     .results
                                     .iter()
                                     .take(tuning.wiki_context_limit as usize)
-                                    .enumerate()
-                                    .map(|(idx, item)| {
-                                        let snippet = safe_truncate(
-                                            &item.snippet,
-                                            tuning.wiki_snippet_max_chars as usize,
-                                        );
-                                        format!(
-                                            "[{}] {}\nURL: {}\nSnippet: {}",
-                                            idx + 1,
-                                            item.title,
+                                    .map(|item| WebContextItem {
+                                        url: item.url.clone(),
+                                        title: item.title.clone(),
+                                        detail: format!(
+                                            "URL: {}\nSnippet: {}",
                                             item.url,
-                                            snippet
-                                        )
+                                            safe_truncate(
+                                                &item.snippet,
+                                                tuning.wiki_snippet_max_chars as usize,
+                                            )
+                                        ),
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n");
-                                if !wiki_context.trim().is_empty() {
-                                    searched.context = Some(wiki_context);
-                                }
+                                    .collect();
                             }
                         }
                         Err(error) => {
@@ -1017,7 +1038,7 @@ impl ExternalLookup<'_> {
         (outcomes, memory)
     }
 
-    async fn web_search(&self, web_query: &str) -> ExternalSearchResult {
+    async fn web_search(&self, web_query: &str, followups: &[String]) -> ExternalSearchResult {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
         let mut searched = ExternalSearchResult::default();
@@ -1068,7 +1089,8 @@ impl ExternalLookup<'_> {
                 "providers": providers,
                 "include_wikipedia": include_wikipedia,
                 "depth": web_depth,
-                "branch_queries": web_branch_queries
+                "branch_queries": web_branch_queries,
+                "followup_queries": followups
             }),
         );
 
@@ -1148,7 +1170,7 @@ impl ExternalLookup<'_> {
                                 let (pages, page_memory) =
                                     self.fetch_page_texts(&output.results).await;
                                 searched.pages = page_memory;
-                                let context_text = output
+                                searched.context = output
                                     .results
                                     .iter()
                                     .enumerate()
@@ -1169,21 +1191,16 @@ impl ExternalLookup<'_> {
                                         // degrades to what the old behaviour gave.
                                         let body =
                                             render_page_body(pages.get(i).and_then(Option::as_ref));
-                                        format!(
-                                            "[{}] {}\nURL: {}\nSnippet: {}{}{}",
-                                            i + 1,
-                                            result.title,
-                                            result.url,
-                                            snippet,
-                                            published_line,
-                                            body
-                                        )
+                                        WebContextItem {
+                                            url: result.url.clone(),
+                                            title: result.title.clone(),
+                                            detail: format!(
+                                                "URL: {}\nSnippet: {}{}{}",
+                                                result.url, snippet, published_line, body
+                                            ),
+                                        }
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n");
-                                if !context_text.trim().is_empty() {
-                                    searched.context = Some(context_text);
-                                }
+                                    .collect();
                             }
                         }
                         Err(e) => {
@@ -1245,7 +1262,7 @@ pub(super) fn attach_wiki_results(
             "Forced wiki citations attached"
         );
     }
-    if outcome.web_context.is_none() {
+    if outcome.web_context.is_empty() {
         outcome.web_context = wiki.context;
     }
 }
@@ -1295,14 +1312,7 @@ pub(super) fn attach_web_results(
             "Forced web search citations attached"
         );
     }
-    if let Some(context_text) = web.context {
-        outcome.web_context = match outcome.web_context.take() {
-            Some(existing) if !existing.trim().is_empty() => {
-                Some(format!("{}\n\n{}", existing, context_text))
-            }
-            _ => Some(context_text),
-        };
-    }
+    outcome.web_context.extend(web.context);
 }
 
 #[cfg(test)]

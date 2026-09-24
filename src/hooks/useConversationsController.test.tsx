@@ -250,6 +250,57 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(result.current.optimisticMessages.size).toBe(0);
     expect(result.current.error).toBeNull();
   });
+
+  const cancelMidTurn = async (persistedMessages: unknown[]) => {
+    conversationUiStore.setState({ composerDraft: null });
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => {
+      resolveChat = resolve;
+    }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    let sendPromise: Promise<void> | undefined;
+    act(() => { sendPromise = result.current.sendMessage('Where is the draft?'); });
+    await waitFor(() => expect(result.current.inFlightGenerations.size).toBe(1));
+    api.getConversationMessages = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { messages: persistedMessages, total: persistedMessages.length },
+    });
+    await act(async () => result.current.cancelGeneration('conversation-1'));
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'generation cancelled', details: { code: ErrorCode.INVALID_STATE } });
+      await sendPromise;
+    });
+    return result;
+  };
+
+  it('hands the question back to the composer when a stop lands before it was saved', async () => {
+    const result = await cancelMidTurn([]);
+    expect(result.current.composerDraft).toBe('Where is the draft?');
+  });
+
+  it('leaves the composer alone when the stopped question was already saved', async () => {
+    const result = await cancelMidTurn([{
+      id: 'm1',
+      conversationId: 'conversation-1',
+      role: 'user',
+      content: 'Where is the draft?',
+      status: 'failed',
+      createdAt: '2026-08-02T00:00:00.000Z',
+    }]);
+    expect(result.current.composerDraft).toBeNull();
+  });
+
+  it('forwards the attached document ids to the chat call', async () => {
+    api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture finished' });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => result.current.sendMessage('Read these', 'conversation-1', undefined, ['a.pdf'], ['doc-1']));
+    expect(api.chatWithConversation).toHaveBeenCalledWith(
+      'conversation-1', 'Read these', undefined, expect.any(String), ['a.pdf'], ['doc-1']
+    );
+  });
+
   it('refreshes the sidebar bookmark query when a message is bookmarked', async () => {
     let bookmarks: Array<{ id: string; spaceId: string }> = [];
     api.listMessageBookmarks = vi.fn().mockImplementation(async () => ({ ok: true, data: { bookmarks, total: bookmarks.length } }));

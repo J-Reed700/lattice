@@ -1040,6 +1040,7 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
     assert_eq!(
         names,
         [
+            TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
             TOOL_READ_CONVERSATION_HISTORY
         ]
@@ -1053,13 +1054,14 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
         [
             "semantic_search",
             "web_search",
+            TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
             TOOL_READ_CONVERSATION_HISTORY
         ]
     );
 
     // A grounded branch that offers a single tool still gains them.
-    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 3);
+    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 4);
 
     // And when memory is unavailable, nothing is advertised that cannot answer:
     // §9.3 forbids telling a model to call a tool it was not given.
@@ -1072,7 +1074,7 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
 }
 
 #[test]
-fn only_the_two_history_names_are_claimed_by_this_module() {
+fn only_scoped_memory_tools_are_claimed_by_this_module() {
     assert!(is_history_tool(TOOL_SEARCH_CONVERSATION_HISTORY));
     assert!(is_history_tool(TOOL_READ_CONVERSATION_HISTORY));
     for other in ["semantic_search", "web_search", "get_document", ""] {
@@ -1085,6 +1087,7 @@ fn only_the_two_history_names_are_claimed_by_this_module() {
     assert_eq!(
         defined,
         [
+            TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
             TOOL_READ_CONVERSATION_HISTORY
         ]

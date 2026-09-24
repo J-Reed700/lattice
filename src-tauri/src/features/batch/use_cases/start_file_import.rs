@@ -26,6 +26,8 @@ struct FileImportOptions {
     #[serde(default)]
     space_id: Option<String>,
     #[serde(default)]
+    owner_conversation_id: Option<String>,
+    #[serde(default)]
     indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
     #[serde(default)]
     file_order: Vec<String>,
@@ -89,6 +91,16 @@ impl StartBatchFileImportUseCase {
                 )));
             }
         }
+        if let Some(conversation_id) = &request.owner_conversation_id {
+            let scope = self.document_scope.as_ref().ok_or_else(|| {
+                AppError::ServiceNotAvailable("Attachment scoping is unavailable".into())
+            })?;
+            if !scope.conversation_exists(conversation_id).await? {
+                return Err(AppError::InvalidInput(format!(
+                    "Conversation not found: {conversation_id}"
+                )));
+            }
+        }
         if let Some(group) = request
             .indexing
             .as_ref()
@@ -111,6 +123,7 @@ impl StartBatchFileImportUseCase {
         let job_id = Uuid::new_v4().to_string();
         let options = serde_json::to_string(&FileImportOptions {
             space_id: request.space_id,
+            owner_conversation_id: request.owner_conversation_id,
             indexing: request.indexing,
             file_order: request.file_paths.clone(),
         })?;
@@ -258,6 +271,7 @@ impl StartBatchFileImportUseCase {
             .transpose()?
             .unwrap_or_default();
         let space_id = options.space_id.clone();
+        let owner_conversation_id = options.owner_conversation_id.clone();
         // Recompute from items: the app may have exited between committing an
         // item and updating the aggregate counters.
         let mut completed = job
@@ -340,14 +354,40 @@ impl StartBatchFileImportUseCase {
                     .await?;
                 return Ok(());
             }
+            // Whether this item created the document or merely found it. Only a
+            // new one may be stamped as a conversation's attachment: a file the
+            // user already filed in the library stays filed, and attaching it to
+            // a chat must not quietly pull it out of the library.
+            let mut freshly_indexed = false;
             let result = match outcome {
                 Ok(PrepareForIndexingOutcome::Duplicate { document_id }) => Ok(document_id),
                 Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
+                    freshly_indexed = true;
                     self.index_file_use_case
                         .commit_prepared(*prepared, self.uow_factory.as_ref())
                         .await
                 }
                 Err(error) => Err(error),
+            };
+            // A chat's attachment is owned by that chat: out of the library, out
+            // of every other conversation's retrieval, and deleted with it.
+            let result = match (
+                result,
+                owner_conversation_id.as_deref().filter(|_| freshly_indexed),
+            ) {
+                (Ok(document_id), Some(conversation)) => match self.document_scope.as_ref() {
+                    Some(scope) => scope
+                        .set_conversation_owner(
+                            std::slice::from_ref(&document_id),
+                            Some(conversation),
+                        )
+                        .await
+                        .map(|()| document_id),
+                    None => Err(AppError::ServiceNotAvailable(
+                        "Attachment scoping is unavailable".into(),
+                    )),
+                },
+                (result, _) => result,
             };
             let result = match (result, space_id.as_deref()) {
                 (Ok(document_id), Some(space)) => match self.document_scope.as_ref() {
@@ -933,6 +973,7 @@ mod tests {
             indexing: None,
             file_paths,
             space_id: None,
+            owner_conversation_id: None,
         };
         let response = use_case.execute(request).await.unwrap();
 
@@ -953,6 +994,7 @@ mod tests {
             indexing: None,
             file_paths: vec![],
             space_id: None,
+            owner_conversation_id: None,
         };
 
         let result = use_case.execute(request).await;
@@ -980,6 +1022,7 @@ mod tests {
             indexing: None,
             file_paths,
             space_id: None,
+            owner_conversation_id: None,
         };
 
         let result = use_case.execute(request).await;
@@ -1005,6 +1048,7 @@ mod tests {
             file_paths: vec!["../../../etc/passwd".to_string()],
 
             space_id: None,
+            owner_conversation_id: None,
         };
 
         let result = use_case.execute(request).await;
@@ -1032,6 +1076,7 @@ mod tests {
             file_paths: vec![file_path.to_str().unwrap().to_string()],
 
             space_id: None,
+            owner_conversation_id: None,
         };
 
         let response = use_case.execute(request).await.unwrap();

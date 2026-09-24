@@ -156,6 +156,7 @@ fn main() {
             lattice::features::conversation::plugin::fork_conversation,
             lattice::features::conversation::plugin::compact_conversation,
             lattice::features::conversation::plugin::get_conversation_memory,
+            lattice::features::conversation::plugin::manage_knowledge,
             lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
             lattice::features::settings::plugin::set_cloud_api_key,
             // Additional public IPC contracts (use the same signatures as runtime).
@@ -272,6 +273,7 @@ fn main() {
             lattice::features::conversation::plugin::list_conversation_web_sources,
             lattice::features::conversation::plugin::remove_conversation_web_source,
             lattice::features::conversation::plugin::list_document_space_memberships,
+            lattice::features::conversation::plugin::add_documents_to_library,
             lattice::features::conversation::plugin::set_document_space_membership,
             lattice::features::conversation::plugin::set_documents_space_membership,
             lattice::features::conversation::plugin::set_conversation_saved,

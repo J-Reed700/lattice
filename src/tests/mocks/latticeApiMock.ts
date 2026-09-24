@@ -111,7 +111,7 @@ export function createVaultAPIMock() {
       },
       externalModelDirectories: [],
       customTools: [],
-      boundedConversationMemory: false,
+      boundedConversationMemory: true,
     },
     ui: {
       theme: 'system',

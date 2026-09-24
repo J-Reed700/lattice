@@ -10,6 +10,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 // Enhanced API Result types
 import { parseApiError } from './errorHandling';
+import { diagnostics } from '../utils/diagnostics';
 
 import type * as Wire from './bindings';
 import type {
@@ -271,11 +272,13 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   list_document_space_memberships: { domain: 'conversation', command: 'list_document_space_memberships' },
   set_document_space_membership: { domain: 'conversation', command: 'set_document_space_membership' },
   set_documents_space_membership: { domain: 'conversation', command: 'set_documents_space_membership' },
+  add_documents_to_library: { domain: 'conversation', command: 'add_documents_to_library' },
   synthesize_journal_entries: { domain: 'conversation', command: 'synthesize_journal_entries' },
   truncate_conversation_after: { domain: 'conversation', command: 'truncate_conversation_after' },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
   compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
+  manage_knowledge: { domain: 'conversation', command: 'manage_knowledge' },
   get_conversation_memory: { domain: 'conversation', command: 'get_conversation_memory' },
 
   // Passage references
@@ -492,6 +495,7 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
     return { ok: true, data };
   } catch (error) {
     const apiError = parseApiError(error);
+    diagnostics.capture(apiError, `API · ${command}`, error instanceof Error ? { stack: error.stack } : undefined);
     return {
       ok: false,
       error: apiError.message,
@@ -2103,11 +2107,19 @@ const VaultAPI = {
    * Indexes multiple files in a single batch operation with progress tracking.
    *
    * @param filePaths - Array of absolute file paths to import
+   * @param ownerConversationId - Set when these files were attached to a chat
+   *   rather than added to the library. Files this job imports then belong to
+   *   that conversation: they stay out of the library and out of every other
+   *   chat's searches, and they are deleted with it. Leave it out for a real
+   *   library import.
    * @returns Batch job ID for tracking progress
    */
-  startBatchFileImport: async (filePaths: string[]): Promise<ApiResult<string>> => {
+  startBatchFileImport: async (
+    filePaths: string[],
+    ownerConversationId?: string
+  ): Promise<ApiResult<string>> => {
     const result = await apiCall<Wire.StartBatchFileImportResponseDto>('batch_import_files', {
-      request: { filePaths },
+      request: { filePaths, ownerConversationId },
     });
     if (!result.ok) {
       return result;
@@ -2415,6 +2427,8 @@ const VaultAPI = {
    *
    * @param conversationId - ID of existing conversation, or null to create new one
    * @param message - User's message text
+   * @param attachmentNames - File names to stamp on the message, for the chips in history
+   * @param attachmentDocumentIds - Documents this message brought in; the turn reads them whole
    * @returns Response containing conversation ID, all messages, and context usage
    */
   chatWithConversation: async (
@@ -2422,13 +2436,15 @@ const VaultAPI = {
     message: string,
     toolPreferences?: ToolPreferences,
     requestId?: string,
-    attachmentNames?: string[]
+    attachmentNames?: string[],
+    attachmentDocumentIds?: string[]
   ): Promise<ApiResult<Wire.ChatResponse>> => apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
       message,
       requestId,
       toolPreferences,
       attachmentNames,
+      attachmentDocumentIds,
     }),
 
   /**
@@ -2684,11 +2700,13 @@ const VaultAPI = {
    */
   listSpaceDocuments: async (
     spaceId: string | null,
+    conversationId: string | null,
     query: string,
     limit: number
   ): Promise<ApiResult<SpaceDocument[]>> =>
     apiCall<Wire.SpaceDocumentDto[]>('list_space_documents', {
       spaceId,
+      conversationId,
       query,
       limit,
     }),
@@ -2862,13 +2880,15 @@ const VaultAPI = {
    * the active items with the quotations behind them, the counts, and the
    * `mode` that says whether any of it is usable.
    *
-   * Read-only on purpose. There is no companion write command, because an
-   * editable memory item would be a requirement with no source behind it —
-   * exactly the failure this layer exists to prevent.
+   * This read view resolves original quotations. manageKnowledge preserves
+   * new user-authored source messages for additions and corrections.
    *
    * `includeHistory` also returns superseded and resolved items, for "what was
    * my original budget?".
    */
+  manageKnowledge: async (request: Wire.KnowledgeRequestDto): Promise<ApiResult<Wire.KnowledgeResponseDto>> =>
+    apiCall<Wire.KnowledgeResponseDto>('manage_knowledge', { request }),
+
   getConversationMemory: async (
     conversationId: string,
     includeHistory?: boolean
@@ -2890,6 +2910,21 @@ const VaultAPI = {
 
       spaceId,
       assigned,
+    }),
+
+  /**
+   * Files a chat's attachments in the library.
+   *
+   * An attached file belongs to the conversation it arrived in: it is not
+   * listed in the library, no other chat can search it, and it is deleted with
+   * the conversation. This is the one way out of that — afterwards it is an
+   * ordinary document. Documents that were never attachments are untouched.
+   */
+  addDocumentsToLibrary: async (
+    documentIds: string[]
+  ): Promise<ApiResult<RenameConversationResponse>> =>
+    apiCall<Wire.RenameConversationResponseDto>('add_documents_to_library', {
+      documentIds,
     }),
 
 

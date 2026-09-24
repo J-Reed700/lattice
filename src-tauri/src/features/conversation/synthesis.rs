@@ -495,6 +495,7 @@ pub async fn synthesize_journal_entries_impl(
                 None,
                 None,
                 None,
+                None,
                 window.clone(),
             )
             .await
@@ -515,6 +516,7 @@ pub async fn synthesize_journal_entries_impl(
             synthesis_conversation_id.clone(),
             reduce_prompt,
             Some(tool_preferences.clone()),
+            None,
             None,
             None,
             None,

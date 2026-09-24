@@ -291,6 +291,20 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
         })
     )?)?;
 
+    // A file the reader attached to *this* conversation is not in the library
+    // and `list_documents` will not show it. It is carried whole into the turn
+    // it arrives on and then only reachable by search, so without this the
+    // model has no way to ask "what did they attach?" several turns later.
+    registry.register(ToolDefinition::new(
+        "list_attachments",
+        "List the files the reader attached to this conversation. These belong to this chat only — they are not in the library and list_documents will not show them. Use this when the reader refers to a file they attached earlier, then pass the document_id to get_document to read it.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    )?)?;
+
     registry.register(ToolDefinition::new(
         "web_search",
         "Search the web with pagination and provider enrichment when information isn't in the lattice. Supports DuckDuckGo, Bing, and optional Wikipedia blending.",
@@ -346,6 +360,11 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "default": 2,
                     "minimum": 1,
                     "maximum": 4
+                },
+                "followup_queries": {
+                    "type": "array",
+                    "description": "Further searches to run when depth > 1, each a different angle on the same subject (3-8 words each)",
+                    "items": { "type": "string" }
                 }
             },
             "required": ["query"]
@@ -504,11 +523,12 @@ mod tests {
         let registry = init_function_registry().unwrap();
         let tools = registry.list_tools();
 
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
 
         assert!(registry.get_tool("semantic_search").is_some());
         assert!(registry.get_tool("get_document").is_some());
         assert!(registry.get_tool("list_documents").is_some());
+        assert!(registry.get_tool("list_attachments").is_some());
         assert!(registry.get_tool("web_search").is_some());
         assert!(registry.get_tool("fetch_url_content").is_some());
         assert!(registry.get_tool("wiki_search").is_some());

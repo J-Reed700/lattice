@@ -9,7 +9,10 @@ pub(super) struct PromptMessageBuilder<'a> {
     is_greeting: bool,
     force_kb_search: bool,
     force_web_search: bool,
+    /// The files the reader attached to this message, already carried whole.
+    attachment_context: Option<String>,
     followup_context: Option<String>,
+    prior_evidence_context: Option<String>,
     kb_context: Option<String>,
     linked_web_sources_context: Option<String>,
     web_context: Option<String>,
@@ -37,7 +40,9 @@ impl<'a> PromptMessageBuilder<'a> {
             is_greeting,
             force_kb_search: search_flags.force_kb_search,
             force_web_search: search_flags.force_web_search,
+            attachment_context: None,
             followup_context: None,
+            prior_evidence_context: None,
             kb_context: None,
             linked_web_sources_context: None,
             web_context: None,
@@ -46,6 +51,21 @@ impl<'a> PromptMessageBuilder<'a> {
             kb_attempted: false,
             thin_kb_reason: None,
         }
+    }
+
+    /// The files attached to this message.
+    ///
+    /// They outrank every other section: the reader put them there, and a turn
+    /// that answers "no file came through" while one sits in the library is the
+    /// worst failure this prompt can produce.
+    pub(super) fn with_attachment_context(mut self, attachment_context: Option<String>) -> Self {
+        self.attachment_context = attachment_context;
+        self
+    }
+
+    pub(super) fn with_prior_evidence_context(mut self, context: Option<String>) -> Self {
+        self.prior_evidence_context = context;
+        self
     }
 
     pub(super) fn with_followup_context(mut self, followup_context: Option<String>) -> Self {
@@ -108,12 +128,22 @@ impl<'a> PromptMessageBuilder<'a> {
     }
 
     pub(super) fn build(self) -> String {
-        if let Some(context_text) = self.followup_context {
-            return render_prompt_template(
-                &self.prompt_settings.rag_prompt_template,
-                &context_text,
-                self.question,
-            );
+        // Reusing the last document is the whole prompt on a bare follow-up —
+        // but not when this message brought files of its own. Then the
+        // attachment leads and the earlier document is one section among
+        // several, because "here it is" means the new file, not the old one.
+        if self.attachment_context.is_none()
+            && self.prior_evidence_context.is_none()
+            && self.web_context.is_none()
+            && self.linked_web_sources_context.is_none()
+        {
+            if let Some(context_text) = self.followup_context.as_deref() {
+                return render_prompt_template(
+                    &self.prompt_settings.rag_prompt_template,
+                    context_text,
+                    self.question,
+                );
+            }
         }
 
         let has_kb_context = self.kb_context.is_some();
@@ -122,7 +152,27 @@ impl<'a> PromptMessageBuilder<'a> {
         // retrieved. With no knowledge-base section at all, the templates below
         // already say there was nothing to go on.
         let thin_kb_reason = self.thin_kb_reason.as_deref().filter(|_| has_kb_context);
-        let mut context_sections: Vec<String> = Vec::new();
+        let mut context_sections: Vec<String> = vec![
+            "Conversation continuity: Answer the ongoing question using the user's established facts, \
+             conversation memory, and relevant original evidence from earlier turns together with new sources. \
+             New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
+             Before declaring information unavailable, consult retained evidence and available history/source \
+             tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
+             Earlier assistant claims alone are not source evidence; use the numbered original passages \
+             supplied now, or retrieve the original source.".to_string()
+        ];
+        if let Some(context) = self.prior_evidence_context.as_ref() {
+            context_sections.push(context.clone());
+        }
+        if let Some(context_text) = self.attachment_context.as_ref() {
+            context_sections.push(context_text.clone());
+        }
+        if let Some(context_text) = self.followup_context.as_ref() {
+            context_sections.push(format!(
+                "Document from earlier in this conversation:\n{}",
+                context_text
+            ));
+        }
         if has_kb_context && has_web_context {
             // Preferring the knowledge base is the right default, but not when
             // the app has already judged that its passages do not answer the
@@ -154,7 +204,7 @@ from general knowledge as though it came from the user's documents."
             context_sections.push(format!("Web Results (Supplemental):\n{}", context_text));
         }
 
-        if !context_sections.is_empty() {
+        if context_sections.len() > 1 {
             return render_prompt_template(
                 &self.prompt_settings.rag_prompt_template,
                 &context_sections.join("\n\n"),
@@ -888,6 +938,126 @@ mod empty_vault_tests {
                 .no_context_prompt_template
                 .contains("No relevant documents were found"),
             "the default must not assert a search that may not have happened"
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod attachment_prompt_tests {
+    use super::*;
+
+    fn web_turn_flags() -> SearchFlags {
+        SearchFlags {
+            force_kb_search: false,
+            force_web_search: true,
+            force_wiki_search: false,
+            deep_research_mode: true,
+            force_followup_mode: false,
+            closed_book: false,
+        }
+    }
+
+    fn builder<'a>(settings: &'a LLMPromptSettingsDto) -> PromptMessageBuilder<'a> {
+        PromptMessageBuilder::new(
+            settings,
+            "here it is, are you not receiving it?",
+            false,
+            web_turn_flags(),
+        )
+    }
+
+    /// The turn this was written for. Deep research had the vault switched
+    /// off, so the attached file reached the model only if something carried
+    /// it — and nothing did. The answer was "no file came through", with the
+    /// file indexed in the library.
+    #[test]
+    fn an_attachment_reaches_a_forced_web_turn() {
+        let settings = LLMPromptSettingsDto::default();
+
+        let prompt = builder(&settings)
+            .with_attachment_context(Some(
+                "Attached Files:\n[1] Attached file: greens.txt\nContent: kale, chard".to_string(),
+            ))
+            .with_web_context(Some("Web Results".to_string()))
+            .build();
+
+        assert!(prompt.contains("greens.txt"), "{prompt}");
+        assert!(prompt.contains("kale, chard"), "{prompt}");
+    }
+
+    /// Attaching a file is the reader saying "this one". A follow-up would
+    /// otherwise hand the model the *previous* document as the whole prompt
+    /// and drop the new one.
+    #[test]
+    fn an_attachment_outranks_the_document_from_the_last_turn() {
+        let settings = LLMPromptSettingsDto::default();
+
+        let prompt = builder(&settings)
+            .with_attachment_context(Some("Attached Files:\nthe new file".to_string()))
+            .with_followup_context(Some("[1] Document: older.txt\nContent: older".to_string()))
+            .build();
+
+        let attachment_at = prompt.find("the new file").expect("attachment is carried");
+        let followup_at = prompt
+            .find("older.txt")
+            .expect("the earlier document stays");
+        assert!(
+            attachment_at < followup_at,
+            "the attached file must lead the context:\n{prompt}"
+        );
+    }
+
+    /// Without an attachment the follow-up path is unchanged: the last
+    /// document is still the whole prompt.
+    #[test]
+    fn a_plain_followup_still_reuses_the_last_document_alone() {
+        let settings = LLMPromptSettingsDto::default();
+
+        let prompt = builder(&settings)
+            .with_followup_context(Some("[1] Document: older.txt\nContent: older".to_string()))
+            .with_kb_context(Some("Knowledge Base".to_string()))
+            .build();
+
+        assert!(prompt.contains("older.txt"), "{prompt}");
+        assert!(!prompt.contains("Knowledge Base"), "{prompt}");
+    }
+
+    #[test]
+    fn prior_evidence_survives_new_research_and_followup_prompt_paths() {
+        let settings = LLMPromptSettingsDto::default();
+        for followup in [None, Some("[1] earlier document".to_string())] {
+            let prompt = builder(&settings)
+                .with_followup_context(followup)
+                .with_prior_evidence_context(Some("[11] retained grow light evidence".to_string()))
+                .with_web_context(Some("[2] new product specifications".to_string()))
+                .build();
+            assert!(
+                prompt.contains("[11] retained grow light evidence"),
+                "{prompt}"
+            );
+            assert!(
+                prompt.contains("[2] new product specifications"),
+                "{prompt}"
+            );
+            assert!(prompt.contains("supplement that evidence"), "{prompt}");
+        }
+    }
+
+    /// A file that arrived but could not be read is still a file that
+    /// arrived; the prompt must never let the model deny it.
+    #[test]
+    fn an_attachment_alone_is_enough_context_to_answer_from() {
+        let settings = LLMPromptSettingsDto::default();
+
+        let prompt = builder(&settings)
+            .with_attachment_context(Some("Attached but not readable yet: scan.pdf".to_string()))
+            .build();
+
+        assert!(prompt.contains("scan.pdf"), "{prompt}");
+        assert!(
+            !prompt.contains("live web retrieval is currently unavailable"),
+            "an attachment is context, so the empty-turn templates must not fire:\n{prompt}"
         );
     }
 }

@@ -90,6 +90,7 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
             indexing: None,
             file_paths: files,
             space_id: Some("retry-space".into()),
+            owner_conversation_id: None,
         })
         .await?;
     tokio::time::timeout(
@@ -340,6 +341,7 @@ async fn cancelling_mid_file_releases_its_library_blob_and_cancels_the_file_it_s
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
             space_id: None,
+            owner_conversation_id: None,
         })
         .await?;
     tokio::time::timeout(
@@ -634,6 +636,7 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
             indexing: None,
             file_paths: vec![path.to_string_lossy().into_owned()],
             space_id: None,
+            owner_conversation_id: None,
         })
         .await?;
     let failed = wait_for_job(repo.as_ref(), &job.job_id).await?;
@@ -754,6 +757,7 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
         .execute(StartBatchFileImportRequestDto {
             file_paths: paths.clone(),
             space_id: None,
+            owner_conversation_id: None,
             indexing: None,
         })
         .await?;
@@ -782,6 +786,7 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
         .execute(StartBatchFileImportRequestDto {
             file_paths: vec![paths[1].clone(), paths[0].clone()],
             space_id: None,
+            owner_conversation_id: None,
             indexing: Some(FileIndexingOptionsDto {
                 source_group: Some(group.clone()),
             }),

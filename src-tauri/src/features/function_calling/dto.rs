@@ -369,6 +369,27 @@ pub struct DocumentListItem {
     pub access_count: usize,
 }
 
+/// One file attached to the current conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentItem {
+    /// Pass this to `get_document` to read the file.
+    pub document_id: String,
+    pub filename: String,
+    pub extension: String,
+    pub size_bytes: i64,
+    pub word_count: i32,
+    /// When the file was attached and indexed.
+    pub indexed_at: DateTime<Utc>,
+}
+
+/// Output from list_attachments function.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListAttachmentsOutput {
+    /// Files attached to this conversation, oldest first.
+    pub attachments: Vec<AttachmentItem>,
+    pub total: usize,
+}
+
 /// Output from list_documents function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListDocumentsOutput {
@@ -425,6 +446,12 @@ pub struct WebSearchInput {
     /// Maximum follow-up query branches per recursion step (1-4).
     #[serde(default = "default_research_branch_queries")]
     pub branch_queries: usize,
+
+    /// Searches to run after `query`, `branch_queries` per level of `depth`
+    /// past the first. Each should take a different angle on the same
+    /// subject. Without them a deep search is just `query`.
+    #[serde(default)]
+    pub followup_queries: Vec<String>,
 }
 
 fn default_max_results() -> usize {
@@ -788,6 +815,7 @@ mod tests {
             include_wikipedia: false,
             depth: default_research_depth(),
             branch_queries: default_research_branch_queries(),
+            followup_queries: Vec::new(),
         };
 
         assert_eq!(input.max_results, 5);

@@ -105,6 +105,7 @@ pub async fn chat_with_conversation_wrapper(
     cancel_only: Option<bool>,
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_wrapper_impl(
@@ -115,6 +116,7 @@ pub async fn chat_with_conversation_wrapper(
         cancel_only,
         request_id,
         attachment_names,
+        attachment_document_ids,
         window,
     )
     .await
@@ -130,6 +132,7 @@ pub async fn chat_with_conversation(
     cancel_only: Option<bool>,
     request_id: Option<String>,
     attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_impl(
@@ -140,6 +143,7 @@ pub async fn chat_with_conversation(
         cancel_only,
         request_id,
         attachment_names,
+        attachment_document_ids,
         window,
     )
     .await
@@ -287,11 +291,19 @@ pub async fn remove_conversation_from_journal(
 #[specta::specta]
 pub async fn list_space_documents(
     space_id: Option<String>,
+    conversation_id: Option<String>,
     query: Option<String>,
     limit: Option<u32>,
     container: State<'_, Container>,
 ) -> Result<Vec<SpaceDocumentDto>, ApiError> {
-    conversation_impl::list_space_documents_impl(space_id, query, limit, container.inner()).await
+    conversation_impl::list_space_documents_impl(
+        space_id,
+        conversation_id,
+        query,
+        limit,
+        container.inner(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -405,6 +417,16 @@ pub async fn set_documents_space_membership(
         container.inner(),
     )
     .await
+}
+
+/// Move a chat's attachments into the library.
+#[tauri::command]
+#[specta::specta]
+pub async fn add_documents_to_library(
+    document_ids: Vec<String>,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::add_documents_to_library_impl(document_ids, container.inner()).await
 }
 
 #[tauri::command]
@@ -560,6 +582,15 @@ pub async fn regenerate_response(
 /// display; only the LLM context switches to the summary.
 #[tauri::command]
 #[specta::specta]
+pub async fn manage_knowledge(
+    request: crate::features::conversation::knowledge_dto::KnowledgeRequestDto,
+    container: State<'_, Container>,
+) -> Result<crate::features::conversation::knowledge_dto::KnowledgeResponseDto, ApiError> {
+    conversation_impl::manage_knowledge_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_conversation_memory(
     request: crate::features::conversation::memory_dto::GetConversationMemoryRequestDto,
     container: State<'_, Container>,
@@ -615,6 +646,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             list_document_space_memberships,
             set_document_space_membership,
             set_documents_space_membership,
+            add_documents_to_library,
             bookmark_conversation_message,
             unbookmark_conversation_message,
             delete_conversation_message,
@@ -627,6 +659,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             regenerate_response,
             compact_conversation,
             get_conversation_memory,
+            manage_knowledge,
         ])
         .build()
 }

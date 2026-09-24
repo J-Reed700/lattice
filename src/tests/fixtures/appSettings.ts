@@ -113,7 +113,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       },
       externalModelDirectories: [],
       customTools: [],
-      boundedConversationMemory: false,
+      boundedConversationMemory: true,
     },
     ui: {
       theme: 'system',

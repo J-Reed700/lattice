@@ -881,11 +881,23 @@ pub async fn delete_conversation_impl(
         .await
         .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
 
-    // 2. Delegate to service
+    // 2. Take the conversation's attachments with it.
+    //
+    //    A file attached to a chat exists only for that chat: it is not in the
+    //    library and no other conversation can retrieve from it, so once the
+    //    chat is gone nothing can ever reach it again. Deleting through the
+    //    document use case — rather than letting the rows cascade — is what
+    //    also drops its vectors and releases its library blob.
+    //
+    //    A failure here is logged and does not block the delete the user asked
+    //    for: the startup sweep collects whatever is left behind.
+    delete_conversation_attachments(container, &conversation_id).await;
+
+    // 3. Delegate to service
     let service = container.conversation_service();
     service.delete_conversation(&conversation_id).await?;
 
-    // 3. Audit logging
+    // 4. Audit logging
     let audit_logger = get_audit_logger();
     let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
         .with_resource_id(&conversation_id)
@@ -896,6 +908,41 @@ pub async fn delete_conversation_impl(
     }
 
     Ok(())
+}
+
+/// Delete every document this conversation owns.
+///
+/// Never fails the caller: a document that resists deletion is worth a log
+/// line, not a conversation the user cannot remove.
+async fn delete_conversation_attachments(container: &Container, conversation_id: &str) {
+    let scope = container.document_scope();
+    let attachments = match scope.documents_owned_by_conversation(conversation_id).await {
+        Ok(ids) => ids,
+        Err(error) => {
+            warn!(%error, conversation_id, "Could not list this conversation's attachments");
+            return;
+        }
+    };
+    if attachments.is_empty() {
+        return;
+    }
+
+    let delete_document = container.delete_document_use_case();
+    let mut deleted = 0usize;
+    for document_id in &attachments {
+        match delete_document.execute(document_id.clone()).await {
+            Ok(_) => deleted += 1,
+            Err(error) => {
+                warn!(%error, conversation_id, document_id, "Could not delete an attachment")
+            }
+        }
+    }
+    tracing::info!(
+        conversation_id,
+        owned = attachments.len(),
+        deleted,
+        "Deleted the conversation's attachments"
+    );
 }
 
 /// Tauri command wrapper

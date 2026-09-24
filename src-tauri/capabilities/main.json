@@ -128,6 +128,8 @@
     "conversation:allow-regenerate-response",
     "conversation:allow-compact-conversation",
     "conversation:allow-get-conversation-memory",
+    "conversation:allow-manage-knowledge",
+    "conversation:allow-add-documents-to-library",
     "conversation:allow-list-space-documents",
     "conversation:allow-list-conversation-linked-documents",
     "conversation:allow-remove-conversation-linked-document",

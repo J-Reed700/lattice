@@ -18,6 +18,20 @@ use async_trait::async_trait;
 
 #[async_trait]
 impl ConversationMemoryPort for ConversationRepository {
+    async fn suppressed_item_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
+        self.suppressed_memory_ids(conversation_id).await
+    }
+
+    async fn prepare_memory(
+        &self,
+        conversation_id: &str,
+        query: &str,
+    ) -> Result<Option<crate::application::ports::conversation_memory::PreparedMemory>> {
+        self.prepare_knowledge(conversation_id, query)
+            .await
+            .map(Some)
+    }
+
     async fn load_snapshot(&self, conversation_id: &str) -> Result<MemorySnapshot> {
         self.load_memory_snapshot(conversation_id).await
     }
@@ -31,6 +45,22 @@ impl ConversationMemoryPort for ConversationRepository {
     ) -> Result<SourcePage> {
         self.page_memory_source_messages(conversation_id, after_sequence, through_sequence, limits)
             .await
+    }
+
+    async fn page_recent_source_messages(
+        &self,
+        conversation_id: &str,
+        after_sequence: i64,
+        through_sequence: i64,
+        limits: SourceReadLimits,
+    ) -> Result<SourcePage> {
+        self.page_recent_memory_source_messages(
+            conversation_id,
+            after_sequence,
+            through_sequence,
+            limits,
+        )
+        .await
     }
 
     async fn read_source_spans(
@@ -77,6 +107,17 @@ impl ConversationMemoryPort for ConversationRepository {
 
 #[async_trait]
 impl ConversationMemoryReadPort for ConversationRepository {
+    async fn search_shared_knowledge(
+        &self,
+        conversation_id: &str,
+        query: &str,
+        history: bool,
+        max_bytes: usize,
+    ) -> Result<serde_json::Value> {
+        self.search_knowledge(conversation_id, query, history, max_bytes)
+            .await
+    }
+
     async fn search_source_messages(
         &self,
         conversation_id: &str,
@@ -84,7 +125,7 @@ impl ConversationMemoryReadPort for ConversationRepository {
         exact_terms: &[String],
         limit: usize,
     ) -> Result<RecallCandidates> {
-        self.search_memory_source_messages(conversation_id, query, exact_terms, limit)
+        self.search_memory_hybrid(conversation_id, query, exact_terms, limit)
             .await
     }
 
