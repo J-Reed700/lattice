@@ -87,7 +87,12 @@ impl Decoder {
                 .and_then(|c| c.first())
             {
                 if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
-                    if reason != "stop" && !(self.allow_tool_calls && reason == "tool_calls") {
+                    // Running out of answer room still leaves an answer. The
+                    // reason travels with the text so the caller decides what
+                    // a cut-short answer is worth; failing here threw it away.
+                    let expected = matches!(reason, "stop" | "length")
+                        || (self.allow_tool_calls && reason == "tool_calls");
+                    if !expected {
                         return Err(AppError::Network(format!(
                             "llama.cpp generation stopped: {reason}"
                         )));
