@@ -74,6 +74,22 @@ impl EmbeddingPort for DynamicEmbedding {
             .split_text(text, prefix)
     }
 
+    fn window_parts(
+        &self,
+        text: &str,
+    ) -> crate::shared::result::Result<
+        Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>,
+    > {
+        self.provider
+            .current_model()
+            .ok_or_else(|| {
+                crate::shared::error::AppError::AiModelsNotInstalled(
+                    "Load an embedding model before indexing".into(),
+                )
+            })?
+            .window_parts(text)
+    }
+
     fn uses_late_chunking(&self) -> bool {
         self.provider
             .current_model()

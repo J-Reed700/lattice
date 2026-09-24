@@ -49,8 +49,8 @@ use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_sup
 use crate::application::ports::EmbeddingPort;
 use crate::domain::value_objects::{ArtifactIdentity, SparseEmbedding};
 use crate::features::embedding::late_chunking::{
-    l2_normalize_in_place, mean_pool_rows, pooling_token_indices, strategy_identity,
-    validate_chunk_ranges, window_groups, EmbeddingStrategy, LateChunkingError,
+    l2_normalize_in_place, mean_pool_rows, pooling_token_indices, validate_chunk_ranges,
+    vector_identity, window_groups, EmbeddingStrategy, LateChunkingError,
 };
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
 use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
@@ -713,10 +713,8 @@ impl CandleEmbeddingService {
                         reason = %error,
                         "Late-chunking window is not poolable; embedding its chunks individually"
                     );
-                    let texts =
-                        span_chunk_texts(&text, &shifted).map_err(LateChunkingError::Embedding)?;
                     vectors.extend(
-                        <Self as EmbeddingPort>::embed_batch(self, &texts)
+                        self.embed_chunks_individually(&text, &shifted)
                             .await
                             .map_err(LateChunkingError::Embedding)?,
                     );
@@ -775,8 +773,8 @@ impl CandleEmbeddingService {
                 Err(error) => return Err(error.into()),
             }
         }
-        let texts = span_chunk_texts(span_text, chunk_ranges)?;
-        <Self as EmbeddingPort>::embed_batch(self, &texts).await
+        self.embed_chunks_individually(span_text, chunk_ranges)
+            .await
     }
 
     /// One forward pass over one already-tokenized sequence, returned as
@@ -939,12 +937,64 @@ impl CandleEmbeddingService {
 
     /// Embed one string that already carries whichever prefix its role calls
     /// for. Every public entry point funnels through here once it has decided
-    /// between the query and the document prefix.
-    async fn embed_prepared(&self, text: String) -> Result<Vec<f32>> {
+    /// between the query and the document prefix; `content_start` is where
+    /// that role prefix ends.
+    async fn embed_prepared(&self, text: String, content_start: usize) -> Result<Vec<f32>> {
+        if self.strategy.is_late_chunking() {
+            return self.embed_content_mean(&text, content_start).await;
+        }
         let mut out = self.forward_batched(vec![text], None).await?.0;
         out.pop().ok_or_else(|| AppError::EmbeddingFailed {
             reason: "Forward pass returned no embeddings".into(),
         })
+    }
+
+    /// One vector pooled the way late chunking pools a chunk: the mean of the
+    /// tokens from `content_start` on, special tokens excluded. Under late
+    /// chunking every dense vector in the generation — query, lone passage,
+    /// and a chunk that could not be late chunked — is made this way, because
+    /// the model's own pooling (CLS for BGE, last token for Qwen3) is a
+    /// different vector space from a mean and the two cannot be compared.
+    async fn embed_content_mean(&self, text: &str, content_start: usize) -> Result<Vec<f32>> {
+        let content = content_start.min(text.len())..text.len();
+        let pooled = match self
+            .embed_late_chunked(text, std::slice::from_ref(&content))
+            .await
+        {
+            // Nothing after the prefix tokenized (an empty passage behind a
+            // context prefix): the prefix is all there is to pool.
+            Err(LateChunkingError::EmptyChunkSpan { .. }) if content_start > 0 => {
+                self.embed_late_chunked(text, std::slice::from_ref(&(0..text.len())))
+                    .await
+            }
+            outcome => outcome,
+        };
+        pooled?.pop().ok_or_else(|| AppError::EmbeddingFailed {
+            reason: "Forward pass returned no embeddings".into(),
+        })
+    }
+
+    /// Embed each chunk of a span on its own, for a span (or window) that
+    /// could not be late chunked. Under late chunking the chunk is still pooled
+    /// as a mean over its own tokens behind the span's shared prefix, so these
+    /// vectors land in the same space as their late-chunked neighbours.
+    /// `span_text` already carries the document prefix.
+    async fn embed_chunks_individually(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> Result<Vec<Vec<f32>>> {
+        let texts = span_chunk_texts(span_text, chunk_ranges)?;
+        if !self.strategy.is_late_chunking() {
+            // Not `embed_batch`: that would put the document prefix in twice.
+            return Ok(self.forward_batched(texts, None).await?.0);
+        }
+        let content_start = chunk_ranges.first().map_or(0, |range| range.start);
+        let mut vectors = Vec::with_capacity(texts.len());
+        for text in &texts {
+            vectors.push(self.embed_content_mean(text, content_start).await?);
+        }
+        Ok(vectors)
     }
 
     /// A previously embedded query, if this service has seen it.
@@ -1057,8 +1107,11 @@ impl EmbeddingPort for CandleEmbeddingService {
         if text.is_empty() {
             return Err(AppError::InvalidInput("Cannot embed empty text".into()));
         }
-        self.embed_prepared(self.prefixes.document_input(text).into_owned())
-            .await
+        self.embed_prepared(
+            self.prefixes.document_input(text).into_owned(),
+            self.prefixes.document.len(),
+        )
+        .await
     }
 
     async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
@@ -1066,12 +1119,27 @@ impl EmbeddingPort for CandleEmbeddingService {
         if let Some(cached) = self.cached_query(&query) {
             return Ok(Vec::clone(&cached));
         }
-        let vector = Arc::new(self.embed_prepared(query.clone()).await?);
+        let vector = Arc::new(
+            self.embed_prepared(query.clone(), self.prefixes.query.len())
+                .await?,
+        );
         self.cache_query(query, Arc::clone(&vector));
         Ok(Vec::clone(&vector))
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if self.strategy.is_late_chunking() {
+            // One pass per text: mean pooling over each text's own content
+            // tokens is what keeps these in the late-chunked space.
+            let mut vectors = Vec::with_capacity(texts.len());
+            for text in self.as_documents(texts) {
+                vectors.push(
+                    self.embed_content_mean(&text, self.prefixes.document.len())
+                        .await?,
+                );
+            }
+            return Ok(vectors);
+        }
         Ok(self
             .forward_batched(self.as_documents(texts), None)
             .await?
@@ -1093,6 +1161,29 @@ impl EmbeddingPort for CandleEmbeddingService {
         }
         self.input_policy
             .split(text, &format!("{}{prefix}", self.prefixes.document))
+    }
+
+    fn window_parts(
+        &self,
+        text: &str,
+    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tokens = self
+            .input_policy
+            .count(&self.prefixes.document_input(text))?;
+        if tokens > self.input_policy.max_tokens {
+            return <Self as EmbeddingPort>::split_text(self, text, "");
+        }
+        Ok(vec![
+            crate::application::ports::embedding_port::EmbeddingTextChunk {
+                text: text.to_owned(),
+                start: 0,
+                end: text.len(),
+                token_count: tokens,
+            },
+        ])
     }
 
     fn uses_late_chunking(&self) -> bool {
@@ -1138,17 +1229,7 @@ impl EmbeddingPort for CandleEmbeddingService {
     }
 
     fn model_identity(&self) -> String {
-        let identity = strategy_identity(self.identity.as_str(), self.strategy);
-        // A document prefix goes into every stored vector, so it belongs in the
-        // key that decides whether those vectors are still the live generation.
-        // A policy that only prefixes queries leaves stored vectors alone and
-        // so leaves the identity alone — which is why Qwen3, whose instruction
-        // is query-side only, keeps the identity it already had.
-        if self.prefixes.document.is_empty() {
-            identity
-        } else {
-            format!("{identity}+prefix-{}", self.prefixes.id)
-        }
+        vector_identity(self.identity.as_str(), self.strategy, self.prefixes)
     }
 
     fn dimension(&self) -> usize {
@@ -1329,6 +1410,20 @@ fn resolve_prefixes(
 /// Run the encoder for one padded batch, returning (batch, seq, hidden).
 /// Shared by the pooled batch path and by late chunking, which needs the
 /// per-token states rather than a pooled vector.
+/// The prefixes a model directory would load with, without loading it. Search
+/// binds its index under [`vector_identity`] before the model is opened, and
+/// that key must match the one the opened service reports.
+pub fn prefixes_for_model_dir(dir: &Path) -> &'static EmbeddingPrefixes {
+    let config_bytes = std::fs::read(dir.join("config.json")).unwrap_or_default();
+    // An unreadable config or an unknown `model_type` only loses the
+    // architecture fallback, and none of those fallbacks prefix documents.
+    let architecture = serde_json::from_slice::<ModelConfig>(&config_bytes)
+        .ok()
+        .and_then(|config| ModelArchitecture::from_model_type(&config.model_type))
+        .unwrap_or(ModelArchitecture::Bert);
+    resolve_prefixes(dir, &config_bytes, architecture)
+}
+
 /// Run one inference step off the async runtime.
 ///
 /// Metal work blocks for as long as the GPU takes, so it belongs on the
@@ -1623,14 +1718,15 @@ fn tensor_to_vec_of_vec(t: &Tensor) -> std::result::Result<Vec<Vec<f32>>, candle
 use candle_core::IndexOp;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::features::embedding::artifact_identity;
     use tempfile::TempDir;
 
-    /// A one-layer, four-wide BERT with zero weights: enough for the loader
-    /// to accept, never run.
-    fn write_tiny_bert(dir: &Path) {
+    /// A one-layer, four-wide BERT: config, tokenizer and the weight shapes.
+    /// `write_tiny_bert` fills them with zeros — enough for the loader to
+    /// accept, never run.
+    fn write_tiny_bert_files(dir: &Path) -> (Vec<(String, Vec<usize>)>, PathBuf) {
         std::fs::write(
             dir.join("config.json"),
             r#"{"model_type":"bert","vocab_size":2,"hidden_size":4,"num_hidden_layers":1,
@@ -1679,6 +1775,11 @@ mod tests {
             (format!("{layer}.output.LayerNorm.weight"), vec![4]),
             (format!("{layer}.output.LayerNorm.bias"), vec![4]),
         ];
+        (shapes, dir.join(WEIGHTS_SAFETENSORS))
+    }
+
+    pub(crate) fn write_tiny_bert(dir: &Path) {
+        let (shapes, path) = write_tiny_bert_files(dir);
         let tensors: std::collections::HashMap<String, Tensor> = shapes
             .into_iter()
             .map(|(name, shape)| {
@@ -1686,7 +1787,90 @@ mod tests {
                 (name, tensor)
             })
             .collect();
-        candle_core::safetensors::save(&tensors, dir.join(WEIGHTS_SAFETENSORS)).unwrap();
+        candle_core::safetensors::save(&tensors, path).unwrap();
+    }
+
+    /// The tiny BERT with weights that make every position's hidden state
+    /// different, and a whitespace tokenizer, so CLS and mean pooling of the
+    /// same input give different vectors. Attention and the feed-forward are
+    /// zero, so each output row is the layer-normed sum of its word and
+    /// position embeddings.
+    fn write_runnable_tiny_bert(dir: &Path) {
+        let (shapes, path) = write_tiny_bert_files(dir);
+        let tensors: std::collections::HashMap<String, Tensor> = shapes
+            .into_iter()
+            .map(|(name, shape)| {
+                let len: usize = shape.iter().product();
+                let values: Vec<f32> = if name.ends_with("LayerNorm.weight") {
+                    vec![1.0; len]
+                } else if name.starts_with("embeddings.") && name.ends_with("embeddings.weight") {
+                    (0..len)
+                        .map(|i| ((i * i + 1) as f32 * 0.37).sin())
+                        .collect()
+                } else {
+                    vec![0.0; len]
+                };
+                let tensor = Tensor::from_vec(values, shape, &Device::Cpu).unwrap();
+                (name, tensor)
+            })
+            .collect();
+        candle_core::safetensors::save(&tensors, path).unwrap();
+        let vocab = [("[PAD]".to_owned(), 0), ("[UNK]".to_owned(), 1)]
+            .into_iter()
+            .collect();
+        let mut tokenizer = Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(vocab)
+                .unk_token("[UNK]".into())
+                .build()
+                .unwrap(),
+        );
+        tokenizer.with_pre_tokenizer(tokenizers::pre_tokenizers::whitespace::Whitespace);
+        tokenizer.save(dir.join("tokenizer.json"), false).unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_chunking_pools_queries_and_fallback_chunks_like_late_chunks() {
+        let dir = TempDir::new().unwrap();
+        write_runnable_tiny_bert(dir.path());
+        let identity = ArtifactIdentity::from_digest(&[7; 32]);
+        let chunk_first = CandleEmbeddingService::open(dir.path(), identity.clone()).unwrap();
+        assert_eq!(chunk_first.pooling, PoolingStrategy::Cls);
+        let late = CandleEmbeddingService::open(dir.path(), identity)
+            .unwrap()
+            .with_strategy(EmbeddingStrategy::LateChunking);
+
+        let text = "one two three four";
+        let whole = 0..text.len();
+        let late_chunked = late
+            .embed_late_chunked(text, std::slice::from_ref(&whole))
+            .await
+            .unwrap();
+        let query = EmbeddingPort::embed_query(&late, text).await.unwrap();
+        let cls = EmbeddingPort::embed_query(&chunk_first, text)
+            .await
+            .unwrap();
+        let close = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        // Without the fix the query came from CLS pooling: a different space.
+        assert!(!close(&cls, &late_chunked[0]));
+        assert!(close(&query, &late_chunked[0]));
+
+        // A chunk embedded on its own pools its own tokens, not the prefix.
+        let span = "p q\n\none two three";
+        let ranges = [5..8, 8..18];
+        let late_pair = late.embed_late_chunked(span, &ranges).await.unwrap();
+        let alone = late.embed_chunks_individually(span, &ranges).await.unwrap();
+        let expected = late
+            .embed_late_chunked("p q\n\n two three", std::slice::from_ref(&(5..15)))
+            .await
+            .unwrap();
+        let batch_cls = EmbeddingPort::embed_batch(&chunk_first, &["p q\n\n two three".into()])
+            .await
+            .unwrap();
+        assert_eq!(alone.len(), 2);
+        assert!(close(&alone[1], &expected[0]));
+        assert!(!close(&alone[1], &batch_cls[0]));
+        assert_eq!(late_pair.len(), 2);
     }
 
     #[test]
@@ -1705,8 +1889,38 @@ mod tests {
         let late = service.with_strategy(EmbeddingStrategy::LateChunking);
         assert_eq!(
             EmbeddingPort::model_identity(&late),
-            strategy_identity(stored.as_str(), EmbeddingStrategy::LateChunking)
+            crate::features::embedding::late_chunking::strategy_identity(
+                stored.as_str(),
+                EmbeddingStrategy::LateChunking
+            )
         );
+    }
+
+    #[test]
+    fn a_document_prefix_joins_the_identity_search_binds_before_loading() {
+        let root = TempDir::new().unwrap();
+        // No `_name_or_path` in the tiny config, so the directory name picks E5.
+        let dir = root.path().join("multilingual-e5-small");
+        std::fs::create_dir(&dir).unwrap();
+        write_tiny_bert(&dir);
+        let stored = ArtifactIdentity::from_digest(&[7; 32]);
+        let prefixes = prefixes_for_model_dir(&dir);
+        assert_eq!(prefixes.id, "e5");
+
+        for strategy in [
+            EmbeddingStrategy::ChunkFirst,
+            EmbeddingStrategy::LateChunking,
+        ] {
+            let service = CandleEmbeddingService::open(&dir, stored.clone())
+                .unwrap()
+                .with_strategy(strategy);
+            let identity = EmbeddingPort::model_identity(&service);
+            assert!(identity.ends_with("+prefix-e5"), "{identity}");
+            assert_eq!(
+                identity,
+                vector_identity(stored.as_str(), strategy, prefixes)
+            );
+        }
     }
 
     #[test]

@@ -130,6 +130,15 @@ pub trait EmbeddingPort: Send + Sync {
         })
     }
 
+    /// Split `text` only where the model window cannot take it in one pass.
+    ///
+    /// Re-embedding a stored chunk uses this rather than [`Self::split_text`]:
+    /// the stored text already carries the context prefix it was sized with,
+    /// so the chunk-size split would cut nearly every full chunk in two.
+    fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        self.split_text(text, "")
+    }
+
     /// True when this embedder derives chunk vectors from a single forward pass
     /// over the whole span ("late chunking") instead of embedding each chunk on
     /// its own. Callers that can group chunks per structure span should check
