@@ -13,7 +13,7 @@ use crate::application::ports::{
 use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
 use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
-use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
+use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
@@ -57,11 +57,6 @@ pub struct SearchDi {
     // Ports (exported so IndexingModule can write to the same USearch index)
     pub vector_search: Arc<dyn VectorSearchPort>,
     pub document_repo: Arc<dyn DocumentRepository>,
-
-    /// Writes the index and its manifest. `None` until an embedding model is
-    /// active, because there is no generation to stamp a manifest with before
-    /// then. Held by the composition root so shutdown can flush.
-    pub index_persistence: Option<Arc<IndexPersistence>>,
 }
 
 pub async fn build(
@@ -122,14 +117,10 @@ pub async fn build_with_compression(
     // toggling it rebuilds into its own files instead of mixing two vector
     // spaces in one index. `None` contributes no suffix, so existing vaults keep
     // their current filenames byte for byte.
-    let generation = match &identity {
-        Some(id) => id.replace(':', "-"),
-        None => "unconfigured".to_string(),
-    };
-    let generation = match compression.layout_token() {
-        Some(layout) => format!("{}-{}", generation, layout),
-        None => generation,
-    };
+    let generation = super::engine::vector_search::runtime_index::generation_name(
+        identity.as_deref(),
+        &compression,
+    );
     // A backup restore leaves this marker because archives carry no vectors.
     let reembed_marker = usearch_index_path
         .parent()
@@ -277,6 +268,8 @@ pub async fn build_with_compression(
             usearch_index,
             identity,
             usearch_index_path,
+            compression,
+            index_persistence,
         ),
     );
     let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;
@@ -352,7 +345,6 @@ pub async fn build_with_compression(
         search_enrichment_service,
         vector_search,
         document_repo,
-        index_persistence,
     })
 }
 
@@ -379,7 +371,15 @@ fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy)
         .iter()
         .all(|name| dir.join(name).is_file())
         && has_loadable_weights(&dir);
-    files_present.then(|| strategy_identity(artifact.as_str(), strategy))
+    // The document prefix is part of the key the loaded model reports, so it
+    // is resolved here exactly as the loader resolves it.
+    files_present.then(|| {
+        vector_identity(
+            artifact.as_str(),
+            strategy,
+            crate::features::embedding::candle_service::prefixes_for_model_dir(&dir),
+        )
+    })
 }
 
 /// Search's registrar surface on `Container`.
@@ -566,6 +566,29 @@ mod index_identity_tests {
                 index_identity(Some(&active), strategy),
                 Some(strategy_identity(recorded().as_str(), strategy))
             );
+        }
+    }
+
+    #[test]
+    fn a_prefixed_model_is_named_as_the_loaded_service_names_itself() {
+        use crate::application::ports::EmbeddingPort;
+        use crate::features::embedding::candle_service::CandleEmbeddingService;
+        let root = tempfile::tempdir().unwrap();
+        // Tiny real checkpoint; the directory name selects E5's `passage: `.
+        let dir = root.path().join("multilingual-e5-small");
+        std::fs::create_dir(&dir).unwrap();
+        crate::features::embedding::candle_service::tests::write_tiny_bert(&dir);
+        let active = model(local(&dir), Some(recorded()));
+        for strategy in [
+            EmbeddingStrategy::ChunkFirst,
+            EmbeddingStrategy::LateChunking,
+        ] {
+            let loaded = CandleEmbeddingService::open(&dir, recorded())
+                .unwrap()
+                .with_strategy(strategy);
+            let expected = EmbeddingPort::model_identity(&loaded);
+            assert!(expected.ends_with("+prefix-e5"), "{expected}");
+            assert_eq!(index_identity(Some(&active), strategy), Some(expected));
         }
     }
 

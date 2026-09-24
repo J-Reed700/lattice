@@ -176,6 +176,15 @@ impl ReindexDocumentUseCase {
         // 2. Read current file content (clone to avoid borrow conflict)
         let file_path = document.file_path().to_path_buf();
         let (content, pages) = self.extract(&file_path).await?;
+        // The import path refuses a file with no text; a reindex must too, or
+        // it replaces every chunk and vector with nothing and still marks the
+        // document indexed. Failing here leaves the old chunks in place.
+        if content.trim().is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "File contains no extractable text: {}",
+                file_path.display()
+            )));
+        }
 
         // 3. Reindex with an inferred strategy based on existing chunk sizes,
         // then adapt for new content length.
@@ -519,16 +528,26 @@ mod tests {
         }
     }
 
-    struct MockFileStorage;
+    struct MockFileStorage {
+        content: &'static str,
+    }
+
+    impl MockFileStorage {
+        fn updated() -> Self {
+            Self {
+                content: "Updated content for reindexing. This is a longer text that will be chunked properly with the default chunking strategy. \
+            We need to ensure this content is long enough to create at least one chunk when using the default FixedSize strategy with size 512. \
+            This text is being extended to reach that minimum length requirement so that the reindexing tests can verify that chunks are created successfully. \
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \
+            Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+            }
+        }
+    }
 
     #[async_trait]
     impl FileStoragePort for MockFileStorage {
         async fn read_file(&self, _path: &Path) -> Result<String> {
-            Ok("Updated content for reindexing. This is a longer text that will be chunked properly with the default chunking strategy. \
-            We need to ensure this content is long enough to create at least one chunk when using the default FixedSize strategy with size 512. \
-            This text is being extended to reach that minimum length requirement so that the reindexing tests can verify that chunks are created successfully. \
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \
-            Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string())
+            Ok(self.content.to_string())
         }
 
         async fn read_file_bytes(&self, _path: &Path) -> Result<Vec<u8>> {
@@ -895,7 +914,7 @@ mod tests {
         repo.set_document(aggregate);
 
         let use_case = ReindexDocumentUseCase::new(
-            Arc::new(MockFileStorage),
+            Arc::new(MockFileStorage::updated()),
             Arc::new(MockEmbedder),
             repo.clone(),
             Arc::new(MockUnitOfWorkFactory),
@@ -934,7 +953,7 @@ mod tests {
 
         let vector_search = Arc::new(MockVectorSearch::default());
         let use_case = ReindexDocumentUseCase::new(
-            Arc::new(MockFileStorage),
+            Arc::new(MockFileStorage::updated()),
             Arc::new(MockEmbedder),
             repo.clone(),
             Arc::new(MockUnitOfWorkFactory),
@@ -973,12 +992,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
+        let repo = Arc::new(MockDocumentRepo::new());
+        let (aggregate, _temp_dir) = create_test_aggregate();
+        let doc_id = aggregate.id().to_string();
+        repo.set_document(aggregate);
+        let vector_search = Arc::new(MockVectorSearch::default());
+        let use_case = ReindexDocumentUseCase::new(
+            Arc::new(MockFileStorage {
+                content: " \n\t\n ",
+            }),
+            Arc::new(MockEmbedder),
+            repo,
+            Arc::new(MockUnitOfWorkFactory),
+            vector_search.clone(),
+        );
+
+        let error = use_case.execute(doc_id).await.unwrap_err();
+        assert!(
+            matches!(&error, AppError::InvalidInput(m) if m.contains("no extractable text")),
+            "{error:?}"
+        );
+        assert!(vector_search.removed.lock().unwrap().is_empty());
+        assert!(vector_search.added.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_reindex_document_not_found() {
         let repo = Arc::new(MockDocumentRepo::new());
         // Don't set any document
 
         let use_case = ReindexDocumentUseCase::new(
-            Arc::new(MockFileStorage),
+            Arc::new(MockFileStorage::updated()),
             Arc::new(MockEmbedder),
             repo,
             Arc::new(MockUnitOfWorkFactory),
@@ -1002,7 +1047,7 @@ mod tests {
 
         let vector_search = Arc::new(MockVectorSearch::default());
         let use_case = ReindexDocumentUseCase::new(
-            Arc::new(MockFileStorage),
+            Arc::new(MockFileStorage::updated()),
             Arc::new(MockEmbedder),
             repo,
             Arc::new(MockUnitOfWorkFactory),
