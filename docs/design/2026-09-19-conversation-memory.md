@@ -428,7 +428,7 @@ Introduce a shared `ContextAssembler` in the application layer. It owns selectio
 Use the smaller of configured and provider-advertised context capacity, `C`. Reserve generation tokens `O` and safety margin `S`:
 
 ```text
-O = configured generation limit, default min(4096, floor(C / 4))
+O = configured generation limit, default min(32768, floor(C / 4))
 S = max(256, ceil(0.05 * C))
 InputBudget = C - O - S
 Fixed = tokens(system policy + tool schemas + current input + message framing)
