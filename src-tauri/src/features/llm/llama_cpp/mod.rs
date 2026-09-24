@@ -80,6 +80,47 @@ impl LlamaCppLlm {
         Ok(models)
     }
 
+    /// What the server can still be asked to generate once this prompt is in
+    /// its context.
+    ///
+    /// `max_tokens` is a *reservation*: llama.cpp holds prompt + n_predict in
+    /// one slot, so asking for the whole window on every turn works only while
+    /// prompts stay small. A turn carrying an attachment and six web pages ran
+    /// 75k prompt tokens into a 163k slot, asked for 131k more on top, and the
+    /// server failed the batch — a 500 forty-eight seconds in, after it had
+    /// already done the work.
+    ///
+    /// The prompt is measured with the same rough estimate the budgeter uses,
+    /// which reads low on dense text, so the estimate is inflated before it is
+    /// subtracted. `MIN_OUTPUT_TOKENS` keeps a nearly-full window answerable
+    /// rather than silently truncated to nothing; a prompt that leaves less
+    /// room than that is over budget for reasons this clamp cannot fix.
+    fn output_room_for(&self, messages: &[Value], requested: u32) -> u32 {
+        /// Estimated prompt tokens are scaled by this before being subtracted.
+        const ESTIMATE_SAFETY: usize = 3;
+        const ESTIMATE_SAFETY_DIVISOR: usize = 2;
+        const MIN_OUTPUT_TOKENS: u32 = 1024;
+
+        let window = self.settings.context_window as usize;
+        let prompt_chars: usize = messages
+            .iter()
+            .map(|message| message.to_string().chars().count())
+            .sum();
+        let prompt_tokens = prompt_chars.div_ceil(4) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR;
+        let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
+        let allowed = requested.min(room).max(MIN_OUTPUT_TOKENS);
+        if allowed < requested {
+            tracing::debug!(
+                requested,
+                allowed,
+                prompt_tokens,
+                window,
+                "Capped the llama.cpp output reservation to what the window has left"
+            );
+        }
+        allowed
+    }
+
     fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
         let mut messages = Vec::new();
         for item in &request.input {
@@ -92,6 +133,8 @@ impl LlamaCppLlm {
             });
         }
         let messages = coalesce_system_messages(messages)?;
+        let requested_output = request.effective_max_output_tokens(self.settings.max_tokens);
+        let max_tokens = self.output_room_for(&messages, requested_output);
         let mut body = serde_json::Map::from_iter([
             ("model".into(), json!(self.settings.llama_cpp.model)),
             ("messages".into(), json!(messages)),
@@ -100,10 +143,7 @@ impl LlamaCppLlm {
             ("top_p".into(), json!(self.settings.top_p)),
             ("top_k".into(), json!(self.settings.top_k)),
             ("repeat_penalty".into(), json!(self.settings.repeat_penalty)),
-            (
-                "max_tokens".into(),
-                json!(request.effective_max_output_tokens(self.settings.max_tokens)),
-            ),
+            ("max_tokens".into(), json!(max_tokens)),
         ]);
         if stream {
             body.insert("stream_options".into(), json!({"include_usage": true}));
@@ -309,6 +349,12 @@ impl LLMPort for LlamaCppLlm {
             let response = result?;
             if !response.tool_calls.is_empty() {
                 Err(AppError::InvalidState("Unexpected tool call in text generation".into()))?;
+            }
+            // A plain text stream has no way to say it was cut short.
+            if response.finish_reason == "length" {
+                Err(AppError::InvalidState(
+                    "llama.cpp reached the output token limit before completing the response".into(),
+                ))?;
             }
             while let Ok(text) = receiver.try_recv() { yield text; }
         };

@@ -367,12 +367,26 @@ fn sse_handles_split_utf8_and_rejects_failed_or_truncated_streams() {
     assert!(streaming::Decoder::default().finish().is_err());
     for event in [
         r#"{"error":{"message":"private"}}"#,
-        r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+        r#"{"choices":[{"delta":{},"finish_reason":"content_filter"}]}"#,
     ] {
         assert!(streaming::Decoder::default()
             .push(format!("data: {event}\n\n").as_bytes())
             .is_err());
     }
+}
+
+/// Running out of answer room keeps what was written; the caller sees why it
+/// stopped and decides what a cut-short answer is worth.
+#[test]
+fn sse_length_stop_keeps_the_text_and_reports_the_reason() {
+    let mut decoder = streaming::Decoder::for_completion();
+    let text = decoder
+        .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"half an answer\"},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n")
+        .unwrap();
+    assert_eq!(text.concat(), "half an answer");
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "half an answer");
+    assert_eq!(response.finish_reason, "length");
 }
 
 #[test]
@@ -823,14 +837,12 @@ async fn empty_response_exhaustion_returns_error_after_five_attempts() {
 }
 
 #[tokio::test]
-async fn authentication_invalid_tools_and_output_limit_are_not_retried() {
+async fn authentication_and_invalid_tools_are_not_retried() {
     for response in [
         ResponseTemplate::new(401),
         sse_response(
             json!({"tool_calls":[{"id":"x","type":"function","function":{"name":"search","arguments":"[1]"}}]}),
         ),
-        ResponseTemplate::new(200)
-            .set_body_string(stream_reply(json!({"content":"unfinished"}), "length")),
     ] {
         let server = sequence_server(vec![response]).await;
         let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
@@ -839,6 +851,32 @@ async fn authentication_invalid_tools_and_output_limit_are_not_retried() {
             .await
             .is_err());
     }
+}
+
+#[tokio::test]
+async fn an_output_limit_stop_returns_the_text_once_without_retrying() {
+    let server = sequence_server(vec![ResponseTemplate::new(200)
+        .set_body_string(stream_reply(json!({"content":"unfinished"}), "length"))])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let response = client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(response.text, "unfinished");
+    assert_eq!(response.finish_reason, "length");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    // Spent it all thinking: nothing to keep, and a retry would do the same.
+    let server = sequence_server(vec![ResponseTemplate::new(200)
+        .set_body_string(stream_reply(json!({"reasoning_content":"hmm"}), "length"))])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    assert!(client
+        .complete(&CompletionRequest::default())
+        .await
+        .is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]

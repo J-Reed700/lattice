@@ -197,6 +197,15 @@ impl LlamaCppLlm {
             .finish()
             .map_err(|error| Failure::Retry(error, None))?;
         let response = decoder.into_response().map_err(Failure::Permanent)?;
+        // The same request would hit the same limit again; retrying only
+        // spends the budget several times over.
+        if response.finish_reason == "length" && response.text.trim().is_empty() {
+            return Err(Failure::Permanent(AppError::InvalidState(
+                "the model used its whole answer budget before writing an answer \
+                 (llama.cpp stopped: length)"
+                    .into(),
+            )));
+        }
         if response.text.trim().is_empty() && response.tool_calls.is_empty() {
             return Err(Failure::Retry(AppError::Network(
                 "llama.cpp returned no public answer or tool calls (empty or reasoning-only response)".into()
