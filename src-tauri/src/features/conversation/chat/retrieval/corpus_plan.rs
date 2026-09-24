@@ -695,8 +695,6 @@ pub(super) async fn retrieve(
     } else {
         &scope.document_ids
     };
-    let space_filter =
-        (scope.space_id != super::DEFAULT_SPACE_ID).then_some(scope.space_id.as_str());
     // Independent lexical and vector branches: a query/model failure cannot
     // silently discard successful retrieval from the other branch. Learned
     // sparse retrieval remains an evaluation-only experiment; it did not beat
@@ -718,7 +716,10 @@ pub(super) async fn retrieve(
                 threshold: None,
                 mode: SearchModeDto::BM25,
             },
-            space_filter,
+            // The allow-list already is the space plus this chat's
+            // attachments. A membership check on top would drop the
+            // attachments, which belong to no space, from the keyword branch.
+            None,
             Some(search_ids),
         );
         let (vector, lexical) = tokio::join!(vector, lexical);

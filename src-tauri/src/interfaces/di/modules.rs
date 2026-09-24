@@ -353,7 +353,7 @@ impl SearchModule {
     pub fn index_persistence(
         &self,
     ) -> Option<&Arc<crate::features::search::engine::vector_search::IndexPersistence>> {
-        self.search.index_persistence.as_ref()
+        self.search.runtime_index.persistence()
     }
 
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {

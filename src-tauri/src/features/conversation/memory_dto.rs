@@ -2,12 +2,9 @@
 //!
 //! Design: `docs/design/2026-09-19-conversation-memory.md` §13.
 //!
-//! Read-only on purpose. There is no "edit memory" shape here and there is not
-//! going to be one in v1: a free-form editor is a way to create a requirement
-//! with no source behind it, and the entire value of this ledger is that every
-//! authoritative item can be traced to something the user actually wrote. A
-//! correction is an ordinary message and goes through the same validation as any
-//! other.
+//! This read view resolves original evidence. User edits use `knowledge_dto`:
+//! additions and corrections create a durable, user-authored source message
+//! rather than rewriting a generated label and pretending it is a quotation.
 
 use serde::{Deserialize, Serialize};
 

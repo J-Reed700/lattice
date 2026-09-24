@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::BoxFuture;
+use futures::{FutureExt, StreamExt};
 use serde::Deserialize;
 use tokio::time::Instant;
 use tracing::{debug, warn};
@@ -26,7 +28,7 @@ use super::super::prompting::{
     claim_judge_schema, render_claim_judge_prompt, ClaimJudgePassage, ClaimJudgeRequest,
     CLAIM_JUDGE_SYSTEM,
 };
-use super::lexical::LexicalClaim;
+use super::lexical::{best_window, LexicalClaim};
 use super::ClaimVerdict;
 
 /// Claims per request. Larger batches cut round trips; past roughly this many
@@ -34,12 +36,27 @@ use super::ClaimVerdict;
 pub(super) const MAX_CLAIMS_PER_CALL: usize = 12;
 
 /// Wall-clock ceiling for all judging in one turn.
-pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(8);
+///
+/// Measured, not guessed: on the local utility model (a 9B model at Q4) one
+/// batch of twelve claims takes about 30 seconds, so the earlier 30s ceiling
+/// judged exactly one batch a turn and left every later escalated claim
+/// marked unsupported however well it was cited. Ninety seconds and
+/// [`MAX_CONCURRENT_CALLS`] batches in flight cover a long research answer.
+pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
+
+/// Batches judged side by side.
+///
+/// The local sidecar serves several slots over one KV cache (llama.cpp's
+/// auto `n_parallel`, four on the pinned build), and decoding is memory-bound,
+/// so three requests in flight finish well ahead of three in a row. Three,
+/// not four: the slots share one context window and a judge prompt carries
+/// up to a dozen passages. A single-slot remote server simply queues them,
+/// which costs nothing over the sequential path.
+pub(super) const MAX_CONCURRENT_CALLS: usize = 3;
 
 /// Do not start a request that cannot plausibly finish inside what is left.
 const MIN_CALL_SLICE: Duration = Duration::from_millis(250);
 
-const MAX_PASSAGE_CHARS: usize = 1200;
 const MAX_PASSAGES_PER_CLAIM: usize = 3;
 /// Ceiling on the shared passage table for one request, so a batch whose
 /// claims cite a dozen different sources cannot blow the prompt window.
@@ -57,6 +74,7 @@ pub(super) struct ClaimJudge {
     llm: Arc<dyn LLMPort>,
     batch_size: usize,
     time_budget: Duration,
+    concurrency: usize,
 }
 
 impl ClaimJudge {
@@ -65,6 +83,7 @@ impl ClaimJudge {
             llm,
             batch_size: MAX_CLAIMS_PER_CALL,
             time_budget: DEFAULT_TIME_BUDGET,
+            concurrency: MAX_CONCURRENT_CALLS,
         }
     }
 
@@ -77,6 +96,12 @@ impl ClaimJudge {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size.max(1);
+        self
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1);
         self
     }
 
@@ -99,96 +124,35 @@ impl ClaimJudge {
             return outcomes;
         }
 
+        // Batches run side by side, each against the same deadline. A batch
+        // that finds no time left when its turn comes is skipped rather than
+        // started, so a slow model never overruns the budget by a whole call.
         let deadline = Instant::now() + self.time_budget;
-        for batch in pending.chunks(self.batch_size) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining < MIN_CALL_SLICE {
-                warn!(
-                    judged = outcomes.len(),
-                    remaining_claims = pending.len().saturating_sub(outcomes.len()),
-                    budget_ms = self.time_budget.as_millis(),
-                    "Claim judge time budget exhausted — remaining claims stay unresolved"
-                );
-                break;
-            }
+        // Boxed: the borrowed `async fn` futures otherwise trip the compiler's
+        // higher-ranked `Send` check once the whole turn is spawned.
+        let batch_futures: Vec<BoxFuture<'_, BatchResult>> = pending
+            .chunks(self.batch_size)
+            .map(|batch| self.judge_batch(claims, batch, sources, deadline).boxed())
+            .collect();
+        let mut batches = futures::stream::iter(batch_futures).buffer_unordered(self.concurrency);
 
-            let Some(batch_input) = BatchInput::build(claims, batch, sources) else {
-                continue;
-            };
-            let requests: Vec<ClaimJudgeRequest<'_>> = batch_input
-                .claims
-                .iter()
-                .enumerate()
-                .map(|(slot, (_, claim, citations))| ClaimJudgeRequest {
-                    index: slot + 1,
-                    claim: claim.claim_text.as_str(),
-                    citations: citations.clone(),
-                })
-                .collect();
-            let passages: Vec<ClaimJudgePassage<'_>> = batch_input
-                .table
-                .iter()
-                .map(|(citation_id, text)| ClaimJudgePassage {
-                    citation_id: *citation_id,
-                    text: text.as_str(),
-                })
-                .collect();
-
-            let prompt = render_claim_judge_prompt(&passages, &requests);
-            let response = match tokio::time::timeout(remaining, self.request(&prompt)).await {
-                Ok(Ok(text)) => text,
-                Ok(Err(e)) => {
-                    warn!(error = %e, batch = batch.len(), "Claim judge call failed — leaving this batch unresolved");
-                    continue;
-                }
-                Err(_) => {
-                    warn!(
-                        batch = batch.len(),
-                        "Claim judge call exceeded the remaining time budget — leaving claims unresolved"
-                    );
-                    break;
-                }
-            };
-
-            let parsed = parse_judge_response(&response);
-            if parsed.is_empty() {
-                warn!(
-                    batch = batch.len(),
-                    response_chars = response.len(),
-                    "Claim judge returned no parseable verdicts — leaving this batch unresolved"
-                );
-                continue;
-            }
-
-            for raw in parsed {
-                let Some(slot) = raw.id.and_then(|id| usize::try_from(id).ok()) else {
-                    continue;
-                };
-                let Some(slot) = slot.checked_sub(1) else {
-                    continue;
-                };
-                let Some((claim_index, _, citations)) = batch_input.claims.get(slot) else {
-                    continue;
-                };
-                let Some(verdict) = raw.verdict.as_deref().and_then(parse_verdict) else {
-                    continue;
-                };
-                let quote = raw
-                    .quote
-                    .as_deref()
-                    .and_then(|quote| batch_input.verified_quote(quote, citations));
-                // A positive verdict without a real supporting span is not evidence.
-                // Do not fall back to lexical support: the judge may be certifying
-                // exactly the numeric/negated claim the lexical pass cannot settle.
-                let verdict = if verdict == ClaimVerdict::Supported && quote.is_none() {
-                    ClaimVerdict::Unsupported
-                } else {
-                    verdict
-                };
-                outcomes.insert(*claim_index, JudgeOutcome { verdict, quote });
+        let mut out_of_time = false;
+        while let Some(result) = batches.next().await {
+            match result {
+                BatchResult::Judged(judged) => outcomes.extend(judged),
+                BatchResult::OutOfTime => out_of_time = true,
+                BatchResult::Unusable => {}
             }
         }
 
+        if out_of_time {
+            warn!(
+                judged = outcomes.len(),
+                remaining_claims = pending.len().saturating_sub(outcomes.len()),
+                budget_ms = self.time_budget.as_millis(),
+                "Claim judge time budget exhausted — remaining claims stay unresolved"
+            );
+        }
         debug!(
             judged = outcomes.len(),
             requested = pending.len(),
@@ -196,6 +160,98 @@ impl ClaimJudge {
             "Claim judge finished"
         );
         outcomes
+    }
+
+    /// One request: the claims at `batch`, judged before `deadline`.
+    async fn judge_batch(
+        &self,
+        claims: &[LexicalClaim],
+        batch: &[usize],
+        sources: &[SourceDto],
+        deadline: Instant,
+    ) -> BatchResult {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < MIN_CALL_SLICE {
+            return BatchResult::OutOfTime;
+        }
+
+        let Some(batch_input) = BatchInput::build(claims, batch, sources) else {
+            return BatchResult::Unusable;
+        };
+        let requests: Vec<ClaimJudgeRequest<'_>> = batch_input
+            .claims
+            .iter()
+            .enumerate()
+            .map(|(slot, (_, claim, citations))| ClaimJudgeRequest {
+                index: slot + 1,
+                claim: claim.claim_text.as_str(),
+                citations: citations.clone(),
+            })
+            .collect();
+        let passages: Vec<ClaimJudgePassage<'_>> = batch_input
+            .table
+            .iter()
+            .map(|(citation_id, text)| ClaimJudgePassage {
+                citation_id: *citation_id,
+                text: text.as_str(),
+            })
+            .collect();
+
+        let prompt = render_claim_judge_prompt(&passages, &requests);
+        let response = match tokio::time::timeout(remaining, self.request(&prompt)).await {
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => {
+                warn!(error = %e, batch = batch.len(), "Claim judge call failed — leaving this batch unresolved");
+                return BatchResult::Unusable;
+            }
+            Err(_) => {
+                warn!(
+                    batch = batch.len(),
+                    "Claim judge call exceeded the remaining time budget — leaving claims unresolved"
+                );
+                return BatchResult::OutOfTime;
+            }
+        };
+
+        let parsed = parse_judge_response(&response);
+        if parsed.is_empty() {
+            warn!(
+                batch = batch.len(),
+                response_chars = response.len(),
+                "Claim judge returned no parseable verdicts — leaving this batch unresolved"
+            );
+            return BatchResult::Unusable;
+        }
+
+        let mut judged = Vec::with_capacity(parsed.len());
+        for raw in parsed {
+            let Some(slot) = raw.id.and_then(|id| usize::try_from(id).ok()) else {
+                continue;
+            };
+            let Some(slot) = slot.checked_sub(1) else {
+                continue;
+            };
+            let Some((claim_index, _, citations)) = batch_input.claims.get(slot) else {
+                continue;
+            };
+            let Some(verdict) = raw.verdict.as_deref().and_then(parse_verdict) else {
+                continue;
+            };
+            let quote = raw
+                .quote
+                .as_deref()
+                .and_then(|quote| batch_input.verified_quote(quote, citations));
+            // A positive verdict without a real supporting span is not evidence.
+            // Do not fall back to lexical support: the judge may be certifying
+            // exactly the numeric/negated claim the lexical pass cannot settle.
+            let verdict = if verdict == ClaimVerdict::Supported && quote.is_none() {
+                ClaimVerdict::Unsupported
+            } else {
+                verdict
+            };
+            judged.push((*claim_index, JudgeOutcome { verdict, quote }));
+        }
+        BatchResult::Judged(judged)
     }
 
     async fn request(&self, prompt: &str) -> Result<String> {
@@ -226,6 +282,16 @@ impl ClaimJudge {
     }
 }
 
+/// What one batch came back with.
+enum BatchResult {
+    /// Verdicts keyed by index into the full claim list.
+    Judged(Vec<(usize, JudgeOutcome)>),
+    /// Nothing to judge, the call failed, or the reply held no verdicts.
+    Unusable,
+    /// The budget ran out before or during the call.
+    OutOfTime,
+}
+
 /// One request's worth of claims and the passage table they share.
 struct BatchInput<'a> {
     /// `(index into the full claim list, the claim, the citations it cites)`.
@@ -251,7 +317,13 @@ impl<'a> BatchInput<'a> {
             };
             let mut citations = Vec::new();
             for (citation_id, text) in passages_for(claim, sources) {
-                if !input.table.iter().any(|(id, _)| *id == citation_id) {
+                // Keyed by text as well as citation: two claims citing one long
+                // page are each shown the part of it that concerns them.
+                if !input
+                    .table
+                    .iter()
+                    .any(|(id, known)| *id == citation_id && *known == text)
+                {
                     if input.table.len() >= MAX_PASSAGES_PER_BATCH {
                         continue;
                     }
@@ -310,7 +382,7 @@ fn passages_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Vec<(u32, String
         .into_iter()
         .filter_map(|idx| {
             let source = sources.get(idx)?;
-            let text = passage_text(source);
+            let text = passage_text(&claim.claim_text, source);
             if text.trim().is_empty() {
                 return None;
             }
@@ -322,13 +394,16 @@ fn passages_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Vec<(u32, String
         .collect()
 }
 
-fn passage_text(source: &SourceDto) -> String {
+/// The stretch of a source the claim is judged against: the window of it that
+/// best matches the claim. A cited web page is the whole article, and its
+/// opening paragraphs rarely hold the sentence a claim rests on.
+fn passage_text(claim: &str, source: &SourceDto) -> String {
     let body = if source.content.trim().is_empty() {
         source.excerpt.as_deref().unwrap_or_default()
     } else {
         source.content.as_str()
     };
-    truncate_chars(&normalize_whitespace(body), MAX_PASSAGE_CHARS)
+    best_window(claim, body)
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -484,6 +559,7 @@ fn balanced_objects(text: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::source;
     use super::*;
 
     #[test]
@@ -601,10 +677,17 @@ mod tests {
     }
 
     #[test]
-    fn passage_text_is_bounded() {
-        let long = "word ".repeat(1000);
-        let truncated = truncate_chars(&long, MAX_PASSAGE_CHARS);
-        assert_eq!(truncated.chars().count(), MAX_PASSAGE_CHARS + 1);
-        assert!(truncated.ends_with('…'));
+    fn passage_text_is_the_part_of_a_long_page_the_claim_rests_on() {
+        let page = format!(
+            "{} Soak red kidney beans for five hours and boil them for thirty minutes to destroy lectins. {}",
+            "Gardening filler about compost and mulch. ".repeat(80),
+            "More filler about trellis spacing. ".repeat(80),
+        );
+        let text = passage_text(
+            "Soak kidney beans and boil them to destroy lectins",
+            &source(&page),
+        );
+        assert!(text.chars().count() <= super::super::lexical::WINDOW_CHARS);
+        assert!(text.contains("destroy lectins"));
     }
 }

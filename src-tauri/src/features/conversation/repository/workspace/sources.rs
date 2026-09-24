@@ -8,6 +8,7 @@ struct ConversationLinkedDocumentRow {
     file_type: Option<String>,
     category: String,
     indexed_at: String,
+    attached_to_conversation: bool,
     last_referenced_at: String,
     reference_count: i64,
 }
@@ -39,12 +40,13 @@ impl ConversationRepository {
             d.file_type AS file_type,
             d.category AS category,
             d.indexed_at AS indexed_at,
+            d.owner_conversation_id IS NOT NULL AS attached_to_conversation,
             MAX(cd.added_at) AS last_referenced_at,
             COUNT(*) AS reference_count
         FROM conversation_documents cd
         INNER JOIN documents d ON d.id = cd.document_id
         WHERE cd.conversation_id = ?
-        GROUP BY d.id, d.file_name, d.file_path, d.file_type, d.category, d.indexed_at
+        GROUP BY d.id, d.file_name, d.file_path, d.file_type, d.category, d.indexed_at, attached_to_conversation
         ORDER BY last_referenced_at DESC
         "#,
         )
@@ -67,6 +69,7 @@ impl ConversationRepository {
                 file_type: row.file_type.unwrap_or_default(),
                 category: row.category,
                 indexed_at: row.indexed_at,
+                attached_to_conversation: row.attached_to_conversation,
                 last_referenced_at: row.last_referenced_at,
                 reference_count: row.reference_count,
             })

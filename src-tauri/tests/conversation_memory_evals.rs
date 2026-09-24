@@ -63,6 +63,15 @@
 //! contains conversation text and **must never be committed**; the default
 //! location is the system temp dir precisely so it cannot be added by accident.
 //!
+//! For a timeout diagnosis, select one repeat and one compaction cycle with
+//! `LATTICE_EVAL_CELLS=family:0`, `LATTICE_EVAL_RUNS=1`, and
+//! `LATTICE_EVAL_MAX_CYCLES=1`, leaving `LATTICE_EVAL_CONCURRENCY=1` to measure
+//! a single conversation without adding test-generated provider load. The
+//! targeted cell test emits phase and utility-call timings for snapshot reads,
+//! extraction, review, summary, and commit; it does not log prompts or answers.
+//! Increase concurrency only when the goal is to measure provider behavior
+//! under concurrent evaluation.
+//!
 //! # Status
 //!
 //! The first authenticated three-repeat Qwen release run completed and exposed
@@ -365,7 +374,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-09-20.16";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-09-23.1";
 
 impl EvalConfig {
     fn from_env() -> Self {
@@ -3004,6 +3013,17 @@ async fn targeted_bounded_memory_families_from_env() {
 #[tokio::test]
 #[ignore = "needs a local utility model and LATTICE_EVAL_CELLS; runs only the named bounded-memory repeats"]
 async fn targeted_bounded_memory_cells_from_env() {
+    // Emit only the privacy-safe conversation-memory stage timings during the
+    // targeted timeout diagnostic; provider prompts and model responses remain
+    // confined to the existing opt-in eval trace.
+    let _ = {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "lattice::application::services::conversation_memory=info",
+            ))
+            .with_test_writer()
+            .try_init()
+    };
     let config = EvalConfig::from_env();
     let known = all_families();
     let cells: Vec<(String, usize)> = std::env::var("LATTICE_EVAL_CELLS")

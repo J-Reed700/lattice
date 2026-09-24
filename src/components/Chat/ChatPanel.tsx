@@ -53,6 +53,17 @@ const SUGGEST_LIST_ID = 'composer-suggest-list';
 
 type TurnMode = 'auto' | 'followup' | 'query';
 
+/**
+ * What an import handed the send: names for the chips, ids for the turn.
+ *
+ * Both travel or the file is only half attached — visible in the thread and
+ * invisible to the answer.
+ */
+type ImportedAttachments = {
+  names: string[];
+  documentIds: string[];
+};
+
 const normalizeEnabledTools = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) {
     return undefined;
@@ -178,6 +189,7 @@ export function ChatPanel() {
     forkConversation,
     compactConversation,
     moveConversationToSpace,
+    selectConversation,
     loadConversationLinkedDocuments,
   } = useConversationsStore();
   const queryClient = useQueryClient();
@@ -550,13 +562,18 @@ export function ChatPanel() {
 
     // Staged files join the conversation *with* this message: import them
     // first so the turn can already draw on them, and let the message carry
-    // their names. A total import failure aborts the send with the draft
-    // intact — sending without the files would answer the wrong question.
+    // their names and ids. The names draw the chips; the ids are what makes
+    // the turn actually read the files, so a send that has one without the
+    // other is a file the answer will not have seen. A total import failure
+    // aborts the send with the draft intact — sending without the files would
+    // answer the wrong question.
     let attachmentNames: string[] | undefined;
+    let attachmentDocumentIds: string[] | undefined;
     if (staged.length > 0) {
-      const names = await handleImportStagedFiles();
-      if (names === null) return;
-      if (names.length > 0) attachmentNames = names;
+      const imported = await handleImportStagedFiles();
+      if (imported === null) return;
+      if (imported.names.length > 0) attachmentNames = imported.names;
+      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
     }
 
     setInput('');
@@ -564,7 +581,13 @@ export function ChatPanel() {
       textareaRef.current.style.height = 'auto';
     }
 
-    await sendMessage(message, activeConversationId, resolveEffectiveToolPreferences(), attachmentNames);
+    await sendMessage(
+      message,
+      activeConversationId,
+      resolveEffectiveToolPreferences(),
+      attachmentNames,
+      attachmentDocumentIds
+    );
   };
 
   const handleCancel = async () => {
@@ -645,17 +668,29 @@ export function ChatPanel() {
   /**
    * Import the staged files into the vault and link them to this conversation.
    *
-   * Returns the staged names when the send may proceed — including the
-   * still-indexing case, where the documents are linked and the next turn
-   * catches up — and `null` when nothing made it in, so the caller can abort
-   * with the composer's draft and the staged files both intact.
+   * Returns the names and the document ids when the send may proceed —
+   * including the still-indexing case, where the documents are linked and the
+   * next turn catches up — and `null` when nothing made it in, so the caller
+   * can abort with the composer's draft and the staged files both intact.
+   *
+   * The ids matter as much as the names: the names only draw the chips, while
+   * the ids are what the turn reads. A file whose id never reaches the send is
+   * a file the answer is written without, however plainly its chip says it was
+   * attached.
    */
-  const handleImportStagedFiles = useCallback(async (): Promise<string[] | null> => {
+  const handleImportStagedFiles = useCallback(async (): Promise<ImportedAttachments | null> => {
     if (!activeConversationId || staged.length === 0 || isImportingFiles) return null;
     const stagedNames = staged.map((file) => file.name);
     setIsImportingFiles(true);
     try {
-      const started = await VaultAPI.startBatchFileImport(staged.map((file) => file.path));
+      // Attached, not filed. These documents belong to this conversation: the
+      // turn can read and cite them, but they stay out of the library and out
+      // of every other chat's searches, and they go when this chat goes. The
+      // "Add to library" action on the attachment is what files them for good.
+      const started = await VaultAPI.startBatchFileImport(
+        staged.map((file) => file.path),
+        activeConversationId
+      );
       if (!started.ok) {
         toast.error("Couldn't add these files", { message: started.error });
         return null;
@@ -700,29 +735,33 @@ export function ChatPanel() {
       void loadConversationLinkedDocuments(activeConversationId);
 
       const requested = staged.length;
-      // Report what the job actually did. Saying "Added 4 files" after the
+      // Report what the job actually did. Saying "Attached 4 files" after the
       // batch failed, or after we stopped waiting, is a claim we cannot make.
       // Files stay staged on a total failure so the send can be retried.
+      //
+      // "Attached", not "Added": these files belong to this conversation, not
+      // to the library, and the wording is the only place the user learns that
+      // before they go looking for them in the library.
       if (addedCount === null) {
         clearStaged();
-        toast.info(`Still adding ${requested} file${requested !== 1 ? 's' : ''}`, {
+        toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
-        return stagedNames;
+        return { names: stagedNames, documentIds };
       } else if (addedCount === 0) {
-        toast.error("Couldn't add these files", {
+        toast.error("Couldn't attach these files", {
           message: `${failedCount || requested} failed to import.`,
         });
         return null;
       } else {
         clearStaged();
-        toast.success(`Added ${addedCount} file${addedCount !== 1 ? 's' : ''}`, {
+        toast.success(`Attached ${addedCount} file${addedCount !== 1 ? 's' : ''}`, {
           message:
             failedCount > 0
               ? `${failedCount} couldn't be read. The rest are indexing now.`
-              : "They're indexing now.",
+              : 'Only this conversation can see them. Add them to your library from Sources.',
         });
-        return stagedNames;
+        return { names: stagedNames, documentIds };
       }
     } finally {
       setIsImportingFiles(false);
@@ -838,10 +877,12 @@ export function ChatPanel() {
     }
   };
 
-  // `@` may only ever offer documents of this conversation's own space — never
-  // the sidebar's selection, which is a different chat's business.
+  // `@` may only ever offer documents this conversation can read — its own
+  // space and its own attachments, never the sidebar's selection, which is a
+  // different chat's business.
   const { documents: mentionDocuments, isLoading: isLoadingMentions } = useSpaceDocuments(
     conversationSpaceId,
+    activeConversationId,
     mentionQuery
   );
 
@@ -1155,6 +1196,7 @@ export function ChatPanel() {
         isOpen={isMemoryOpen}
         onClose={() => setIsMemoryOpen(false)}
         messageContentById={messageContentById}
+        onOpenConversation={(id) => { setIsMemoryOpen(false); void selectConversation(id); }}
       />
       {/* Thread scroll region */}
       <div

@@ -29,6 +29,11 @@ use tauri::State;
 /// # Arguments
 ///
 /// * `file_paths` - Array of file paths to import (max 100)
+/// * `space_id` - Optional space to file the imported documents in
+/// * `owner_conversation_id` - Set when these files were attached to a chat
+///   rather than added to the library. Documents this job creates are then
+///   scoped to that conversation: hidden from the library, invisible to every
+///   other chat's retrieval, and deleted with it.
 /// * `container` - Service container for dependency injection
 ///
 /// # Returns
@@ -56,15 +61,24 @@ use tauri::State;
 pub async fn start_batch_file_import(
     file_paths: Vec<String>,
     space_id: Option<String>,
+    owner_conversation_id: Option<String>,
     indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
     container: State<'_, Container>,
 ) -> Result<String, AppError> {
-    start_batch_file_import_impl(file_paths, space_id, indexing, container.inner()).await
+    start_batch_file_import_impl(
+        file_paths,
+        space_id,
+        owner_conversation_id,
+        indexing,
+        container.inner(),
+    )
+    .await
 }
 
 pub async fn start_batch_file_import_impl(
     file_paths: Vec<String>,
     space_id: Option<String>,
+    owner_conversation_id: Option<String>,
     indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
     container: &Container,
 ) -> Result<String, AppError> {
@@ -108,6 +122,7 @@ pub async fn start_batch_file_import_impl(
         .execute(StartBatchFileImportRequestDto {
             file_paths,
             space_id,
+            owner_conversation_id,
             indexing,
         })
         .await

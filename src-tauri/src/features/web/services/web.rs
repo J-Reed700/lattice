@@ -27,6 +27,7 @@
 //!     include_wikipedia: false,
 //!     depth: 1,
 //!     branch_queries: 2,
+//!     followup_queries: vec![],
 //! };
 //! let results = service.search_web(&request).await?;
 //!
@@ -56,8 +57,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tokio::time::sleep;
+
+use super::browser_reader;
 use tracing::{debug, info, warn};
 use url::{form_urlencoded, Url};
+
+/// Extracted text shorter than this is a shell — a title, a menu, a cookie
+/// notice — and the page is worth reading in the browser. Matches the chat
+/// pipeline's floor for a page worth quoting.
+const THIN_PAGE_CHARS: usize = 400;
+
+/// `<article>` text is used only when it is at least 1/N of the page's
+/// paragraph text; below that it is cards or teasers, not the body.
+const ARTICLE_SHARE_DENOMINATOR: usize = 3;
 
 /// Results requested per search-engine page.
 const PROVIDER_PAGE_SIZE: usize = 10;
@@ -87,76 +99,6 @@ const SITE_ALIASES: &[(&str, &str)] = &[
     ("html.duckduckgo.com", "duckduckgo.com"),
     ("lite.duckduckgo.com", "duckduckgo.com"),
 ];
-
-/// Words too common to steer a search, at the length [`followup_terms`] keeps.
-///
-/// Two kinds. Function words, which say nothing about any topic; and the
-/// vocabulary pages use about themselves rather than about their subject —
-/// the listicle words every second headline carries ("best", "tips",
-/// "ultimate"). Both are shared by enough results to pass for the topic's own
-/// vocabulary, and a search sent after them lands nowhere in particular. The
-/// furniture a snippet picks up off an address is dropped a step earlier, by
-/// [`is_address_like`]; the URL words here predate that rule and cost nothing.
-const FOLLOWUP_STOPWORDS: &[&str] = &[
-    "about", "after", "also", "been", "before", "best", "click", "could", "does", "each", "email",
-    "even", "every", "find", "from", "have", "here", "html", "http", "https", "index", "into",
-    "just", "know", "like", "login", "look", "make", "many", "more", "most", "much", "need",
-    "only", "other", "over", "page", "pages", "posted", "read", "same", "share", "should", "site",
-    "some", "such", "take", "than", "that", "their", "them", "then", "there", "these", "they",
-    "this", "guide", "those", "tips", "ultimate", "used", "using", "very", "want", "well", "were",
-    "website", "what", "when", "where", "which", "while", "will", "with", "would", "your",
-];
-
-/// Whether `chunk` is an address rather than a word: a URL, a bare host, or
-/// anything else written with a dot inside it.
-///
-/// Search engines print a result's URL in with its snippet, so a site's own
-/// name arrives in the text as a word. One site with two pages in a set of
-/// results has it in two of them, which is all the shared-vocabulary rule in
-/// `derive_followup_queries` asks of a term, and a live turn went out
-/// searching for "vegetables Chicago spring thegardeningdad". The date
-/// printed against the URL is machine text of the same kind:
-/// "2025-04-25T00:00:00.0000000" is one chunk, and none of it is vocabulary.
-fn is_address_like(chunk: &str) -> bool {
-    if chunk.contains("://") {
-        return true;
-    }
-    chunk.char_indices().any(|(index, ch)| {
-        ch == '.'
-            && chunk[..index].ends_with(|before: char| before.is_ascii_alphanumeric())
-            && chunk[index + 1..].starts_with(|after: char| after.is_ascii_alphanumeric())
-    })
-}
-
-/// Whether `token` reads as a word: letters, optionally with digits on the
-/// end, as in "broccolini" or "zone5".
-///
-/// A token that opens with a digit, or that mixes the two any other way, is a
-/// piece of something that was never prose. A timestamp written without a
-/// fractional second escapes [`is_address_like`], and splitting
-/// "2026-09-29T00:00:00" on its punctuation leaves "29t00" — long enough to
-/// keep, not a bare number, and in every snippet carrying that date, so it
-/// reads as shared vocabulary. What went out was "vegetables Chicago 29t00
-/// growing". Content hashes and ids break up the same way.
-fn is_word_like(token: &str) -> bool {
-    let digits_at = token
-        .find(|ch: char| ch.is_ascii_digit())
-        .unwrap_or(token.len());
-    digits_at > 0 && token[digits_at..].bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// The words of `text` that could usefully extend a search query: lowercased,
-/// long enough to mean something, shaped like a word, off prose rather than
-/// off an address, not a function word.
-fn followup_terms(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split_whitespace()
-        .filter(|chunk| !is_address_like(chunk))
-        .flat_map(|chunk| chunk.split(|ch: char| !ch.is_ascii_alphanumeric()))
-        .filter(|token| token.len() >= 4)
-        .filter(|token| is_word_like(token))
-        .map(str::to_ascii_lowercase)
-        .filter(|token| !FOLLOWUP_STOPWORDS.contains(&token.as_str()))
-}
 
 /// Shorten `content` to at most `max_chars`, reporting whether anything was cut.
 ///
@@ -280,7 +222,7 @@ impl SearchCache {
         let mut providers = input.providers.clone();
         providers.sort();
         format!(
-            "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
             input.query.trim().to_lowercase(),
             input.max_results,
             input.page,
@@ -288,7 +230,8 @@ impl SearchCache {
             providers.join(","),
             input.include_wikipedia,
             input.depth,
-            input.branch_queries
+            input.branch_queries,
+            input.followup_queries.join("\u{1e}")
         )
     }
 
@@ -486,6 +429,17 @@ impl WebService {
         if !response.status().is_success() {
             let status = response.status();
             warn!("URL fetch failed with status: {}", status);
+            // 403 and 503 are what a JavaScript check answers a plain client
+            // with. The page may open in a browser, so it is tried there
+            // before the refusal is believed.
+            if matches!(
+                status,
+                StatusCode::FORBIDDEN | StatusCode::SERVICE_UNAVAILABLE
+            ) {
+                if let Some(page) = self.read_through_browser(url, start).await {
+                    return Ok(page);
+                }
+            }
             // Remembered only when the status means the answer is settled, so
             // the next turn does not spend a request finding out again.
             self.page_cache
@@ -518,11 +472,73 @@ impl WebService {
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
 
-        let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-
         let title = self.extract_title(&html);
         let content = self.extract_article_text(&html);
 
+        // A page whose text is written by its scripts arrives as a shell: a
+        // title and a menu. The browser runs the scripts; its text is kept
+        // only when it is actually more.
+        if content.trim().len() < THIN_PAGE_CHARS {
+            if let Some(page) = self.read_through_browser(url, start).await {
+                if page.output.content.trim().len() > content.trim().len() {
+                    return Ok(page);
+                }
+            }
+        }
+
+        Ok(self
+            .keep_page(url, final_url, title, content, content_type, start)
+            .await)
+    }
+
+    /// Read `url` in a hidden browser window, and cache and return it if that
+    /// produced text. `None` leaves the HTTP result standing.
+    async fn read_through_browser(&self, url: &str, start: Instant) -> Option<ReadPage> {
+        match browser_reader::read(url, browser_reader::DEFAULT_READ_TIMEOUT).await {
+            Ok(page) if !page.text.trim().is_empty() => {
+                // The browser follows redirects the HTTP client never saw.
+                if page.final_url != url && self.validate_url(&page.final_url).is_err() {
+                    warn!(
+                        url,
+                        final_url = page.final_url.as_str(),
+                        "Browser read ended somewhere not allowed; discarded"
+                    );
+                    return None;
+                }
+                Some(
+                    self.keep_page(
+                        url,
+                        page.final_url,
+                        page.title,
+                        page.text,
+                        Some("text/html".to_string()),
+                        start,
+                    )
+                    .await,
+                )
+            }
+            Ok(_) => {
+                info!(url, "Browser read found no text either");
+                None
+            }
+            Err(reason) => {
+                info!(url, %reason, "Browser read did not help");
+                None
+            }
+        }
+    }
+
+    /// Cap, count, cache and wrap a page's extracted text.
+    async fn keep_page(
+        &self,
+        url: &str,
+        final_url: String,
+        title: Option<String>,
+        content: String,
+        content_type: Option<String>,
+        start: Instant,
+    ) -> ReadPage {
+        let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
         let (final_content, truncated) = cap_page_text(content, MAX_FETCHED_PAGE_CHARS);
 
         let word_count = final_content.split_whitespace().count();
@@ -548,7 +564,7 @@ impl WebService {
             )
             .await;
 
-        Ok(ReadPage {
+        ReadPage {
             output: FetchUrlContentOutput {
                 url: final_url,
                 title,
@@ -560,7 +576,7 @@ impl WebService {
                 from_cache: false,
             },
             fetched_at,
-        })
+        }
     }
 
     /// Extract main text content from HTML
@@ -572,39 +588,41 @@ impl WebService {
     fn extract_article_text(&self, html: &str) -> String {
         let document = Html::parse_document(html);
 
-        // Try to find article content
-        let article_selector = Selector::parse("article").ok();
-        let p_selector = Selector::parse("p, h1, h2, h3, h4, h5, h6").ok();
+        let (Ok(article_selector), Ok(p_selector)) = (
+            Selector::parse("article"),
+            Selector::parse("p, h1, h2, h3, h4, h5, h6"),
+        ) else {
+            return String::new();
+        };
 
-        let mut text_parts = Vec::new();
+        let blocks = |root: scraper::ElementRef<'_>| -> Vec<String> {
+            root.select(&p_selector)
+                .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .filter(|text| !text.is_empty())
+                .collect()
+        };
 
-        // First try to find article element
-        if let Some(selector) = article_selector {
-            for element in document.select(&selector) {
-                if let Some(p_sel) = &p_selector {
-                    for p in element.select(p_sel) {
-                        let text = p.text().collect::<Vec<_>>().join(" ");
-                        if !text.trim().is_empty() {
-                            text_parts.push(text.trim().to_string());
-                        }
-                    }
-                }
-            }
-        }
+        let article_parts: Vec<String> = document
+            .select(&article_selector)
+            .flat_map(&blocks)
+            .collect();
+        let page_parts = blocks(document.root_element());
 
-        // If no article found, extract all paragraphs
-        if text_parts.is_empty() {
-            if let Some(p_sel) = &p_selector {
-                for p in document.select(p_sel) {
-                    let text = p.text().collect::<Vec<_>>().join(" ");
-                    if !text.trim().is_empty() {
-                        text_parts.push(text.trim().to_string());
-                    }
-                }
-            }
-        }
+        // An `<article>` is not always the article. Journal and news pages use
+        // it for "related" cards and leave the body outside any `<article>`:
+        // Frontiers yielded 48 words of card blurbs from a full paper, and the
+        // page was reported unreadable. The article set is trusted only when
+        // it holds a real share of the page's text.
+        let chars = |parts: &[String]| parts.iter().map(String::len).sum::<usize>();
+        let parts = if !article_parts.is_empty()
+            && chars(&article_parts) * ARTICLE_SHARE_DENOMINATOR >= chars(&page_parts)
+        {
+            article_parts
+        } else {
+            page_parts
+        };
 
-        text_parts.join("\n\n")
+        parts.join("\n\n")
     }
 
     /// Extract title from HTML
@@ -1119,178 +1137,6 @@ impl WebService {
         results
     }
 
-    /// The part of `root_query` every follow-up keeps: what it is about.
-    ///
-    /// A follow-up that carries the whole query differs from it in two words
-    /// out of eleven, and an engine ranks the two almost alike — seven
-    /// searches come back with one search's pages, which is what the deck
-    /// showed. What has to survive into a follow-up is the subject. The rest
-    /// of the query is one phrasing of one angle on it, and the follow-ups
-    /// exist to take other angles; carrying "varieties most beneficial" into
-    /// each of them only pins every angle back to the first.
-    ///
-    /// The results say which words are the subject, and their *titles* say it
-    /// best: a title names what a page is about, where a snippet is prose and
-    /// carries whatever words prose carries. Both were tried against the turn
-    /// in the deck. Counting snippets as well, the best three words came out
-    /// "frost varieties purple" — "varieties" is in five of those ten pages,
-    /// in phrases like "cold-hardy varieties", and it crowded out the word the
-    /// search was actually for. Counting titles alone gives "frost broccolini
-    /// purple"; no title anywhere says "varieties".
-    ///
-    /// So the query's own words are ranked by how many result titles use them,
-    /// the best three kept, and those put back in the order the query had
-    /// them.
-    ///
-    /// `None` when fewer than two of the query's words come back at all, which
-    /// leaves the caller on the whole root. One word is not a subject: anchor
-    /// a search on "frost" alone and it finds a bank of that name, as this
-    /// turn's own results did.
-    fn search_anchor(root_query: &str, results: &[WebSearchResult]) -> Option<String> {
-        const RESULTS_CONSIDERED: usize = 8;
-        const MAX_ANCHOR_WORDS: usize = 3;
-        const MIN_ANCHOR_WORDS: usize = 2;
-
-        let per_result: Vec<HashSet<String>> = results
-            .iter()
-            .take(RESULTS_CONSIDERED)
-            .map(|result| followup_terms(&result.title).collect())
-            .collect();
-
-        // Each of the query's words, where it sat, and how many titles use
-        // it. A word the query says twice is weighed once.
-        let mut scored: Vec<(usize, &str, usize)> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        for (position, word) in root_query.split_whitespace().enumerate() {
-            let bare = word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
-            let terms: Vec<String> = followup_terms(bare).collect();
-            if terms.is_empty() {
-                continue;
-            }
-            let repeated = terms.iter().any(|term| seen.contains(term));
-            seen.extend(terms.iter().cloned());
-            if repeated {
-                continue;
-            }
-            let echoes = per_result
-                .iter()
-                .filter(|result_terms| terms.iter().any(|term| result_terms.contains(term)))
-                .count();
-            if echoes > 0 {
-                scored.push((position, bare, echoes));
-            }
-        }
-
-        // Stable, so words the results echo equally often stay in query order.
-        scored.sort_by_key(|(_, _, echoes)| std::cmp::Reverse(*echoes));
-        scored.truncate(MAX_ANCHOR_WORDS);
-        if scored.len() < MIN_ANCHOR_WORDS {
-            return None;
-        }
-        scored.sort_by_key(|(position, _, _)| *position);
-        Some(
-            scored
-                .iter()
-                .map(|(_, word, _)| *word)
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
-    }
-
-    /// Follow-up queries that look somewhere the searches so far did not.
-    ///
-    /// The vocabulary comes from the results themselves: a word several of
-    /// them use is part of how the topic is written about, where a word only
-    /// one of them uses is usually that site's name or its headline style. So
-    /// terms are ranked by how many results mention them, and a term has to
-    /// appear in at least two to count.
-    ///
-    /// Every follow-up extends the root's subject ([`Self::search_anchor`]),
-    /// never an earlier follow-up, and never with a term in `used_terms` —
-    /// which holds the root's own words and everything already tried. The previous version took the first words of
-    /// the top result's title whatever they were and appended them to the last
-    /// query, so a search for a Silo recap went out as "… recap silo ultimate
-    /// guide" and then "… recap silo ultimate guide silo ultimate guide": the
-    /// same search again, plus the title of the page it had already found.
-    ///
-    /// Returns nothing when the results offer no new shared vocabulary. Not
-    /// searching is better than searching for noise.
-    ///
-    /// A root too long to sharpen gets no follow-ups either. Two terms only
-    /// change what an engine matches when the query is short enough for them
-    /// to weigh; appended to a twenty-four word root they change nothing, and
-    /// a level of "the same search, two words longer" costs a request apiece
-    /// and brings back the pages the root already found. What happened in the
-    /// log: a rewrite that had copied out a reader's whole list of crops went
-    /// out seven times over, each time with two more mined words on the end.
-    /// How the root got that long is the caller's to fix — this only declines
-    /// to multiply it.
-    fn derive_followup_queries(
-        root_query: &str,
-        used_terms: &mut HashSet<String>,
-        results: &[WebSearchResult],
-        branch_queries: usize,
-    ) -> Vec<String> {
-        const RESULTS_CONSIDERED: usize = 8;
-        const MIN_RESULTS_SHARING_A_TERM: usize = 2;
-        const TERMS_PER_FOLLOWUP: usize = 2;
-        /// The longest root that two more terms can still steer.
-        const MAX_ROOT_WORDS: usize = 12;
-
-        let root_words = root_query.split_whitespace().count();
-        if root_words > MAX_ROOT_WORDS {
-            debug!(
-                root_words,
-                root_preview = %crate::shared::text_utils::safe_truncate(root_query.trim(), 120),
-                "No follow-up searches: the query is too long for two more terms to change it"
-            );
-            return Vec::new();
-        }
-
-        // How many results mention each term, and the order terms were first
-        // met in, so that ties break the same way on every run.
-        let mut ranked: Vec<(String, usize)> = Vec::new();
-        for result in results.iter().take(RESULTS_CONSIDERED) {
-            let text = format!("{} {}", result.title, result.snippet);
-            // A result that repeats a word is still one result.
-            let mut seen_here = HashSet::new();
-            for term in followup_terms(&text) {
-                if used_terms.contains(&term) || !seen_here.insert(term.clone()) {
-                    continue;
-                }
-                match ranked.iter_mut().find(|(known, _)| *known == term) {
-                    Some((_, count)) => *count += 1,
-                    None => ranked.push((term, 1)),
-                }
-            }
-        }
-        ranked.retain(|(_, count)| *count >= MIN_RESULTS_SHARING_A_TERM);
-        // Stable, so equally common terms stay in first-met order.
-        ranked.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-
-        // What every follow-up is a search for. Without an anchor the results
-        // never named the subject back, and the whole query stands in for it.
-        let anchor = Self::search_anchor(root_query, results);
-        let base = anchor.as_deref().unwrap_or(root_query).trim();
-
-        let mut queries = Vec::new();
-        for pair in ranked.chunks(TERMS_PER_FOLLOWUP) {
-            if queries.len() >= branch_queries {
-                break;
-            }
-            let suffix = pair
-                .iter()
-                .map(|(term, _)| term.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            for (term, _) in pair {
-                used_terms.insert(term.clone());
-            }
-            queries.push(format!("{base} {suffix}"));
-        }
-        queries
-    }
-
     /// Search one query across `providers`.
     ///
     /// Every provider's first page is always requested, so those run
@@ -1718,18 +1564,32 @@ impl WebServiceTrait for WebService {
         let mut executed_queries: Vec<String> = Vec::new();
         let mut seen_domains = HashSet::new();
         let mut last_error: Option<String> = None;
+        // The root on its own, then the caller's follow-ups `branch_queries`
+        // at a time, one level per step of depth.
+        //
+        // Follow-ups are written by whoever asked, never mined from the
+        // results here. Mining ran for months and never stopped producing
+        // noise: the words several snippets share are a page's furniture as
+        // often as its subject, and each fix (stopwords, address filtering,
+        // anchoring on title words) moved the noise rather than removing it —
+        // "steps greens garden step learn", "steps greens garden beginner
+        // right". Choosing another angle on a subject takes reading it, which
+        // is the model's job, not a word count's.
+        let followup_levels = depth.saturating_sub(1);
+        let mut followups = input
+            .followup_queries
+            .iter()
+            .map(|followup| followup.trim())
+            .filter(|followup| !followup.is_empty())
+            .take(followup_levels * branch_queries)
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+            .into_iter();
         let mut frontier = vec![query.to_string()];
-        // The root's own words, then every term a follow-up has spent, so no
-        // follow-up repeats the query it extends or one that came before it.
-        let mut used_followup_terms: HashSet<String> = followup_terms(query).collect();
 
-        for _ in 0..depth {
-            if frontier.is_empty() {
-                break;
-            }
+        while !frontier.is_empty() {
             let level_queries: Vec<String> = frontier
                 .into_iter()
-                .take(branch_queries)
                 .filter(|frontier_query| {
                     let normalized_query = frontier_query.trim().to_ascii_lowercase();
                     !normalized_query.is_empty() && seen_queries.insert(normalized_query)
@@ -1738,8 +1598,8 @@ impl WebServiceTrait for WebService {
             executed_queries.extend(level_queries.iter().cloned());
 
             // Search the level's queries concurrently (the site pacer keeps
-            // same-site requests spaced), then merge in frontier order so dedup,
-            // telemetry and follow-ups match a serial run. No extra concurrency
+            // same-site requests spaced), then merge in frontier order so dedup
+            // and telemetry match a serial run. No extra concurrency
             // limit: `branch_queries` already bounds a level to four queries.
             // The futures are collected up front because holding the borrowing
             // `map` closure across the await fails this `async_trait` future's
@@ -1752,7 +1612,6 @@ impl WebServiceTrait for WebService {
                 .collect();
             let level_results: Vec<QueryResults> = join_all(searches).await;
 
-            let mut next_frontier = Vec::new();
             for query_results in level_results {
                 let QueryResults {
                     results,
@@ -1766,10 +1625,6 @@ impl WebServiceTrait for WebService {
                 for provider in used_by_query {
                     providers_used.insert(provider);
                 }
-                if results.is_empty() {
-                    continue;
-                }
-
                 for result in &results {
                     let canonical_url = self.canonicalize_url_for_dedup(&result.url);
                     if seen_urls.insert(canonical_url) {
@@ -1779,17 +1634,8 @@ impl WebServiceTrait for WebService {
                         merged_results.push(result.clone());
                     }
                 }
-
-                if depth > 1 {
-                    next_frontier.extend(Self::derive_followup_queries(
-                        query,
-                        &mut used_followup_terms,
-                        &results,
-                        branch_queries,
-                    ));
-                }
             }
-            frontier = next_frontier;
+            frontier = followups.by_ref().take(branch_queries).collect();
         }
 
         if merged_results.is_empty() {
@@ -1968,6 +1814,37 @@ mod tests {
         assert!(text.contains("Second paragraph"));
     }
 
+    /// Pages that failed in a real deep-research turn: one needs TLS 1.3, one
+    /// hides its body outside `<article>`. Run by hand; it needs the network.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn live_pages_that_once_failed_are_read() {
+        let dir = std::env::temp_dir().join(format!("lattice-live-read-{}", std::process::id()));
+        let service = WebService::new(&dir).unwrap();
+        for url in [
+            "https://urbansurvivalsite.com/highest-calorie-crops-survival-garden/",
+            "https://www.htecfarming.com/indoor-plants-that-dont-need-sun/",
+            "https://www.frontiersin.org/journals/sustainable-food-systems/articles/10.3389/fsufs.2020.588988/full",
+        ] {
+            let page = service.read_page(url).await.unwrap_or_else(|e| panic!("{url}: {e}"));
+            assert!(page.output.word_count > 500, "{url}: {} words", page.output.word_count);
+        }
+    }
+
+    #[test]
+    fn related_article_cards_do_not_stand_in_for_the_body() {
+        let service = test_service();
+        let body =
+            "<p>Perennial staple crops provide carbohydrates, proteins and fats.</p>".repeat(40);
+        let html = format!(
+            "<html><body><article class=\"Card\"><p>Related: another paper</p></article>\
+             <div class=\"JournalFullText\">{body}</div></body></html>"
+        );
+
+        let text = service.extract_article_text(&html);
+        assert!(text.matches("Perennial staple crops").count() == 40);
+    }
+
     #[test]
     fn test_normalize_search_url_accepts_bing_redirect_links() {
         let service = test_service();
@@ -2118,369 +1995,6 @@ mod tests {
             SitePacer::site_key("https://www.theguardian.co.uk/news")
         );
         assert_eq!(SitePacer::site_key("not a url"), None);
-    }
-
-    fn found(title: &str, snippet: &str) -> WebSearchResult {
-        WebSearchResult {
-            title: title.to_string(),
-            url: format!("https://example.test/{}", title.len()),
-            snippet: snippet.to_string(),
-            published_date: None,
-            source: None,
-        }
-    }
-
-    type Service = WebService;
-
-    /// The turn in the log. The root query's first result was titled "Silo
-    /// Ultimate Guide: Every Episode Recap…", and the follow-ups that went out
-    /// were "<root> silo ultimate guide" and then "<root> silo ultimate guide
-    /// silo ultimate guide".
-    #[test]
-    fn a_followup_never_repeats_words_the_query_already_has() {
-        let root = "Silo Season 1 Season 2 episode summaries plot recap";
-        let results = vec![
-            found(
-                "Silo Ultimate Guide: Every Episode Recap, Review & Ending Explained",
-                "Catch up on Silo with every episode recap and ending explained.",
-            ),
-            found(
-                "Silo Season 2 Explained: Every Episode",
-                "Juliette reaches Silo 17 while Bernard loses control. Ending explained.",
-            ),
-            found(
-                "Silo Season 1 Recap",
-                "Juliette becomes sheriff and Bernard is revealed.",
-            ),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
-
-        assert!(
-            !followups.is_empty(),
-            "shared vocabulary should yield follow-ups"
-        );
-        let root_terms: HashSet<String> = followup_terms(root).collect();
-        for followup in &followups {
-            let words: Vec<String> = followup_terms(followup).collect();
-            let distinct: HashSet<&String> = words.iter().collect();
-            assert_eq!(
-                words.len(),
-                distinct.len(),
-                "{followup:?} says a word twice"
-            );
-            assert!(
-                words.iter().any(|word| !root_terms.contains(word)),
-                "{followup:?} asks nothing the query did not already ask"
-            );
-            // Only the subject is carried over; the rest of the query is not.
-            assert!(
-                words
-                    .iter()
-                    .filter(|word| root_terms.contains(*word))
-                    .count()
-                    <= 3,
-                "{followup:?} carries more of the query than its subject"
-            );
-        }
-    }
-
-    /// Seven searches that differ in two words out of eleven come back with
-    /// one search's pages. The subject reaches every follow-up; the reader's
-    /// phrasing of it does not — no page calls broccolini "varieties most
-    /// beneficial", so searching for that only pins each follow-up back to the
-    /// query it was supposed to look past.
-    #[test]
-    fn a_followup_keeps_the_subject_and_drops_the_phrasing() {
-        let root = "frost tolerant broccolini varieties purple most beneficial nutrients";
-        let results = vec![
-            found(
-                "Is Broccoli Frost Tolerant?",
-                "Purple sprouting broccoli survives a hard frost.",
-            ),
-            found(
-                "Purple Broccoli: Description, Flavor, Benefits",
-                "Purple sprouting broccoli, an heirloom vegetable.",
-            ),
-            found(
-                "How to Grow Broccolini in Containers",
-                "Broccolini seedlings in a container garden.",
-            ),
-            found(
-                "10 Impressive Broccolini Nutrition Facts",
-                "Broccolini is rich in vitamins.",
-            ),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
-
-        assert!(!followups.is_empty(), "the results share new vocabulary");
-        for followup in &followups {
-            assert!(
-                !followup.starts_with(root),
-                "{followup:?} carries the whole query"
-            );
-            // The words no title used. Dropping them widens the search.
-            assert!(!followup.contains("varieties"), "{followup:?}");
-            assert!(!followup.contains("beneficial"), "{followup:?}");
-            assert!(!followup.contains("nutrients"), "{followup:?}");
-            // What the pages do call it, stays.
-            assert!(followup.contains("broccolini"), "{followup:?}");
-        }
-    }
-
-    /// Words only one result uses are that site's name or its headline, not the
-    /// topic's vocabulary. "finale" and "breakdown" are in exactly one title
-    /// here, and neither is a stopword — it is the counting that drops them.
-    #[test]
-    fn a_word_only_one_result_uses_does_not_steer_the_search() {
-        let root = "Silo recap";
-        let results = vec![
-            found("Silo Finale Breakdown", "Juliette and Bernard."),
-            found("Silo explained", "Juliette and Bernard again."),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
-
-        assert_eq!(followups, vec!["Silo recap juliette bernard".to_string()]);
-    }
-
-    /// From the greens turn in the log, which searched for "vegetables Chicago
-    /// 29t00 growing". Splitting a publish date like "2026-09-29T00:00:00" on
-    /// its punctuation leaves "29t00": long enough to keep, not a bare number,
-    /// and in every snippet that carries the same date, so it reads as the
-    /// vocabulary those pages share.
-    #[test]
-    fn a_followup_never_searches_for_a_piece_of_a_timestamp() {
-        let root = "Chicago vegetables";
-        let results = vec![
-            found(
-                "Cold Hardy Greens",
-                "2026-09-29T00:00:00 Kale and spinach overwinter in raised beds.",
-            ),
-            found(
-                "Planting Calendar",
-                "2026-09-29T00:00:00 Kale and spinach overwinter in raised beds.",
-            ),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
-
-        assert_eq!(
-            followups,
-            vec![
-                "Chicago vegetables kale spinach".to_string(),
-                "Chicago vegetables overwinter raised".to_string(),
-                "Chicago vegetables beds".to_string(),
-            ]
-        );
-    }
-
-    /// Also from the greens turn. The engines print a result's URL in with its
-    /// snippet, and a site with two pages among the results has its own name
-    /// in two of them — which is all a term needs to pass for the topic's
-    /// shared vocabulary. The search that went out was "vegetables Chicago
-    /// spring thegardeningdad".
-    #[test]
-    fn a_followup_never_searches_for_the_site_that_printed_it() {
-        let root = "Chicago vegetables";
-        let results = vec![
-            found(
-                "Best Vegetables to Grow in Illinois",
-                "thegardeningdad.com/best-vegetables-to-grow-in-illinois Lettuce radish arugula \
-                 sprout indoors.",
-            ),
-            found(
-                "Fall Garden Planting",
-                "https://thegardeningdad.com/fall-garden-illinois Lettuce radish arugula sprout \
-                 indoors.",
-            ),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
-
-        assert_eq!(
-            followups,
-            vec![
-                "Chicago vegetables lettuce radish".to_string(),
-                "Chicago vegetables arugula sprout".to_string(),
-                "Chicago vegetables indoors".to_string(),
-            ]
-        );
-    }
-
-    /// The second level used to extend the first level's query, so its suffix
-    /// stacked. Now every level extends the root and spends fresh terms.
-    #[test]
-    fn a_second_round_of_followups_spends_new_terms_on_the_same_root() {
-        let root = "Silo recap";
-        let results = vec![
-            found("one", "juliette bernard solo safeguard"),
-            found("two", "juliette bernard solo safeguard"),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let first = Service::derive_followup_queries(root, &mut used, &results, 1);
-        let second = Service::derive_followup_queries(root, &mut used, &results, 1);
-
-        assert_eq!(first, vec!["Silo recap juliette bernard".to_string()]);
-        assert_eq!(second, vec!["Silo recap solo safeguard".to_string()]);
-    }
-
-    /// A query too long to steer is not the place to add words. The one in the
-    /// log had the reader's whole list of crops copied into it, and went out
-    /// seven times over, each time with two more mined terms on the end — the
-    /// same search, seven requests, the same pages.
-    #[test]
-    fn an_over_long_root_gets_no_followups() {
-        let root = "indoor vegetable garden list supplement existing crops spinach chard kale \
-                    sage dill basil tomatoes thyme oregano golden beets beets bell peppers";
-        let results = vec![
-            found(
-                "Best Vegetables to Grow Indoors",
-                "Lettuce and herbs grow indoors year round.",
-            ),
-            found(
-                "15 Best Vegetables That Can Grow Indoors",
-                "Lettuce and herbs grow indoors year round.",
-            ),
-        ];
-
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        assert!(Service::derive_followup_queries(root, &mut used, &results, 3).is_empty());
-
-        // The same results, off a query short enough for two terms to weigh,
-        // still earn their follow-ups: it is the root's length that stopped it.
-        let short_root = "indoor vegetables";
-        let mut used: HashSet<String> = followup_terms(short_root).collect();
-        assert!(!Service::derive_followup_queries(short_root, &mut used, &results, 3).is_empty());
-    }
-
-    /// The turn in the deck, replayed against the results the engines actually
-    /// returned for it — titles and snippets as they came back, URLs and all.
-    ///
-    /// What went out that day was the query seven times over, two words apart
-    /// each time: "… broccoli growing", "… benefits nutrition", "… html
-    /// health", "… cold tips", "… need cool". "html" came off the end of three
-    /// of these URLs; "need", "tips" and "cool" are words any ten gardening
-    /// pages share. Ten results, twenty-six unique URLs between all seven.
-    ///
-    /// A live turn feeds each branch its own results, so the second level's
-    /// terms come from what the first level found; replaying one result set
-    /// through both levels is the pessimistic case, and still splits.
-    #[test]
-    fn the_broccolini_turn_searches_for_different_things_now() {
-        let root = "frost tolerant broccolini varieties purple most beneficial nutrients";
-        let results = vec![
-            found(
-                "The Amazing Purple Broccoli: Nutrition, Growing Tips, and Delicious ...",
-                "www.colorfood.org/en/Foodcategory/purplecategory/Purple-broccoli.html Discover the \
-                 health benefits, growing methods, and tasty recipes featuring purple broccoli, a \
-                 colorful superfood packed with antioxidants.",
-            ),
-            found(
-                "Is Broccoli Frost Tolerant? (Everything You Need To Know)",
-                "backyardgardenersnetwork.org/broccoli-frost-tolerant/ You may wonder if broccoli is \
-                 frost tolerant. Broccoli plants can tolerate periods of cold weather. Here is what you \
-                 need to know to help your broccoli plants manage those temperatures. Is Broccoli Frost \
-                 Tolerant? Yes, broccoli is frost tolerant. It is considered frost-hardy. Broccoli can \
-                 survive temperatures down to 26 degrees F.",
-            ),
-            found(
-                "Purple Broccoli: Description, Flavor, Benefits, And Uses",
-                "gardenersmag.com/purple-broccoli/ 2025-04-25T00:00:00.0000000 The purple variety is a \
-                 relatively recent addition to the Brassica oleracea family, including cauliflower, \
-                 brussels sprouts, and kale. This variety was created by crossing two traditional \
-                 broccoli plants - the green Calabrese and Purple Sprouting varieties.",
-            ),
-            found(
-                "Growing Purple Sprouting Broccoli In Usda Zone 4: Tips For Cold-Climate ...",
-                "shuncy.com/article/growing-purple-sprouting-broccoli-in-zone-4 \
-                 2026-06-27T00:00:00.0000000 Yes, you can grow purple sprouting broccoli in USDA zone 4 \
-                 by selecting cold‑hardy varieties and timing planting to avoid the worst frost, though \
-                 success depends on choosing the right cultivars and proper scheduling. This guide will \
-                 cover how to pick suitable cold‑tolerant types, when to sow seeds and transplant to \
-                 sidestep frost, soil preparation and microclimate management for purple ...",
-            ),
-            found(
-                "How to Grow Broccolini in Containers and Gardens: Complete Easy Guide ...",
-                "greentomorrow2026.blogspot.com/2026/05/how-to-grow-broccolini-in-containers.html \
-                 2026-05-26T00:00:00.0000000 The complete guide to growing broccolini in the USA and \
-                 Canada — from seed to harvest, containers to raised beds, NPK nutrition, best \
-                 varieties, cooking recipes, and a full regional planting calendar.",
-            ),
-            found(
-                "10 Impressive Broccolini Nutrition facts and Health benefits",
-                "www.nutrition-and-you.com/broccolini.html Broccolini is renowned for its asparagus \
-                 -like long, tender stalks and loose clusters of florets reminiscent of broccoli rabe. \
-                 This much sought-after leafy vegetable has gained popularity among chefs for its \
-                 subtly sweet flavor paired with a hint of pepperiness. Broccolini is a fast-growing, \
-                 upright plant. While it thrives in cool seasons, it is sensitive to frost and prefers \
-                 milder summers ...",
-            ),
-            found(
-                "Top 10 Heirloom Broccoli to Grow in 2025 | The Homestead Guide",
-                "thehomesteadguide.com/best-heirloom-broccoli/ In this article, we go through the 10 \
-                 best heirloom broccoli varieties to grow in your garden. There are cold tolerant- \
-                 broccoli varieties, slow-bolting broccoli varieties, and more. Come check it out and \
-                 pick out a couple of your favorites!",
-            ),
-            found(
-                "Broccoli Beyond Basics: 5 Types of Broccoli and Their Benefits",
-                "seniorfitness.org/types-of-broccoli-and-their-benefits/ 2026-04-22T00:00:00.0000000 \
-                 You will check out the health benefits of various broccoli types, from antioxidant- \
-                 rich purple cauliflower to versatile broccolini and nutrient-packed Calabrese.",
-            ),
-            found(
-                "Broccoli's frost-defying prowess: a horticultural enigma revealed",
-                "cooknight.net/can-broccoli-handle-frost/ 2025-05-02T00:00:00.0000000 Understanding how \
-                 broccoli handles frost empowers gardeners to extend the growing season and enjoy \
-                 fresh, homegrown broccoli throughout the winter months. By choosing cold-hardy \
-                 varieties, protecting plants from frost, and monitoring for signs of damage, gardeners \
-                 can reap the benefits of this nutritious vegetable even in challenging climates.",
-            ),
-            found(
-                "Online Banking Services Login | Frost",
-                "www.frostbank.com/online-banking Sign in to your Frost online accounts through \
-                 our online banking feature.",
-            ),
-        ];
-
-        // Depth 3, three branches a level, as deep research asks for it.
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        let mut executed = vec![root.to_string()];
-        for _ in 0..2 {
-            executed.extend(Service::derive_followup_queries(
-                root, &mut used, &results, 3,
-            ));
-        }
-
-        assert_eq!(
-            executed,
-            vec![
-                // The rewrite of the question, searched as it stands.
-                "frost tolerant broccolini varieties purple most beneficial nutrients",
-                // Then the same subject, six other ways.
-                "frost broccolini purple broccoli growing",
-                "frost broccolini purple benefits nutrition",
-                "frost broccolini purple health cold",
-                "frost broccolini purple grow recipes",
-                "frost broccolini purple packed plants",
-                "frost broccolini purple hardy flavor",
-            ]
-        );
-    }
-
-    /// Searching for noise is worse than not searching.
-    #[test]
-    fn results_with_no_shared_new_vocabulary_yield_no_followups() {
-        let root = "Silo recap";
-        let results = vec![
-            found("Collider", "alpha"),
-            found("Vulture", "bravo"),
-            found("2026 2025 1999", "with from that this"),
-        ];
-        let mut used: HashSet<String> = followup_terms(root).collect();
-        assert!(Service::derive_followup_queries(root, &mut used, &results, 3).is_empty());
     }
 
     /// The old cap was `content[..50000]`. This input puts a three-byte

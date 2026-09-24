@@ -244,6 +244,21 @@ async fn complete_json(
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
+    let phase = if system == prompts::EXTRACTOR_SYSTEM {
+        "extractor_model_call"
+    } else if system == prompts::VERIFIER_SYSTEM {
+        "reviewer_model_call"
+    } else if system == prompts::SUMMARIZER_SYSTEM {
+        "summarizer_model_call"
+    } else {
+        "other_model_call"
+    };
+    let started = std::time::Instant::now();
+    tracing::info!(
+        phase,
+        timeout_ms = remaining.as_millis() as u64,
+        "Memory utility model call started"
+    );
     let call = async move {
         if llm.supports_typed_completions() {
             let request = CompletionRequest {
@@ -291,9 +306,33 @@ async fn complete_json(
         None => tokio::time::timeout(remaining, call).await,
     };
     match outcome {
-        Ok(Ok(text)) => Ok(text),
-        Ok(Err(error)) => Err(CompactionError::Model(error.to_string())),
-        Err(_) => Err(CompactionError::DeadlineExceeded(deadline.total)),
+        Ok(Ok(text)) => {
+            tracing::info!(
+                phase,
+                outcome = "completed",
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Memory utility model call finished"
+            );
+            Ok(text)
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(
+                phase,
+                outcome = "provider_error",
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Memory utility model call failed"
+            );
+            Err(CompactionError::Model(error.to_string()))
+        }
+        Err(_) => {
+            tracing::warn!(
+                phase,
+                outcome = "deadline_timeout",
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Memory utility model call timed out"
+            );
+            Err(CompactionError::DeadlineExceeded(deadline.total))
+        }
     }
 }
 
@@ -349,6 +388,8 @@ pub enum CompactionTrigger {
     Manual,
     /// Context assembly would otherwise have dropped unprocessed source.
     Automatic,
+    /// Consolidate completed turns even before the context window fills.
+    Maintenance,
 }
 
 /// One compaction request.

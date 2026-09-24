@@ -889,7 +889,14 @@ export function useConversationsController(): ConversationsState {
           const refreshed = await fetchMessages(requestConversationId);
           queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
           settleOptimisticMessages();
-          conversationUiStore.setState({ error: null });
+          // A stop during retrieval ends the turn before the backend has
+          // persisted the question, so the bubble we just dropped was its only
+          // copy. Hand it back to the composer rather than lose it.
+          const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
+          const questionLost = showUserBubble && lastUser?.content !== content;
+          conversationUiStore.setState(questionLost
+            ? { error: null, composerDraft: content }
+            : { error: null });
           return 'cancelled';
         }
         const detail: unknown = result.details?.details;
@@ -968,7 +975,8 @@ export function useConversationsController(): ConversationsState {
     content: string,
     conversationId?: string | null,
     toolPreferences?: ToolPreferences,
-    attachmentNames?: string[]
+    attachmentNames?: string[],
+    attachmentDocumentIds?: string[]
   ) => {
     const state = conversationUiStore.getState();
     const requestConversationId = conversationId ?? state.activeConversationId ?? conversations[0]?.id ?? null;
@@ -985,7 +993,8 @@ export function useConversationsController(): ConversationsState {
         content,
         toolPreferences,
         requestId,
-        attachmentNames
+        attachmentNames,
+        attachmentDocumentIds
       ),
     });
   }, [conversations, runGeneration]);

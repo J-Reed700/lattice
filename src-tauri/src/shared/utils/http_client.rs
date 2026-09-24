@@ -6,7 +6,10 @@ use reqwest::ClientBuilder;
 /// We disable system proxies when running tests or when the
 /// RECALL_DISABLE_SYSTEM_PROXY env var is set.
 pub fn reqwest_client_builder() -> ClientBuilder {
-    let mut builder = reqwest::Client::builder();
+    // Chosen explicitly: other crates switch on reqwest's native-tls, and with
+    // both compiled in reqwest picks native-tls — Secure Transport on macOS,
+    // which cannot speak TLS 1.3 or HTTP/2. See the note in Cargo.toml.
+    let mut builder = reqwest::Client::builder().use_rustls_tls();
     if should_disable_system_proxy() {
         builder = builder.no_proxy();
     }

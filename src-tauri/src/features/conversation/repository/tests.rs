@@ -6,6 +6,7 @@ use sqlx::SqlitePool;
 mod conversations;
 mod document_references;
 mod fork;
+mod knowledge;
 mod memory;
 mod messages;
 mod pruning;

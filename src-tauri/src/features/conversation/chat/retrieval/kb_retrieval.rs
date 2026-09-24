@@ -157,6 +157,7 @@ pub(super) async fn run_kb_retrieval(
                 let history = super::build_hyde_context_window_for_conversation(
                     conv_service,
                     conversation_id,
+                    validated_message,
                 )
                 .await;
                 super::corpus_plan::plan(
@@ -505,8 +506,12 @@ async fn corrective_pass(
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
     };
-    let history =
-        super::build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
+    let history = super::build_hyde_context_window_for_conversation(
+        conv_service,
+        conversation_id,
+        validated_message,
+    )
+    .await;
     let retry_plan = match super::corpus_plan::plan_correction(
         utility.as_ref(),
         validated_message,

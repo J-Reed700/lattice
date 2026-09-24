@@ -1,6 +1,9 @@
 use crate::shared::error::{AppError, Result};
 use serde_json::Value;
 
+/// Upper bound on a chat message, in characters: room for a long pasted article.
+pub const MAX_CHAT_MESSAGE_CHARS: usize = 200_000;
+
 /// SECURITY FIX: Comprehensive input validation (CWE-20)
 /// Validates and sanitizes all user inputs
 #[derive(Debug, Clone)]
@@ -60,6 +63,26 @@ impl InputValidator {
         }
 
         Ok(query.trim().to_string())
+    }
+
+    /// Validate a chat message. Chat turns routinely carry a pasted article,
+    /// so the cap is far above a search query's and is counted in characters
+    /// (not bytes) so non-Latin text gets the same allowance.
+    pub fn validate_chat_message(&self, message: &str) -> Result<String> {
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Message cannot be empty".to_string(),
+            ));
+        }
+
+        if trimmed.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+            return Err(AppError::InvalidInput(format!(
+                "Message too long (max {MAX_CHAT_MESSAGE_CHARS} characters)"
+            )));
+        }
+
+        Ok(trimmed.to_string())
     }
 
     /// Validate JSON input for deserialization
@@ -557,6 +580,30 @@ mod tests {
             .validate_search_query("O'Brien's \"research\" on SQL;")
             .unwrap();
         assert_eq!(result, "O'Brien's \"research\" on SQL;");
+    }
+
+    #[test]
+    fn chat_message_allows_a_pasted_article_and_counts_characters() {
+        let validator = InputValidator::new();
+
+        // A 50 KB article is well past the search-query cap but a normal chat turn.
+        let article = "word ".repeat(10_000);
+        assert!(validator.validate_search_query(&article).is_err());
+        assert_eq!(
+            validator
+                .validate_chat_message(&format!("  {article}  "))
+                .unwrap(),
+            article.trim()
+        );
+
+        // Multi-byte text is measured in characters, not bytes.
+        let at_cap = "é".repeat(MAX_CHAT_MESSAGE_CHARS);
+        assert!(validator.validate_chat_message(&at_cap).is_ok());
+        assert!(validator
+            .validate_chat_message(&format!("{at_cap}é"))
+            .is_err());
+
+        assert!(validator.validate_chat_message("   ").is_err());
     }
 
     #[test]

@@ -32,8 +32,11 @@ impl ConversationRepository {
 
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at)
+            INSERT INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id, chunk_id) DO UPDATE SET
+                added_at = excluded.added_at,
+                relevance_score = COALESCE(excluded.relevance_score, relevance_score)
             "#,
         )
         .bind(conversation_id)

@@ -18,14 +18,31 @@ pub(super) async fn persist_user_message_pending(
     conversation_id: &str,
     user_message: &str,
     attachment_names: &[String],
+    attachment_document_ids: &[String],
     llm: &Arc<dyn crate::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
     // The files this turn brought into the conversation, stamped on the message
-    // so history shows where they entered. Names only: the documents themselves
-    // are reachable through the conversation's linked sources.
-    let metadata = (!attachment_names.is_empty())
-        .then(|| serde_json::json!({ "attachments": attachment_names }).to_string());
+    // so history shows where they entered. The names draw the chips; the ids
+    // are what a regenerate re-reads, so the second run of a turn sees the same
+    // files the first one did.
+    let metadata =
+        (!attachment_names.is_empty() || !attachment_document_ids.is_empty()).then(|| {
+            let mut payload = serde_json::Map::new();
+            if !attachment_names.is_empty() {
+                payload.insert(
+                    "attachments".to_string(),
+                    serde_json::json!(attachment_names),
+                );
+            }
+            if !attachment_document_ids.is_empty() {
+                payload.insert(
+                    "attachmentDocumentIds".to_string(),
+                    serde_json::json!(attachment_document_ids),
+                );
+            }
+            serde_json::Value::Object(payload).to_string()
+        });
     let user_msg = conv_service
         .add_message_with_metadata(
             conversation_id,
@@ -52,6 +69,7 @@ pub(super) async fn finalize_successful_turn(
     context_len: usize,
     sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
+    memory_usage: Option<serde_json::Value>,
     retrieval_trace: Option<RetrievalTraceDto>,
     turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
@@ -62,6 +80,9 @@ pub(super) async fn finalize_successful_turn(
     let mut metadata_payload = serde_json::Map::new();
     if !sources.is_empty() {
         metadata_payload.insert("sources".to_string(), serde_json::json!(&sources));
+    }
+    if let Some(memory) = memory_usage {
+        metadata_payload.insert("memory".into(), memory);
     }
     if let Some(verification) = verification_metadata {
         metadata_payload.insert("verification".to_string(), verification);
@@ -95,6 +116,10 @@ pub(super) async fn finalize_successful_turn(
         .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
+    crate::features::conversation::compaction::consolidate_after_turn(
+        container.clone(),
+        conversation_id.to_string(),
+    );
 
     spawn_memory_indexing(
         container.clone(),
@@ -584,4 +609,22 @@ mod cited_web_source_tests {
         assert!(cited_web_sources(&[document("doc-1")]).is_empty());
         assert!(cited_web_sources(&[]).is_empty());
     }
+}
+
+/// Explicit user memory notes use the same embedding writer as chat turns.
+pub(crate) fn index_memory_note(
+    container: Container,
+    conversation_id: String,
+    message_id: String,
+    content: String,
+) {
+    spawn_memory_indexing(
+        container,
+        conversation_id,
+        vec![MemoryToIndex {
+            message_id,
+            role: "user".into(),
+            content,
+        }],
+    );
 }

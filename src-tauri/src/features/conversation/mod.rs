@@ -32,6 +32,7 @@ pub mod commands;
 pub mod compaction;
 pub mod di;
 pub mod dto;
+pub mod knowledge_dto;
 pub mod mapper;
 pub mod memory_details;
 pub mod memory_dto;

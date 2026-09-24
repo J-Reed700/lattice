@@ -361,19 +361,10 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub custom_tools: Vec<CustomToolSettingsDto>,
 
-    /// Staged rollout switch for bounded, source-backed conversation memory.
-    ///
-    /// Off by default. The deterministic guarantees — quote provenance,
-    /// ownership, atomicity, budget enforcement — hold whenever this runs, but
-    /// whether the model reliably *finds* every constraint is a measured
-    /// question, and the evaluation gate in the design document has to be met
-    /// for a model configuration before it becomes the default for that
-    /// configuration. This is a release default, not an allowlist: a user may
-    /// turn it on with any model, and the UI must not describe memory as
-    /// reliable while it is off or rebuilding.
-    ///
-    /// Design: `docs/design/2026-09-19-conversation-memory.md` §18.
-    #[serde(default)]
+    /// Bounded, source-backed memory. Enabled for new settings and missing fields.
+    /// An explicitly saved false remains an opt-out. Model extraction quality is
+    /// evaluated separately from deterministic provenance and budget guarantees.
+    #[serde(default = "default_bounded_memory")]
     pub bounded_conversation_memory: bool,
 }
 
@@ -1081,8 +1072,7 @@ impl Default for LLMSettingsDto {
             router: RouterSettingsDto::default(),
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
-            // Off until the evaluation gate is met for a model configuration.
-            bounded_conversation_memory: false,
+            bounded_conversation_memory: true,
         }
     }
 }
@@ -1237,5 +1227,28 @@ mod tests {
         assert!(result.valid);
         assert!(result.has_warnings());
         assert_eq!(result.warnings.get("llm").unwrap().len(), 1);
+    }
+}
+
+fn default_bounded_memory() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod memory_defaults_tests {
+    use super::*;
+    #[test]
+    fn memory_defaults_on_without_overriding_an_explicit_opt_out() {
+        assert!(LLMSettingsDto::default().bounded_conversation_memory);
+        let mut value = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("boundedConversationMemory");
+        let missing: LLMSettingsDto = serde_json::from_value(value.clone()).unwrap();
+        assert!(missing.bounded_conversation_memory);
+        value["boundedConversationMemory"] = serde_json::json!(false);
+        let disabled: LLMSettingsDto = serde_json::from_value(value).unwrap();
+        assert!(!disabled.bounded_conversation_memory);
     }
 }

@@ -85,9 +85,19 @@ const RECENT_FRACTION: f64 = 0.35;
 const MANDATORY_BORROW_CAP: usize = 8192;
 const MANDATORY_BORROW_FRACTION: f64 = 0.50;
 
+/// Ceiling on the default generation reservation. A reasoning model spends
+/// much of its answer budget thinking before it writes a word, so this is sized
+/// for a long written answer plus its reasoning, not for the answer alone.
+const OUTPUT_RESERVATION_CAP: usize = 32_768;
+
 /// Default generation reservation when the caller configures none.
+///
+/// This reservation becomes the request's `max_tokens`. It was once capped at
+/// 4096, which a reasoning model on a 128K window exhausted mid-answer — the
+/// server stopped with `length` and the turn failed while most of the window
+/// sat unused.
 fn default_output_reservation(capacity: usize) -> usize {
-    (capacity / 4).min(4096)
+    (capacity / 4).min(OUTPUT_RESERVATION_CAP)
 }
 
 /// Safety margin against tokenizer imprecision and provider framing.
@@ -274,7 +284,10 @@ mod tests {
         for tokens in [4096, 8192, 32_768, 131_072] {
             let allocation = BudgetAllocation::plan(&capacity(tokens), 500).expect("plan");
             assert_eq!(allocation.capacity, tokens);
-            assert_eq!(allocation.output_reserved, (tokens / 4).min(4096));
+            assert_eq!(
+                allocation.output_reserved,
+                (tokens / 4).min(OUTPUT_RESERVATION_CAP)
+            );
             assert_eq!(
                 allocation.safety_margin,
                 ((tokens as f64 * 0.05).ceil() as usize).max(256)
@@ -304,6 +317,7 @@ mod tests {
         // raw conversation, not more distillation of it.
         assert!(allocation.recent_history > RECENT_FRACTION as usize);
         assert!(allocation.rag_and_tools > 0);
+        assert_eq!(allocation.output_reserved, OUTPUT_RESERVATION_CAP);
     }
 
     #[test]

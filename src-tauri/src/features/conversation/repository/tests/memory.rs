@@ -1285,3 +1285,123 @@ async fn event_retention_is_bounded_and_never_removes_item_evidence() {
     assert_eq!(after.active_items.len(), 1);
     assert_eq!(after.active_items[0].evidence.len(), 1);
 }
+
+/// Commit one extracted item citing `extracted_from` and one citing
+/// `user_edited_from` that the user then acted on (the attributes row a
+/// verify, scope or correct action writes), with a summary through mm2.
+async fn seed_extracted_and_user_items(
+    pool: &SqlitePool,
+    repo: &ConversationRepository,
+    conversation_id: &str,
+    extracted_from: &str,
+    user_edited_from: &str,
+) -> (MemoryId, MemoryId) {
+    let snapshot = repo.load_memory_snapshot(conversation_id).await.unwrap();
+    let extracted = MemoryId::new();
+    let user_edited = MemoryId::new();
+    let extracted_span = whole_message_span(pool, extracted_from, EvidencePurpose::Assertion).await;
+    let user_span = whole_message_span(pool, user_edited_from, EvidencePurpose::Assertion).await;
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.to_string(),
+            expected_transcript_revision: snapshot.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-regen".into(),
+        },
+        &candidate(
+            MemoryCommit {
+                inserts: vec![
+                    item(
+                        &extracted,
+                        conversation_id,
+                        MemoryKind::Constraint,
+                        extracted_span,
+                    ),
+                    item(
+                        &user_edited,
+                        conversation_id,
+                        MemoryKind::Decision,
+                        user_span,
+                    ),
+                ],
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            snapshot.transcript_revision,
+            Some(SummaryUpdate {
+                summary_text: "The user forbade deploying.".into(),
+                up_to_message_id: "mm2".into(),
+                original_message_count: 2,
+                original_tokens: 20,
+                summary_tokens: 5,
+            }),
+        ),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO conversation_memory_attributes (item_id, verified_at) VALUES (?, ?)")
+        .bind(user_edited.as_str())
+        .bind("2026-09-23T10:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    (extracted, user_edited)
+}
+
+#[tokio::test]
+async fn regenerating_a_turn_no_memory_cites_keeps_the_ledger_and_clamps_the_watermark() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm1", "mm2").await;
+
+    // Regenerate takes back mm3 and mm4; nothing in the ledger cites either.
+    repo.take_last_user_turn(&conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(after.state.validity, MemoryValidity::Ready);
+    assert_eq!(
+        after.active_items.len(),
+        2,
+        "no rebuild for an uncited delete"
+    );
+    assert_eq!(
+        after.state.processed_through_sequence, 2,
+        "the watermark no longer claims the deleted turn"
+    );
+    assert!(
+        after.summary.is_some(),
+        "the summary ends before the deleted turn"
+    );
+}
+
+#[tokio::test]
+async fn regenerating_a_cited_turn_rebuilds_extraction_but_keeps_what_the_user_edited() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let (_, user_edited) =
+        seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm3", "mm1").await;
+
+    repo.take_last_user_turn(&conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(after.state.validity, MemoryValidity::RebuildRequired);
+    assert_eq!(after.state.processed_through_sequence, 0);
+    assert!(after.summary.is_none());
+    let kept: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM conversation_memory_items WHERE conversation_id = ?")
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, vec![user_edited.as_str().to_string()]);
+}

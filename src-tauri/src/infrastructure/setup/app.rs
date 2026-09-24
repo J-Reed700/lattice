@@ -397,6 +397,40 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         }
     });
 
+    // Collect attachments whose conversation is gone. They are owned by a chat
+    // that no longer exists, so they are hidden from the library and reachable
+    // from no conversation's retrieval — nothing but this can free them. The
+    // delete happens before the blob sweep would run again, so their blobs go
+    // on the next startup.
+    let orphan_scope = container.document_scope();
+    let orphan_delete = container.delete_document_use_case();
+    tokio::spawn(async move {
+        let orphans = match orphan_scope.orphaned_conversation_owned_documents().await {
+            Ok(ids) => ids,
+            Err(error) => {
+                tracing::error!(%error, "Failed to look for attachments of deleted conversations");
+                return;
+            }
+        };
+        if orphans.is_empty() {
+            return;
+        }
+        let mut deleted = 0usize;
+        for document_id in &orphans {
+            match orphan_delete.execute(document_id.clone()).await {
+                Ok(_) => deleted += 1,
+                Err(error) => {
+                    tracing::warn!(%error, document_id, "Could not delete an orphaned attachment")
+                }
+            }
+        }
+        tracing::info!(
+            found = orphans.len(),
+            deleted,
+            "Swept attachments left by deleted conversations"
+        );
+    });
+
     // App-wide shutdown signal. Cloned into every supervised task so
     // app shutdown (Tauri window close, OS signal, test teardown) can
     // preempt long-running event loops that would otherwise wait

@@ -118,6 +118,14 @@ impl ContextAssembler {
     /// - [`AppError::InvalidState`] carrying [`ActiveMemoryBudgetExceeded`] when
     ///   the genuinely active requirements do not fit even after borrowing.
     pub fn assemble(&self, request: &ContextRequest<'_>) -> Result<ContextPlan> {
+        self.assemble_with_memory(request, None)
+    }
+
+    pub fn assemble_with_memory(
+        &self,
+        request: &ContextRequest<'_>,
+        prepared: Option<&crate::application::ports::conversation_memory::PreparedMemory>,
+    ) -> Result<ContextPlan> {
         // --- 1. fixed costs -------------------------------------------------
         let policy = if request.system_policy.trim().is_empty() {
             render::MEMORY_USE_POLICY.to_string()
@@ -152,12 +160,15 @@ impl ContextAssembler {
         // no longer resolves is not carried as fact: it is counted as a conflict
         // and left out, because the alternative is quoting text the user does
         // not have any more.
-        let (mandatory_blocks, mandatory_items, unresolvable) = match request.snapshot {
+        let (mut mandatory_blocks, mandatory_items, unresolvable) = match request.snapshot {
             Some(snapshot) if snapshot.is_usable() => self.render_items(snapshot, request.recent),
             _ => (Vec::new(), Vec::new(), 0),
         };
-        accounting.active_mandatory_count = mandatory_items.len();
-        accounting.active_conflict_count = unresolvable
+        if let Some(prepared) = prepared {
+            mandatory_blocks = prepared.mandatory.clone();
+        }
+        accounting.active_mandatory_count = mandatory_blocks.len();
+        accounting.active_conflict_count = if prepared.is_some() { 0 } else { unresolvable }
             + mandatory_items
                 .iter()
                 .filter(|item| {
@@ -185,7 +196,7 @@ impl ContextAssembler {
                 // A real finite-context limit. Not resolved by dropping the
                 // oldest restriction or truncating a negation.
                 return Err(ActiveMemoryBudgetExceeded {
-                    count: mandatory_items.len(),
+                    count: mandatory_blocks.len(),
                     required: memory_tokens,
                     available: ceiling,
                 }
@@ -293,7 +304,18 @@ impl ContextAssembler {
         }
 
         // --- 8. document and web evidence ----------------------------------
-        let mut evidence: Vec<&RankedEvidence> = request.document_evidence.iter().collect();
+        let optional: Vec<RankedEvidence> = prepared
+            .into_iter()
+            .flat_map(|p| &p.optional)
+            .enumerate()
+            .map(|(index, content)| RankedEvidence {
+                label: "Saved memory with original evidence".into(),
+                content: content.clone(),
+                rank: 1.0 / (index + 1) as f32,
+            })
+            .collect();
+        let mut evidence: Vec<&RankedEvidence> =
+            request.document_evidence.iter().chain(&optional).collect();
         evidence.sort_by(|a, b| {
             b.rank
                 .partial_cmp(&a.rank)
@@ -310,6 +332,9 @@ impl ContextAssembler {
                 continue;
             }
             evidence_tokens += cost;
+            if item.label == "Saved memory with original evidence" {
+                accounting.optional_selected_count += 1;
+            }
             evidence_blocks.push(block);
         }
         let evidence_message = (!evidence_blocks.is_empty()).then(|| CompletionInput::Message {

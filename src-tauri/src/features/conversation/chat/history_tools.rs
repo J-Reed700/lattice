@@ -52,6 +52,7 @@ use crate::shared::error::Result;
 pub const TOOL_SEARCH_CONVERSATION_HISTORY: &str = "search_conversation_history";
 /// Tool the model calls to read the text back exactly.
 pub const TOOL_READ_CONVERSATION_HISTORY: &str = "read_conversation_history";
+pub const TOOL_SEARCH_SAVED_KNOWLEDGE: &str = "search_saved_knowledge";
 
 /// §9.1 step 5: the candidate ceiling for one retrieval.
 const MAX_CANDIDATES: usize = 24;
@@ -99,7 +100,9 @@ const SCOPE_ARGUMENT_KEYS: [&str; 5] = [
 /// True for the two names this module answers. Everything else belongs to the
 /// ordinary executor.
 pub fn is_history_tool(name: &str) -> bool {
-    name == TOOL_SEARCH_CONVERSATION_HISTORY || name == TOOL_READ_CONVERSATION_HISTORY
+    name == TOOL_SEARCH_CONVERSATION_HISTORY
+        || name == TOOL_READ_CONVERSATION_HISTORY
+        || name == TOOL_SEARCH_SAVED_KNOWLEDGE
 }
 
 /// The two definitions, in the provider-facing shape.
@@ -109,6 +112,11 @@ pub fn is_history_tool(name: &str) -> bool {
 /// something was never mentioned.
 pub fn history_tool_definitions() -> Vec<ToolDefinition> {
     vec![
+        ToolDefinition {
+            name: TOOL_SEARCH_SAVED_KNOWLEDGE.into(),
+            description: "Search saved facts, decisions, preferences and open work in this conversation plus explicitly shared space and personal memory. Every result retains original evidence and source conversation. Use include_history for corrected, superseded or expired facts; never treat those as current. A miss is not proof a fact was never recorded. You cannot choose a foreign conversation or sharing scope.".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string"},"include_history":{"type":"boolean","default":false}},"required":["query"],"additionalProperties":false}),
+        },
         ToolDefinition {
             name: TOOL_SEARCH_CONVERSATION_HISTORY.to_string(),
             description: "Search the original messages of THIS conversation, including older \
@@ -404,6 +412,44 @@ pub async fn execute(
         ));
     }
     match call.name.as_str() {
+        TOOL_SEARCH_SAVED_KNOWLEDGE => {
+            let query = call
+                .arguments
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if query.trim().is_empty() {
+                return Ok(FunctionResult::error(
+                    "EMPTY_QUERY",
+                    "Give a non-empty query.",
+                ));
+            }
+            let room = scope
+                .budget
+                .max_response_bytes
+                .min(MAX_TURN_RESPONSE_BYTES.saturating_sub(memo.bytes_delivered));
+            if room < MIN_RESPONSE_BYTES {
+                return Ok(FunctionResult::error(
+                    "TURN_BUDGET_EXHAUSTED",
+                    "Answer using the evidence already available.",
+                ));
+            }
+            let result = port
+                .search_shared_knowledge(
+                    scope.conversation_id(),
+                    query,
+                    call.arguments
+                        .get("include_history")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    room,
+                )
+                .await?;
+            memo.bytes_delivered = memo
+                .bytes_delivered
+                .saturating_add(result.to_string().len());
+            Ok(FunctionResult::success(result))
+        }
         TOOL_SEARCH_CONVERSATION_HISTORY => {
             execute_search(port, scope, memo, &call.arguments).await
         }

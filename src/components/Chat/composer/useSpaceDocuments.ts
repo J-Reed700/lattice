@@ -5,12 +5,14 @@ import { VaultAPI } from '../../../lib/api';
 import type { SpaceDocument } from '../../../types';
 
 /**
- * The documents `@` may offer, for the space the conversation is in.
+ * The documents `@` may offer this conversation.
  *
  * `list_space_documents` answers from the same allow-list retrieval uses, so
- * what the popup shows is exactly what a turn can read. It is the only source
- * here on purpose: a general document list would offer files this chat cannot
- * open, and space isolation fails closed rather than apologising afterwards.
+ * what the popup shows is exactly what a turn can read: the chat's space, plus
+ * the files attached to this chat, which belong to no space. It is the only
+ * source here on purpose: a general document list would offer files this chat
+ * cannot open, and space isolation fails closed rather than apologising
+ * afterwards.
  */
 
 /** Eight rows is a menu; more is a file browser, and there is one of those. */
@@ -24,7 +26,11 @@ export interface SpaceDocumentsResult {
 }
 
 /** `query` of null means nothing is being looked up. */
-export function useSpaceDocuments(spaceId: string | null, query: string | null): SpaceDocumentsResult {
+export function useSpaceDocuments(
+  spaceId: string | null,
+  conversationId: string | null,
+  query: string | null
+): SpaceDocumentsResult {
   const [documents, setDocuments] = useState<SpaceDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -38,7 +44,7 @@ export function useSpaceDocuments(spaceId: string | null, query: string | null):
     let cancelled = false;
     setIsLoading(true);
     const timer = setTimeout(() => {
-      void VaultAPI.listSpaceDocuments(spaceId, query, MENTION_LIMIT).then((result) => {
+      void VaultAPI.listSpaceDocuments(spaceId, conversationId, query, MENTION_LIMIT).then((result) => {
         if (cancelled) return;
         // A failed lookup offers nothing rather than offering the last space's
         // answer: the chips it builds decide what the turn is allowed to read.
@@ -51,7 +57,7 @@ export function useSpaceDocuments(spaceId: string | null, query: string | null):
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [spaceId, query]);
+  }, [spaceId, conversationId, query]);
 
   return { documents, isLoading };
 }

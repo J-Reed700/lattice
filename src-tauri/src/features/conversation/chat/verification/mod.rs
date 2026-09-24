@@ -90,9 +90,36 @@ impl ClaimAssessment {
     }
 }
 
-/// Emitting more than this many per-claim verdicts would overflow what the UI
-/// will accept and cost the whole summary, so the tail is dropped instead.
+/// The limits the UI's summary schema (`src/types/conversation.ts`) enforces.
+/// It discards the whole summary on any violation, so everything emitted is
+/// cut to fit here instead; the counts stay the true totals.
 const MAX_EMITTED_VERDICTS: usize = 60;
+const MAX_SUPPORTED_NOTES: usize = 40;
+const MAX_LISTED_CLAIMS: usize = 20;
+const MAX_SENTENCE_UNITS: usize = 2000;
+const MAX_QUOTE_UNITS: usize = 1000;
+const MAX_CLAIM_CITATIONS: usize = 24;
+const CITATION_ID_RANGE: std::ops::RangeInclusive<u32> = 1..=1000;
+
+/// Cut to at most `max` UTF-16 code units — the unit a JavaScript string's
+/// length counts — without splitting a character.
+fn fit_utf16(text: &str, max: usize) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= max
+        })
+        .collect()
+}
+
+fn fit_sentences(sentences: &[String], max: usize) -> Vec<String> {
+    sentences
+        .iter()
+        .take(max)
+        .map(|sentence| fit_utf16(sentence, MAX_SENTENCE_UNITS))
+        .collect()
+}
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct GroundingReport {
@@ -166,11 +193,21 @@ impl GroundingReport {
             .iter()
             .take(MAX_EMITTED_VERDICTS)
             .map(|claim| {
+                let citation_ids: Vec<u32> = claim
+                    .citation_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| CITATION_ID_RANGE.contains(id))
+                    .take(MAX_CLAIM_CITATIONS)
+                    .collect();
                 serde_json::json!({
-                    "sentence": claim.sentence,
-                    "citationIds": claim.citation_ids,
+                    "sentence": fit_utf16(&claim.sentence, MAX_SENTENCE_UNITS),
+                    "citationIds": citation_ids,
                     "verdict": claim.verdict.as_str(),
-                    "evidenceQuote": claim.evidence_quote,
+                    "evidenceQuote": claim
+                        .evidence_quote
+                        .as_deref()
+                        .map(|quote| fit_utf16(quote, MAX_QUOTE_UNITS)),
                     "method": claim.method.as_str(),
                 })
             })
@@ -180,10 +217,10 @@ impl GroundingReport {
             "enabled": true,
             "claimsEvaluated": self.claims_evaluated,
             "supportedClaims": self.supported_claims,
-            "supportedClaimNotes": self.supported_claim_notes,
-            "unsupportedClaims": self.unsupported_claims,
+            "supportedClaimNotes": fit_sentences(&self.supported_claim_notes, MAX_SUPPORTED_NOTES),
+            "unsupportedClaims": fit_sentences(&self.unsupported_claims, MAX_LISTED_CLAIMS),
             "groundedRatio": self.grounded_ratio(),
-            "contradictedClaims": self.contradicted_claims,
+            "contradictedClaims": fit_sentences(&self.contradicted_claims, MAX_LISTED_CLAIMS),
             "verdictCounts": {
                 "supported": self.supported_claims,
                 "contradicted": self.contradicted_claims.len(),
@@ -629,6 +666,7 @@ mod tests {
             judge: Some(
                 ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
                     .with_batch_size(1)
+                    .with_concurrency(1)
                     .with_time_budget(Duration::from_millis(400)),
             ),
         };
@@ -644,6 +682,51 @@ mod tests {
         assert_eq!(report.claims[0].method, VerificationMethod::Judge);
         assert_eq!(report.claims[1].method, VerificationMethod::Lexical);
         assert_eq!(report.claims[2].method, VerificationMethod::Lexical);
+    }
+
+    /// The same three claims and the same budget, which serves one call in a
+    /// row: judged side by side, all three fit. The whole point of running
+    /// batches concurrently, pinned against the local model's ~30s batches.
+    #[tokio::test]
+    async fn concurrent_batches_judge_more_claims_inside_the_same_budget() {
+        let response = "Yields rose by 42 percent in treated plots [1].\n\
+                        Frost damage fell by 18 percent in treated plots [1].\n\
+                        Harvest weight increased by 7 percent in treated plots [1].";
+        let sources = vec![source(
+            "Treated plots recorded changes in yields, frost damage, and harvest weight across the trial.",
+        )];
+
+        let llm = Arc::new(
+            ScriptedLlm::new(vec![
+                r#"{"verdicts":[{"id":1,"verdict":"contradicted","quote":""}]}"#,
+            ])
+            .with_delay(Duration::from_millis(200)),
+        );
+        let verifier = GroundingVerifier {
+            judge: Some(
+                ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
+                    .with_batch_size(1)
+                    .with_concurrency(3)
+                    .with_time_budget(Duration::from_millis(400)),
+            ),
+        };
+
+        let started = std::time::Instant::now();
+        let report = verifier.verify(response, &sources).await;
+
+        assert_eq!(llm.call_count(), 3);
+        assert!(
+            report
+                .claims
+                .iter()
+                .all(|claim| claim.method == VerificationMethod::Judge),
+            "every claim was judged: {:?}",
+            report.claims.iter().map(|c| c.method).collect::<Vec<_>>()
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(600),
+            "three 200ms calls ran side by side, not in a row"
+        );
     }
 
     #[tokio::test]
@@ -707,5 +790,40 @@ mod tests {
             verdicts[0]["evidenceQuote"],
             "reduced measured cold tolerance"
         );
+    }
+
+    /// The UI drops the whole summary on any schema violation, so the lists
+    /// are cut to its limits while the counts keep the true totals.
+    #[test]
+    fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
+        let claim = |sentence: String, citation_ids: Vec<u32>| ClaimAssessment {
+            sentence,
+            citation_ids,
+            verdict: ClaimVerdict::Unsupported,
+            evidence_quote: None,
+            method: VerificationMethod::Lexical,
+        };
+        let mut claims: Vec<ClaimAssessment> = (0..25)
+            .map(|i| claim(format!("claim {i}"), vec![1]))
+            .collect();
+        claims[0] = claim("🙂".repeat(1500), (0..40).collect());
+
+        let metadata = GroundingReport::from_assessments(claims, false).metadata_json();
+
+        assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 20);
+        assert_eq!(metadata["claimsEvaluated"], 25);
+        assert_eq!(metadata["verdictCounts"]["unsupported"], 25);
+        let first = &metadata["claimVerdicts"][0];
+        assert_eq!(
+            first["sentence"].as_str().unwrap().encode_utf16().count(),
+            2000
+        );
+        let ids: Vec<u64> = first["citationIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
     }
 }

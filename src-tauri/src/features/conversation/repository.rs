@@ -15,9 +15,11 @@
 mod conversations;
 mod document_references;
 mod fork;
+mod knowledge;
 mod memory;
 mod memory_port;
 mod memory_recall;
+mod memory_semantic;
 mod messages;
 mod port;
 mod pruning;
@@ -36,9 +38,10 @@ use sqlx::SqlitePool;
 /// # Thread Safety
 ///
 /// This repository is thread-safe through SQLitePool's internal connection management.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConversationRepository {
     pool: SqlitePool,
+    memory_embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
 }
 
 impl ConversationRepository {
@@ -48,6 +51,25 @@ impl ConversationRepository {
     ///
     /// * `pool` - SQLite connection pool
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            memory_embedding: None,
+        }
+    }
+}
+
+impl ConversationRepository {
+    pub fn with_memory_embedding(
+        mut self,
+        embedding: Option<std::sync::Arc<dyn crate::application::ports::EmbeddingPort>>,
+    ) -> Self {
+        self.memory_embedding = embedding;
+        self
+    }
+}
+impl std::fmt::Debug for ConversationRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConversationRepository")
+            .finish_non_exhaustive()
     }
 }

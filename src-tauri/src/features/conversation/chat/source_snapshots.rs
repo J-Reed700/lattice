@@ -8,6 +8,7 @@
 
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::dto::FetchUrlContentOutput;
+use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use tracing::warn;
 
@@ -77,6 +78,35 @@ pub(super) async fn archive_page(
             "Failed to archive a read page beside its citation"
         );
     }
+}
+
+/// The turn's sources as the answering model read them.
+///
+/// A web citation carries the search engine's snippet — a sentence or two —
+/// while the prompt carried the whole page. Checking the answer against the
+/// snippet marked nearly every well-cited sentence unsupported, which reads to
+/// the user as invented citations. Each web source whose page this
+/// conversation archived is given that page's text for verification; the
+/// sources persisted with the message are left as they were.
+pub(super) async fn with_archived_page_text(
+    container: &Container,
+    conversation_id: &str,
+    sources: &[SourceDto],
+) -> Vec<SourceDto> {
+    let mut evidence = sources.to_vec();
+    for source in &mut evidence {
+        let url = source.path.as_deref().unwrap_or(source.file_path.as_str());
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            continue;
+        }
+        let url = url.to_string();
+        if let Some(page) = archived_page(container, conversation_id, &url).await {
+            if !page.content.trim().is_empty() {
+                source.content = page.content;
+            }
+        }
+    }
+    evidence
 }
 
 /// The text worth archiving, capped, plus whether the cap cut anything.

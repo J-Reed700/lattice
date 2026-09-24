@@ -1021,9 +1021,9 @@ async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatS
     else return { status: "error", error: e  as any };
 }
 },
-async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
+async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null, attachmentDocumentIds: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames }) };
+    return { status: "ok", data: await TAURI_INVOKE("chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames, attachmentDocumentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1075,6 +1075,14 @@ async compactConversation(request: CompactConversationRequestDto) : Promise<Resu
     else return { status: "error", error: e  as any };
 }
 },
+async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<Result<ConversationMemoryDetailsDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_conversation_memory", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Compact a conversation's oldest messages into an LLM summary.
  *
@@ -1083,9 +1091,9 @@ async compactConversation(request: CompactConversationRequestDto) : Promise<Resu
  * a single context note. The original messages stay in the history for
  * display; only the LLM context switches to the summary.
  */
-async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<Result<ConversationMemoryDetailsDto, ApiError>> {
+async manageKnowledge(request: KnowledgeRequestDto) : Promise<Result<KnowledgeResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_conversation_memory", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("manage_knowledge", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2277,9 +2285,9 @@ async removeConversationFromJournal(request: RemoveConversationFromJournalReques
  * scope and nothing else, so it can never name a document the turn could not
  * then search.
  */
-async listSpaceDocuments(spaceId: string | null, query: string | null, limit: number | null) : Promise<Result<SpaceDocumentDto[], ApiError>> {
+async listSpaceDocuments(spaceId: string | null, conversationId: string | null, query: string | null, limit: number | null) : Promise<Result<SpaceDocumentDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_space_documents", { spaceId, query, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_space_documents", { spaceId, conversationId, query, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2328,6 +2336,17 @@ async removeConversationWebSource(conversationId: string, sourceId: string) : Pr
 async listDocumentSpaceMemberships(documentId: string) : Promise<Result<DocumentSpaceMembershipDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_document_space_memberships", { documentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Move a chat's attachments into the library.
+ */
+async addDocumentsToLibrary(documentIds: string[]) : Promise<Result<RenameConversationResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_documents_to_library", { documentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4085,7 +4104,14 @@ forkedFromConversationId: string | null;
 forkedFromMessageId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
-export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number }
+export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
+/**
+ * True when this file was attached to this chat rather than filed in the
+ * library. It is then the chat's alone — not listed in the library, not
+ * searchable from anywhere else, and deleted with the conversation — until
+ * "Add to library" releases it.
+ */
+attachedToConversation: boolean }
 /**
  * What the memory layer can currently promise for a conversation.
  */
@@ -4994,6 +5020,29 @@ indexedDocuments: number;
 totalChunks: number }
 export type IndexingStatus = { active: boolean; progress: number }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
+export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
+/**
+ * Exact original passages, resolved on every read.
+ */
+evidence: MemoryEvidenceDto[];
+/**
+ * Why this item is visible here; not a claim it appeared in the last prompt.
+ */
+availabilityReason: string }
+export type KnowledgeRequestDto = { conversationId: string;
+/**
+ * list, remember, correct, scope, forget, verify, or dates.
+ */
+action: string; itemId: string | null;
+/**
+ * User-authored evidence for remember/correct, never a generated paraphrase.
+ */
+text: string | null; scope: string | null; kind: string | null; validFrom: string | null; validUntil: string | null; offset: number | null }
+export type KnowledgeResponseDto = { items: KnowledgeItemDto[]; hasMore: boolean;
+/**
+ * Items supplied in the initial context of the latest completed answer.
+ */
+lastAnswerMemoryIds: string[] }
 /**
  * Serialized health response from the QA command.
  */
@@ -5136,18 +5185,9 @@ externalModelDirectories: string[];
  */
 customTools: CustomToolSettingsDto[];
 /**
- * Staged rollout switch for bounded, source-backed conversation memory.
- *
- * Off by default. The deterministic guarantees — quote provenance,
- * ownership, atomicity, budget enforcement — hold whenever this runs, but
- * whether the model reliably *finds* every constraint is a measured
- * question, and the evaluation gate in the design document has to be met
- * for a model configuration before it becomes the default for that
- * configuration. This is a release default, not an allowlist: a user may
- * turn it on with any model, and the UI must not describe memory as
- * reliable while it is off or rebuilding.
- *
- * Design: `docs/design/2026-09-19-conversation-memory.md` §18.
+ * Bounded, source-backed memory. Enabled for new settings and missing fields.
+ * An explicitly saved false remains an opt-out. Model extraction quality is
+ * evaluated separately from deterministic provenance and budget guarantees.
  */
 boundedConversationMemory: boolean }
 /**
@@ -6370,7 +6410,13 @@ export type StartBatchFileImportRequestDto = {
 /**
  * List of file paths to import (1-100 files).
  */
-filePaths: string[]; indexing?: FileIndexingOptionsDto | null; spaceId?: string | null }
+filePaths: string[]; indexing?: FileIndexingOptionsDto | null; spaceId?: string | null;
+/**
+ * The conversation these files were attached to, if they came in through
+ * a chat composer rather than the library. Every document this job newly
+ * creates is stamped with it and stays scoped to that chat.
+ */
+ownerConversationId?: string | null }
 /**
  * Response after starting a batch file import job.
  *

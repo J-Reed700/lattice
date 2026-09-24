@@ -289,11 +289,16 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
             .unwrap();
     }
     let snapshot = repository.load_memory_snapshot(&id).await.unwrap();
-    let (recent, unread) = load_recent(&repository, &id, &snapshot).await.unwrap();
+    // No ledger: nothing stands in for the message the cap left unread.
+    let (recent, unread) = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
     assert_eq!(recent.len(), 1);
+    assert_eq!(
+        recent[0].sequence, snapshot.latest_sequence,
+        "the newest is kept"
+    );
     assert!(
         unread,
-        "a byte cap must not silently hide the end of the source window"
+        "a byte cap must not silently hide unprocessed source"
     );
 }
 

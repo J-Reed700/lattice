@@ -45,24 +45,29 @@ async fn enrich_vector_results(
 
     let search_results = results
         .into_iter()
-        .map(|r| {
-            let doc_metadata = enriched_data.get(&r.id);
-            let content = doc_metadata.map(|m| m.snippet.clone()).unwrap_or_default();
+        .filter_map(|r| {
+            // A hit the enrichment could not resolve is dropped, not rendered
+            // as a bare chunk id with no file and no path. Enrichment refuses a
+            // chat's attachments, which is how they stay off the search page,
+            // and the only other way to land here is a chunk whose document row
+            // is already gone.
+            let doc_metadata = enriched_data.get(&r.id)?;
+            let content = doc_metadata.snippet.clone();
             let title = doc_metadata
-                .and_then(|m| m.metadata.get("filename"))
+                .metadata
+                .get("filename")
                 .and_then(|v| v.as_str())
                 .unwrap_or(&r.id)
                 .to_string();
             let path = doc_metadata
-                .and_then(|m| m.metadata.get("path"))
+                .metadata
+                .get("path")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let document_id = doc_metadata.map(|m| m.document_id.clone());
-            let full_metadata = doc_metadata
-                .map(|m| m.metadata.clone())
-                .unwrap_or_else(std::collections::HashMap::new);
+            let document_id = Some(doc_metadata.document_id.clone());
+            let full_metadata = doc_metadata.metadata.clone();
 
-            SearchResultDto {
+            Some(SearchResultDto {
                 id: r.id.clone(),
                 title,
                 content,
@@ -75,7 +80,7 @@ async fn enrich_vector_results(
                 vector_rank: Some(r.index),
                 bm25_rank: None,
                 metadata: full_metadata,
-            }
+            })
         })
         .collect();
 
@@ -97,38 +102,36 @@ async fn enrich_hybrid_results(
 
     let search_results = results
         .into_iter()
-        .map(|r| {
-            let doc_metadata = enriched_data.get(&r.id);
+        .filter_map(|r| {
+            // Same rule as the vector branch: no document, no result. See
+            // `enrich_vector_results`.
+            let Some(doc_metadata) = enriched_data.get(&r.id) else {
+                tracing::debug!("Dropping chunk {}: no library document behind it", r.id);
+                return None;
+            };
 
-            if let Some(metadata) = doc_metadata {
-                tracing::debug!(
-                    "Chunk {} enriched with document_id: {:?}, filename: {:?}, path: {:?}",
-                    r.id,
-                    metadata.document_id,
-                    metadata.metadata.get("filename"),
-                    metadata.metadata.get("path")
-                );
-            } else {
-                tracing::warn!("No enrichment data found for chunk {}", r.id);
-            }
+            tracing::debug!(
+                "Chunk {} enriched with document_id: {:?}, filename: {:?}, path: {:?}",
+                r.id,
+                doc_metadata.document_id,
+                doc_metadata.metadata.get("filename"),
+                doc_metadata.metadata.get("path")
+            );
 
-            let content = doc_metadata
-                .map(|m| m.snippet.clone())
-                .unwrap_or_default();
+            let content = doc_metadata.snippet.clone();
             let title = doc_metadata
-                .and_then(|m| m.metadata.get("filename"))
+                .metadata
+                .get("filename")
                 .and_then(|v| v.as_str())
                 .unwrap_or(&r.id)
                 .to_string();
             let path = doc_metadata
-                .and_then(|m| m.metadata.get("path"))
+                .metadata
+                .get("path")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let document_id = doc_metadata
-                .map(|m| m.document_id.clone());
-            let full_metadata = doc_metadata
-                .map(|m| m.metadata.clone())
-                .unwrap_or_else(std::collections::HashMap::new);
+            let document_id = Some(doc_metadata.document_id.clone());
+            let full_metadata = doc_metadata.metadata.clone();
 
             let result = SearchResultDto {
                 id: r.id.clone(),
@@ -150,7 +153,7 @@ async fn enrich_hybrid_results(
                 r.id, title, path, document_id, r.score
             );
 
-            result
+            Some(result)
         })
         .collect();
 

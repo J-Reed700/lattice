@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex as SyncMutex;
 use tokio::sync::Mutex as AsyncMutex;
@@ -46,6 +47,52 @@ pub struct CompactionJob {
     count_tokens: TokenCounter,
     config: CompactionConfig,
     slots: Arc<CompactionSlots>,
+}
+
+/// Privacy-safe timing for one compaction phase. A drop without `finish` means
+/// the future was cancelled while the phase was running.
+struct PhaseTiming {
+    conversation_id: String,
+    phase: &'static str,
+    started: Instant,
+    finished: bool,
+}
+
+impl PhaseTiming {
+    fn start(conversation_id: &str, phase: &'static str) -> Self {
+        info!(conversation_id, phase, "Memory compaction phase started");
+        Self {
+            conversation_id: conversation_id.to_string(),
+            phase,
+            started: Instant::now(),
+            finished: false,
+        }
+    }
+
+    fn finish(mut self, outcome: &'static str) {
+        info!(
+            conversation_id = %self.conversation_id,
+            phase = self.phase,
+            outcome,
+            elapsed_ms = self.started.elapsed().as_millis() as u64,
+            "Memory compaction phase finished"
+        );
+        self.finished = true;
+    }
+}
+
+impl Drop for PhaseTiming {
+    fn drop(&mut self) {
+        if !self.finished {
+            warn!(
+                conversation_id = %self.conversation_id,
+                phase = self.phase,
+                outcome = "cancelled_or_interrupted",
+                elapsed_ms = self.started.elapsed().as_millis() as u64,
+                "Memory compaction phase interrupted"
+            );
+        }
+    }
 }
 
 /// The per-conversation single-flight slots.
@@ -239,7 +286,14 @@ impl CompactionJob {
         commit_conflict_retries: usize,
     ) -> std::result::Result<CompactionOutcome, CompactionError> {
         deadline.check()?;
-        let snapshot = self.memory.load_snapshot(conversation_id).await?;
+        let snapshot_phase = PhaseTiming::start(conversation_id, "load_snapshot");
+        let snapshot = self.memory.load_snapshot(conversation_id).await;
+        snapshot_phase.finish(if snapshot.is_ok() {
+            "completed"
+        } else {
+            "error"
+        });
+        let snapshot = snapshot?;
 
         // An unsupported schema or an invalidating edit means the stored ledger
         // cannot be trusted, so this run rebuilds from sequence zero rather than
@@ -254,19 +308,40 @@ impl CompactionJob {
             (true, _) => "rebuild",
             (false, CompactionTrigger::Automatic) => "auto_compact",
             (false, CompactionTrigger::Manual) => "compact",
+            (false, CompactionTrigger::Maintenance) => "consolidate",
         };
         if snapshot.latest_sequence <= start_after {
             return Ok(CompactionOutcome::nothing(&snapshot));
         }
 
-        let (window, reached_end) = self
+        let source_phase = PhaseTiming::start(conversation_id, "read_source_window");
+        let source_window = self
             .read_window(conversation_id, start_after, snapshot.latest_sequence)
-            .await?;
+            .await;
+        source_phase.finish(if source_window.is_ok() {
+            "completed"
+        } else {
+            "error"
+        });
+        let (window, reached_end) = source_window?;
         let keep_recent = request
             .keep_recent_messages
             .unwrap_or(self.config.keep_recent_messages)
             .max(1);
-        let Some(prefix_len) = select_boundary(&window, reached_end, keep_recent) else {
+        let boundary = if request.trigger == CompactionTrigger::Maintenance {
+            // Only completed turns: never extract a pending user turn while its
+            // answer is being generated. Recent messages remain available raw.
+            window
+                .iter()
+                .rposition(|m| {
+                    m.role == crate::domain::conversation_memory::SourceRole::Assistant
+                        && m.status == "completed"
+                })
+                .map(|index| index + 1)
+        } else {
+            select_boundary(&window, reached_end, keep_recent)
+        };
+        let Some(prefix_len) = boundary else {
             return Ok(CompactionOutcome::nothing(&snapshot));
         };
         let prefix = window.get(..prefix_len).unwrap_or(&window);
@@ -313,6 +388,7 @@ impl CompactionJob {
             let quotable = quotable_messages(&eligible, batch, &context);
             let rendered = render_context(&context);
 
+            let extraction_phase = PhaseTiming::start(conversation_id, "extract");
             let outcome = extract::extract_segments(
                 self.utility_llm.as_ref(),
                 deadline,
@@ -322,6 +398,11 @@ impl CompactionJob {
                 ledger.active(),
             )
             .await;
+            extraction_phase.finish(if outcome.is_ok() {
+                "completed"
+            } else {
+                "error"
+            });
             let outcome = match outcome {
                 Ok(outcome) => outcome,
                 Err(CompactionError::Rejected(error)) => {
@@ -339,6 +420,7 @@ impl CompactionJob {
                 repaired_batches += 1;
             }
 
+            let evidence_phase = PhaseTiming::start(conversation_id, "resolve_review_evidence");
             let evidence = self
                 .resolve_review_evidence(
                     conversation_id,
@@ -346,7 +428,14 @@ impl CompactionJob {
                     &eligible,
                     ledger.active(),
                 )
-                .await?;
+                .await;
+            evidence_phase.finish(if evidence.is_ok() {
+                "completed"
+            } else {
+                "error"
+            });
+            let evidence = evidence?;
+            let review_phase = PhaseTiming::start(conversation_id, "review");
             let review = verify::review_patch(
                 self.utility_llm.as_ref(),
                 deadline,
@@ -355,7 +444,9 @@ impl CompactionJob {
                 &eligible,
                 &evidence,
             )
-            .await?;
+            .await;
+            review_phase.finish(if review.is_ok() { "completed" } else { "error" });
+            let review = review?;
             review_calls += review.calls;
             review_degraded |= review.degraded;
 
@@ -427,6 +518,7 @@ impl CompactionJob {
         } else {
             snapshot.summary.as_deref()
         };
+        let summary_phase = PhaseTiming::start(conversation_id, "summary");
         let summary = summarize::fold_summary(
             self.utility_llm.as_ref(),
             deadline,
@@ -436,7 +528,13 @@ impl CompactionJob {
             self.config.summary_token_budget,
             self.count_tokens.as_ref(),
         )
-        .await?;
+        .await;
+        summary_phase.finish(if summary.is_ok() {
+            "completed"
+        } else {
+            "error"
+        });
+        let summary = summary?;
 
         let summary_text = Some(summary.text.clone()).filter(|text| !text.is_empty());
         let (inserts, updates) = ledger.into_changes();
@@ -476,11 +574,14 @@ impl CompactionJob {
             expected_memory_revision: snapshot.state.memory_revision,
             operation_id: operation_id.to_string(),
         };
-        let committed = self
-            .memory
-            .commit_memory(&preconditions, &candidate)
-            .await
-            .map_err(CompactionError::Commit)?;
+        let commit_phase = PhaseTiming::start(conversation_id, "commit");
+        let committed = self.memory.commit_memory(&preconditions, &candidate).await;
+        commit_phase.finish(if committed.is_ok() {
+            "completed"
+        } else {
+            "error"
+        });
+        let committed = committed.map_err(CompactionError::Commit)?;
 
         // Retaining the recent tail is the design, not unfinished work. This run
         // is incomplete only when the work cap stopped the read short of the
