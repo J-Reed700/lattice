@@ -1,11 +1,11 @@
+import { diagnostics } from './diagnostics';
 /**
  * Error Logging Utility for Lattice/Lattice Application
  *
- * Handles error logging to console (development) and external services (production).
+ * Compatibility facade for the local diagnostics store.
  * Includes privacy protection and sanitization.
  */
 
-import { sanitizeErrorMessage, isCustomError } from '../types/errors';
 
 export interface ErrorLogEntry {
   message: string;
@@ -28,168 +28,22 @@ export interface ErrorContext {
 }
 
 class ErrorLogger {
-  private isDevelopment: boolean;
-  private errorQueue: ErrorLogEntry[] = [];
-  private maxQueueSize = 50;
-
-  constructor() {
-    this.isDevelopment = import.meta.env.DEV;
-    this.initializeSentry();
+  public logError(error: Error, context?: ErrorContext, level: 'error' | 'warning' | 'info' = 'error'): void {
+    diagnostics.record(level === 'warning' ? 'warn' : level, error.message, context?.component ?? context?.action ?? 'Application', { error, context });
   }
 
-  /**
-   * Initialize Sentry or other error tracking service
-   * Currently a placeholder for future integration
-   */
-  private initializeSentry(): void {
-    if (this.isDevelopment) {
-      console.log('[ErrorLogger] Running in development mode - errors will be logged to console');
-      return;
-    }
-
-    // TODO: Initialize Sentry
-    // Sentry.init({
-    //   dsn: 'YOUR_SENTRY_DSN',
-    //   environment: import.meta.env.MODE,
-    //   beforeSend(event) {
-    //     // Sanitize sensitive data before sending
-    //     return event;
-    //   },
-    // });
-  }
-
-  /**
-   * Log an error with full context
-   */
-  public logError(
-    error: Error,
-    context?: ErrorContext,
-    level: 'error' | 'warning' | 'info' = 'error'
-  ): void {
-    const logEntry: ErrorLogEntry = {
-      message: this.isDevelopment ? error.message : sanitizeErrorMessage(error.message),
-      stack: this.isDevelopment ? error.stack : undefined,
-      componentStack: context?.component,
-      timestamp: new Date().toISOString(),
-      url: window.location.href,
-      userAgent: navigator.userAgent,
-      errorType: error.name,
-      level,
-      metadata: {
-        ...context?.additionalData,
-        customError: isCustomError(error),
-      },
-    };
-
-    this.addToQueue(logEntry);
-
-    // Console logging
-    this.logToConsole(error, logEntry, context);
-
-    // Send to external service (production only)
-    if (!this.isDevelopment) {
-      this.sendToExternalService(error, logEntry, context);
-    }
-  }
-
-  /**
-   * Add error to local queue for debugging
-   */
-  private addToQueue(entry: ErrorLogEntry): void {
-    this.errorQueue.push(entry);
-    if (this.errorQueue.length > this.maxQueueSize) {
-      this.errorQueue.shift();
-    }
-  }
-
-  /**
-   * Log error to console with formatting
-   */
-  private logToConsole(error: Error, entry: ErrorLogEntry, context?: ErrorContext): void {
-    const style = 'color: #ef4444; font-weight: bold;';
-
-    console.group(`%c[${entry.level.toUpperCase()}] ${entry.errorType}`, style);
-    console.error('Message:', error.message);
-
-    if (error.stack) {
-      console.error('Stack:', error.stack);
-    }
-
-    if (context) {
-      console.info('Context:', context);
-    }
-
-    if (entry.metadata) {
-      console.info('Metadata:', entry.metadata);
-    }
-
-    console.info('Timestamp:', entry.timestamp);
-    console.groupEnd();
-  }
-
-  /**
-   * Send error to external tracking service
-   */
-  private sendToExternalService(
-    _error: Error,
-    entry: ErrorLogEntry,
-    _context?: ErrorContext
-  ): void {
-    // TODO: Send to Sentry
-    // Sentry.captureException(error, {
-    //   level: entry.level,
-    //   contexts: {
-    //     app: {
-    //       component: context?.component,
-    //       action: context?.action,
-    //     },
-    //   },
-    //   extra: entry.metadata,
-    // });
-
-    // For now, just store in localStorage for debugging
-    try {
-      const recentErrors = this.getRecentErrors();
-      recentErrors.push({
-        message: entry.message,
-        type: entry.errorType,
-        timestamp: entry.timestamp,
-      });
-
-      // Keep last 20 errors
-      const trimmed = recentErrors.slice(-20);
-      localStorage.setItem('recall_error_log', JSON.stringify(trimmed));
-    } catch (e) {
-      // Ignore localStorage errors
-      console.warn('Failed to store error in localStorage:', e);
-    }
-  }
-
-  /**
-   * Get recent errors from localStorage
-   */
   public getRecentErrors(): Array<{ message: string; type: string; timestamp: string }> {
-    try {
-      const stored = localStorage.getItem('recall_error_log');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    return diagnostics.getSnapshot().filter(entry => entry.level === 'error').map(entry => ({ message: entry.message, type: entry.source, timestamp: entry.timestamp }));
   }
 
-  /**
-   * Get errors from in-memory queue
-   */
   public getErrorQueue(): ErrorLogEntry[] {
-    return [...this.errorQueue];
+    return diagnostics.getSnapshot().filter(entry => entry.level === 'error').map(entry => ({
+      message: entry.message, timestamp: entry.timestamp, errorType: entry.source,
+      level: 'error', url: '', userAgent: '', metadata: { details: entry.details },
+    }));
   }
 
-  /**
-   * Clear error queue
-   */
-  public clearErrorQueue(): void {
-    this.errorQueue = [];
-  }
+  public clearErrorQueue(): void { diagnostics.clear(); }
 
   /**
    * Log a component error (from Error Boundary)
@@ -246,12 +100,7 @@ class ErrorLogger {
    * Export error log for debugging
    */
   public exportErrorLog(): string {
-    const log = {
-      queue: this.errorQueue,
-      recent: this.getRecentErrors(),
-      timestamp: new Date().toISOString(),
-    };
-    return JSON.stringify(log, null, 2);
+    return diagnostics.export();
   }
 
   /**

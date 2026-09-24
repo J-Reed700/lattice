@@ -13,6 +13,7 @@ import App from './App'
 import { RootErrorBoundary } from './components/ErrorBoundary'
 import { queryClient } from './lib/queryClient'
 import { ConversationsProvider } from './stores/conversationsStore'
+import { installGlobalDiagnostics } from './utils/globalDiagnostics'
 import '@fontsource-variable/inter/opsz.css'
 import '@fontsource-variable/inter/opsz-italic.css'
 import '@fontsource-variable/source-serif-4/opsz.css'
@@ -42,6 +43,9 @@ function bootstrapLocalStorage() {
     }
   })
 }
+
+const disposeDiagnostics = installGlobalDiagnostics()
+if (import.meta.hot) import.meta.hot.dispose(disposeDiagnostics)
 
 bootstrapLocalStorage()
 
