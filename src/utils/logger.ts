@@ -1,3 +1,5 @@
+import { diagnostics } from './diagnostics';
+
 /**
  * Frontend Logger Utility
  *
@@ -62,6 +64,7 @@ class Logger {
     context?: LogContext,
     ...args: unknown[]
   ): void {
+    diagnostics.record(level, message, context?.component ?? 'Application', { context, args });
     if (!this.shouldLog(level)) return;
 
     const formatted = this.formatMessage(level, message, context);

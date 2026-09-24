@@ -116,6 +116,10 @@ export function parseApiError(error: unknown): ApiError {
 
   // Case 3: String error
   if (typeof error === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(error);
+      if (parsed && typeof parsed === 'object' && 'message' in parsed && 'code' in parsed) return parseApiError(parsed);
+    } catch { /* Plain-text backend errors are also valid. */ }
     return {
       code: ErrorCode.UNKNOWN,
       message: error,
@@ -164,6 +168,7 @@ export function handleApiError(error: ApiError, context?: string): void {
 export function apiErrorToException(error: ApiError): Error {
   const exception = new Error(error.message);
   exception.name = error.code;
+  Object.assign(exception, { code: error.code });
   if (error.details) {
     void Object.assign(exception, { details: error.details });
   }

@@ -19,6 +19,7 @@ import { AIModelsTab } from './AIModelsTab';
 import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
 import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
+import { LogsTab } from './LogsTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
 import { SpacesTab } from './SpacesTab';
@@ -40,7 +41,8 @@ type SettingsTab =
   | 'tuning'
   | 'tools'
   | 'display'
-  | 'privacy';
+  | 'privacy'
+  | 'logs';
 
 interface Tab {
   id: SettingsTab;
@@ -63,6 +65,7 @@ const tabGroups: TabGroup[] = [
       { id: 'spaces', label: 'Spaces', component: SpacesTab },
       { id: 'display', label: 'Display', component: DisplayTab },
       { id: 'privacy', label: 'Privacy', component: PrivacyTab },
+      { id: 'logs', label: 'Logs', component: LogsTab },
     ],
   },
   {
