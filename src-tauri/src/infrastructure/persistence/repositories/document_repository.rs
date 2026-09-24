@@ -859,6 +859,11 @@ impl DocumentRepositoryPort for DocumentRepository {
                         last_accessed_at,
                         word_count, source_context
                     FROM documents
+                    -- Files attached to a chat are not library documents: they
+                    -- are owned by that conversation, hidden from this listing,
+                    -- and deleted with it. "Add to library" clears the owner and
+                    -- the document appears here like any other.
+                    WHERE owner_conversation_id IS NULL
                     ORDER BY indexed_at DESC
                     LIMIT ?
                     "#,
