@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
+use crate::application::contracts::settings::LLMVerificationSettingsDto;
 use crate::application::ports::LLMPort;
 use crate::features::qa::dto::SourceDto;
 
@@ -283,6 +284,16 @@ impl GroundingVerifier {
             );
         }
         Self { judge: None }
+    }
+
+    /// Apply the user's verification settings to the judge, if there is one.
+    ///
+    /// Without this the judge decodes greedily, which is the right default; the
+    /// settings exist so someone can trade that determinism away deliberately
+    /// rather than inheriting it from whatever the chat model is tuned to.
+    pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
+        self.judge = self.judge.map(|judge| judge.with_tuning(tuning));
+        self
     }
 
     pub(super) async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {

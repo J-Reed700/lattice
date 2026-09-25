@@ -414,11 +414,55 @@ pub struct LLMPromptSettingsDto {
 }
 
 /// Verification settings for response grounding checks.
+///
+/// The judge's sampling lives here rather than being inherited from
+/// [`LLMSettingsDto`]: a verdict is a classification, not a composition, and
+/// running it at the chat model's creative temperature makes the same claim
+/// against the same passage come out differently from one turn to the next.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LLMVerificationSettingsDto {
     /// Enable grounding verification and metadata emission for assistant messages.
     pub enabled: bool,
+
+    /// Sampling temperature for the claim judge. Zero is greedy decoding, which
+    /// is what a verdict wants: the same evidence must produce the same answer.
+    #[serde(default = "default_verification_temperature")]
+    pub temperature: f32,
+
+    /// Nucleus sampling for the claim judge. One disables it, leaving the
+    /// temperature as the only knob that can introduce variance.
+    #[serde(default = "default_verification_top_p")]
+    pub top_p: f32,
+
+    /// Top-k sampling for the claim judge. One takes the argmax token.
+    #[serde(default = "default_verification_top_k")]
+    pub top_k: i32,
+
+    /// Output ceiling for one judge request.
+    ///
+    /// A batch is up to twelve verdicts, each carrying a quote of up to 240
+    /// characters, so a full batch needs well over a thousand tokens. Too low a
+    /// ceiling truncates the reply mid-array; the parser then salvages the
+    /// complete verdicts and the rest of the batch is silently left unjudged.
+    #[serde(default = "default_verification_max_tokens")]
+    pub max_tokens: u32,
+}
+
+fn default_verification_temperature() -> f32 {
+    0.0
+}
+
+fn default_verification_top_p() -> f32 {
+    1.0
+}
+
+fn default_verification_top_k() -> i32 {
+    1
+}
+
+fn default_verification_max_tokens() -> u32 {
+    2048
 }
 
 /// Tool output shaping settings (excerpts + truncation).
@@ -1094,7 +1138,13 @@ impl Default for LLMVerificationSettingsDto {
         // Verification annotates the completed answer; it never rewrites or
         // suppresses it. Keep the safety signal on and let users who prefer
         // lower post-generation latency opt out.
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            temperature: default_verification_temperature(),
+            top_p: default_verification_top_p(),
+            top_k: default_verification_top_k(),
+            max_tokens: default_verification_max_tokens(),
+        }
     }
 }
 
@@ -1176,6 +1226,9 @@ mod tests {
         );
         assert_eq!(settings.llm.model, "llama3.2:latest");
         assert!(settings.llm.verification.enabled);
+        // A judge that samples is a judge that disagrees with itself.
+        assert_eq!(settings.llm.verification.temperature, 0.0);
+        assert_eq!(settings.llm.verification.top_k, 1);
         assert_eq!(settings.ui.theme, "system");
     }
 

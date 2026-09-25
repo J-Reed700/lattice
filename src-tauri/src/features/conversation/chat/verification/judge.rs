@@ -18,7 +18,8 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use crate::application::contracts::settings::LLMVerificationSettingsDto;
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
 use crate::application::ports::LLMPort;
 use crate::features::qa::dto::SourceDto;
 use crate::shared::error::Result;
@@ -57,6 +58,14 @@ pub(super) const MAX_CONCURRENT_CALLS: usize = 3;
 /// Do not start a request that cannot plausibly finish inside what is left.
 const MIN_CALL_SLICE: Duration = Duration::from_millis(250);
 
+/// Output ceiling for one judge request.
+///
+/// A full batch is [`MAX_CLAIMS_PER_CALL`] verdicts, each carrying a quote of
+/// up to [`MAX_QUOTE_CHARS`]. Below roughly this, the reply is cut off mid-array
+/// and only the verdicts that were already complete survive the parser — the
+/// rest of the batch goes unjudged and reads back as "not found in the source".
+const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 2_048;
+
 const MAX_PASSAGES_PER_CLAIM: usize = 3;
 /// Ceiling on the shared passage table for one request, so a batch whose
 /// claims cite a dozen different sources cannot blow the prompt window.
@@ -75,6 +84,10 @@ pub(super) struct ClaimJudge {
     batch_size: usize,
     time_budget: Duration,
     concurrency: usize,
+    /// How the verdict is decoded. Greedy unless the user says otherwise.
+    sampling: SamplingOverride,
+    /// Output ceiling for one request, sized to a full batch of verdicts.
+    max_output_tokens: u32,
 }
 
 impl ClaimJudge {
@@ -84,7 +97,27 @@ impl ClaimJudge {
             batch_size: MAX_CLAIMS_PER_CALL,
             time_budget: DEFAULT_TIME_BUDGET,
             concurrency: MAX_CONCURRENT_CALLS,
+            // Deterministic by default, so a judge built anywhere in the code
+            // cannot quietly inherit a creative model's sampling: measured on
+            // the bundled 9B at the chat default of 0.7, one claim against one
+            // passage came back supported, unsupported and contradicted across
+            // twenty-one runs of the same request.
+            sampling: SamplingOverride::deterministic(),
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         }
+    }
+
+    /// Apply the user's verification settings.
+    pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
+        self.sampling = SamplingOverride {
+            temperature: Some(tuning.temperature),
+            top_p: Some(tuning.top_p),
+            top_k: Some(tuning.top_k),
+        };
+        if tuning.max_tokens > 0 {
+            self.max_output_tokens = tuning.max_tokens;
+        }
+        self
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -270,6 +303,8 @@ impl ClaimJudge {
                     ],
                     reasoning_effort: Some("none".into()),
                     json_schema: Some(claim_judge_schema()),
+                    sampling: Some(self.sampling),
+                    max_output_tokens: Some(self.max_output_tokens),
                     ..Default::default()
                 })
                 .await
@@ -361,22 +396,26 @@ impl<'a> BatchInput<'a> {
     }
 }
 
-/// Evidence offered for one claim: the passages it cites, or the top sources
-/// when it cites none — the same passages the lexical pass scored against.
+/// Evidence offered for one claim: the passages it cites, and nothing else.
+///
+/// A claim that cites nothing yields nothing. [`needs_judge`] already keeps
+/// those out of a batch; this is the same rule held at the point the evidence
+/// is chosen, so no future caller can reintroduce "judge it against whatever
+/// ranked first".
+///
+/// [`needs_judge`]: super::lexical::needs_judge
 fn passages_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Vec<(u32, String)> {
-    if claim.citation_ids.len() != claim.cited_source_indices.len() {
+    if claim.citation_ids.is_empty()
+        || claim.citation_ids.len() != claim.cited_source_indices.len()
+    {
         return Vec::new();
     }
-    let indices: Vec<usize> = if claim.citation_ids.is_empty() {
-        (0..sources.len().min(MAX_PASSAGES_PER_CLAIM)).collect()
-    } else {
-        claim
-            .cited_source_indices
-            .iter()
-            .copied()
-            .take(MAX_PASSAGES_PER_CLAIM)
-            .collect()
-    };
+    let indices: Vec<usize> = claim
+        .cited_source_indices
+        .iter()
+        .copied()
+        .take(MAX_PASSAGES_PER_CLAIM)
+        .collect();
 
     indices
         .into_iter()
@@ -674,6 +713,146 @@ mod tests {
         );
         assert!(batch.verified_quote("", &[1]).is_none());
         assert!(batch.verified_quote("anything", &[]).is_none());
+    }
+
+    #[test]
+    fn a_claim_that_cites_nothing_is_offered_no_evidence() {
+        let sources = [
+            source("Sweet potato vines can be kept alive as a perennial indoors."),
+            source("The ideal initial planting depth for potatoes is 4 to 6 inches."),
+        ];
+        let claims = super::super::lexical::lexical_pass(
+            "So: fully buried at first, then buried deeper as the plant grows.",
+            &sources,
+        );
+        let claim = claims.first().expect("the uncited sentence is a claim");
+
+        assert!(claim.citation_ids.is_empty());
+        // Not "the first three sources": a sentence that cites nothing has no
+        // passages, and a batch built from it is not worth a call.
+        assert!(passages_for(claim, &sources).is_empty());
+        assert!(BatchInput::build(&claims, &[0], &sources).is_none());
+    }
+
+    /// Records the request the judge sends, so sampling can be asserted.
+    struct RecordingLlm {
+        seen: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for RecordingLlm {
+        async fn generate(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> Result<String> {
+            unreachable!("this mock supports typed completions")
+        }
+
+        async fn generate_streaming(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> Result<
+            Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>,
+        > {
+            unimplemented!("streaming is not used by the claim judge")
+        }
+
+        fn supports_typed_completions(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            request: &CompletionRequest,
+        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            #[allow(clippy::unwrap_used)]
+            self.seen.lock().unwrap().push(request.clone());
+            Ok(crate::application::ports::llm_port::CompletionResponse {
+                text: r#"{"verdicts":[{"id":1,"verdict":"supported","quote":""}]}"#.to_string(),
+                ..Default::default()
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "recording-judge"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            8192
+        }
+
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn the_judge_decodes_greedily_unless_the_user_says_otherwise() {
+        let sources = [source(
+            "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
+        )];
+        let claims = super::super::lexical::lexical_pass(
+            "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
+            &sources,
+        );
+        let llm = Arc::new(RecordingLlm {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+
+        ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
+            .judge_claims(&claims, &[0], &sources)
+            .await;
+
+        #[allow(clippy::unwrap_used)]
+        let sent = llm.seen.lock().unwrap().clone();
+        let sampling = sent[0].sampling.expect("the judge sets its own sampling");
+        // A verdict is a classification. Sampling one from the chat model's
+        // distribution made the same claim against the same passage come back
+        // supported, unsupported and contradicted across repeats of one request.
+        assert_eq!(sampling.temperature, Some(0.0));
+        assert_eq!(sampling.top_k, Some(1));
+        assert_eq!(sent[0].max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
+    }
+
+    #[tokio::test]
+    async fn verification_settings_reach_the_request() {
+        let sources = [source(
+            "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
+        )];
+        let claims = super::super::lexical::lexical_pass(
+            "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
+            &sources,
+        );
+        let llm = Arc::new(RecordingLlm {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+
+        ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
+            .with_tuning(&LLMVerificationSettingsDto {
+                enabled: true,
+                temperature: 0.4,
+                top_p: 0.8,
+                top_k: 20,
+                max_tokens: 777,
+            })
+            .judge_claims(&claims, &[0], &sources)
+            .await;
+
+        #[allow(clippy::unwrap_used)]
+        let sent = llm.seen.lock().unwrap().clone();
+        let sampling = sent[0].sampling.expect("the judge sets its own sampling");
+        assert_eq!(sampling.temperature, Some(0.4));
+        assert_eq!(sampling.top_p, Some(0.8));
+        assert_eq!(sampling.top_k, Some(20));
+        assert_eq!(sent[0].max_output_tokens, Some(777));
     }
 
     #[test]

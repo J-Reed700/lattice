@@ -31,6 +31,13 @@ use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;
 
+/// Output ceiling for the shared utility model.
+///
+/// Sized to the largest cap its callers send (conversation memory extraction
+/// asks for 8192), because a ceiling below a caller's own cap does not shorten
+/// that caller's work — it truncates its reply.
+const DEFAULT_UTILITY_MAX_OUTPUT_TOKENS: usize = 8_192;
+
 #[derive(Clone)]
 pub struct LlmDi {
     pub get_system_capabilities_use_case: Arc<GetSystemCapabilitiesUseCase>,
@@ -245,7 +252,14 @@ impl Container {
             temperature: settings.llm.temperature,
             top_p: settings.llm.top_p,
             top_k: settings.llm.top_k,
-            max_tokens: 512,
+            // A ceiling, not an allowance: each caller sends the cap its own
+            // work needs and `max_output_tokens` only ever tightens this one.
+            // It was 512, which was below what several callers were already
+            // asking for — memory extraction requests 8192 and the claim judge
+            // returns up to twelve verdicts with quotes — so their JSON was cut
+            // off mid-array and read back as malformed or half a batch.
+            max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS
+                .max(settings.llm.verification.max_tokens as usize),
             repeat_penalty: settings.llm.repeat_penalty,
         };
 

@@ -1,8 +1,9 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { ChatTab } from './AITab/ChatTab';
+import { PromptsTab } from './AITab/PromptsTab';
 import { VaultAPI } from '../../lib/api';
 
 import type { LlmSettingsContextValue } from './AITab/useLlmSettings';
@@ -52,7 +53,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
         semanticSearchTemplate: '',
       },
     },
-    verification: { enabled: true },
+    verification: { enabled: true, temperature: 0, topP: 1, topK: 1, maxTokens: 2048 },
     customTools: [],
   } as never,
   isLoading: false,
@@ -179,4 +180,76 @@ describe('ChatTab', () => {
     expect(mockLlmSettings.saveLlmUpdates).not.toHaveBeenCalled();
   });
 
+});
+
+describe('PromptsTab verification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLlmSettings.llmSettings!.verification = {
+      enabled: true,
+      temperature: 0,
+      topP: 1,
+      topK: 1,
+      maxTokens: 2048,
+    };
+  });
+
+  it('shows the judge sampling knobs under the toggle, greedy by default', () => {
+    render(<PromptsTab />);
+
+    expect(screen.getByLabelText('Verify responses')).toBeInTheDocument();
+    expect(screen.getByLabelText('Temperature')).toHaveValue(0);
+    expect(screen.getByLabelText('Top P')).toHaveValue(1);
+    expect(screen.getByLabelText('Top K')).toHaveValue(1);
+    expect(screen.getByLabelText('Max tokens')).toHaveValue(2048);
+  });
+
+  it('explains why a verdict is not sampled', () => {
+    render(<PromptsTab />);
+    expect(screen.getByText(/A verdict is a classification/)).toBeInTheDocument();
+  });
+
+  it('disables the knobs when verification is off, because they do nothing then', () => {
+    mockLlmSettings.llmSettings!.verification = {
+      enabled: false,
+      temperature: 0,
+      topP: 1,
+      topK: 1,
+      maxTokens: 2048,
+    };
+    render(<PromptsTab />);
+
+    expect(screen.getByLabelText('Temperature')).toBeDisabled();
+    expect(screen.getByLabelText('Top P')).toBeDisabled();
+    expect(screen.getByLabelText('Top K')).toBeDisabled();
+    expect(screen.getByLabelText('Max tokens')).toBeDisabled();
+  });
+
+  it('persists a changed temperature without dropping the other verification fields', async () => {
+    render(<PromptsTab />);
+
+    const temperature = screen.getByLabelText('Temperature');
+    fireEvent.change(temperature, { target: { value: '0.5' } });
+    fireEvent.blur(temperature);
+
+    await waitFor(() => {
+      expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
+        verification: { enabled: true, temperature: 0.5, topP: 1, topK: 1, maxTokens: 2048 },
+      });
+    });
+  });
+
+  it('clamps an out-of-range value to the field bounds before saving', async () => {
+    render(<PromptsTab />);
+
+    const maxTokens = screen.getByLabelText('Max tokens');
+    fireEvent.change(maxTokens, { target: { value: '10' } });
+    fireEvent.blur(maxTokens);
+
+    await waitFor(() => {
+      expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
+        verification: { enabled: true, temperature: 0, topP: 1, topK: 1, maxTokens: 256 },
+      });
+    });
+  });
 });

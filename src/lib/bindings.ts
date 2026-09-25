@@ -5192,12 +5192,40 @@ customTools: CustomToolSettingsDto[];
 boundedConversationMemory: boolean }
 /**
  * Verification settings for response grounding checks.
+ *
+ * The judge's sampling lives here rather than being inherited from
+ * [`LLMSettingsDto`]: a verdict is a classification, not a composition, and
+ * running it at the chat model's creative temperature makes the same claim
+ * against the same passage come out differently from one turn to the next.
  */
 export type LLMVerificationSettingsDto = {
 /**
  * Enable grounding verification and metadata emission for assistant messages.
  */
-enabled: boolean }
+enabled: boolean;
+/**
+ * Sampling temperature for the claim judge. Zero is greedy decoding, which
+ * is what a verdict wants: the same evidence must produce the same answer.
+ */
+temperature: number;
+/**
+ * Nucleus sampling for the claim judge. One disables it, leaving the
+ * temperature as the only knob that can introduce variance.
+ */
+topP: number;
+/**
+ * Top-k sampling for the claim judge. One takes the argmax token.
+ */
+topK: number;
+/**
+ * Output ceiling for one judge request.
+ *
+ * A batch is up to twelve verdicts, each carrying a quote of up to 240
+ * characters, so a full batch needs well over a thousand tokens. Too low a
+ * ceiling truncates the reply mid-array; the parser then salvages the
+ * complete verdicts and the rest of the batch is silently left unjudged.
+ */
+maxTokens: number }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
