@@ -342,7 +342,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             .map(|value| CompletionInput::Native { value }),
                     );
                 }
-            } else if llm.provider_name() == "llamacpp" {
+            } else if matches!(llm.provider_name(), "llamacpp" | "local-sidecar") {
+                // Both are llama-server: the assistant message, tool calls and
+                // any reasoning included, replays as the server returned it.
                 native_request.input.push(CompletionInput::Native {
                     value: response.provider_output,
                 });

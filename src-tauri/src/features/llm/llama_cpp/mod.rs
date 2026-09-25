@@ -1,7 +1,9 @@
 //! Remote llama.cpp server adapter. Uses Chat Completions, independently of Ollama.
 use crate::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
-    ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse, LLMPort},
+    ports::llm_port::{
+        CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ToolDefinition,
+    },
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -11,7 +13,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 mod retry;
-mod streaming;
+pub(crate) mod streaming;
 #[cfg(test)]
 mod tests;
 
@@ -122,17 +124,7 @@ impl LlamaCppLlm {
     }
 
     fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
-        let mut messages = Vec::new();
-        for item in &request.input {
-            messages.push(match item {
-                CompletionInput::Native { value } => value.clone(),
-                CompletionInput::Message { role, content } => json!({"role":role,"content":content}),
-                CompletionInput::ToolCall { id, name, arguments } => json!({"role":"assistant","content":null,
-                    "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),
-                CompletionInput::ToolResult { id, output } => json!({"role":"tool","tool_call_id":id,"content":output}),
-            });
-        }
-        let messages = coalesce_system_messages(messages)?;
+        let messages = chat_messages(&request.input)?;
         let requested_output = request.effective_max_output_tokens(self.settings.max_tokens);
         let max_tokens = self.output_room_for(&messages, requested_output);
         let sampling = request.sampling.unwrap_or_default();
@@ -174,14 +166,13 @@ impl LlamaCppLlm {
             );
         }
         if !request.tools.is_empty() {
+            body.insert("tools".into(), tool_specs(&request.tools));
+        }
+        if request.want_logprobs {
+            body.insert("logprobs".into(), json!(true));
             body.insert(
-                "tools".into(),
-                json!(request
-                    .tools
-                    .iter()
-                    .map(|t| json!({"type":"function",
-                "function":{"name":t.name,"description":t.description,"parameters":t.parameters}}))
-                    .collect::<Vec<_>>()),
+                "top_logprobs".into(),
+                json!(crate::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
             );
         }
         if let Some(schema) = &request.json_schema {
@@ -225,6 +216,40 @@ impl LlamaCppLlm {
             ..Default::default()
         }
     }
+}
+
+/// A typed request's input as OpenAI chat messages.
+///
+/// Shared with the bundled sidecar, which is the same llama-server behind the
+/// same `/v1/chat/completions` route: one translation means a tool round
+/// replays identically whichever of the two the model is reached through.
+pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
+    let messages = input
+        .iter()
+        .map(|item| match item {
+            CompletionInput::Native { value } => value.clone(),
+            // Chat templates know system, user, assistant and tool; a
+            // developer instruction is a system one to every one of them.
+            CompletionInput::Message { role, content } if role == "developer" => {
+                json!({"role":"system","content":content})
+            }
+            CompletionInput::Message { role, content } => json!({"role":role,"content":content}),
+            CompletionInput::ToolCall { id, name, arguments } => json!({"role":"assistant","content":null,
+                "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),
+            CompletionInput::ToolResult { id, output } => json!({"role":"tool","tool_call_id":id,"content":output}),
+        })
+        .collect();
+    coalesce_system_messages(messages)
+}
+
+/// Tool definitions in the OpenAI `tools` shape llama-server renders through
+/// the model's chat template.
+pub(crate) fn tool_specs(tools: &[ToolDefinition]) -> Value {
+    json!(tools
+        .iter()
+        .map(|t| json!({"type":"function",
+            "function":{"name":t.name,"description":t.description,"parameters":t.parameters}}))
+        .collect::<Vec<_>>())
 }
 
 /// The server's chat template may allow only one system message at index zero.
@@ -466,7 +491,7 @@ async fn check_status(mut response: reqwest::Response) -> Result<reqwest::Respon
     }
 }
 
-fn parse_completion(value: Value) -> Result<CompletionResponse> {
+pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     let choice = value
         .get("choices")
         .and_then(Value::as_array)
@@ -536,5 +561,8 @@ fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .and_then(Value::as_u64)
             .unwrap_or_default(),
         provider_output: message.clone(),
+        first_token_logprobs: choice
+            .get("logprobs")
+            .and_then(crate::application::ports::llm_port::first_token_logprobs),
     })
 }

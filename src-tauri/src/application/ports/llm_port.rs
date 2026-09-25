@@ -407,6 +407,12 @@ pub struct CompletionRequest {
     /// so this only needs to exceed the longest legitimate generation.
     #[serde(skip)]
     pub time_budget: Option<Duration>,
+    /// Ask for the log-probabilities of the first generated token and its top
+    /// alternatives. A classifier reads its answer's probability from these
+    /// rather than trusting one sampled word. Providers that cannot report
+    /// them ignore the flag and return `None`.
+    #[serde(default)]
+    pub want_logprobs: bool,
 }
 
 impl CompletionRequest {
@@ -436,6 +442,37 @@ pub struct CompletionResponse {
     pub finish_reason: String,
     /// Opaque native output items for replaying provider-specific reasoning state.
     pub provider_output: serde_json::Value,
+    /// The first generated token's top alternatives as `(token, logprob)`,
+    /// most likely first. Present only when the request asked for them and the
+    /// provider reports them.
+    #[serde(default)]
+    pub first_token_logprobs: Option<Vec<(String, f32)>>,
+}
+
+/// How many alternatives to request for the first token. Enough to hold every
+/// spelling of a one-word label a tokenizer might start it with.
+pub const FIRST_TOKEN_TOP_LOGPROBS: u8 = 10;
+
+/// Read the first token's alternatives from an OpenAI-shaped `logprobs` object
+/// (`{"content":[{"token","logprob","top_logprobs":[{"token","logprob"}]}]}`),
+/// as llama-server returns it on a choice or on a stream chunk's choice.
+pub fn first_token_logprobs(logprobs: &serde_json::Value) -> Option<Vec<(String, f32)>> {
+    let first = logprobs.get("content")?.as_array()?.first()?;
+    let entry = |value: &serde_json::Value| -> Option<(String, f32)> {
+        let token = value.get("token")?.as_str()?.to_string();
+        let logprob = value.get("logprob")?.as_f64()? as f32;
+        logprob.is_finite().then_some((token, logprob))
+    };
+    let mut alternatives: Vec<(String, f32)> = first
+        .get("top_logprobs")
+        .and_then(serde_json::Value::as_array)
+        .map(|top| top.iter().filter_map(entry).collect())
+        .unwrap_or_default();
+    if alternatives.is_empty() {
+        alternatives.push(entry(first)?);
+    }
+    alternatives.sort_by(|a, b| b.1.total_cmp(&a.1));
+    Some(alternatives)
 }
 
 #[cfg(test)]
@@ -479,5 +516,31 @@ mod tests {
             zero.effective_max_output_tokens(provider_limit),
             provider_limit
         );
+    }
+
+    #[test]
+    fn first_token_alternatives_are_read_from_the_openai_logprobs_shape() {
+        let logprobs = serde_json::json!({"content":[
+            {"token":"supported","logprob":-0.1,"top_logprobs":[
+                {"token":"uns","logprob":-2.5},
+                {"token":"supported","logprob":-0.1}
+            ]},
+            {"token":"!","logprob":-3.0}
+        ]});
+        let alternatives = first_token_logprobs(&logprobs).expect("first token present");
+        assert_eq!(alternatives[0], ("supported".to_string(), -0.1));
+        assert_eq!(alternatives[1], ("uns".to_string(), -2.5));
+
+        // No alternatives offered: the chosen token alone still counts.
+        let bare = serde_json::json!({"content":[{"token":"contr","logprob":-0.3}]});
+        assert_eq!(
+            first_token_logprobs(&bare),
+            Some(vec![("contr".to_string(), -0.3)])
+        );
+        assert_eq!(
+            first_token_logprobs(&serde_json::json!({"content":[]})),
+            None
+        );
+        assert_eq!(first_token_logprobs(&serde_json::Value::Null), None);
     }
 }

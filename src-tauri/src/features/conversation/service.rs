@@ -664,6 +664,16 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.update_message_status(message_id, status).await
     }
+
+    async fn set_message_metadata_fields(
+        &self,
+        message_id: &str,
+        fields: Vec<(String, serde_json::Value)>,
+    ) -> Result<()> {
+        self.repository
+            .set_message_metadata_fields(message_id, fields)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -1076,6 +1086,64 @@ mod tests {
         assert_eq!(message.content, "Hi there!");
         assert_eq!(message.tokens, 20);
         assert!(matches!(message.role, MessageRole::Assistant));
+    }
+
+    #[tokio::test]
+    async fn setting_metadata_fields_keeps_the_other_keys() {
+        use crate::features::conversation::ConversationServiceTrait;
+        let (service, _pool) = create_test_service().await;
+        let conversation = service
+            .create_conversation("Test".to_string(), "model".to_string(), None)
+            .await
+            .expect("create should succeed");
+        let message = service
+            .add_assistant_message_with_metadata(
+                &conversation.id.to_string(),
+                "Answer".to_string(),
+                5,
+                Some(
+                    r#"{"sources":[1],"verification":{"enabled":true,"pending":true}}"#.to_string(),
+                ),
+            )
+            .await
+            .expect("add should succeed");
+
+        ConversationServiceTrait::set_message_metadata_fields(
+            &service,
+            &message.id,
+            vec![(
+                "verification".to_string(),
+                serde_json::json!({"enabled": true, "claimsEvaluated": 2}),
+            )],
+        )
+        .await
+        .expect("update should succeed");
+
+        let aggregate = service
+            .get_conversation(&conversation.id.to_string())
+            .await
+            .expect("load")
+            .expect("present");
+        let stored = aggregate
+            .messages()
+            .iter()
+            .find(|m| m.id == message.id)
+            .and_then(|m| m.metadata.clone())
+            .expect("metadata");
+        let stored: serde_json::Value = serde_json::from_str(&stored).expect("json");
+        assert_eq!(stored["sources"], serde_json::json!([1]));
+        assert_eq!(
+            stored["verification"],
+            serde_json::json!({"enabled": true, "claimsEvaluated": 2})
+        );
+
+        let missing = ConversationServiceTrait::set_message_metadata_fields(
+            &service,
+            "no-such-message",
+            vec![("verification".to_string(), serde_json::json!({}))],
+        )
+        .await;
+        assert!(missing.is_err());
     }
 
     #[tokio::test]

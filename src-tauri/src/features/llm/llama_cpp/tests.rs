@@ -941,3 +941,53 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
     assert!(result.is_err());
     assert_eq!(*text.lock().unwrap(), "Partial");
 }
+
+#[test]
+fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
+    let client = LlamaCppLlm::new(&settings("http://127.0.0.1:1".into())).unwrap();
+    let request = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Answer in one word.".into(),
+        }],
+        want_logprobs: true,
+        ..Default::default()
+    };
+    let body = client.body(&request, true).unwrap();
+    assert_eq!(body["logprobs"], true);
+    assert!(body["top_logprobs"].as_u64().unwrap() > 1);
+    let plain = client
+        .body(
+            &CompletionRequest {
+                want_logprobs: false,
+                ..request.clone()
+            },
+            true,
+        )
+        .unwrap();
+    assert!(plain.get("logprobs").is_none());
+
+    // Streamed: the first chunk carries the first token's alternatives; later
+    // chunks' logprobs must not replace them.
+    let events = [
+        json!({"choices":[{"delta":{"content":"supported"},"logprobs":{"content":[{"token":"supported","logprob":-0.2,"top_logprobs":[{"token":"supported","logprob":-0.2},{"token":"uns","logprob":-1.9}]}]}}]}),
+        json!({"choices":[{"delta":{"content":"."},"logprobs":{"content":[{"token":".","logprob":-0.01,"top_logprobs":[]}]}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"stop"}]}),
+    ];
+    let mut decoder = streaming::Decoder::for_completion();
+    for event in events {
+        decoder
+            .push(format!("data: {event}\n\n").as_bytes())
+            .unwrap();
+    }
+    decoder.push(b"data: [DONE]\n\n").unwrap();
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "supported.");
+    let alternatives = response.first_token_logprobs.unwrap();
+    assert_eq!(alternatives[0], ("supported".to_string(), -0.2));
+    assert_eq!(alternatives[1], ("uns".to_string(), -1.9));
+
+    // Not asked for: nothing reported.
+    let parsed = parse_completion(reply()).unwrap();
+    assert!(parsed.first_token_logprobs.is_none());
+}

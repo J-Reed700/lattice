@@ -3769,7 +3769,12 @@ export type ChatStreamEventDto = { conversationId: string; requestId: string; do
  * has during that stretch, and unlike the sentence it replaces it is kept:
  * the timeline under the finished answer is this same list.
  */
-step?: TurnStepDto | null }
+step?: TurnStepDto | null;
+/**
+ * A grounding check that finished after the turn returned. Arrives once
+ * per verified answer, possibly well after `done`.
+ */
+verification?: VerificationReadyDto | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -5216,16 +5221,7 @@ topP: number;
 /**
  * Top-k sampling for the claim judge. One takes the argmax token.
  */
-topK: number;
-/**
- * Output ceiling for one judge request.
- *
- * A batch is up to twelve verdicts, each carrying a quote of up to 240
- * characters, so a full batch needs well over a thousand tokens. Too low a
- * ceiling truncates the reply mid-array; the parser then salvages the
- * complete verdicts and the rest of the batch is silently left unjudged.
- */
-maxTokens: number }
+topK: number }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -6975,6 +6971,19 @@ export type VectorQuantizationDto =
  * searches rescore against full-precision vectors.
  */
 "i8"
+/**
+ * A finished check, addressed to the message it belongs to.
+ */
+export type VerificationReadyDto = { messageId: string;
+/**
+ * The same object persisted under `metadata.verification`.
+ */
+verification: JsonValue;
+/**
+ * The turn record with its "Checking the answer" step finished, when the
+ * turn kept one.
+ */
+turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
 /**
  * Response from web ingestion command

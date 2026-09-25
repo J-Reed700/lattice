@@ -585,6 +585,18 @@ export const TauriEventNames = {
 
 
 /**
+ * `status` values on `llm-stream` events that carry something other than text.
+ * `Verification` arrives after the turn has returned: the answer's grounding
+ * check runs in the background and reports on the turn's own request id.
+ */
+export const ChatStreamStatus = {
+  Step: 'step' as const,
+  Retrieval: 'retrieval' as const,
+  Verification: 'verification' as const,
+} as const;
+
+
+/**
  * Listen to a Tauri event with runtime validation of the payload
  *
  * This catches backend/frontend schema mismatches at runtime by validating

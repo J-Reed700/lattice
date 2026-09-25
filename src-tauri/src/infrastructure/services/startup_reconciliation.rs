@@ -6,6 +6,30 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+/// Close out grounding checks the last run never finished.
+///
+/// An answer is persisted with `verification.pending = true` and checked in a
+/// background task; if the app quits under that task the marker stays, and the
+/// message would show "Checking…" forever. Nothing re-runs the check (its
+/// evidence lived in the turn), so the honest state is "not checked".
+///
+/// # Returns
+/// Number of messages marked interrupted.
+pub async fn reconcile_interrupted_verifications(
+    pool: &sqlx::SqlitePool,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE conversation_messages \
+         SET metadata = json_set(metadata, '$.verification.pending', json('false'), \
+                                          '$.verification.interrupted', json('true')) \
+         WHERE json_valid(metadata) \
+           AND json_extract(metadata, '$.verification.pending') = 1",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Reconcile stale download sessions on app startup
 ///
 /// Finds downloads stuck in "Downloading" state (from app crash)
@@ -281,6 +305,62 @@ mod tests {
     use super::*;
     use crate::domain::download::DownloadSession;
     use crate::features::download::download_repository::mock::MockDownloadRepository;
+
+    #[tokio::test]
+    async fn a_check_the_last_run_never_finished_is_marked_not_checked() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c', 'c', 'm')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, metadata) in [
+            (
+                "waiting",
+                r#"{"verification":{"enabled":true,"pending":true},"turn":{"x":1}}"#,
+            ),
+            (
+                "checked",
+                r#"{"verification":{"enabled":true,"pending":false,"claimsEvaluated":3}}"#,
+            ),
+            ("off", r#"{"verification":{"enabled":false}}"#),
+        ] {
+            sqlx::query(
+                "INSERT INTO conversation_messages (id, conversation_id, role, content, metadata) \
+                 VALUES (?, 'c', 'assistant', 'a', ?)",
+            )
+            .bind(id)
+            .bind(metadata)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let marked = reconcile_interrupted_verifications(&pool).await.unwrap();
+        assert_eq!(marked, 1);
+
+        let waiting: String =
+            sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id = 'waiting'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let waiting: serde_json::Value = serde_json::from_str(&waiting).unwrap();
+        assert_eq!(waiting["verification"]["pending"], false);
+        assert_eq!(waiting["verification"]["interrupted"], true);
+        // The rest of the metadata is untouched.
+        assert_eq!(waiting["turn"]["x"], 1);
+
+        let checked: String =
+            sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id = 'checked'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!checked.contains("interrupted"));
+    }
 
     #[tokio::test]
     async fn orphan_cleanup_preserves_unreadable_and_valid_models_but_removes_orphans() {

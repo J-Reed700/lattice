@@ -569,3 +569,32 @@ fn web_query_strips_tracking_even_for_a_short_product_link() {
     assert!(!query.contains("opaqueidentifier"), "{query}");
     assert!(!query.contains("unrelated"), "{query}");
 }
+
+/// The intent classifier wanting the web used to switch the vault off: its
+/// `needs_web` became `force_web_search`, and the plan read that as "web
+/// instead of the library". Web now adds to the vault, and the two run side by
+/// side so both sets of sources reach the answer.
+#[test]
+fn an_intent_that_needs_the_web_still_searches_the_vault() {
+    let intent = crate::infrastructure::services::intent::TurnIntent {
+        needs_knowledge_base: false,
+        needs_web: true,
+        is_followup: false,
+        confidence: 0.9,
+    };
+    let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);
+    assert!(merged.force_web_search);
+    assert!(!merged.force_kb_search);
+
+    let decision = RouterDecisionOutcome {
+        action: RouterAction::NewSearch,
+        recent_doc_meta: None,
+        clarify_message: None,
+    };
+    let plan =
+        RetrievalPlan::from_router(&RouterSettingsDto::default(), &decision, "latest", merged);
+
+    assert!(plan.should_search_kb);
+    assert!(plan.should_search_web);
+    assert!(kb_can_run_alongside_external(merged));
+}

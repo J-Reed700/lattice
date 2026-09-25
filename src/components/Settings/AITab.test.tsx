@@ -53,7 +53,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
         semanticSearchTemplate: '',
       },
     },
-    verification: { enabled: true, temperature: 0, topP: 1, topK: 1, maxTokens: 2048 },
+    verification: { enabled: true, temperature: 0, topP: 1, topK: 1 },
     customTools: [],
   } as never,
   isLoading: false,
@@ -190,7 +190,6 @@ describe('PromptsTab verification', () => {
       temperature: 0,
       topP: 1,
       topK: 1,
-      maxTokens: 2048,
     };
   });
 
@@ -201,7 +200,7 @@ describe('PromptsTab verification', () => {
     expect(screen.getByLabelText('Temperature')).toHaveValue(0);
     expect(screen.getByLabelText('Top P')).toHaveValue(1);
     expect(screen.getByLabelText('Top K')).toHaveValue(1);
-    expect(screen.getByLabelText('Max tokens')).toHaveValue(2048);
+    expect(screen.queryByLabelText('Max tokens')).not.toBeInTheDocument();
   });
 
   it('explains why a verdict is not sampled', () => {
@@ -215,14 +214,12 @@ describe('PromptsTab verification', () => {
       temperature: 0,
       topP: 1,
       topK: 1,
-      maxTokens: 2048,
     };
     render(<PromptsTab />);
 
     expect(screen.getByLabelText('Temperature')).toBeDisabled();
     expect(screen.getByLabelText('Top P')).toBeDisabled();
     expect(screen.getByLabelText('Top K')).toBeDisabled();
-    expect(screen.getByLabelText('Max tokens')).toBeDisabled();
   });
 
   it('persists a changed temperature without dropping the other verification fields', async () => {
@@ -234,7 +231,7 @@ describe('PromptsTab verification', () => {
 
     await waitFor(() => {
       expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
-        verification: { enabled: true, temperature: 0.5, topP: 1, topK: 1, maxTokens: 2048 },
+        verification: { enabled: true, temperature: 0.5, topP: 1, topK: 1 },
       });
     });
   });
@@ -242,13 +239,13 @@ describe('PromptsTab verification', () => {
   it('clamps an out-of-range value to the field bounds before saving', async () => {
     render(<PromptsTab />);
 
-    const maxTokens = screen.getByLabelText('Max tokens');
-    fireEvent.change(maxTokens, { target: { value: '10' } });
-    fireEvent.blur(maxTokens);
+    const topK = screen.getByLabelText('Top K');
+    fireEvent.change(topK, { target: { value: '9999' } });
+    fireEvent.blur(topK);
 
     await waitFor(() => {
       expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
-        verification: { enabled: true, temperature: 0, topP: 1, topK: 1, maxTokens: 256 },
+        verification: { enabled: true, temperature: 0, topP: 1, topK: 500 },
       });
     });
   });

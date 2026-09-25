@@ -255,11 +255,9 @@ impl Container {
             // A ceiling, not an allowance: each caller sends the cap its own
             // work needs and `max_output_tokens` only ever tightens this one.
             // It was 512, which was below what several callers were already
-            // asking for — memory extraction requests 8192 and the claim judge
-            // returns up to twelve verdicts with quotes — so their JSON was cut
-            // off mid-array and read back as malformed or half a batch.
-            max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS
-                .max(settings.llm.verification.max_tokens as usize),
+            // asking for — memory extraction requests 8192 — so their JSON was
+            // cut off mid-array and read back as malformed.
+            max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
             repeat_penalty: settings.llm.repeat_penalty,
         };
 

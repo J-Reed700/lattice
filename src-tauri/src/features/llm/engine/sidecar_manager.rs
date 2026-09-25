@@ -2499,6 +2499,10 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
         config.n_gpu_layers.to_string(),
         "--ctx-size".to_string(),
         config.context_size.to_string(),
+        // The GGUF's own Jinja chat template is what knows the model's native
+        // tool-call format; without it llama-server cannot render `tools` or
+        // parse `tool_calls` back out, and the tool loop gets plain text.
+        "--jinja".to_string(),
     ]
 }
 
@@ -3878,6 +3882,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         assert!(args.iter().any(|a| a == "127.0.0.1"));
         assert!(args.iter().any(|a| a == "-ngl"));
         assert!(args.iter().any(|a| a == "99"));
+        assert!(args.iter().any(|a| a == "--jinja"));
     }
 
     /// An unauthenticated loopback port is reachable from every other process

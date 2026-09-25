@@ -188,6 +188,63 @@ describe('useConversationsController optimistic cleanup', () => {
   });
 
   /**
+   * The answer returns before its grounding check; the check lands on the
+   * same channel afterwards and must reach the badge without a reload.
+   */
+  it('fills in the answer\'s check when it lands after the turn returned', async () => {
+    let emit: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async (_event, handler) => {
+      emit = handler as typeof emit;
+      return unlisten;
+    });
+    conversationUiStore.setState({ activeConversationId: 'conversation-1' });
+    const answer = {
+      id: 'answer-1',
+      conversationId: 'conversation-1',
+      role: 'assistant',
+      content: 'Tomatoes need sun [1].',
+      tokens: 5,
+      status: 'completed',
+      createdAt: '2026-09-24T00:00:00.000Z',
+      metadata: JSON.stringify({ verification: { enabled: true, pending: true } }),
+    };
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [answer], total: 1 } });
+    api.chatWithConversation = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { conversationId: 'conversation-1', message: answer.content, messages: [answer], contextUsed: 0, sources: [] },
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    await act(async () => { await result.current.sendMessage('Where do tomatoes go?'); });
+    expect(result.current.messageVerification.get('answer-1')?.pending).toBe(true);
+    // Still listening: the check has not arrived.
+    expect(unlisten).not.toHaveBeenCalled();
+
+    const requestId = api.chatWithConversation.mock.calls[0][3];
+    act(() => emit?.({ payload: {
+      conversationId: 'conversation-1',
+      requestId,
+      done: false,
+      status: 'verification',
+      verification: {
+        messageId: 'answer-1',
+        verification: {
+          enabled: true,
+          claimsEvaluated: 1,
+          supportedClaims: 1,
+          verdictCounts: { supported: 1, contradicted: 0, unsupported: 0, unverified: 0 },
+        },
+      },
+    } }));
+
+    await waitFor(() => expect(result.current.messageVerification.get('answer-1')?.claimsEvaluated).toBe(1));
+    expect(result.current.messageVerification.get('answer-1')?.pending).toBeUndefined();
+    expect(unlisten).toHaveBeenCalled();
+  });
+
+  /**
    * A finish event carries the id of its start. Appending it would make a
    * finished step jump to the bottom of the timeline the moment it completed.
    */

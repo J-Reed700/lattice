@@ -378,6 +378,22 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         }
     });
 
+    // A grounding check the last run quit under would show "Checking…" for
+    // good; mark it not checked before the first conversation loads.
+    let verification_pool = container.db_pool().clone();
+    tokio::spawn(async move {
+        use crate::infrastructure::services::startup_reconciliation::reconcile_interrupted_verifications;
+        match reconcile_interrupted_verifications(&verification_pool).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "Marked interrupted grounding checks as not checked");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, "Failed to reconcile interrupted grounding checks");
+            }
+        }
+    });
+
     // Collect library blobs nothing references any more: an import that
     // crashed before it committed, or a database that was reset out from under
     // the files. Without this they stay on disk forever and get packed into

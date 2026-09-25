@@ -164,10 +164,6 @@ pub(super) async fn run_retrieval_pipeline(
             tool_output_settings.excerpt_chars as usize,
         )
         .await;
-
-        retrieval_plan.enable_kb_fallback(
-            outcome.followup_context.is_none() && !search_flags.force_web_search,
-        );
     }
 
     let external = ExternalLookup {

@@ -22,3 +22,17 @@ describe('verificationSummaryLine', () => {
     );
   });
 });
+
+describe('verificationSummaryLine with unchecked claims', () => {
+  it('does not count an unchecked claim as ungrounded', () => {
+    expect(verificationSummaryLine(5, 0, 2)).toBe(
+      'Every checked claim is grounded in your sources · 3 of 5 claims checked'
+    );
+  });
+
+  it('names unchecked claims beside the ungrounded ones', () => {
+    expect(verificationSummaryLine(5, 1, 2)).toBe(
+      '1 of 5 claims could not be grounded in your sources · 2 not checked'
+    );
+  });
+});

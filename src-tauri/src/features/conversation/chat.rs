@@ -94,7 +94,8 @@ pub use self::turn_record::{
     TurnModelDto, TurnRecordDto, TurnRouterDto, TurnStepDto, TurnStepKind, TurnStepState,
     TurnTimingDto, TurnTokensDto,
 };
-use self::verification::{GroundingReport, GroundingVerifier};
+pub use self::verification::VerificationReadyDto;
+use self::verification::{pending_metadata, BackgroundVerification};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -281,6 +282,11 @@ pub struct ChatStreamEventDto {
     /// the timeline under the finished answer is this same list.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<TurnStepDto>,
+
+    /// A grounding check that finished after the turn returned. Arrives once
+    /// per verified answer, possibly well after `done`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationReadyDto>,
 }
 
 impl ChatStreamEventDto {
@@ -1221,60 +1227,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             // it against — judging it only reports every sentence unsupported.
             let verification_enabled =
                 settings.llm.verification.enabled && !search_flags.closed_book;
-            let verify_step = verification_enabled
-                .then(|| recorder.begin(TurnStepKind::Verify, "Checking the answer", None));
-            let grounding_report = if verification_enabled {
-                // The utility model judges claims so a chat turn is not charged a
-                // second pass through the large model. Without one configured the
-                // chat LLM stands in, exactly as retrieval planning does; only a
-                // hard load failure drops back to lexical-only verification.
-                let judge_llm = match container.get_or_load_utility_llm().await {
-                    Ok(Some(utility)) => Some(utility),
-                    Ok(None) => Some(Arc::clone(&llm)),
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "Utility LLM load failed — grounding stays lexical for this turn"
-                        );
-                        None
-                    }
-                };
-                let evidence =
-                    source_snapshots::with_archived_page_text(container, &conv_id, &sources).await;
-                GroundingVerifier::new(judge_llm)
-                    .with_tuning(&settings.llm.verification)
-                    .verify(&assistant_response, &evidence)
-                    .await
-            } else {
-                GroundingReport::default()
-            };
-            if let Some(step) = verify_step {
-                recorder.end(
-                    &step,
-                    TurnStepState::Done,
-                    Some(verification_result_line(&grounding_report)),
-                );
+            // Begun here and left running: the check itself happens after the
+            // answer is persisted and returned (see `BackgroundVerification`),
+            // which finishes this step in the persisted record when it lands.
+            if verification_enabled {
+                recorder.begin(TurnStepKind::Verify, "Checking the answer", None);
             }
-            if verification_enabled && grounding_report.claims_evaluated > 0 {
-                info!(
-                    conversation_id = conv_id.as_str(),
-                    claims_evaluated = grounding_report.claims_evaluated,
-                    supported_claims = grounding_report.supported_claims,
-                    unsupported_claims = grounding_report.unsupported_count(),
-                    contradicted_claims = grounding_report.contradicted_count(),
-                    judged_claims = grounding_report.judged_claim_count(),
-                    grounded_ratio = grounding_report.grounded_ratio(),
-                    verification_ms = elapsed_ms(verification_start),
-                    "Response grounding verification complete"
-                );
-            }
-            let verification_metadata = if verification_enabled {
-                Some(grounding_report.metadata_json())
+            let verification_metadata = Some(if verification_enabled {
+                pending_metadata()
             } else {
-                Some(serde_json::json!({
-                    "enabled": false
-                }))
-            };
+                serde_json::json!({ "enabled": false })
+            });
             flow_metrics.verification_ms = elapsed_ms(verification_start);
 
             // Built here rather than after persistence so `totalMs` is time to
@@ -1301,6 +1264,14 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 router: router_record,
             };
 
+            let background_verification = verification_enabled.then(|| {
+                (
+                    assistant_response.clone(),
+                    sources.clone(),
+                    turn_record.clone(),
+                )
+            });
+
             let finalize_start = Instant::now();
             let mut chat_response = finalize_successful_turn(
                 container,
@@ -1320,6 +1291,37 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             )
             .await?;
             flow_metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
+
+            // The answer the turn just persisted is the newest assistant message.
+            let answer_id = chat_response
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant")
+                .map(|message| message.id.clone());
+            if let (Some((response, sources, turn)), Some(message_id)) =
+                (background_verification, answer_id)
+            {
+                let window = window.clone();
+                BackgroundVerification {
+                    container: container.clone(),
+                    conversation_id: conv_id.clone(),
+                    request_id: turn_id.clone(),
+                    message_id,
+                    response,
+                    sources,
+                    tuning: settings.llm.verification.clone(),
+                    chat_llm: Arc::clone(&llm),
+                    turn: Some(turn),
+                    started: verification_start,
+                    emit: Box::new(move |payload| {
+                        if let Err(error) = window.emit("llm-stream", payload) {
+                            warn!(%error, "Failed to emit a finished grounding check");
+                        }
+                    }),
+                }
+                .spawn();
+            }
             flow_metrics.total_ms = elapsed_ms(flow_start);
             let retrieval_sub = retrieval_subtimings_or_default(&flow_metrics);
             let generation_sub = generation_subtimings_or_default(&flow_metrics);
@@ -1435,20 +1437,6 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-/// What the `verify` step says it found.
-///
-/// An answer with nothing to check is not an answer that failed its check, so
-/// it says so in those words rather than reporting "0 of 0 backed".
-fn verification_result_line(report: &GroundingReport) -> String {
-    if report.claims_evaluated == 0 {
-        return "nothing to check against sources".to_string();
-    }
-    format!(
-        "{} of {} claims backed",
-        report.supported_claims, report.claims_evaluated
-    )
 }
 
 /// Generation allowance for one turn, shared by tool rounds and provider retries.

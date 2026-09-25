@@ -20,6 +20,7 @@ import type {
   DocumentSpaceMembershipDto,
 } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
+import { ChatStreamStatus } from '@/types/events';
 import type {
   CompactionRecord,
   Conversation,
@@ -224,6 +225,8 @@ const parseVerification = (raw: unknown): MessageVerificationSummary | null => {
   const value = raw as Record<string, unknown>;
   const parsed = MessageVerificationSummarySchema.safeParse({
     enabled: Boolean(value.enabled),
+    pending: value.pending,
+    interrupted: value.interrupted,
     claimsEvaluated: value.claimsEvaluated ?? value.claims_evaluated,
     supportedClaims: value.supportedClaims ?? value.supported_claims,
     supportedClaimNotes: value.supportedClaimNotes ?? value.supported_claim_notes,
@@ -235,6 +238,65 @@ const parseVerification = (raw: unknown): MessageVerificationSummary | null => {
     judgeUsed: value.judgeUsed ?? value.judge_used,
   });
   return parsed.success ? parsed.data : null;
+};
+
+/** A grounding check that finished after its turn returned. */
+interface VerificationPatch {
+  messageId: string;
+  verification: unknown;
+  turn?: unknown;
+}
+
+/**
+ * How long a turn keeps listening for its answer's background check. The
+ * judge's own budget is ninety seconds; loading the utility model and reading
+ * the cited pages come on top. Past this the badge stays on "checking" until
+ * the next load reads the persisted result.
+ */
+const VERIFICATION_WAIT_MS = 5 * 60 * 1000;
+
+/** Write a finished check into a message's metadata, as the backend persisted it. */
+const applyVerificationPatch = (
+  messages: ConversationMessage[],
+  patch: VerificationPatch
+): ConversationMessage[] => messages.map(message => {
+  if (message.id !== patch.messageId) return message;
+  let metadata: Record<string, unknown> = {};
+  if (message.metadata) {
+    try {
+      metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+    } catch {
+      metadata = {};
+    }
+  }
+  metadata.verification = patch.verification;
+  if (patch.turn) metadata.turn = patch.turn;
+  return { ...message, metadata: JSON.stringify(metadata) };
+});
+
+/** Every message still waiting on its check is marked as never having got it. */
+const markVerificationInterrupted = (messages: ConversationMessage[]): ConversationMessage[] =>
+  messages.map(message => {
+    if (!isVerificationPending(message) || !message.metadata) return message;
+    try {
+      const metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+      const verification = metadata.verification as Record<string, unknown>;
+      metadata.verification = { ...verification, pending: false, interrupted: true };
+      return { ...message, metadata: JSON.stringify(metadata) };
+    } catch {
+      return message;
+    }
+  });
+
+/** Whether a message was persisted with its check still running. */
+const isVerificationPending = (message: ConversationMessage | undefined): boolean => {
+  if (!message?.metadata) return false;
+  try {
+    const metadata = JSON.parse(message.metadata) as { verification?: { pending?: unknown } };
+    return metadata.verification?.pending === true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -828,14 +890,40 @@ export function useConversationsController(): ConversationsState {
     };
 
     let unlisten: (() => void) | undefined;
+    // The answer returns before its grounding check finishes; the check
+    // arrives on this same channel afterwards. The listener stays up for it
+    // after the turn settles, and only for it.
+    let awaitingVerification = false;
+    let verificationConversationId = requestConversationId;
+    let verificationTimer: ReturnType<typeof setTimeout> | undefined;
+    let readyVerification: VerificationPatch | null = null;
+    const stopListening = () => {
+      if (verificationTimer) clearTimeout(verificationTimer);
+      unlisten?.();
+      unlisten = undefined;
+    };
     try {
       unlisten = await listen<ChatStreamEventDto>('llm-stream', event => {
         const payload = event.payload;
-        if (payload.conversationId !== requestConversationId || payload.requestId !== requestId) return;
-        if (payload.done) {
-          unlisten?.();
+        // Matched on the request alone: a turn that created its conversation
+        // reports the conversation's real id, not the one it was asked for.
+        if (payload.requestId !== requestId) return;
+        if (payload.status === ChatStreamStatus.Verification && payload.verification) {
+          const patch: VerificationPatch = {
+            messageId: payload.verification.messageId,
+            verification: payload.verification.verification,
+            turn: payload.verification.turn ?? undefined,
+          };
+          readyVerification = patch;
+          queryClient.setQueryData<ConversationMessage[]>(
+            conversationKeys.messages(payload.conversationId),
+            current => (current ? applyVerificationPatch(current, patch) : current)
+          );
+          if (awaitingVerification) stopListening();
           return;
         }
+        if (payload.conversationId !== requestConversationId) return;
+        if (payload.done) return;
         // A round can run for minutes without a single character of text. The
         // steps are the only thing distinguishing "still working" from "hung",
         // and unlike the note they replace they are kept: the same list is
@@ -909,12 +997,19 @@ export function useConversationsController(): ConversationsState {
         sources?: SourceWithMetadata[];
       };
       const responseId = raw.conversationId ?? raw.conversation_id;
+      verificationConversationId = responseId ?? requestConversationId;
       if (!responseId) {
         settleOptimisticMessages('Chat response missing conversation ID. Please try again.');
         return 'failed';
       }
-      const responseMessages = raw.messages.map(toConversationMessage);
+      // The check may have landed while the response was on its way; the
+      // response itself was read before it did.
+      const persistedMessages = raw.messages.map(toConversationMessage);
+      const responseMessages = readyVerification
+        ? applyVerificationPatch(persistedMessages, readyVerification)
+        : persistedMessages;
       const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
+      awaitingVerification = isVerificationPending(lastAssistant);
       if (lastAssistant && raw.sources?.length && !lastAssistant.sources?.length) {
         lastAssistant.sources = parseSources(raw.sources);
       }
@@ -955,7 +1050,19 @@ export function useConversationsController(): ConversationsState {
       settleOptimisticMessages(error instanceof Error ? error.message : String(error));
       return 'failed';
     } finally {
-      unlisten?.();
+      if (awaitingVerification && unlisten) {
+        // A check that never reports must not leave the badge on "Checking…"
+        // until the conversation is reopened: mark it interrupted and stop.
+        const pendingMessages = conversationKeys.messages(verificationConversationId);
+        verificationTimer = setTimeout(() => {
+          queryClient.setQueryData<ConversationMessage[]>(pendingMessages, current =>
+            current ? markVerificationInterrupted(current) : current
+          );
+          stopListening();
+        }, VERIFICATION_WAIT_MS);
+      } else {
+        stopListening();
+      }
       pendingCancellationRequests.delete(requestId);
       conversationUiStore.setState(current => {
         const inFlightGenerations = new Map(current.inFlightGenerations);

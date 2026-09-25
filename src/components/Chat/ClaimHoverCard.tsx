@@ -1,4 +1,4 @@
-import { CircleCheck, CircleHelp, CircleX } from 'lucide-react';
+import { CircleCheck, CircleDashed, CircleHelp, CircleX } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
@@ -30,11 +30,35 @@ function headline(verdict: ClaimVerdict) {
   if (verdict.verdict === 'contradicted') {
     return { icon: CircleX, tone: 'text-[hsl(var(--danger-fg))]', text: 'The source says otherwise' };
   }
+  if (verdict.verdict === 'unverified') {
+    return { icon: CircleDashed, tone: 'text-text-muted', text: 'Not checked' };
+  }
   return {
     icon: CircleHelp,
     tone: 'text-[hsl(var(--warning-fg))]',
     text: verdict.citationIds.length > 0 ? 'Not found in the cited passage' : 'No source cited for this',
   };
+}
+
+/** Why the claim was not checked, or how it was. */
+function howChecked(verdict: ClaimVerdict): string {
+  if (verdict.verdict === 'unverified') {
+    switch (verdict.unverifiedReason) {
+      case 'budget':
+        return 'The check ran out of time before reaching this sentence';
+      case 'no_text':
+        return 'The cited page has no saved text to check against';
+      case 'judge_failed':
+        return 'The checking model gave no usable answer for this sentence';
+      default:
+        return 'Nothing read the cited passage against this sentence';
+    }
+  }
+  if (verdict.method === 'judge') {
+    const sure = verdict.confidence != null ? ` · ${Math.round(verdict.confidence * 100)}% sure` : '';
+    return `The model read the passage against this sentence${sure}`;
+  }
+  return 'Matched on shared wording, not read for meaning';
 }
 
 /**
@@ -71,9 +95,7 @@ export function ClaimHoverCard({ hover, verdict, citationMap }: ClaimHoverCardPr
         {text}
       </p>
       <p className="mt-0.5 pl-5 text-xs text-text-muted">
-        {verdict.method === 'judge'
-          ? 'The model read the passage against this sentence'
-          : 'Matched on shared wording, not read for meaning'}
+        {howChecked(verdict)}
       </p>
       {verdict.evidenceQuote ? (
         <p className="mt-2.5 line-clamp-5 border-l-2 border-accent/50 pl-2.5 font-serif text-[13.5px] leading-relaxed text-text-secondary">

@@ -19,6 +19,7 @@ use tracing::{debug, info, warn};
 use super::SearchFlags;
 mod conversation_helpers;
 mod corpus_plan;
+pub(super) use corpus_plan::fused_search;
 mod external_query;
 pub(super) use external_query::search_text_without_url_tracking;
 mod followup_context;
@@ -259,21 +260,19 @@ impl RetrievalPlan {
 
         Self {
             route_action: route_action.clone(),
+            // Web adds to the vault; it never replaces it. The intent
+            // classifier sets `force_web_search` whenever a question looks
+            // current, and reading that as "skip the library" answered
+            // questions the user's own documents covered from the web alone.
+            // A closed-book turn never reaches this plan.
             should_search_kb: search_flags.force_kb_search
-                || (!search_flags.force_web_search
-                    && matches!(
-                        route_action,
-                        RouterAction::NewSearch | RouterAction::UseLastDocument
-                    )),
+                || matches!(
+                    route_action,
+                    RouterAction::NewSearch | RouterAction::UseLastDocument
+                ),
             should_search_web: search_flags.force_web_search,
             should_search_wiki: search_flags.force_wiki_search,
             short_circuit_response,
-        }
-    }
-
-    fn enable_kb_fallback(&mut self, enabled: bool) {
-        if enabled {
-            self.should_search_kb = true;
         }
     }
 }

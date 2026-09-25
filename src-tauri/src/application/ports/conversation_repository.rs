@@ -65,4 +65,12 @@ pub trait ConversationRepositoryPort: Send + Sync {
         status: &str,
     ) -> Result<ConversationMessage>;
     async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()>;
+    /// Set top-level keys of a message's metadata object, leaving every other
+    /// key as it is. For results that land after the message was written, such
+    /// as a grounding check that runs once the answer is already on screen.
+    async fn set_message_metadata_fields(
+        &self,
+        message_id: &str,
+        fields: Vec<(String, serde_json::Value)>,
+    ) -> Result<()>;
 }

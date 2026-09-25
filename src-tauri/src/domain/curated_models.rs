@@ -29,6 +29,35 @@
 use crate::domain::model_management::ModelFormat;
 use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
 
+/// Capability tag for a chat model whose GGUF chat template carries a native
+/// tool-call format that llama.cpp parses under `--jinja`.
+///
+/// Set only where that is known: Qwen 3.5 and Llama 3.1 ship such templates.
+/// TinyLlama, Phi-3/3.5, Mistral 7B v0.2 and Mixtral v0.1 have none, and
+/// Llama 3.2 3B's small-model tool use is too unreliable to turn on by default.
+pub const TOOL_CALLING_CAPABILITY: &str = "tool-calling";
+
+/// Whether a downloaded chat-model file is a catalog entry tagged for tool
+/// calling. Matched on the file name, which is the entry's `default_filename`
+/// for every catalog download.
+///
+/// `false` for anything else, including another quantisation of a tagged
+/// model fetched from the Hugging Face browser: an unknown file has made no
+/// promise about its template, and silence reads as "no tools".
+pub fn chat_model_file_supports_tool_calling(file_name: &str) -> bool {
+    let file_name = file_name.trim();
+    get_curated_llm_models().iter().any(|model| {
+        model
+            .default_filename
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(file_name))
+            && model
+                .capabilities
+                .iter()
+                .any(|capability| capability == TOOL_CALLING_CAPABILITY)
+    })
+}
+
 /// Get curated list of LLM models for text generation and chat.
 ///
 /// Returns models across size ranges:
@@ -167,7 +196,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             context_length: 262144,
             performance_tier: PerformanceTier::Fast,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
-            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into(), TOOL_CALLING_CAPABILITY.into()],
             download_url: Some("https://huggingface.co/unsloth/Qwen3.5-2B-GGUF".into()),
             license: "Apache-2.0".into(),
             requires_auth: false,
@@ -190,7 +219,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             context_length: 262144,
             performance_tier: PerformanceTier::Balanced,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
-            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into(), TOOL_CALLING_CAPABILITY.into()],
             download_url: Some("https://huggingface.co/unsloth/Qwen3.5-4B-GGUF".into()),
             license: "Apache-2.0".into(),
             requires_auth: false,
@@ -213,7 +242,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             context_length: 262144,
             performance_tier: PerformanceTier::Balanced,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q8_0".into()],
-            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "multilingual".into(), "long-context".into(), TOOL_CALLING_CAPABILITY.into()],
             download_url: Some("https://huggingface.co/unsloth/Qwen3.5-9B-GGUF".into()),
             license: "Apache-2.0".into(),
             requires_auth: false,
@@ -237,7 +266,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             context_length: 131072,
             performance_tier: PerformanceTier::Accurate,
             supported_quantizations: vec!["Q4_K_M".into(), "Q5_K_M".into(), "Q6_K".into()],
-            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "long-context".into()],
+            capabilities: vec!["chat".into(), "code".into(), "reasoning".into(), "long-context".into(), TOOL_CALLING_CAPABILITY.into()],
             download_url: Some("https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF".into()),
             license: "Llama-3.1".into(),
             requires_auth: false,
@@ -677,6 +706,28 @@ mod tests {
     fn test_llm_models_count() {
         let models = get_curated_llm_models();
         assert_eq!(models.len(), 10);
+    }
+
+    /// The default install runs whatever tier first run picks, so each tier is
+    /// what turns the tool loop on for most users.
+    #[test]
+    fn every_first_run_tier_can_call_tools_and_unknown_files_cannot() {
+        for ram in [4.0, 12.0, 32.0] {
+            let id = recommend_chat_model_for_ram(ram);
+            let entry = get_curated_llm_models()
+                .into_iter()
+                .find(|model| model.id == id)
+                .expect("tier is in the catalog");
+            let file = entry.default_filename.expect("tier names a file");
+            assert!(chat_model_file_supports_tool_calling(&file), "{file}");
+            assert!(chat_model_file_supports_tool_calling(&file.to_lowercase()));
+        }
+        assert!(!chat_model_file_supports_tool_calling(
+            "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+        ));
+        assert!(!chat_model_file_supports_tool_calling(
+            "my-own-finetune.gguf"
+        ));
     }
 
     /// First run downloads whatever this names, so every tier has to be a real

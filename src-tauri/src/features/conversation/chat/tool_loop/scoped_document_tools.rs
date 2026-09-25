@@ -75,28 +75,47 @@ pub(super) async fn execute(
         return container.function_executor().execute(call).await;
     }
     let input: SemanticSearchInput = serde_json::from_value(call.arguments.clone())?;
-    let request = SearchRequestDto {
-        query: input.query.clone(),
-        limit: Some(input.limit.clamp(1, 50)),
-        threshold: Some(input.threshold.clamp(0.0, 1.0)),
-        mode: match input.search_mode {
-            SearchMode::Semantic => SearchModeDto::Vector,
-            SearchMode::Keyword => SearchModeDto::BM25,
-            SearchMode::Hybrid => SearchModeDto::Hybrid {
-                vector_weight: 0.5,
-                bm25_weight: 0.5,
-            },
-        },
+    let limit = input.limit.clamp(1, 50);
+    let (hits, query_time_ms) = match input.search_mode {
+        // The default mode, and the one the model almost always sends: searched
+        // with first-pass retrieval's own branches and fusion, so a follow-up
+        // search ranks this space the way the search that opened the turn did.
+        SearchMode::Hybrid => {
+            let start = std::time::Instant::now();
+            let hits = crate::features::conversation::chat::retrieval::fused_search(
+                container.semantic_search_use_case().as_ref(),
+                container.hybrid_search_use_case().as_ref(),
+                &input.query,
+                &allowed,
+                limit,
+            )
+            .await?;
+            (hits, start.elapsed().as_millis() as u64)
+        }
+        // A single branch the model asked for by name.
+        SearchMode::Semantic | SearchMode::Keyword => {
+            let request = SearchRequestDto {
+                query: input.query.clone(),
+                limit: Some(limit),
+                threshold: Some(input.threshold.clamp(0.0, 1.0)),
+                mode: if matches!(input.search_mode, SearchMode::Semantic) {
+                    SearchModeDto::Vector
+                } else {
+                    SearchModeDto::BM25
+                },
+            };
+            let response = container
+                .hybrid_search_use_case()
+                // `allowed` is the space plus the chat's attachments; a membership
+                // filter as well would hide the attachments from keyword search.
+                .execute_scoped(request, None, Some(&allowed))
+                .await?;
+            (response.results, response.query_time_ms)
+        }
     };
-    let response = container
-        .hybrid_search_use_case()
-        // `allowed` is the space plus the chat's attachments; a membership
-        // filter as well would hide the attachments from keyword search.
-        .execute_scoped(request, None, Some(&allowed))
-        .await?;
     let documents = container.document_repository().list_metadata().await?;
     let mut results = Vec::new();
-    for result in response.results {
+    for result in hits {
         let Some(doc) = documents
             .iter()
             .find(|doc| Some(doc.id().as_str()) == result.document_id.as_deref())
@@ -141,7 +160,7 @@ pub(super) async fn execute(
         total_found: results.len(),
         results,
         documents: vec![],
-        search_time_ms: response.query_time_ms as f64,
+        search_time_ms: query_time_ms as f64,
         query: input.query,
     };
     Ok(FunctionResult::success(serde_json::to_value(output)?))
