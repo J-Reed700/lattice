@@ -282,10 +282,21 @@ async fn create_local_llm_sidecar(
         .unwrap_or("local")
         .to_string();
 
-    let client = SidecarLLMClient::new(handle, model_name, generation_config)?;
-    info!(binary, n_gpu_layers, "Local LLM (sidecar) ready");
+    let supports_tools = model_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(crate::domain::curated_models::chat_model_file_supports_tool_calling);
 
-    Ok(Arc::new(SidecarPortAdapter { client }))
+    let client = SidecarLLMClient::new(handle, model_name, generation_config)?;
+    info!(
+        binary,
+        n_gpu_layers, supports_tools, "Local LLM (sidecar) ready"
+    );
+
+    Ok(Arc::new(SidecarPortAdapter {
+        client,
+        supports_tools,
+    }))
 }
 
 /// Adapts `SidecarLLMClient` (LLMClient trait) to `LLMPort`. The
@@ -294,53 +305,54 @@ async fn create_local_llm_sidecar(
 /// message rather than parsed into role-tagged history.
 struct SidecarPortAdapter {
     client: crate::features::llm::engine::sidecar_client::SidecarLLMClient,
+    /// Whether the loaded GGUF is a catalog model whose chat template carries
+    /// a native tool-call format. Unknown files stay without tools: a template
+    /// that cannot render `tools` answers a tool request with a 500 or with
+    /// prose pretending to be a call.
+    supports_tools: bool,
 }
 
-/// Flatten a typed request into the role/content pairs the OpenAI-compat
-/// endpoint accepts.
-///
-/// Tool traffic cannot legitimately arrive here — the adapter reports no tool
-/// support — so a tool item is a caller bug and is refused rather than dropped
-/// into the prompt as untagged text.
-fn sidecar_messages(
-    input: &[crate::application::ports::llm_port::CompletionInput],
-) -> Result<Vec<(&'static str, String)>> {
-    use crate::application::ports::llm_port::CompletionInput;
+impl SidecarPortAdapter {
+    /// Messages and tools for a typed request, refusing tool traffic when the
+    /// model cannot take it rather than letting it reach the template as text.
+    fn typed_parts(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+    ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>)> {
+        use crate::application::ports::llm_port::CompletionInput;
 
-    fn role_of(role: &str) -> &'static str {
-        match role {
-            "system" | "developer" => "system",
-            "assistant" => "assistant",
-            _ => "user",
+        let carries_tools = !request.tools.is_empty()
+            || request.input.iter().any(|item| {
+                matches!(
+                    item,
+                    CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. }
+                )
+            });
+        if carries_tools && !self.supports_tools {
+            return Err(AppError::InvalidConfig(
+                "This local model does not support tool calling".into(),
+            ));
         }
+        let messages = crate::features::llm::llama_cpp::chat_messages(&request.input)?;
+        let tools = (!request.tools.is_empty())
+            .then(|| crate::features::llm::llama_cpp::tool_specs(&request.tools));
+        Ok((messages, tools))
     }
+}
 
-    input
-        .iter()
-        .map(|item| match item {
-            CompletionInput::Message { role, content } => Ok((role_of(role), content.to_string())),
-            CompletionInput::Native { value } => {
-                let role = value
-                    .get("role")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("user");
-                let content = value
-                    .get("content")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::InvalidInput(
-                            "The bundled local model accepts text messages only".into(),
-                        )
-                    })?;
-                Ok((role_of(role), content.to_string()))
-            }
-            CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => {
-                Err(AppError::InvalidConfig(
-                    "The bundled local model does not support tool calling".into(),
-                ))
-            }
-        })
-        .collect()
+fn sidecar_tuning<'a>(
+    request: &'a crate::application::ports::llm_port::CompletionRequest,
+    tools: Option<&'a serde_json::Value>,
+) -> crate::features::llm::engine::sidecar_client::RequestTuning<'a> {
+    crate::features::llm::engine::sidecar_client::RequestTuning {
+        reasoning_effort: request.reasoning_effort.as_deref(),
+        json_schema: request.json_schema.as_ref(),
+        time_budget: Some(request.effective_time_budget()),
+        sampling: request.sampling,
+        max_output_tokens: request.max_output_tokens,
+        tools,
+        want_logprobs: request.want_logprobs,
+    }
 }
 
 #[async_trait]
@@ -356,39 +368,34 @@ impl LLMPort for SidecarPortAdapter {
         &self,
         request: &crate::application::ports::llm_port::CompletionRequest,
     ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::CompletionResponse;
-        use crate::features::llm::engine::sidecar_client::RequestTuning;
-
-        if !request.tools.is_empty() {
-            return Err(AppError::InvalidConfig(
-                "The bundled local model does not support tool calling".into(),
-            ));
-        }
-
-        let messages = sidecar_messages(&request.input)?;
-        let outcome = self
-            .client
-            .complete_messages(
-                &messages,
-                RequestTuning {
-                    reasoning_effort: request.reasoning_effort.as_deref(),
-                    json_schema: request.json_schema.as_ref(),
-                    time_budget: Some(request.effective_time_budget()),
-                    sampling: request.sampling,
-                    max_output_tokens: request.max_output_tokens,
-                },
-            )
+        let (messages, tools) = self.typed_parts(request)?;
+        self.client
+            .complete_typed(messages, sidecar_tuning(request, tools.as_ref()))
             .await
-            .map_err(|e| AppError::Other(format!("LLM completion failed: {e}")))?;
+    }
 
-        Ok(CompletionResponse {
-            text: outcome.text,
-            tool_calls: Vec::new(),
-            input_tokens: outcome.input_tokens,
-            output_tokens: outcome.output_tokens,
-            finish_reason: outcome.finish_reason,
-            provider_output: serde_json::Value::Null,
-        })
+    async fn complete_with_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        let (messages, tools) = self.typed_parts(request)?;
+        let budget = request.effective_time_budget();
+        tokio::time::timeout(
+            budget,
+            self.client.complete_typed_streaming(
+                messages,
+                sidecar_tuning(request, tools.as_ref()),
+                on_text,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            AppError::ServiceNotAvailable(format!(
+                "Local model generation exceeded its {}-minute time budget",
+                budget.as_secs().div_ceil(60).max(1)
+            ))
+        })?
     }
 
     async fn generate(
@@ -475,9 +482,7 @@ impl LLMPort for SidecarPortAdapter {
     }
 
     fn supports_tool_calling(&self) -> bool {
-        // Keep disabled until the catalog records tool support for shipped
-        // GGUF models.
-        false
+        self.supports_tools
     }
 
     fn provider_name(&self) -> &str {

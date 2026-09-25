@@ -672,6 +672,93 @@ async fn plan_with(
     serde_json::from_str::<CorpusSearchPlan>(response)?.validate(catalog)
 }
 
+/// One query through the vector and keyword branches over an allow-list,
+/// each branch returned with its fusion weight. Also returns how many branches
+/// answered, so a caller can tell "nothing matched" from "search is down".
+async fn search_branches(
+    semantic: &SemanticSearchUseCase,
+    hybrid: &HybridSearchUseCase,
+    query: &str,
+    document_ids: &HashSet<String>,
+    limit: usize,
+) -> (Vec<(f32, Vec<SearchResultDto>)>, usize) {
+    let vector = semantic.execute_scoped(
+        SearchRequestDto {
+            query: query.to_string(),
+            limit: Some(limit * 3),
+            threshold: Some(0.15),
+            mode: SearchModeDto::Vector,
+        },
+        Some(document_ids),
+    );
+    let lexical = hybrid.execute_scoped(
+        SearchRequestDto {
+            query: query.to_string(),
+            limit: Some(limit * 3),
+            threshold: None,
+            mode: SearchModeDto::BM25,
+        },
+        // The allow-list already is the space plus this chat's
+        // attachments. A membership check on top would drop the
+        // attachments, which belong to no space, from the keyword branch.
+        None,
+        Some(document_ids),
+    );
+    let (vector, lexical) = tokio::join!(vector, lexical);
+    let mut branches = Vec::new();
+    for (branch, weight, result) in [
+        (
+            "vector",
+            crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+            vector,
+        ),
+        (
+            "keyword",
+            crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+            lexical,
+        ),
+    ] {
+        match result {
+            Ok(response) => {
+                tracing::info!(
+                    branch,
+                    result_count = response.results.len(),
+                    query_time_ms = response.query_time_ms,
+                    "Document search branch completed"
+                );
+                branches.push((weight, response.results));
+            }
+            Err(error) => tracing::warn!(branch, %error, "A document search branch failed"),
+        }
+    }
+    let succeeded = branches.len();
+    (branches, succeeded)
+}
+
+/// One query searched exactly as first-pass retrieval searches: the same
+/// branches, weights, RRF constant and per-document cap.
+///
+/// The model's own `semantic_search` calls come through here. They used the
+/// generic hybrid endpoint instead — even weights, a higher vector floor and a
+/// lexical-support filter — so a follow-up search ranked the same space
+/// differently from the search that opened the turn, and could miss passages
+/// the first pass would have found.
+pub(in crate::features::conversation::chat) async fn fused_search(
+    semantic: &SemanticSearchUseCase,
+    hybrid: &HybridSearchUseCase,
+    query: &str,
+    document_ids: &HashSet<String>,
+    limit: usize,
+) -> Result<Vec<SearchResultDto>> {
+    let (branches, succeeded) = search_branches(semantic, hybrid, query, document_ids, limit).await;
+    if succeeded == 0 {
+        return Err(AppError::ServiceNotAvailable(
+            "Document search failed in both vector and keyword retrieval".into(),
+        ));
+    }
+    Ok(fuse_branches(branches, limit))
+}
+
 pub(super) async fn retrieve(
     repository: &ConversationRepository,
     semantic: &SemanticSearchUseCase,
@@ -700,55 +787,10 @@ pub(super) async fn retrieve(
     // sparse retrieval remains an evaluation-only experiment; it did not beat
     // calibrated two-way fusion on the production-path corpus.
     for query in &plan.queries {
-        let vector = semantic.execute_scoped(
-            SearchRequestDto {
-                query: query.clone(),
-                limit: Some(limit * 3),
-                threshold: Some(0.15),
-                mode: SearchModeDto::Vector,
-            },
-            Some(search_ids),
-        );
-        let lexical = hybrid.execute_scoped(
-            SearchRequestDto {
-                query: query.clone(),
-                limit: Some(limit * 3),
-                threshold: None,
-                mode: SearchModeDto::BM25,
-            },
-            // The allow-list already is the space plus this chat's
-            // attachments. A membership check on top would drop the
-            // attachments, which belong to no space, from the keyword branch.
-            None,
-            Some(search_ids),
-        );
-        let (vector, lexical) = tokio::join!(vector, lexical);
-        for (branch, weight, result) in [
-            (
-                "vector",
-                crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-                vector,
-            ),
-            (
-                "keyword",
-                crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
-                lexical,
-            ),
-        ] {
-            match result {
-                Ok(response) => {
-                    tracing::info!(
-                        branch,
-                        result_count = response.results.len(),
-                        query_time_ms = response.query_time_ms,
-                        "Document search branch completed"
-                    );
-                    successful_branches += 1;
-                    branches.push((weight, response.results));
-                }
-                Err(error) => tracing::warn!(branch, %error, "A document search branch failed"),
-            }
-        }
+        let (query_branches, succeeded) =
+            search_branches(semantic, hybrid, query, search_ids, limit).await;
+        successful_branches += succeeded;
+        branches.extend(query_branches);
     }
     let openings = repository
         .retrieval_openings(&plan.opening_document_ids, &scope.document_ids, 4)

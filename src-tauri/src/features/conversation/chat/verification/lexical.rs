@@ -439,19 +439,78 @@ pub(super) fn passage_windows(text: &str) -> Vec<String> {
     windows
 }
 
-/// The window of `text` that shares the most vocabulary with `claim`.
-pub(super) fn best_window(claim: &str, text: &str) -> String {
+/// One stretch of a passage, scored against a claim.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ScoredWindow {
+    /// Position among the passage's windows, so picks can be put back in
+    /// reading order and neighbours told apart.
+    pub(super) index: usize,
+    /// Claim tokens this window shares.
+    pub(super) score: usize,
+    pub(super) text: String,
+}
+
+/// Up to `max` windows of `text` that share the most vocabulary with `claim`,
+/// best first.
+///
+/// An answer synthesises: one sentence can join a figure from the middle of a
+/// page to a condition near its end, and no single window holds both. So the
+/// judge is shown several. A window next to one already taken is skipped —
+/// the two share a third of their text, and the overlap exists so a sentence
+/// lands whole in one of them, not so it is shown twice. A window sharing no
+/// vocabulary at all is dropped unless it is the passage's only one.
+pub(super) fn best_windows(claim: &str, text: &str, max: usize) -> Vec<ScoredWindow> {
+    let claim_tokens = extract_normalized_tokens(claim);
+    let windows = passage_windows(text);
+    let only_one = windows.len() == 1;
+    let mut scored: Vec<ScoredWindow> = windows
+        .into_iter()
+        .enumerate()
+        .map(|(index, window)| ScoredWindow {
+            index,
+            score: claim_tokens
+                .intersection(&extract_normalized_tokens(&window))
+                .count(),
+            text: window,
+        })
+        .filter(|window| only_one || window.score > 0)
+        .collect();
+    // Stable: equal scores keep page order.
+    scored.sort_by_key(|window| std::cmp::Reverse(window.score));
+
+    let mut picked: Vec<ScoredWindow> = Vec::new();
+    for window in scored {
+        if picked.len() >= max {
+            break;
+        }
+        if picked
+            .iter()
+            .any(|taken| taken.index.abs_diff(window.index) <= 1)
+        {
+            continue;
+        }
+        picked.push(window);
+    }
+    picked
+}
+
+/// The sentence of `text` that shares the most vocabulary with `claim`.
+///
+/// Shown beside a verdict as the words it rests on. Taken from the passage
+/// rather than asked of the model: a one-word judge cannot quote, and a quote
+/// a model writes has to be checked against the page anyway.
+pub(super) fn best_sentence(claim: &str, text: &str) -> Option<String> {
     let claim_tokens = extract_normalized_tokens(claim);
     let mut best: Option<(usize, String)> = None;
-    for window in passage_windows(text) {
+    for sentence in split_sentences(&normalize_whitespace(text)) {
         let score = claim_tokens
-            .intersection(&extract_normalized_tokens(&window))
+            .intersection(&extract_normalized_tokens(&sentence))
             .count();
-        if best.as_ref().is_none_or(|(top, _)| score > *top) {
-            best = Some((score, window));
+        if score > 0 && best.as_ref().is_none_or(|(top, _)| score > *top) {
+            best = Some((score, sentence));
         }
     }
-    best.map(|(_, window)| window).unwrap_or_default()
+    best.map(|(_, sentence)| sentence)
 }
 
 /// One entry per source, each a token set per window of its text. Title, path
@@ -642,7 +701,9 @@ mod tests {
             claims.iter().map(|c| &c.sentence).collect::<Vec<_>>()
         );
         assert!(claims[0].sentence.starts_with("Bury it all the way"));
-        assert!(claims[1].sentence.starts_with("The ideal initial planting depth"));
+        assert!(claims[1]
+            .sentence
+            .starts_with("The ideal initial planting depth"));
     }
 
     #[test]
@@ -651,7 +712,10 @@ mod tests {
             strip_emphasis_markers("Set _max_tokens_ in the *config* file"),
             "Set max_tokens in the config file"
         );
-        assert_eq!(strip_emphasis_markers("A rule: ---- and ____"), "A rule: ---- and ____");
+        assert_eq!(
+            strip_emphasis_markers("A rule: ---- and ____"),
+            "A rule: ---- and ____"
+        );
     }
 
     #[test]

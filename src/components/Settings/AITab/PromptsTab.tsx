@@ -23,10 +23,9 @@ const VERIFICATION_DEFAULTS: VerificationSettings = {
   temperature: 0,
   topP: 1,
   topK: 1,
-  maxTokens: 2048,
 };
 
-type VerificationNumericKey = 'temperature' | 'topP' | 'topK' | 'maxTokens';
+type VerificationNumericKey = 'temperature' | 'topP' | 'topK';
 
 type VerificationFieldConfig = {
   key: VerificationNumericKey;
@@ -48,14 +47,6 @@ const VERIFICATION_FIELDS: VerificationFieldConfig[] = [
   },
   { key: 'topP', label: 'Top P', inputId: 'verification-top-p', min: 0, max: 1, step: 0.05 },
   { key: 'topK', label: 'Top K', inputId: 'verification-top-k', min: 1, max: 500, step: 1 },
-  {
-    key: 'maxTokens',
-    label: 'Max tokens',
-    inputId: 'verification-max-tokens',
-    min: 256,
-    max: 32768,
-    step: 1,
-  },
 ];
 
 function normalizeVerificationValue(field: VerificationFieldConfig, value: number): number {
@@ -75,7 +66,6 @@ export function PromptsTab() {
     temperature: VERIFICATION_DEFAULTS.temperature,
     topP: VERIFICATION_DEFAULTS.topP,
     topK: VERIFICATION_DEFAULTS.topK,
-    maxTokens: VERIFICATION_DEFAULTS.maxTokens,
   });
 
   useEffect(() => {
@@ -90,7 +80,6 @@ export function PromptsTab() {
       temperature: verification?.temperature ?? VERIFICATION_DEFAULTS.temperature,
       topP: verification?.topP ?? VERIFICATION_DEFAULTS.topP,
       topK: verification?.topK ?? VERIFICATION_DEFAULTS.topK,
-      maxTokens: verification?.maxTokens ?? VERIFICATION_DEFAULTS.maxTokens,
     });
   }, [llmSettings]);
 

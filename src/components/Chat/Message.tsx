@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  ShieldEllipsis,
   ShieldOff,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -256,11 +257,22 @@ export function Message({
     [verificationSummary]
   );
   const contradictedCount = contradictedClaims.length;
-  const unverifiedClaims = useMemo(() => {
+  const ungroundedClaims = useMemo(() => {
     if (contradictedCount === 0) return unsupportedClaims;
     const contradicted = new Set(contradictedClaims);
     return unsupportedClaims.filter((claim) => !contradicted.has(claim));
   }, [contradictedClaims, contradictedCount, unsupportedClaims]);
+  // Claims nothing checked: the judge ran out of time or the page had no
+  // saved text. Kept apart from the ungrounded ones — "not looked at" is not
+  // "not found".
+  const uncheckedClaims = useMemo(
+    () => (verificationSummary?.claimVerdicts ?? [])
+      .filter((verdict) => verdict.verdict === 'unverified')
+      .map((verdict) => verdict.sentence),
+    [verificationSummary]
+  );
+  const uncheckedCount = verificationSummary?.verdictCounts?.unverified ?? uncheckedClaims.length;
+  const verificationPending = verificationSummary?.enabled === true && verificationSummary.pending === true;
   /** The passage the judge read, keyed by the claim it ruled on. */
   const evidenceByClaim = useMemo(() => {
     const quotes = new Map<string, string>();
@@ -270,7 +282,7 @@ export function Message({
     return quotes;
   }, [verificationSummary]);
   const canExpandVerification =
-    verificationSummary?.enabled === true && claimsEvaluated > 0;
+    verificationSummary?.enabled === true && !verificationPending && claimsEvaluated > 0;
   // Drawn on the sentences themselves, so a doubtful figure is doubtful where
   // it is read and not in a list under a badge.
   const claimVerdicts = useMemo(
@@ -281,9 +293,9 @@ export function Message({
   const visibleVerifiedClaims = showAllVerifiedClaims
     ? supportedClaims
     : supportedClaims.slice(0, 5);
-  const visibleUnverifiedClaims = showAllUnverifiedClaims
-    ? unverifiedClaims
-    : unverifiedClaims.slice(0, 5);
+  const visibleUngroundedClaims = showAllUnverifiedClaims
+    ? ungroundedClaims
+    : ungroundedClaims.slice(0, 5);
 
   const verificationBadge = useMemo(() => {
     if (isUser || !verificationSummary) return null;
@@ -295,12 +307,40 @@ export function Message({
           'border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
+    // The answer is readable while its check runs; say so quietly rather
+    // than showing a verdict the check has not reached yet.
+    if (verificationPending) {
+      return {
+        label: 'Checking…',
+        icon: ShieldEllipsis,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
+    // The check never reported: the app closed under it, or the wait ran
+    // out. Say that, rather than "nothing to verify", which would be a lie.
+    if (verificationSummary.interrupted) {
+      return {
+        label: 'Not checked',
+        icon: ShieldOff,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
     if (claimsEvaluated === 0) {
       return {
         label: 'Nothing to verify',
         icon: ShieldOff,
         className:
           'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
+    if (unsupportedCount === 0 && uncheckedCount > 0) {
+      return {
+        label: `Partly checked · ${uncheckedCount} not checked`,
+        icon: ShieldCheck,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-secondary))]',
       };
     }
     if (unsupportedCount === 0) {
@@ -328,7 +368,15 @@ export function Message({
       className:
         'border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))]',
     };
-  }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount, contradictedCount]);
+  }, [
+    claimsEvaluated,
+    isUser,
+    verificationSummary,
+    verificationPending,
+    unsupportedCount,
+    contradictedCount,
+    uncheckedCount,
+  ]);
 
   const normalizedMarkdownContent = useMemo(
     () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
@@ -696,7 +744,9 @@ export function Message({
                 title={
                   !verificationSummary?.enabled
                     ? 'Verification is off. Turn on in settings.'
-                    : canExpandVerification
+                    : verificationPending
+                      ? 'Checking the answer against its sources'
+                      : canExpandVerification
                       ? (isVerificationPanelExpanded ? 'Hide verification details' : 'Show verification details')
                       : 'Nothing in this message to verify.'
                 }
@@ -727,7 +777,7 @@ export function Message({
           <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-subtle bg-surface p-4">
             <p className="mb-1 text-sm font-medium text-text-primary">Verification details</p>
             <p className="text-xs text-[hsl(var(--text-muted))]">
-              {verificationSummaryLine(claimsEvaluated, unsupportedCount)}
+              {verificationSummaryLine(claimsEvaluated, unsupportedCount, uncheckedCount)}
             </p>
 
             <div className="mt-3 grid gap-4 lg:grid-cols-2">
@@ -783,19 +833,19 @@ export function Message({
                 </div>
               )}
 
-              {unverifiedClaims.length > 0 && (
+              {ungroundedClaims.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
-                    Unverified claims
+                    Not found in your sources
                   </p>
                   <ul className={CLAIM_LIST_CLASS}>
-                    {visibleUnverifiedClaims.map((claim, idx) => (
+                    {visibleUngroundedClaims.map((claim, idx) => (
                       <li key={`unsupported-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                       </li>
                     ))}
                   </ul>
-                  {unverifiedClaims.length > 5 && (
+                  {ungroundedClaims.length > 5 && (
                     <button
                       type="button"
                       onClick={() => setShowAllUnverifiedClaims((prev) => !prev)}
@@ -803,9 +853,24 @@ export function Message({
                     >
                       {showAllUnverifiedClaims
                         ? 'Show fewer'
-                        : `Show all ${unverifiedClaims.length}`}
+                        : `Show all ${ungroundedClaims.length}`}
                     </button>
                   )}
+                </div>
+              )}
+
+              {uncheckedClaims.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-muted))]">
+                    Not checked
+                  </p>
+                  <ul className={CLAIM_LIST_CLASS}>
+                    {uncheckedClaims.map((claim, idx) => (
+                      <li key={`unchecked-${idx}`} className={CLAIM_ITEM_CLASS}>
+                        {claim}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>

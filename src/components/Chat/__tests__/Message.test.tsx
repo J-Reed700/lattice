@@ -107,7 +107,7 @@ describe('message verification disclosure', () => {
       supportedClaimNotes: ['Supported statement'],
       unsupportedClaims: ['Refuted statement', 'Unverified statement'],
       contradictedClaims: ['Refuted statement'],
-      verdictCounts: { supported: 1, contradicted: 1, unsupported: 1 },
+      verdictCounts: { supported: 1, contradicted: 1, unsupported: 1, unverified: 0 },
       claimVerdicts: [
         {
           sentence: 'Refuted statement',
@@ -132,6 +132,47 @@ describe('message verification disclosure', () => {
     // The contradicted claim is not repeated in the unverified column.
     expect(screen.getByText('Unverified statement')).toBeVisible();
     expect(screen.getAllByText('Refuted statement')).toHaveLength(1);
+  });
+
+  it('says the answer is being checked while its check runs', () => {
+    verificationSummary = { enabled: true, pending: true };
+    renderAnswer();
+    const badge = screen.getByRole('button', { name: /Checking…/ });
+    expect(badge).not.toHaveAttribute('aria-expanded');
+    fireEvent.click(badge);
+    expect(screen.queryByRole('region', { name: 'Verification details' })).not.toBeInTheDocument();
+  });
+
+  it('keeps unchecked claims apart from ungrounded ones', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 3,
+      supportedClaims: 2,
+      supportedClaimNotes: ['Supported statement', 'Another supported statement'],
+      unsupportedClaims: [],
+      contradictedClaims: [],
+      verdictCounts: { supported: 2, contradicted: 0, unsupported: 0, unverified: 1 },
+      claimVerdicts: [
+        {
+          sentence: 'Yields rose by 42 percent.',
+          citationIds: [1],
+          verdict: 'unverified',
+          method: 'lexical',
+          unverifiedReason: 'budget',
+        },
+      ],
+      judgeUsed: true,
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /Partly checked · 1 not checked/ });
+    expect(screen.queryByRole('button', { name: /Partially verified/ })).not.toBeInTheDocument();
+    fireEvent.click(badge);
+    expect(screen.getByText('Not checked')).toBeVisible();
+    expect(screen.queryByText('Not found in your sources')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Every checked claim is grounded in your sources · 2 of 3 claims checked')
+    ).toBeVisible();
   });
 
   it('keeps the old badge for messages verified before the judge existed', () => {

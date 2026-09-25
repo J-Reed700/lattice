@@ -113,4 +113,37 @@ impl crate::application::ports::conversation_repository::ConversationRepositoryP
     async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         ConversationRepository::update_message_status(self, message_id, status).await
     }
+    async fn set_message_metadata_fields(
+        &self,
+        message_id: &str,
+        fields: Vec<(String, serde_json::Value)>,
+    ) -> Result<()> {
+        // One `json_set` in one statement, so a concurrent writer of another
+        // key cannot be overwritten by a read-modify-write from here.
+        if fields.is_empty() {
+            return Ok(());
+        }
+        if let Some((key, _)) = fields.iter().find(|(key, _)| {
+            key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }) {
+            return Err(crate::shared::error::AppError::InvalidInput(format!(
+                "Invalid metadata key: {key}"
+            )));
+        }
+        let pairs = vec!["?, json(?)"; fields.len()].join(", ");
+        let sql = format!(
+            "UPDATE conversation_messages SET metadata = json_set(COALESCE(NULLIF(metadata, ''), '{{}}'), {pairs}) WHERE id = ?"
+        );
+        let mut query = sqlx::query(&sql);
+        for (key, value) in &fields {
+            query = query.bind(format!("$.{key}")).bind(value.to_string());
+        }
+        let result = query.bind(message_id).execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(crate::shared::error::AppError::NotFound(format!(
+                "Message not found: {message_id}"
+            )));
+        }
+        Ok(())
+    }
 }

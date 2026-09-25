@@ -36,10 +36,12 @@
 //! OpenAI-compatible backend later (vLLM, mistralrs-server, etc.)
 //! without changing this file.
 
-use crate::application::ports::llm_port::SamplingOverride;
+use crate::application::ports::llm_port::{CompletionResponse, SamplingOverride};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::traits::{ChatMessage, GenerationConfig, LLMClient};
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::llama_cpp::{parse_completion, streaming::Decoder};
+use crate::shared::error::{AppError, Result as AppResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -85,7 +87,10 @@ struct ChatCompletionRequest<'a> {
     /// killing and respawning the sidecar, matching LM Studio's
     /// per-runtime model lifecycle.
     model: &'a str,
-    messages: Vec<WireMessage<'a>>,
+    /// OpenAI chat messages. Values rather than role/content pairs because a
+    /// tool round carries `tool_calls` on assistant turns and `tool_call_id`
+    /// on tool turns.
+    messages: Vec<Value>,
     stream: bool,
     temperature: f32,
     /// Nucleus sampling.
@@ -110,34 +115,30 @@ struct ChatCompletionRequest<'a> {
     chat_template_kwargs: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+    /// Rendered through the GGUF's own chat template (the server runs with
+    /// `--jinja`), which is what gives each model its native call format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a Value>,
+    /// Asks for a final usage frame on a stream, so a streamed typed
+    /// completion reports tokens the way a non-streamed one does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<Value>,
+    /// First-token log-probabilities, for a caller that reads its one-word
+    /// answer's probability rather than the word alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_logprobs: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatChoiceMessage,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct Usage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,15 +179,10 @@ pub struct RequestTuning<'a> {
     /// Output ceiling for this request. Only ever tightens the configured one,
     /// so a caller cannot generate past what the user allowed.
     pub max_output_tokens: Option<u32>,
-}
-
-/// A non-streaming completion, with the bookkeeping the typed port reports.
-#[derive(Debug, Default)]
-pub struct CompletionOutcome {
-    pub text: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub finish_reason: String,
+    /// OpenAI-shaped tool definitions, already built by the caller.
+    pub tools: Option<&'a Value>,
+    /// Ask for the first token's top alternatives with their log-probabilities.
+    pub want_logprobs: bool,
 }
 
 /// LLM client that talks to a bundled llama-server sidecar.
@@ -213,6 +209,10 @@ pub struct SidecarLLMClient {
 
     /// Mutable generation config for `generation_config_mut()`.
     config: GenerationConfig,
+}
+
+fn typed_error(err: LLMError) -> AppError {
+    AppError::Other(format!("LLM completion failed: {err}"))
 }
 
 /// Incremental parser for the server's SSE frames.
@@ -405,12 +405,12 @@ impl SidecarLLMClient {
         format!("{}{}", self.sidecar.endpoint(), path)
     }
 
-    fn build_messages(system: Option<&str>, prompt: &str) -> Vec<(&'static str, String)> {
-        let mut msgs: Vec<(&'static str, String)> = Vec::with_capacity(2);
+    fn build_messages(system: Option<&str>, prompt: &str) -> Vec<Value> {
+        let mut msgs = Vec::with_capacity(2);
         if let Some(sys) = system {
-            msgs.push(("system", sys.to_string()));
+            msgs.push(json!({"role": "system", "content": sys}));
         }
-        msgs.push(("user", prompt.to_string()));
+        msgs.push(json!({"role": "user", "content": prompt}));
         msgs
     }
 
@@ -418,20 +418,14 @@ impl SidecarLLMClient {
     /// without a live sidecar process behind it.
     fn build_request<'a>(
         config: &GenerationConfig,
-        messages: &'a [(&'a str, String)],
+        messages: Vec<Value>,
         stream: bool,
         tuning: RequestTuning<'a>,
     ) -> ChatCompletionRequest<'a> {
         let sampling = tuning.sampling.unwrap_or_default();
         ChatCompletionRequest {
             model: "local",
-            messages: messages
-                .iter()
-                .map(|(role, content)| WireMessage {
-                    role,
-                    content: content.as_str(),
-                })
-                .collect(),
+            messages,
             stream,
             temperature: sampling.temperature.unwrap_or(config.temperature),
             top_p: sampling.top_p.unwrap_or(config.top_p),
@@ -452,12 +446,18 @@ impl SidecarLLMClient {
             response_format: tuning.json_schema.map(|schema| {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}})
             }),
+            tools: tuning.tools,
+            stream_options: stream.then(|| json!({"include_usage": true})),
+            logprobs: tuning.want_logprobs.then_some(true),
+            top_logprobs: tuning
+                .want_logprobs
+                .then_some(crate::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
         }
     }
 
     async fn post_chat_completion(
         &self,
-        messages: &[(&str, String)],
+        messages: Vec<Value>,
         stream: bool,
         tuning: RequestTuning<'_>,
     ) -> Result<reqwest::Response, LLMError> {
@@ -495,55 +495,90 @@ impl SidecarLLMClient {
         Ok(response)
     }
 
-    async fn extract_completion(
-        response: reqwest::Response,
-    ) -> Result<CompletionOutcome, LLMError> {
+    async fn extract_completion_text(response: reqwest::Response) -> Result<String, LLMError> {
         let parsed: ChatCompletionResponse = response.json().await.map_err(|err| {
             LLMError::GenerationFailed(format!("Failed to parse sidecar response: {err}"))
         })?;
-
-        let usage = parsed.usage.unwrap_or_default();
-        let choice =
-            parsed.choices.into_iter().next().ok_or_else(|| {
-                LLMError::GenerationFailed("Sidecar returned zero choices".into())
-            })?;
-
-        Ok(CompletionOutcome {
-            text: choice.message.content,
-            input_tokens: usage.prompt_tokens,
-            output_tokens: usage.completion_tokens,
-            finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
-        })
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|choice| choice.message.content)
+            .ok_or_else(|| LLMError::GenerationFailed("Sidecar returned zero choices".into()))
     }
 
-    async fn extract_completion_text(response: reqwest::Response) -> Result<String, LLMError> {
-        Self::extract_completion(response).await.map(|out| out.text)
-    }
-
-    /// Typed-completion entry point for the `LLMPort` adapter.
+    /// Typed completion for the `LLMPort` adapter, in one response.
     ///
     /// Separate from `generate_chat` because the trait cannot carry a reasoning
-    /// effort or a response schema, and dropping them is what let a reasoning
-    /// model spend minutes thinking about a one-line query rewrite.
-    pub async fn complete_messages(
+    /// effort, a response schema or tools, and dropping the first two is what
+    /// let a reasoning model spend minutes thinking about a one-line query
+    /// rewrite. The response is parsed by the remote llama.cpp adapter's own
+    /// parser: same server, same tool-call shape.
+    pub async fn complete_typed(
         &self,
-        messages: &[(&str, String)],
+        messages: Vec<Value>,
         tuning: RequestTuning<'_>,
-    ) -> Result<CompletionOutcome, LLMError> {
-        let response = self.post_chat_completion(messages, false, tuning).await?;
-        Self::extract_completion(response).await
+    ) -> AppResult<CompletionResponse> {
+        let response = self
+            .post_chat_completion(messages, false, tuning)
+            .await
+            .map_err(typed_error)?;
+        let value: Value = response
+            .json()
+            .await
+            .map_err(|err| AppError::Other(format!("Failed to parse sidecar response: {err}")))?;
+        parse_completion(value)
     }
 
-    fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<(&'static str, String)> {
+    /// Typed completion that hands answer text to `on_text` as it streams,
+    /// while tool-call fragments are assembled into whole calls.
+    ///
+    /// The tool loop takes this path whenever it offers tools; without it a
+    /// tool-capable local model would write its whole final answer before the
+    /// user saw a word of it.
+    pub async fn complete_typed_streaming(
+        &self,
+        messages: Vec<Value>,
+        tuning: RequestTuning<'_>,
+        on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+    ) -> AppResult<CompletionResponse> {
+        let response = self
+            .post_chat_completion(messages, true, tuning)
+            .await
+            .map_err(typed_error)?;
+        let mut bytes = response.bytes_stream();
+        let mut decoder = Decoder::for_completion();
+        // Prefill of a long tool-round prompt happens before the first frame,
+        // so the first wait gets the same allowance as the response headers.
+        let mut chunk_timeout = FIRST_TOKEN_TIMEOUT;
+        while let Some(chunk) = timeout(chunk_timeout, bytes.next())
+            .await
+            .map_err(|_| typed_error(LLMError::Timeout))?
+        {
+            chunk_timeout = CHUNK_TIMEOUT;
+            let chunk = chunk.map_err(|err| {
+                typed_error(LLMError::Network(format!("SSE byte stream error: {err}")))
+            })?;
+            for text in decoder.push(&chunk)? {
+                on_text(text)?;
+            }
+            if decoder.done() {
+                break;
+            }
+        }
+        decoder.into_response()
+    }
+
+    fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<Value> {
         messages
             .into_iter()
             .map(|m| {
-                let role: &'static str = match m.role.as_str() {
+                let role = match m.role.as_str() {
                     "system" => "system",
                     "assistant" => "assistant",
                     _ => "user",
                 };
-                (role, m.content)
+                json!({"role": role, "content": m.content})
             })
             .collect()
     }
@@ -603,7 +638,7 @@ impl LLMClient for SidecarLLMClient {
     ) -> Result<String, LLMError> {
         let messages = Self::build_messages(system, prompt);
         let response = self
-            .post_chat_completion(&messages, false, RequestTuning::default())
+            .post_chat_completion(messages, false, RequestTuning::default())
             .await?;
         Self::extract_completion_text(response).await
     }
@@ -616,7 +651,7 @@ impl LLMClient for SidecarLLMClient {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let messages = Self::build_messages(system, prompt);
         let response = self
-            .post_chat_completion(&messages, true, RequestTuning::default())
+            .post_chat_completion(messages, true, RequestTuning::default())
             .await?;
         Ok(Self::parse_sse_stream(response))
     }
@@ -644,7 +679,7 @@ impl LLMClient for SidecarLLMClient {
     async fn generate_chat(&self, messages: Vec<ChatMessage>) -> Result<String, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
         let response = self
-            .post_chat_completion(&pairs, false, RequestTuning::default())
+            .post_chat_completion(pairs, false, RequestTuning::default())
             .await?;
         Self::extract_completion_text(response).await
     }
@@ -655,7 +690,7 @@ impl LLMClient for SidecarLLMClient {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
         let response = self
-            .post_chat_completion(&pairs, true, RequestTuning::default())
+            .post_chat_completion(pairs, true, RequestTuning::default())
             .await?;
         Ok(Self::parse_sse_stream(response))
     }
@@ -818,28 +853,13 @@ mod tests {
 
     #[test]
     fn build_request_serializes_to_openai_shape() {
-        let cfg = GenerationConfig::default();
-        let messages = [
-            ("system", "You are helpful.".to_string()),
-            ("user", "Hi.".to_string()),
-        ];
-
-        let body = ChatCompletionRequest {
-            model: "local",
-            messages: messages
-                .iter()
-                .map(|(role, content)| WireMessage { role, content })
-                .collect(),
-            stream: false,
-            temperature: cfg.temperature,
-            top_p: cfg.top_p,
-            top_k: cfg.top_k,
-            repeat_penalty: cfg.repeat_penalty,
-            max_tokens: cfg.max_tokens,
-            reasoning_effort: None,
-            chat_template_kwargs: None,
-            response_format: None,
-        };
+        let messages = SidecarLLMClient::build_messages(Some("You are helpful."), "Hi.");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            false,
+            RequestTuning::default(),
+        );
 
         let json = serde_json::to_value(&body).expect("serialize");
         assert_eq!(json["model"], "local");
@@ -850,6 +870,105 @@ mod tests {
         assert_eq!(messages_json[0]["content"], "You are helpful.");
         assert_eq!(messages_json[1]["role"], "user");
         assert_eq!(messages_json[1]["content"], "Hi.");
+        assert!(json.get("tools").is_none(), "{json}");
+        assert!(json.get("stream_options").is_none(), "{json}");
+    }
+
+    /// A tool round has to reach llama-server in the same shape the remote
+    /// adapter sends: `tools` on the request, the assistant's call and the
+    /// tool's result as their own typed messages, not flattened into text.
+    #[test]
+    fn a_tool_round_goes_out_in_openai_tool_shape() {
+        use crate::application::ports::llm_port::{CompletionInput, ToolDefinition};
+
+        let input = [
+            CompletionInput::Message {
+                role: "system".into(),
+                content: "Answer from the library.".into(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: "What does the lease say?".into(),
+            },
+            CompletionInput::ToolCall {
+                id: "call_1".into(),
+                name: "semantic_search".into(),
+                arguments: json!({"query": "lease term"}),
+            },
+            CompletionInput::ToolResult {
+                id: "call_1".into(),
+                output: "The term is 12 months.".into(),
+            },
+        ];
+        let tools = crate::features::llm::llama_cpp::tool_specs(&[ToolDefinition {
+            name: "semantic_search".into(),
+            description: "Search the library".into(),
+            parameters: json!({"type": "object"}),
+        }]);
+        let messages = crate::features::llm::llama_cpp::chat_messages(&input).expect("messages");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            true,
+            RequestTuning {
+                tools: Some(&tools),
+                ..RequestTuning::default()
+            },
+        );
+
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["tools"][0]["function"]["name"], "semantic_search");
+        assert_eq!(json["stream_options"]["include_usage"], true);
+        let messages = json["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            messages[2]["tool_calls"][0]["function"]["arguments"],
+            r#"{"query":"lease term"}"#
+        );
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
+    }
+
+    /// Tool-call fragments arrive spread over several frames; the shared
+    /// decoder must hand back one whole call and no answer text for it.
+    #[test]
+    fn a_streamed_tool_call_is_reassembled_into_one_call() {
+        use crate::application::ports::llm_port::CompletionInput;
+
+        let frames = [
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_7","type":"function","function":{"name":"semantic_search","arguments":"{\"query\":"}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"lease\"}"}}]}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":9}}),
+        ];
+        let mut decoder = Decoder::for_completion();
+        let mut text = Vec::new();
+        for frame in frames {
+            text.extend(
+                decoder
+                    .push(format!("data: {frame}\n\n").as_bytes())
+                    .expect("frame"),
+            );
+        }
+        decoder.push(b"data: [DONE]\n\n").expect("done");
+        assert!(text.is_empty());
+
+        let response = decoder.into_response().expect("response");
+        assert_eq!(response.finish_reason, "tool_calls");
+        assert_eq!(response.input_tokens, 40);
+        match response.tool_calls.as_slice() {
+            [CompletionInput::ToolCall {
+                id,
+                name,
+                arguments,
+            }] => {
+                assert_eq!(id, "call_7");
+                assert_eq!(name, "semantic_search");
+                assert_eq!(arguments, &json!({"query": "lease"}));
+            }
+            other => panic!("expected one tool call, got {other:?}"),
+        }
     }
 
     /// The llama.cpp chat template is the only layer that can stop a Qwen3-style
@@ -858,10 +977,10 @@ mod tests {
     /// sends to the same server.
     #[test]
     fn no_reasoning_disables_thinking_in_the_chat_template() {
-        let messages = [("user", "Rewrite this.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Rewrite this.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning {
                 reasoning_effort: Some("none"),
@@ -869,6 +988,8 @@ mod tests {
                 time_budget: None,
                 sampling: None,
                 max_output_tokens: None,
+                tools: None,
+                want_logprobs: false,
             },
         );
 
@@ -879,10 +1000,10 @@ mod tests {
 
     #[test]
     fn a_real_reasoning_effort_reaches_the_chat_template_as_itself() {
-        let messages = [("user", "Think about this.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Think about this.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning {
                 reasoning_effort: Some("low"),
@@ -890,6 +1011,8 @@ mod tests {
                 time_budget: None,
                 sampling: None,
                 max_output_tokens: None,
+                tools: None,
+                want_logprobs: false,
             },
         );
 
@@ -898,14 +1021,41 @@ mod tests {
         assert_eq!(json["chat_template_kwargs"]["reasoning_effort"], "low");
     }
 
+    #[test]
+    fn a_logprobs_request_asks_for_the_first_tokens_alternatives() {
+        let messages = SidecarLLMClient::build_messages(None, "Answer in one word.");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages.clone(),
+            false,
+            RequestTuning {
+                want_logprobs: true,
+                ..RequestTuning::default()
+            },
+        );
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["logprobs"], true);
+        assert!(json["top_logprobs"].as_u64().expect("count") > 1);
+
+        let plain = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            false,
+            RequestTuning::default(),
+        );
+        let json = serde_json::to_value(&plain).expect("serialize");
+        assert!(json.get("logprobs").is_none());
+        assert!(json.get("top_logprobs").is_none());
+    }
+
     /// The legacy text API has no reasoning hint; those fields must then stay
     /// off the wire entirely rather than going out as nulls.
     #[test]
     fn an_untuned_request_sends_no_reasoning_fields() {
-        let messages = [("user", "Hi.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Hi.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning::default(),
         );

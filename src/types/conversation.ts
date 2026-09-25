@@ -97,19 +97,30 @@ export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
  * `method` says which pass produced the verdict: `lexical` is stemmed token
  * overlap against the cited passage, `judge` is an LLM entailment decision.
  * Treat them as different strengths of evidence, not the same verdict.
+ *
+ * `unverified` means nothing checked the claim — the judge ran out of time,
+ * failed, or the cited page had no archived text (`unverifiedReason`). It is
+ * not "unsupported": the claim was not found wanting, it was not looked at.
  */
 export const ClaimVerdictSchema = z.object({
   sentence: z.string().max(2000),
   citationIds: z.array(z.number().int().min(1).max(1000)).max(24),
-  verdict: z.enum(['supported', 'contradicted', 'unsupported']),
+  verdict: z.enum(['supported', 'contradicted', 'unsupported', 'unverified']),
   evidenceQuote: z.string().max(1000).nullable().optional(),
   method: z.enum(['lexical', 'judge']),
+  /** The judge's probability for `verdict`, when its provider reports one. */
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  unverifiedReason: z.enum(['budget', 'judge_failed', 'no_text']).nullable().optional(),
 }).strict();
 
 export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;
 
 export const MessageVerificationSummarySchema = z.object({
   enabled: z.boolean(),
+  /** The answer is persisted; its check is still running in the background. */
+  pending: z.boolean().optional(),
+  /** The app closed, or the wait ran out, before the background check reported. */
+  interrupted: z.boolean().optional(),
   claimsEvaluated: z.number().min(0).optional(),
   supportedClaims: z.number().min(0).optional(),
   supportedClaimNotes: z.array(z.string().max(2000)).max(40).optional(),
@@ -124,6 +135,8 @@ export const MessageVerificationSummarySchema = z.object({
     supported: z.number().min(0),
     contradicted: z.number().min(0),
     unsupported: z.number().min(0),
+    /** Claims nothing checked. Not counted in `unsupported`. */
+    unverified: z.number().min(0),
   }).strict().optional(),
   claimVerdicts: z.array(ClaimVerdictSchema).max(60).optional(),
   /** Whether any claim in this turn was judged by a model rather than by overlap. */

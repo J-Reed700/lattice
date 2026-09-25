@@ -87,7 +87,10 @@ impl CloudLlm {
             // Reasoning models reject both knobs outright, so an override that
             // would 400 the request is dropped rather than sent: the caller
             // wanted determinism, not a failed call.
-            if let Some(sampling) = request.sampling.filter(|_| !is_openai_reasoning_model(&self.model)) {
+            if let Some(sampling) = request
+                .sampling
+                .filter(|_| !is_openai_reasoning_model(&self.model))
+            {
                 if let Some(temperature) = sampling.temperature {
                     set_field(&mut body, "temperature", json!(temperature))?;
                 }

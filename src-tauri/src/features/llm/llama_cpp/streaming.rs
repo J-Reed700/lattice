@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
-pub(super) struct Decoder {
+pub(crate) struct Decoder {
     buffer: Vec<u8>,
     received_bytes: usize,
     done: bool,
@@ -14,6 +14,9 @@ pub(super) struct Decoder {
     reasoning: BTreeMap<String, String>,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
+    /// The first chunk's `logprobs`, when the request asked for them: the
+    /// first generated token is the only one a classifier reads.
+    first_logprobs: Option<Value>,
 }
 
 /// The server's own label for a failure: its status code and error type.
@@ -98,6 +101,13 @@ impl Decoder {
                         )));
                     }
                     self.finish_reason = Some(reason.into());
+                }
+                if self.first_logprobs.is_none() {
+                    self.first_logprobs = choice
+                        .pointer("/logprobs/content/0")
+                        .is_some()
+                        .then(|| choice.get("logprobs").cloned())
+                        .flatten();
                 }
                 if let Some(content) = choice
                     .pointer("/delta/content")
@@ -218,7 +228,11 @@ impl Decoder {
             );
         }
         super::parse_completion(json!({
-            "choices": [{"message": message, "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into())}],
+            "choices": [{
+                "message": message,
+                "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
+                "logprobs": self.first_logprobs,
+            }],
             "usage": self.usage,
         }))
     }

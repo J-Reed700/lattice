@@ -296,4 +296,11 @@ pub trait ConversationServiceTrait: Send + Sync {
     /// - `AppError::NotFound` if message doesn't exist
     /// - `AppError::Database` if update fails
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()>;
+
+    /// Set top-level keys of a persisted message's metadata, keeping the rest.
+    async fn set_message_metadata_fields(
+        &self,
+        message_id: &str,
+        fields: Vec<(String, serde_json::Value)>,
+    ) -> Result<()>;
 }

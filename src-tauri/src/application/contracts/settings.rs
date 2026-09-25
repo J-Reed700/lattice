@@ -438,15 +438,6 @@ pub struct LLMVerificationSettingsDto {
     /// Top-k sampling for the claim judge. One takes the argmax token.
     #[serde(default = "default_verification_top_k")]
     pub top_k: i32,
-
-    /// Output ceiling for one judge request.
-    ///
-    /// A batch is up to twelve verdicts, each carrying a quote of up to 240
-    /// characters, so a full batch needs well over a thousand tokens. Too low a
-    /// ceiling truncates the reply mid-array; the parser then salvages the
-    /// complete verdicts and the rest of the batch is silently left unjudged.
-    #[serde(default = "default_verification_max_tokens")]
-    pub max_tokens: u32,
 }
 
 fn default_verification_temperature() -> f32 {
@@ -459,10 +450,6 @@ fn default_verification_top_p() -> f32 {
 
 fn default_verification_top_k() -> i32 {
     1
-}
-
-fn default_verification_max_tokens() -> u32 {
-    2048
 }
 
 /// Tool output shaping settings (excerpts + truncation).
@@ -1143,7 +1130,6 @@ impl Default for LLMVerificationSettingsDto {
             temperature: default_verification_temperature(),
             top_p: default_verification_top_p(),
             top_k: default_verification_top_k(),
-            max_tokens: default_verification_max_tokens(),
         }
     }
 }
