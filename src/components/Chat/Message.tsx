@@ -40,6 +40,18 @@ import type { GenerationOutcome } from '../../stores/conversationsStore.types';
 import type { DisplayMessage, SourceWithMetadata } from '../../types/conversation';
 
 /**
+ * One entry per checked sentence, separated by a rule.
+ *
+ * Claims are printed as the model wrote them, citation markers included, so an
+ * entry routinely ends in `[24]`. Spacing alone left that marker sitting
+ * directly above the next claim's first word, where it read as that claim's
+ * citation — and an uncited sentence looked cited.
+ */
+const CLAIM_LIST_CLASS = 'divide-y divide-border-subtle';
+const CLAIM_ITEM_CLASS =
+  'py-2 first:pt-0 last:pb-0 text-sm leading-relaxed text-[hsl(var(--text-secondary))]';
+
+/**
  * What to say about a regenerate that failed.
  *
  * A cancelled turn is not a failure and never reaches here — only `'failed'`
@@ -724,12 +736,13 @@ export function Message({
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--danger-fg))]">
                     Contradicted by your sources
                   </p>
-                  <ul className="space-y-2">
+                  {/* Ruled, not just spaced. A claim ends in its own citation
+                      marker, so with nothing but a gap between entries the
+                      `[24]` closing one sentence reads as though it belongs to
+                      the sentence printed underneath it. */}
+                  <ul className={CLAIM_LIST_CLASS}>
                     {contradictedClaims.map((claim, idx) => (
-                      <li
-                        key={`contradicted-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                      <li key={`contradicted-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                         {/* The passage the judge read. Without it the verdict is
                             an assertion; with it the reader can check. */}
@@ -749,12 +762,9 @@ export function Message({
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
                     Verified claims
                   </p>
-                  <ul className="space-y-2">
+                  <ul className={CLAIM_LIST_CLASS}>
                     {visibleVerifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`verified-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                      <li key={`verified-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                       </li>
                     ))}
@@ -778,12 +788,9 @@ export function Message({
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
                     Unverified claims
                   </p>
-                  <ul className="space-y-2">
+                  <ul className={CLAIM_LIST_CLASS}>
                     {visibleUnverifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`unsupported-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                      <li key={`unsupported-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                       </li>
                     ))}

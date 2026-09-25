@@ -1242,6 +1242,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 let evidence =
                     source_snapshots::with_archived_page_text(container, &conv_id, &sources).await;
                 GroundingVerifier::new(judge_llm)
+                    .with_tuning(&settings.llm.verification)
                     .verify(&assistant_response, &evidence)
                     .await
             } else {

@@ -135,13 +135,23 @@ impl LlamaCppLlm {
         let messages = coalesce_system_messages(messages)?;
         let requested_output = request.effective_max_output_tokens(self.settings.max_tokens);
         let max_tokens = self.output_room_for(&messages, requested_output);
+        let sampling = request.sampling.unwrap_or_default();
         let mut body = serde_json::Map::from_iter([
             ("model".into(), json!(self.settings.llama_cpp.model)),
             ("messages".into(), json!(messages)),
             ("stream".into(), json!(stream)),
-            ("temperature".into(), json!(self.settings.temperature)),
-            ("top_p".into(), json!(self.settings.top_p)),
-            ("top_k".into(), json!(self.settings.top_k)),
+            (
+                "temperature".into(),
+                json!(sampling.temperature.unwrap_or(self.settings.temperature)),
+            ),
+            (
+                "top_p".into(),
+                json!(sampling.top_p.unwrap_or(self.settings.top_p)),
+            ),
+            (
+                "top_k".into(),
+                json!(sampling.top_k.unwrap_or(self.settings.top_k)),
+            ),
             ("repeat_penalty".into(), json!(self.settings.repeat_penalty)),
             ("max_tokens".into(), json!(max_tokens)),
         ]);

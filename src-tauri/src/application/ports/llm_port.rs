@@ -357,12 +357,44 @@ pub enum CompletionInput {
     },
 }
 
+/// Sampling for one request, overriding the provider's configured defaults.
+///
+/// Most callers want the model the user tuned. A classifier does not: a verdict
+/// or a label is a decision about evidence, and sampling one from a soft
+/// distribution makes the same input answerable two ways on two turns. Fields
+/// left `None` keep the provider's own setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct SamplingOverride {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<i32>,
+}
+
+impl SamplingOverride {
+    /// Greedy decoding: the same prompt returns the same answer every time.
+    pub fn deterministic() -> Self {
+        Self {
+            temperature: Some(0.0),
+            top_p: Some(1.0),
+            top_k: Some(1),
+        }
+    }
+
+    /// Whether this override asks for anything at all.
+    pub fn is_empty(&self) -> bool {
+        self.temperature.is_none() && self.top_p.is_none() && self.top_k.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub input: Vec<CompletionInput>,
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// Sampling for this request. `None` keeps the provider's configuration.
+    #[serde(default)]
+    pub sampling: Option<SamplingOverride>,
     /// Caps generated tokens for this request, overriding the provider's own
     /// configured ceiling when it is lower.
     ///

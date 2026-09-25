@@ -36,6 +36,7 @@
 //! OpenAI-compatible backend later (vLLM, mistralrs-server, etc.)
 //! without changing this file.
 
+use crate::application::ports::llm_port::SamplingOverride;
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::traits::{ChatMessage, GenerationConfig, LLMClient};
 use crate::features::llm::engine::types::LLMError;
@@ -172,6 +173,11 @@ pub struct RequestTuning<'a> {
     pub json_schema: Option<&'a Value>,
     /// Wall-clock allowance for the whole exchange, when the caller sets one.
     pub time_budget: Option<Duration>,
+    /// Sampling for this request, over the client's configured defaults.
+    pub sampling: Option<SamplingOverride>,
+    /// Output ceiling for this request. Only ever tightens the configured one,
+    /// so a caller cannot generate past what the user allowed.
+    pub max_output_tokens: Option<u32>,
 }
 
 /// A non-streaming completion, with the bookkeeping the typed port reports.
@@ -416,6 +422,7 @@ impl SidecarLLMClient {
         stream: bool,
         tuning: RequestTuning<'a>,
     ) -> ChatCompletionRequest<'a> {
+        let sampling = tuning.sampling.unwrap_or_default();
         ChatCompletionRequest {
             model: "local",
             messages: messages
@@ -426,11 +433,14 @@ impl SidecarLLMClient {
                 })
                 .collect(),
             stream,
-            temperature: config.temperature,
-            top_p: config.top_p,
-            top_k: config.top_k,
+            temperature: sampling.temperature.unwrap_or(config.temperature),
+            top_p: sampling.top_p.unwrap_or(config.top_p),
+            top_k: sampling.top_k.unwrap_or(config.top_k),
             repeat_penalty: config.repeat_penalty,
-            max_tokens: config.max_tokens,
+            max_tokens: match tuning.max_output_tokens {
+                Some(requested) if requested > 0 => (requested as usize).min(config.max_tokens),
+                _ => config.max_tokens,
+            },
             reasoning_effort: tuning.reasoning_effort,
             chat_template_kwargs: tuning.reasoning_effort.map(|effort| {
                 if effort == "none" {
@@ -857,6 +867,8 @@ mod tests {
                 reasoning_effort: Some("none"),
                 json_schema: None,
                 time_budget: None,
+                sampling: None,
+                max_output_tokens: None,
             },
         );
 
@@ -876,6 +888,8 @@ mod tests {
                 reasoning_effort: Some("low"),
                 json_schema: None,
                 time_budget: None,
+                sampling: None,
+                max_output_tokens: None,
             },
         );
 

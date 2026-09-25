@@ -374,6 +374,8 @@ impl LLMPort for SidecarPortAdapter {
                     reasoning_effort: request.reasoning_effort.as_deref(),
                     json_schema: request.json_schema.as_ref(),
                     time_budget: Some(request.effective_time_budget()),
+                    sampling: request.sampling,
+                    max_output_tokens: request.max_output_tokens,
                 },
             )
             .await

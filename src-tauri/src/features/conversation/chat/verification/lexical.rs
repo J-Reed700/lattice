@@ -118,7 +118,18 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
 /// Strong overlap settles a plain sentence. It never settles one carrying a
 /// number, date or negation: those are exactly the claims that echo a source's
 /// wording while stating the opposite of it.
+///
+/// A sentence with no citation is never escalated. The judge rules a claim
+/// against the passages it cites, and a sentence that cites nothing has none —
+/// the only evidence to hand it would be whichever sources happened to rank
+/// first, which it was never making a statement about. Asking a judge to rule
+/// on unrelated text does not produce "unverified", it produces a verdict, and
+/// a closing line that summarises the cited ones has been marked contradicted
+/// on the strength of passages from an entirely different document.
 pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
+    if claim.citation_ids.is_empty() {
+        return false;
+    }
     let strongly_supported = claim.supported
         && claim.overlap_ratio >= STRONG_OVERLAP_RATIO
         && claim.matching_tokens >= STRONG_MATCHING_TOKENS;
@@ -200,7 +211,8 @@ fn is_contradiction_prone(claim: &str) -> bool {
 fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
     let mut out = Vec::new();
     for block in response.split('\n') {
-        let sentences = split_sentences(block);
+        let block = strip_emphasis_markers(block);
+        let sentences = split_sentences(&block);
         let own: Vec<Vec<u32>> = sentences
             .iter()
             .map(|sentence| extract_sentence_citation_ids(sentence))
@@ -216,6 +228,53 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
             out.push((sentence, citations));
         }
     }
+    out
+}
+
+/// Drop markdown emphasis so it cannot be read as sentence structure.
+///
+/// [`split_sentences`] breaks after a full stop whose next character is not
+/// alphanumeric, and a bolded opening sentence closes *after* its full stop:
+/// `**Bury it all the way.** The ideal depth is 4–6 inches [24].` split at the
+/// stop inside the emphasis, leaving one claim cut off before its closing `**`
+/// and the next one beginning `** The ideal depth…`. Both went to the judge
+/// malformed, and the stray marker was shown to the user in the verification
+/// panel as part of the claim.
+///
+/// Asterisk runs always go. Underscores go only when they are not inside a
+/// word, so `snake_case` in a quoted identifier survives.
+fn strip_emphasis_markers(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut idx = 0usize;
+
+    while let Some(&current) = chars.get(idx) {
+        if current == '*' || current == '_' {
+            let mut end = idx;
+            while chars.get(end) == Some(&current) {
+                end += 1;
+            }
+            let run = end - idx;
+            let inside_word = current == '_'
+                && idx > 0
+                && chars
+                    .get(idx - 1)
+                    .is_some_and(|previous| previous.is_alphanumeric())
+                && chars.get(end).is_some_and(|next| next.is_alphanumeric());
+            // Four or more is a horizontal rule or ASCII art, not emphasis.
+            // Either way the whole run is consumed here: stepping one character
+            // into a kept run would re-measure the tail as a shorter one and
+            // strip that instead, turning `____` into `_`.
+            if run > 3 || inside_word {
+                out.extend(std::iter::repeat_n(current, run));
+            }
+            idx = end;
+            continue;
+        }
+        out.push(current);
+        idx += 1;
+    }
+
     out
 }
 
@@ -253,12 +312,18 @@ fn is_claim_candidate(sentence: &str) -> bool {
         return false;
     }
     // The app's own line, appended when the model hit its output limit. The
-    // splitter stops at its full stop, so compare the words, not the wrapper.
+    // splitter stops at its full stop, so compare the words, not the wrapper —
+    // and the emphasis around it is gone by now, so match either form.
     let note = super::super::tool_loop::CUT_SHORT_NOTE
         .trim()
-        .trim_start_matches("_(")
-        .trim_end_matches(")_");
-    if s.trim_start_matches("_(").starts_with(note) {
+        .trim_start_matches('_')
+        .trim_start_matches('(')
+        .trim_end_matches('_')
+        .trim_end_matches(')');
+    if s.trim_start_matches('_')
+        .trim_start_matches('(')
+        .starts_with(note)
+    {
         return false;
     }
 
@@ -554,6 +619,66 @@ mod tests {
             .find(|claim| claim.sentence.starts_with("Peanuts"))
             .expect("uncited paragraph is a claim");
         assert!(aside.citation_ids.is_empty());
+    }
+
+    #[test]
+    fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
+        // Verbatim from a turn this got wrong: the bold closes after the full
+        // stop, so the splitter cut there and the second claim reached the
+        // judge — and the user — reading "** The ideal initial planting depth".
+        let claims = lexical_pass(
+            "**Bury it all the way — you don't leave the top sticking out.** The ideal initial \
+             planting depth is 4–6 inches of soil above the seed potato [1].",
+            &[source(
+                "The ideal initial planting depth for potatoes is 4 to 6 inches. This initial 4- \
+                 to 6-inch soil covering provides the seed potato with insulation and moisture.",
+            )],
+        );
+
+        assert_eq!(claims.len(), 2);
+        assert!(
+            claims.iter().all(|claim| !claim.sentence.contains('*')),
+            "emphasis markers reached the claim text: {:?}",
+            claims.iter().map(|c| &c.sentence).collect::<Vec<_>>()
+        );
+        assert!(claims[0].sentence.starts_with("Bury it all the way"));
+        assert!(claims[1].sentence.starts_with("The ideal initial planting depth"));
+    }
+
+    #[test]
+    fn an_underscore_inside_a_word_is_not_emphasis() {
+        assert_eq!(
+            strip_emphasis_markers("Set _max_tokens_ in the *config* file"),
+            "Set max_tokens in the config file"
+        );
+        assert_eq!(strip_emphasis_markers("A rule: ---- and ____"), "A rule: ---- and ____");
+    }
+
+    #[test]
+    fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
+        // Its only possible evidence would be whichever sources ranked first,
+        // which it never claimed anything about. A closing summary line was
+        // marked "contradicted" that way, against a different document.
+        let claims = lexical_pass(
+            "Potatoes want 4–6 inches of cover [1].\n\
+             So: fully buried at first, then buried deeper as the plant grows.",
+            &[source(
+                "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
+            )],
+        );
+
+        let summary = claims
+            .iter()
+            .find(|claim| claim.sentence.starts_with("So:"))
+            .expect("the uncited closing line is still a claim");
+        assert!(summary.citation_ids.is_empty());
+        assert!(!needs_judge(summary));
+        // The cited one still goes, numbers being exactly what overlap cannot settle.
+        let cited = claims
+            .iter()
+            .find(|claim| claim.citation_ids == vec![1])
+            .expect("the cited claim");
+        assert!(needs_judge(cited));
     }
 
     #[test]
