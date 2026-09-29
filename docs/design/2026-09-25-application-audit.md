@@ -12,6 +12,18 @@ The skeleton is sound in every area: blob leases and GC, atomic turn commit, sid
 
 Ranked across all areas by how many users hit it and how bad the result is.
 
+**Status after the 2026-09-25 fix wave** (six agents, one per area, cut off by the spend limit; tree
+reconciled by hand afterwards: 3599 Rust tests, 1132 vitest, clippy/fmt/tsc/eslint clean). Items 1–15
+and 17–20 are fixed in the tree, each with a test named for the behaviour. Item 16 (eval re-pointed at
+chat retrieval, run in CI) is deferred. Also deferred from §3: remote LLM auth headers still live in
+`settings.json` (they are now left out of exports and restored on import); download hash / `If-Range`
+resume; tool-calling support persisted on the downloaded-model row; per-token re-render and message
+virtualisation; the Intel binary lock pin; dropping `space_id` from the memory attributes table (an
+index on it was added instead). Behaviour changes worth knowing: attaching an already-attached file to
+a second chat moves it to that chat; the asset protocol scope is now app data + library + the folders
+the user has opened; a second launch focuses the running instance; log files keep a week; the
+standalone `ask_question` commands and the frontend `progressStore` are gone.
+
 | # | Finding | Area | Severity |
 |---|---|---|---|
 | 1 | **(v)** DOCX extraction returns XML junk plus the first text run. Word writes `document.xml` on one line; the parser reads lines. Every Word file in every library is indexed wrong. `extraction/docx.rs:90-121` | Ingestion | wrong-result |
