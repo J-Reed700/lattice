@@ -4947,18 +4947,6 @@
           "markdownDescription": "Denies the warm_up_active_utility_model command without any pre-configured scope."
         },
         {
-          "description": "Enables the ask_question_stream_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:allow-ask-question-stream-wrapper",
-          "markdownDescription": "Enables the ask_question_stream_wrapper command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the ask_question_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:allow-ask-question-wrapper",
-          "markdownDescription": "Enables the ask_question_wrapper command without any pre-configured scope."
-        },
-        {
           "description": "Enables the check_llm_health_wrapper command without any pre-configured scope.",
           "type": "string",
           "const": "qa:allow-check-llm-health-wrapper",
@@ -4975,18 +4963,6 @@
           "type": "string",
           "const": "qa:allow-get-qa-model-wrapper",
           "markdownDescription": "Enables the get_qa_model_wrapper command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the ask_question_stream_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:deny-ask-question-stream-wrapper",
-          "markdownDescription": "Denies the ask_question_stream_wrapper command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the ask_question_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:deny-ask-question-wrapper",
-          "markdownDescription": "Denies the ask_question_wrapper command without any pre-configured scope."
         },
         {
           "description": "Denies the check_llm_health_wrapper command without any pre-configured scope.",
