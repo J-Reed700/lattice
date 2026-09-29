@@ -3,6 +3,7 @@
 //! Foundation types and utilities used across all layers.
 
 pub mod api_result;
+pub mod background;
 pub mod constants;
 pub mod domain_types;
 pub mod error;
@@ -13,6 +14,7 @@ pub mod sql_like;
 pub mod test_paths;
 pub mod text_utils;
 pub mod time;
+pub mod url_identity;
 // REMOVED: pub mod traits; (5,125-line god object eliminated - traits migrated to infrastructure/services/traits/)
 pub mod utils;
 

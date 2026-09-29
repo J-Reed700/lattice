@@ -34,6 +34,10 @@ pub struct CompareRowDto {
     /// Set when this document could not be processed (timeout, no chunks, LLM
     /// unavailable). Cells are all-null in that case. Rendered as a muted row note.
     pub error: Option<String>,
+    /// Set when this row's values were read from the document's opening
+    /// passages because semantic search failed for it. The cells are filled
+    /// but may not reflect the parts of the document the columns ask about.
+    pub degraded: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

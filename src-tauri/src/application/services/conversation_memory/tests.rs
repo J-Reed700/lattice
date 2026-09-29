@@ -22,7 +22,9 @@ use crate::application::ports::conversation_memory::{
     CommittedMemorySnapshot, ConversationMemoryPort, MemoryCommitCandidate, MemoryCommitError,
     MemoryCommitPreconditions, ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use crate::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, SamplingOverride,
+};
 use crate::application::ports::LLMPort;
 use crate::domain::conversation_memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
@@ -323,6 +325,45 @@ impl ConversationMemoryPort for FakePort {
         })
     }
 
+    async fn page_recent_source_messages(
+        &self,
+        _conversation_id: &str,
+        after_sequence: i64,
+        through_sequence: i64,
+        limits: SourceReadLimits,
+    ) -> Result<SourcePage> {
+        let inner = self.inner.lock();
+        let mut rows: Vec<SourceMessage> = inner
+            .messages
+            .iter()
+            .filter(|message| {
+                message.sequence > after_sequence && message.sequence <= through_sequence
+            })
+            .cloned()
+            .collect();
+        rows.sort_by_key(|message| std::cmp::Reverse(message.sequence));
+
+        let mut messages: Vec<SourceMessage> = Vec::new();
+        let mut bytes = 0usize;
+        let mut truncated = false;
+        for row in rows {
+            if messages.len() >= limits.max_messages
+                || (!messages.is_empty() && bytes + row.content.len() > limits.max_bytes)
+            {
+                truncated = true;
+                break;
+            }
+            bytes += row.content.len();
+            messages.push(row);
+        }
+        messages.reverse();
+        Ok(SourcePage {
+            messages,
+            has_more: truncated,
+            next_after_sequence: after_sequence,
+        })
+    }
+
     async fn read_source_spans(
         &self,
         _conversation_id: &str,
@@ -490,6 +531,7 @@ struct FakeLlm {
     calls: Mutex<Vec<Task>>,
     prompts: Mutex<Vec<String>>,
     request_limits: Mutex<Vec<(Option<String>, Option<u32>)>>,
+    samplings: Mutex<Vec<Option<SamplingOverride>>>,
 }
 
 impl FakeLlm {
@@ -505,6 +547,7 @@ impl FakeLlm {
             calls: Mutex::new(Vec::new()),
             prompts: Mutex::new(Vec::new()),
             request_limits: Mutex::new(Vec::new()),
+            samplings: Mutex::new(Vec::new()),
         })
     }
 
@@ -522,6 +565,10 @@ impl FakeLlm {
 
     fn request_limits(&self) -> Vec<(Option<String>, Option<u32>)> {
         self.request_limits.lock().clone()
+    }
+
+    fn samplings(&self) -> Vec<Option<SamplingOverride>> {
+        self.samplings.lock().clone()
     }
 
     fn reply(&self, prompt: &str) -> Result<String> {
@@ -561,6 +608,7 @@ impl LLMPort for FakeLlm {
         self.request_limits
             .lock()
             .push((request.reasoning_effort.clone(), request.max_output_tokens));
+        self.samplings.lock().push(request.sampling);
         let prompt = request
             .input
             .iter()
@@ -733,6 +781,56 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         Some(&serde_json::json!(["transition"])),
         "typed transitions must not advertise assertion evidence as valid"
     );
+}
+
+/// llama.cpp compiles the schema to a grammar and throws away the whole
+/// grammar when any `maxLength` or `maxItems` exceeds its repetition
+/// threshold. A 2048-byte quote bound did exactly that on the local sidecar:
+/// the model then answered with invented fields and every compaction failed.
+#[test]
+fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
+    fn largest_bound(value: &serde_json::Value, path: &str, worst: &mut (usize, String)) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    if matches!(
+                        key.as_str(),
+                        "maxLength" | "maxItems" | "minLength" | "minItems"
+                    ) {
+                        let bound = child
+                            .as_u64()
+                            .and_then(|bound| usize::try_from(bound).ok())
+                            .unwrap_or(0);
+                        if bound > worst.0 {
+                            *worst = (bound, format!("{path}/{key}"));
+                        }
+                    }
+                    largest_bound(child, &format!("{path}/{key}"), worst);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    largest_bound(child, &format!("{path}/{index}"), worst);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (name, schema) in [
+        ("patch", super::prompts::patch_schema()),
+        ("verdict", super::prompts::verdict_schema()),
+    ] {
+        let mut worst = (0, String::new());
+        largest_bound(&schema, "", &mut worst);
+        assert!(
+            worst.0 <= super::prompts::GRAMMAR_REPETITION_LIMIT,
+            "{name} schema bound {} at {} exceeds llama.cpp's grammar limit of {}",
+            worst.0,
+            worst.1,
+            super::prompts::GRAMMAR_REPETITION_LIMIT
+        );
+    }
 }
 
 #[test]
@@ -954,6 +1052,13 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
             (Some("none".into()), Some(8_192)),
         ],
         "every structured utility request must disable reasoning, and review gets the tighter cap"
+    );
+    assert!(
+        llm.samplings()
+            .iter()
+            .all(|sampling| *sampling == Some(SamplingOverride::deterministic())),
+        "every utility request decodes greedily: the same passages must yield the same patch, \
+         not one that depends on the chat temperature"
     );
     assert_eq!(port.commits(), 1);
     assert_eq!(port.watermark(), 4);
@@ -1388,4 +1493,37 @@ async fn the_fake_port_enforces_the_revision_compare_and_swap() {
         .await
         .expect_err("a stale memory revision must be refused");
     assert_eq!(error.code(), "memory_conflict");
+}
+
+#[tokio::test]
+async fn maintenance_consolidates_the_first_completed_turn_without_waiting_for_overflow() {
+    let messages = four_turns()[..2].to_vec();
+    let port = FakePort::new(messages, Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![proposed_constraint(
+                "c1",
+                "Approval required",
+                "m1",
+                "Do not deploy until I approve.",
+            )],
+            vec![],
+            &["m1:s0", "m2:s0"],
+        ))],
+        vec![Ok(verdict_response(&[("addition:c1", "supported")]))],
+        vec![Ok("Deployment discussed.".into())],
+    );
+    let outcome = job(port.clone(), llm, small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                trigger: super::CompactionTrigger::Maintenance,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(port.watermark(), 2);
+    assert_eq!(outcome.commit.inserts.len(), 1);
 }

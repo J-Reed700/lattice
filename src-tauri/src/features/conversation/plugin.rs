@@ -1,6 +1,7 @@
 //! Conversation Plugin - Thin Tauri wrappers over conversation command implementations.
 
 use crate::features::conversation::branching_dto::{
+    ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
     ForkConversationRequestDto, ForkConversationResponseDto, TruncateConversationAfterRequestDto,
     TruncateConversationAfterResponseDto,
 };
@@ -104,6 +105,8 @@ pub async fn chat_with_conversation_wrapper(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_wrapper_impl(
@@ -113,6 +116,8 @@ pub async fn chat_with_conversation_wrapper(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
+        attachment_document_ids,
         window,
     )
     .await
@@ -127,6 +132,8 @@ pub async fn chat_with_conversation(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_impl(
@@ -136,6 +143,8 @@ pub async fn chat_with_conversation(
         tool_preferences,
         cancel_only,
         request_id,
+        attachment_names,
+        attachment_document_ids,
         window,
     )
     .await
@@ -283,11 +292,19 @@ pub async fn remove_conversation_from_journal(
 #[specta::specta]
 pub async fn list_space_documents(
     space_id: Option<String>,
+    conversation_id: Option<String>,
     query: Option<String>,
     limit: Option<u32>,
     container: State<'_, Container>,
 ) -> Result<Vec<SpaceDocumentDto>, ApiError> {
-    conversation_impl::list_space_documents_impl(space_id, query, limit, container.inner()).await
+    conversation_impl::list_space_documents_impl(
+        space_id,
+        conversation_id,
+        query,
+        limit,
+        container.inner(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -401,6 +418,16 @@ pub async fn set_documents_space_membership(
         container.inner(),
     )
     .await
+}
+
+/// Move a chat's attachments into the library.
+#[tauri::command]
+#[specta::specta]
+pub async fn add_documents_to_library(
+    document_ids: Vec<String>,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::add_documents_to_library_impl(document_ids, container.inner()).await
 }
 
 #[tauri::command]
@@ -524,6 +551,18 @@ pub async fn fork_conversation(
     conversation_impl::fork_conversation_impl(request, container.inner()).await
 }
 
+/// Summarize a conversation and open a new one in the same space that starts
+/// from the summary. Takes minutes on a local model: it is one or more full
+/// generations.
+#[tauri::command]
+#[specta::specta]
+pub async fn continue_in_new_conversation(
+    request: ContinueInNewConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<ContinueInNewConversationResponseDto, ApiError> {
+    conversation_impl::continue_in_new_conversation_impl(request, container.inner()).await
+}
+
 /// Re-run the last user message, streaming over `llm-stream` exactly like a
 /// normal send. The user message is not duplicated.
 ///
@@ -554,6 +593,15 @@ pub async fn regenerate_response(
 /// `keepRecentMessages`, default 4) are summarized by the LLM and folded into
 /// a single context note. The original messages stay in the history for
 /// display; only the LLM context switches to the summary.
+#[tauri::command]
+#[specta::specta]
+pub async fn manage_knowledge(
+    request: crate::features::conversation::knowledge_dto::KnowledgeRequestDto,
+    container: State<'_, Container>,
+) -> Result<crate::features::conversation::knowledge_dto::KnowledgeResponseDto, ApiError> {
+    conversation_impl::manage_knowledge_impl(request, container.inner()).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_conversation_memory(
@@ -611,6 +659,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             list_document_space_memberships,
             set_document_space_membership,
             set_documents_space_membership,
+            add_documents_to_library,
             bookmark_conversation_message,
             unbookmark_conversation_message,
             delete_conversation_message,
@@ -620,9 +669,11 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             synthesize_journal_entries,
             truncate_conversation_after,
             fork_conversation,
+            continue_in_new_conversation,
             regenerate_response,
             compact_conversation,
             get_conversation_memory,
+            manage_knowledge,
         ])
         .build()
 }

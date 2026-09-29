@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   MessageVerificationSummary,
@@ -354,6 +354,49 @@ describe('TurnRecord', () => {
     expect(
       within(screen.getByRole('list')).getByText('Searching your documents')
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The clock belongs to the step, not to the row drawing it. Timed from the
+   * row's mount, every clock went back to zero each time a reader folded the
+   * record and opened it again, while the step itself ran on.
+   */
+  it('keeps a running step on its own clock when the record is folded and reopened', async () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      render(
+        <TurnRecord
+          trace={null}
+          record={null}
+          liveSteps={[
+            step({
+              id: 's0',
+              kind: 'generate',
+              label: 'Thinking',
+              state: 'running',
+              startedAtMs: 2_000,
+              durationMs: undefined,
+            }),
+          ]}
+          // The turn began 44s ago; the step itself, 42s ago.
+          turnStartedAt={now - 44_000}
+          isPending
+          isWriting={false}
+          verification={null}
+        />
+      );
+
+      expect(within(screen.getByRole('list')).getByText('42.0s')).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button'));
+      expect(screen.queryByRole('list')).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button'));
+
+      expect(within(screen.getByRole('list')).getByText('42.0s')).toBeInTheDocument();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   /** Once the answer has text, the answer is the progress indicator. */

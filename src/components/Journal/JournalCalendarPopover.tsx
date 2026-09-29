@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 
 import { CalendarDays } from 'lucide-react';
-import { DayPicker } from 'react-day-picker';
-
 import 'react-day-picker/dist/style.css';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import type { JournalEntrySummary } from './useJournalEntries';
+
+const DayPicker = lazy(() => import('react-day-picker').then((module) => ({ default: module.DayPicker })));
 
 interface JournalCalendarPopoverProps {
   entries: JournalEntrySummary[];
@@ -82,7 +82,7 @@ export function JournalCalendarPopover({ entries, onJumpToEntry }: JournalCalend
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-3">
-        <DayPicker
+        {isOpen && <Suspense fallback={<div className="h-[280px] w-[280px]" aria-label="Loading calendar" />}><DayPicker
           mode="single"
           onSelect={handleSelect}
           modifiers={{ hasEntry: datesWithEntries }}
@@ -112,7 +112,7 @@ export function JournalCalendarPopover({ entries, onJumpToEntry }: JournalCalend
             day_disabled: 'text-[hsl(var(--text-muted))] opacity-40 cursor-not-allowed',
             day_hidden: 'invisible',
           }}
-        />
+        /></Suspense>}
         <style>{`
           .journal-day-has-entry {
             position: relative;

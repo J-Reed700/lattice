@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
 import { useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { ArrowUp, ChevronDown, Cpu, FileText, GitBranch, Library, MessageCircle,
 
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 
+import { pollAttachmentImport } from './attachmentImportPoll';
 import { ChatDropStaging } from './ChatDropStaging';
 import { ChatEmptyStateIngestDelta } from './ChatEmptyStateIngestDelta';
 import { ChatModelNotice } from './ChatModelNotice';
@@ -17,6 +18,7 @@ import { ModeChips } from './composer/ModeChips';
 import { matchSlashCommands, parseSlashSubmission } from './composer/slashCommands';
 import { replaceTrigger } from './composer/suggestTrigger';
 import { useComposerSuggest } from './composer/useComposerSuggest';
+import { useRefocusAfterTurn } from './composer/useRefocusAfterTurn';
 import { useSpaceDocuments } from './composer/useSpaceDocuments';
 import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
@@ -27,6 +29,7 @@ import { ModelPickerPopover } from './ModelPickerPopover';
 import { GENERAL_SPACE_ID, SpacePickerPopover, useOpenSpaces } from './SpacePickerPopover';
 import { useChatFileDrop } from './useChatFileDrop';
 import { UtilityModelNotice } from './UtilityModelNotice';
+import { VirtualizedMessageList, type VirtualizedMessageListHandle } from './VirtualizedMessageList';
 import { useSettingsQuery } from '../../hooks/queries/useSettingsQuery';
 import { conversationKeys } from '../../hooks/useConversationsController';
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
@@ -52,6 +55,17 @@ const BATCH_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const SUGGEST_LIST_ID = 'composer-suggest-list';
 
 type TurnMode = 'auto' | 'followup' | 'query';
+
+/**
+ * What an import handed the send: names for the chips, ids for the turn.
+ *
+ * Both travel or the file is only half attached — visible in the thread and
+ * invisible to the answer.
+ */
+type ImportedAttachments = {
+  names: string[];
+  documentIds: string[];
+};
 
 const normalizeEnabledTools = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) {
@@ -161,25 +175,24 @@ const parseToolPreferences = (serialized: string | null | undefined): ToolPrefer
 
 export function ChatPanel() {
   const { activeModel, downloadedModels, setActiveChatModel } = useDownloadedModels();
-  const {
-    activeConversationId,
-    conversations,
-    spaces,
-    selectedSpaceId,
-    inFlightGenerations,
-    sendMessage,
-    cancelGeneration,
-    createConversation,
-    optimisticMessages,
-    messageRetrieval,
-    composerDraft,
-    setComposerDraft,
-    regenerateResponse,
-    forkConversation,
-    compactConversation,
-    moveConversationToSpace,
-    loadConversationLinkedDocuments,
-  } = useConversationsStore();
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
+  const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
+  const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
+  const composerDraft = useConversationsStore((state) => state.composerDraft);
+  const sendMessage = useConversationsStore((state) => state.sendMessage);
+  const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
+  const createConversation = useConversationsStore((state) => state.createConversation);
+  const setComposerDraft = useConversationsStore((state) => state.setComposerDraft);
+  const regenerateResponse = useConversationsStore((state) => state.regenerateResponse);
+  const forkConversation = useConversationsStore((state) => state.forkConversation);
+  const compactConversation = useConversationsStore((state) => state.compactConversation);
+  const moveConversationToSpace = useConversationsStore((state) => state.moveConversationToSpace);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
   const queryClient = useQueryClient();
   const settings = useSettingsQuery().data;
 
@@ -207,9 +220,13 @@ export function ChatPanel() {
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
   const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<VirtualizedMessageListHandle>(null);
   const previousConversationIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Typing is never blocked during a turn (a turn can run for many minutes);
+  // only submitting is, in handleSubmit.
+  useRefocusAfterTurn(isSending, textareaRef);
   const knownMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
     conversationId: null,
     ids: new Set(),
@@ -252,6 +269,10 @@ export function ChatPanel() {
   const getMessageKey = useCallback(
     (message: typeof messages[number]): string =>
       'tempId' in message ? message.tempId : message.id,
+    []
+  );
+  const getPersistedMessageId = useCallback(
+    (message: typeof messages[number]): string | null => 'id' in message ? message.id : null,
     []
   );
 
@@ -306,8 +327,8 @@ export function ChatPanel() {
     // The global `prefers-reduced-motion` rule in index.css covers CSS
     // transitions, not programmatic scrolling: this ride has to be opted out
     // of here or it happens on every message.
-    container.scrollTo({
-      top: container.scrollHeight,
+    messageListRef.current?.scrollToIndex(messages.length - 1, {
+      align: 'end',
       behavior: isConversationChange || prefersReducedMotion ? 'auto' : 'smooth',
     });
   }, [messages, activeConversationId, prefersReducedMotion]);
@@ -533,11 +554,6 @@ export function ChatPanel() {
     if (isChatUnavailable) return;
 
     const message = input.trim();
-    setInput('');
-
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
 
     // A message that is nothing but a command runs the command instead of being
     // sent. /compact was the first of these — a bare regex here that nothing on
@@ -545,11 +561,42 @@ export function ChatPanel() {
     // same door, typed or picked.
     const typedCommand = parseSlashSubmission(message);
     if (typedCommand) {
+      setInput('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
       runSlashCommand(typedCommand);
       return;
     }
 
-    await sendMessage(message, activeConversationId, resolveEffectiveToolPreferences());
+    // Staged files join the conversation *with* this message: import them
+    // first so the turn can already draw on them, and let the message carry
+    // their names and ids. The names draw the chips; the ids are what makes
+    // the turn actually read the files, so a send that has one without the
+    // other is a file the answer will not have seen. A total import failure
+    // aborts the send with the draft intact — sending without the files would
+    // answer the wrong question.
+    let attachmentNames: string[] | undefined;
+    let attachmentDocumentIds: string[] | undefined;
+    if (staged.length > 0) {
+      const imported = await handleImportStagedFiles();
+      if (imported === null) return;
+      if (imported.names.length > 0) attachmentNames = imported.names;
+      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
+    }
+
+    setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    await sendMessage(
+      message,
+      activeConversationId,
+      resolveEffectiveToolPreferences(),
+      attachmentNames,
+      attachmentDocumentIds
+    );
   };
 
   const handleCancel = async () => {
@@ -627,41 +674,47 @@ export function ChatPanel() {
     [handleChangeSpace]
   );
 
-  const handleImportStagedFiles = useCallback(async () => {
-    if (!activeConversationId || staged.length === 0 || isImportingFiles) return;
+  /**
+   * Import the staged files into the vault and link them to this conversation.
+   *
+   * Returns the names and the document ids when the send may proceed —
+   * including the still-indexing case, where the documents are linked and the
+   * next turn catches up — and `null` when nothing made it in, so the caller
+   * can abort with the composer's draft and the staged files both intact.
+   *
+   * The ids matter as much as the names: the names only draw the chips, while
+   * the ids are what the turn reads. A file whose id never reaches the send is
+   * a file the answer is written without, however plainly its chip says it was
+   * attached.
+   */
+  const handleImportStagedFiles = useCallback(async (): Promise<ImportedAttachments | null> => {
+    if (!activeConversationId || staged.length === 0 || isImportingFiles) return null;
+    const stagedNames = staged.map((file) => file.name);
     setIsImportingFiles(true);
     try {
-      const started = await VaultAPI.startBatchFileImport(staged.map((file) => file.path));
+      // Attached, not filed. These documents belong to this conversation: the
+      // turn can read and cite them, but they stay out of the library and out
+      // of every other chat's searches, and they go when this chat goes. The
+      // "Add to library" action on the attachment is what files them for good.
+      const started = await VaultAPI.startBatchFileImport(
+        staged.map((file) => file.path),
+        activeConversationId
+      );
       if (!started.ok) {
         toast.error("Couldn't add these files", { message: started.error });
-        return;
+        return null;
       }
 
-      const jobId = started.data;
-      const deadline = Date.now() + BATCH_POLL_TIMEOUT_MS;
-      let documentIds: string[] = [];
-      let addedCount: number | null = null;
-      let failedCount = 0;
-      // Poll rather than subscribe: the batch slice emits no per-job event.
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, BATCH_POLL_INTERVAL_MS));
-        const status = await VaultAPI.getBatchJobStatus(jobId);
-        if (!status.ok) break;
-        const job = status.data;
-        const terminal =
-          job.status === 'completed' ||
-          job.status === 'failed' ||
-          job.status === 'cancelled' ||
-          job.completedItems + job.failedItems >= job.totalItems;
-        if (terminal) {
-          documentIds = (job.items ?? [])
-            .map((item) => item.documentId)
-            .filter((id): id is string => Boolean(id));
-          addedCount = job.completedItems;
-          failedCount = job.failedItems;
-          break;
-        }
+      const outcome = await pollAttachmentImport(started.data, {
+        getStatus: VaultAPI.getBatchJobStatus,
+        intervalMs: BATCH_POLL_INTERVAL_MS,
+        timeoutMs: BATCH_POLL_TIMEOUT_MS,
+      });
+      if (outcome.kind === 'unreachable') {
+        toast.error("Couldn't confirm these files were attached", { message: outcome.error });
+        return null;
       }
+      const { documentIds } = outcome;
 
       // Scoping only applies to a conversation that already has its own space.
       // Creating one behind the user's back would silently narrow every future
@@ -676,24 +729,41 @@ export function ChatPanel() {
       void loadConversationLinkedDocuments(activeConversationId);
 
       const requested = staged.length;
-      clearStaged();
-      // Report what the job actually did. Saying "Added 4 files" after the
+      // Report what the job actually did. Saying "Attached 4 files" after the
       // batch failed, or after we stopped waiting, is a claim we cannot make.
-      if (addedCount === null) {
-        toast.info(`Still adding ${requested} file${requested !== 1 ? 's' : ''}`, {
+      // Files stay staged on a total failure so the send can be retried.
+      //
+      // "Attached", not "Added": these files belong to this conversation, not
+      // to the library, and the wording is the only place the user learns that
+      // before they go looking for them in the library.
+      if (outcome.kind === 'pending') {
+        // Still indexing at the deadline. Send only with ids to read: chips
+        // without ids would promise files the answer never sees.
+        if (documentIds.length === 0) {
+          toast.error('These files are taking too long to attach', {
+            message: 'They stay staged, and your message was not sent.',
+          });
+          return null;
+        }
+        clearStaged();
+        toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
-      } else if (addedCount === 0) {
-        toast.error("Couldn't add these files", {
-          message: `${failedCount || requested} failed to import.`,
+        return { names: stagedNames, documentIds };
+      } else if (outcome.added === 0) {
+        toast.error("Couldn't attach these files", {
+          message: `${outcome.failed || requested} failed to import.`,
         });
+        return null;
       } else {
-        toast.success(`Added ${addedCount} file${addedCount !== 1 ? 's' : ''}`, {
+        clearStaged();
+        toast.success(`Attached ${outcome.added} file${outcome.added !== 1 ? 's' : ''}`, {
           message:
-            failedCount > 0
-              ? `${failedCount} couldn't be read. The rest are indexing now.`
-              : "They're indexing now.",
+            outcome.failed > 0
+              ? `${outcome.failed} couldn't be read. The rest are indexing now.`
+              : 'Only this conversation can see them. Add them to your library from Sources.',
         });
+        return { names: stagedNames, documentIds };
       }
     } finally {
       setIsImportingFiles(false);
@@ -809,10 +879,12 @@ export function ChatPanel() {
     }
   };
 
-  // `@` may only ever offer documents of this conversation's own space — never
-  // the sidebar's selection, which is a different chat's business.
+  // `@` may only ever offer documents this conversation can read — its own
+  // space and its own attachments, never the sidebar's selection, which is a
+  // different chat's business.
   const { documents: mentionDocuments, isLoading: isLoadingMentions } = useSpaceDocuments(
     conversationSpaceId,
+    activeConversationId,
     mentionQuery
   );
 
@@ -1084,7 +1156,7 @@ export function ChatPanel() {
 
   if (!activeConversationId) {
     return (
-      <div className="flex min-w-0 flex-1 items-center justify-center bg-bg">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 items-center justify-center bg-bg">
         <div className="max-w-md px-8 text-center">
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-[hsl(var(--text-primary)/0.05)] text-text-tertiary shadow-[inset_0_0_0_1px_hsl(var(--text-primary)/0.05)]">
             <MessageCircle className="h-5 w-5" strokeWidth={1.6} />
@@ -1110,7 +1182,7 @@ export function ChatPanel() {
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
-      className="chat-panel relative flex-1 min-w-0 flex flex-col bg-bg"
+      className="chat-panel relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg"
     >
       {isDragging && (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-[hsl(var(--accent))] bg-bg/80 transition-opacity duration-fast">
@@ -1126,11 +1198,12 @@ export function ChatPanel() {
         isOpen={isMemoryOpen}
         onClose={() => setIsMemoryOpen(false)}
         messageContentById={messageContentById}
+        onOpenConversation={(id) => { setIsMemoryOpen(false); void selectConversation(id); }}
       />
       {/* Thread scroll region */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto"
         onScroll={(event) => {
           const container = event.currentTarget;
           const distanceFromBottom =
@@ -1159,7 +1232,13 @@ export function ChatPanel() {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             >
-              {messages.map((message, index) => {
+              <VirtualizedMessageList
+                ref={messageListRef}
+                items={messages}
+                scrollElementRef={scrollContainerRef}
+                getKey={getMessageKey}
+                getMessageId={getPersistedMessageId}
+                renderItem={(message, index) => {
                 const key = getMessageKey(message);
                 const previous = index > 0 ? messages[index - 1] : null;
                 const showCompactionDivider =
@@ -1167,7 +1246,7 @@ export function ChatPanel() {
                   'id' in message &&
                   message.id === compactionRecord?.upToMessageId;
                 return (
-                  <Fragment key={key}>
+                  <>
                     <Message
                       message={message}
                       isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
@@ -1189,9 +1268,10 @@ export function ChatPanel() {
                         <div className="h-px flex-1 bg-[hsl(var(--border-default))]" />
                       </div>
                     )}
-                  </Fragment>
+                  </>
                 );
-              })}
+              }}
+              />
             </motion.div>
           )}
 
@@ -1212,7 +1292,6 @@ export function ChatPanel() {
           staged={staged}
           isImporting={isImportingFiles}
           onRemove={removeStaged}
-          onImport={() => void handleImportStagedFiles()}
           onClear={clearStaged}
         />
 
@@ -1249,7 +1328,6 @@ export function ChatPanel() {
                 onFocus={() => suggest.setFocused(true)}
                 onBlur={() => suggest.setFocused(false)}
                 placeholder={placeholder}
-                disabled={isSending}
                 rows={1}
                 aria-label="Message composer"
                 aria-autocomplete="list"

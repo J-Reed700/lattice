@@ -58,12 +58,11 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
     }
 
     let mut claims = Vec::new();
-    for sentence in split_sentences(response) {
+    for (sentence, citation_ids) in sentences_with_citations(response) {
         if !is_claim_candidate(&sentence) {
             continue;
         }
 
-        let citation_ids = extract_sentence_citation_ids(&sentence);
         let cited_source_indices: Vec<usize> = citation_ids
             .iter()
             .filter_map(|id| {
@@ -119,7 +118,18 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
 /// Strong overlap settles a plain sentence. It never settles one carrying a
 /// number, date or negation: those are exactly the claims that echo a source's
 /// wording while stating the opposite of it.
+///
+/// A sentence with no citation is never escalated. The judge rules a claim
+/// against the passages it cites, and a sentence that cites nothing has none —
+/// the only evidence to hand it would be whichever sources happened to rank
+/// first, which it was never making a statement about. Asking a judge to rule
+/// on unrelated text does not produce "unverified", it produces a verdict, and
+/// a closing line that summarises the cited ones has been marked contradicted
+/// on the strength of passages from an entirely different document.
 pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
+    if claim.citation_ids.is_empty() {
+        return false;
+    }
     let strongly_supported = claim.supported
         && claim.overlap_ratio >= STRONG_OVERLAP_RATIO
         && claim.matching_tokens >= STRONG_MATCHING_TOKENS;
@@ -188,6 +198,86 @@ fn is_contradiction_prone(claim: &str) -> bool {
 /// a token ("1.2 °C", "v2.1", "example.com") does not, and splitting there cut
 /// every sentence with a decimal in half: the claims most worth checking were
 /// judged as two fragments, neither of which says what the sentence says.
+/// Every sentence with the citations it answers to.
+///
+/// A marker covers the point it closes, not only the sentence it sits in:
+/// "…LED lights are the stated workaround [11]. So 'a lot of sun' becomes
+/// '6–8 hours of strong light'." is one cited point written as two sentences.
+/// Scored alone, the second read as uncited and the answer said "No source
+/// cited for this" beside a visible `[11]`. So a sentence without a marker of
+/// its own takes the next marker in its paragraph or list item, or failing
+/// that the previous one. Its line is the boundary: a heading or a paragraph
+/// with no marker at all stays uncited, which is what it is.
+fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
+    let mut out = Vec::new();
+    for block in response.split('\n') {
+        let block = strip_emphasis_markers(block);
+        let sentences = split_sentences(&block);
+        let own: Vec<Vec<u32>> = sentences
+            .iter()
+            .map(|sentence| extract_sentence_citation_ids(sentence))
+            .collect();
+        for (index, sentence) in sentences.into_iter().enumerate() {
+            let citations = own
+                .get(index)
+                .filter(|ids| !ids.is_empty())
+                .or_else(|| own.iter().skip(index + 1).find(|ids| !ids.is_empty()))
+                .or_else(|| own.iter().take(index).rev().find(|ids| !ids.is_empty()))
+                .cloned()
+                .unwrap_or_default();
+            out.push((sentence, citations));
+        }
+    }
+    out
+}
+
+/// Drop markdown emphasis so it cannot be read as sentence structure.
+///
+/// [`split_sentences`] breaks after a full stop whose next character is not
+/// alphanumeric, and a bolded opening sentence closes *after* its full stop:
+/// `**Bury it all the way.** The ideal depth is 4–6 inches [24].` split at the
+/// stop inside the emphasis, leaving one claim cut off before its closing `**`
+/// and the next one beginning `** The ideal depth…`. Both went to the judge
+/// malformed, and the stray marker was shown to the user in the verification
+/// panel as part of the claim.
+///
+/// Asterisk runs always go. Underscores go only when they are not inside a
+/// word, so `snake_case` in a quoted identifier survives.
+fn strip_emphasis_markers(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut idx = 0usize;
+
+    while let Some(&current) = chars.get(idx) {
+        if current == '*' || current == '_' {
+            let mut end = idx;
+            while chars.get(end) == Some(&current) {
+                end += 1;
+            }
+            let run = end - idx;
+            let inside_word = current == '_'
+                && idx > 0
+                && chars
+                    .get(idx - 1)
+                    .is_some_and(|previous| previous.is_alphanumeric())
+                && chars.get(end).is_some_and(|next| next.is_alphanumeric());
+            // Four or more is a horizontal rule or ASCII art, not emphasis.
+            // Either way the whole run is consumed here: stepping one character
+            // into a kept run would re-measure the tail as a shorter one and
+            // strip that instead, turning `____` into `_`.
+            if run > 3 || inside_word {
+                out.extend(std::iter::repeat_n(current, run));
+            }
+            idx = end;
+            continue;
+        }
+        out.push(current);
+        idx += 1;
+    }
+
+    out
+}
+
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
@@ -219,6 +309,21 @@ fn is_claim_candidate(sentence: &str) -> bool {
         return false;
     }
     if s.ends_with('?') {
+        return false;
+    }
+    // The app's own line, appended when the model hit its output limit. The
+    // splitter stops at its full stop, so compare the words, not the wrapper —
+    // and the emphasis around it is gone by now, so match either form.
+    let note = super::super::tool_loop::CUT_SHORT_NOTE
+        .trim()
+        .trim_start_matches('_')
+        .trim_start_matches('(')
+        .trim_end_matches('_')
+        .trim_end_matches(')');
+    if s.trim_start_matches('_')
+        .trim_start_matches('(')
+        .starts_with(note)
+    {
         return false;
     }
 
@@ -304,46 +409,159 @@ fn extract_sentence_citation_ids(sentence: &str) -> Vec<u32> {
     out
 }
 
-fn collect_source_token_sets(sources: &[SourceDto]) -> Vec<HashSet<String>> {
+/// Characters per scoring window over a long passage.
+///
+/// A cited web page arrives whole, and one token set over a whole article
+/// matches almost any sentence on its topic. Scoring against windows asks
+/// instead whether one stretch of the page says what the claim says.
+pub(super) const WINDOW_CHARS: usize = 1200;
+/// Windows overlap by a third so a sentence that straddles a boundary still
+/// lands whole in one of them.
+const WINDOW_STEP_CHARS: usize = 800;
+
+/// The passage cut into overlapping windows; a short passage is one window.
+pub(super) fn passage_windows(text: &str) -> Vec<String> {
+    let text = normalize_whitespace(text);
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= WINDOW_CHARS {
+        return vec![text];
+    }
+    let mut windows = Vec::new();
+    let mut start = 0;
+    loop {
+        let end = (start + WINDOW_CHARS).min(chars.len());
+        windows.push(chars.iter().skip(start).take(end - start).collect());
+        if end == chars.len() {
+            break;
+        }
+        start += WINDOW_STEP_CHARS;
+    }
+    windows
+}
+
+/// One stretch of a passage, scored against a claim.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ScoredWindow {
+    /// Position among the passage's windows, so picks can be put back in
+    /// reading order and neighbours told apart.
+    pub(super) index: usize,
+    /// Claim tokens this window shares.
+    pub(super) score: usize,
+    pub(super) text: String,
+}
+
+/// Up to `max` windows of `text` that share the most vocabulary with `claim`,
+/// best first.
+///
+/// An answer synthesises: one sentence can join a figure from the middle of a
+/// page to a condition near its end, and no single window holds both. So the
+/// judge is shown several. A window next to one already taken is skipped —
+/// the two share a third of their text, and the overlap exists so a sentence
+/// lands whole in one of them, not so it is shown twice. A window sharing no
+/// vocabulary at all is dropped unless it is the passage's only one.
+pub(super) fn best_windows(claim: &str, text: &str, max: usize) -> Vec<ScoredWindow> {
+    let claim_tokens = extract_normalized_tokens(claim);
+    let windows = passage_windows(text);
+    let only_one = windows.len() == 1;
+    let mut scored: Vec<ScoredWindow> = windows
+        .into_iter()
+        .enumerate()
+        .map(|(index, window)| ScoredWindow {
+            index,
+            score: claim_tokens
+                .intersection(&extract_normalized_tokens(&window))
+                .count(),
+            text: window,
+        })
+        .filter(|window| only_one || window.score > 0)
+        .collect();
+    // Stable: equal scores keep page order.
+    scored.sort_by_key(|window| std::cmp::Reverse(window.score));
+
+    let mut picked: Vec<ScoredWindow> = Vec::new();
+    for window in scored {
+        if picked.len() >= max {
+            break;
+        }
+        if picked
+            .iter()
+            .any(|taken| taken.index.abs_diff(window.index) <= 1)
+        {
+            continue;
+        }
+        picked.push(window);
+    }
+    picked
+}
+
+/// The sentence of `text` that shares the most vocabulary with `claim`.
+///
+/// Shown beside a verdict as the words it rests on. Taken from the passage
+/// rather than asked of the model: a one-word judge cannot quote, and a quote
+/// a model writes has to be checked against the page anyway.
+pub(super) fn best_sentence(claim: &str, text: &str) -> Option<String> {
+    let claim_tokens = extract_normalized_tokens(claim);
+    let mut best: Option<(usize, String)> = None;
+    for sentence in split_sentences(&normalize_whitespace(text)) {
+        let score = claim_tokens
+            .intersection(&extract_normalized_tokens(&sentence))
+            .count();
+        if score > 0 && best.as_ref().is_none_or(|(top, _)| score > *top) {
+            best = Some((score, sentence));
+        }
+    }
+    best.map(|(_, sentence)| sentence)
+}
+
+/// One entry per source, each a token set per window of its text. Title, path
+/// and excerpt tokens are shared by every window of their source.
+fn collect_source_token_sets(sources: &[SourceDto]) -> Vec<Vec<HashSet<String>>> {
     let mut sets = Vec::new();
     for source in sources {
-        let mut text = String::new();
-        text.push_str(&source.content);
-        text.push(' ');
-        text.push_str(&source.file_name);
-        text.push(' ');
-        text.push_str(&source.file_path);
-        text.push(' ');
+        let mut label = String::new();
+        label.push_str(&source.file_name);
+        label.push(' ');
+        label.push_str(&source.file_path);
+        label.push(' ');
         if let Some(path) = source.path.as_deref() {
-            text.push_str(path);
-            text.push(' ');
+            label.push_str(path);
+            label.push(' ');
         }
         if let Some(excerpt) = source.excerpt.as_deref() {
-            text.push_str(excerpt);
-            text.push(' ');
+            label.push_str(excerpt);
+            label.push(' ');
         }
         if let Some(excerpts) = source.chunk_excerpts.as_ref() {
             for excerpt in excerpts {
-                text.push_str(&excerpt.excerpt);
-                text.push(' ');
+                label.push_str(&excerpt.excerpt);
+                label.push(' ');
             }
         }
+        let label_tokens = extract_normalized_tokens(&label);
 
-        let tokens = extract_normalized_tokens(&text);
         // Keep one entry per source; dropping an empty passage shifts citation indices.
-        sets.push(tokens);
+        sets.push(
+            passage_windows(&source.content)
+                .iter()
+                .map(|window| {
+                    let mut tokens = extract_normalized_tokens(window);
+                    tokens.extend(label_tokens.iter().cloned());
+                    tokens
+                })
+                .collect(),
+        );
     }
     sets
 }
 
 fn compute_best_overlap_ratio<'a>(
     claim_tokens: &HashSet<String>,
-    source_token_sets: impl IntoIterator<Item = &'a HashSet<String>>,
+    source_token_sets: impl IntoIterator<Item = &'a Vec<HashSet<String>>>,
 ) -> (f32, usize) {
     let mut best_ratio = 0.0f32;
     let mut best_match_count = 0usize;
 
-    for source_tokens in source_token_sets {
+    for source_tokens in source_token_sets.into_iter().flatten() {
         let match_count = claim_tokens.intersection(source_tokens).count();
         if claim_tokens.is_empty() {
             continue;
@@ -409,6 +627,125 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_claim_deep_in_a_whole_cited_page_is_found_but_a_scattered_one_is_not() {
+        // The page the model read, not the search snippet: the supporting
+        // sentence sits thousands of characters in.
+        let page = format!(
+            "{} Bush beans mature within sixty days and grow well in shallow window boxes. {} {}",
+            "Notes on compost, mulch and seed trays. ".repeat(60),
+            "Trellis spacing and irrigation schedules. ".repeat(60),
+            "Pollination needs wind or hand shaking for corn. ".repeat(10),
+        );
+        let claims = lexical_pass(
+            "Bush beans mature within sixty days in shallow window boxes [1].",
+            &[source(&page)],
+        );
+        assert!(claims[0].supported);
+
+        // Every word appears somewhere on the page, but no one stretch of it
+        // says this; a single token set over the whole article would pass it.
+        let claims = lexical_pass(
+            "Compost pollination needs trellis irrigation seed windows [1].",
+            &[source(&page)],
+        );
+        assert!(claims[0].overlap_ratio < 1.0);
+    }
+
+    #[test]
+    fn a_follow_on_sentence_answers_to_the_marker_of_its_own_point() {
+        let sources = [
+            source(
+                "High-calorie fruiting crops need 6–8 hours of strong light; use LED grow lights.",
+            ),
+            source("Thyme is tough indoors while rosemary wants direct sunlight."),
+        ];
+        let claims = lexical_pass(
+            "- Fruiting crops need 6–8 hours of strong light, and LED grow lights are the workaround [1]. \
+             So needing a lot of sun really means needing strong light for hours.\n\
+             - Thyme copes indoors but rosemary wants direct sunlight [2].\n\
+             ## A heading that says something about peanut pods underground\n\
+             Peanuts develop pods underground, which is my inference and cites nothing at all.",
+            &sources,
+        );
+        let follow_on = claims
+            .iter()
+            .find(|claim| claim.sentence.starts_with("So needing"))
+            .expect("follow-on sentence is a claim");
+        // The next marker is on another line, so it cannot claim this one.
+        assert_eq!(follow_on.citation_ids, vec![1]);
+        let aside = claims
+            .iter()
+            .find(|claim| claim.sentence.starts_with("Peanuts"))
+            .expect("uncited paragraph is a claim");
+        assert!(aside.citation_ids.is_empty());
+    }
+
+    #[test]
+    fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
+        // Verbatim from a turn this got wrong: the bold closes after the full
+        // stop, so the splitter cut there and the second claim reached the
+        // judge — and the user — reading "** The ideal initial planting depth".
+        let claims = lexical_pass(
+            "**Bury it all the way — you don't leave the top sticking out.** The ideal initial \
+             planting depth is 4–6 inches of soil above the seed potato [1].",
+            &[source(
+                "The ideal initial planting depth for potatoes is 4 to 6 inches. This initial 4- \
+                 to 6-inch soil covering provides the seed potato with insulation and moisture.",
+            )],
+        );
+
+        assert_eq!(claims.len(), 2);
+        assert!(
+            claims.iter().all(|claim| !claim.sentence.contains('*')),
+            "emphasis markers reached the claim text: {:?}",
+            claims.iter().map(|c| &c.sentence).collect::<Vec<_>>()
+        );
+        assert!(claims[0].sentence.starts_with("Bury it all the way"));
+        assert!(claims[1]
+            .sentence
+            .starts_with("The ideal initial planting depth"));
+    }
+
+    #[test]
+    fn an_underscore_inside_a_word_is_not_emphasis() {
+        assert_eq!(
+            strip_emphasis_markers("Set _max_tokens_ in the *config* file"),
+            "Set max_tokens in the config file"
+        );
+        assert_eq!(
+            strip_emphasis_markers("A rule: ---- and ____"),
+            "A rule: ---- and ____"
+        );
+    }
+
+    #[test]
+    fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
+        // Its only possible evidence would be whichever sources ranked first,
+        // which it never claimed anything about. A closing summary line was
+        // marked "contradicted" that way, against a different document.
+        let claims = lexical_pass(
+            "Potatoes want 4–6 inches of cover [1].\n\
+             So: fully buried at first, then buried deeper as the plant grows.",
+            &[source(
+                "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
+            )],
+        );
+
+        let summary = claims
+            .iter()
+            .find(|claim| claim.sentence.starts_with("So:"))
+            .expect("the uncited closing line is still a claim");
+        assert!(summary.citation_ids.is_empty());
+        assert!(!needs_judge(summary));
+        // The cited one still goes, numbers being exactly what overlap cannot settle.
+        let cited = claims
+            .iter()
+            .find(|claim| claim.citation_ids == vec![1])
+            .expect("the cited claim");
+        assert!(needs_judge(cited));
+    }
+
+    #[test]
     fn grounded_claim_scores_above_threshold() {
         let claims = lexical_pass(
             "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
@@ -439,6 +776,22 @@ mod tests {
     fn short_or_question_sentences_are_skipped() {
         let claims = lexical_pass("Any update?\nThanks.", &[source("Random source text.")]);
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn the_cut_short_note_is_not_a_claim() {
+        let answer = format!(
+            "Bush beans mature within sixty days in shallow window boxes [1].{}",
+            super::super::super::tool_loop::CUT_SHORT_NOTE
+        );
+        let claims = lexical_pass(
+            &answer,
+            &[source(
+                "Bush beans mature within sixty days and grow well in shallow window boxes.",
+            )],
+        );
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].supported);
     }
 
     #[test]

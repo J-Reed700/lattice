@@ -25,14 +25,14 @@ describe('what `@` is allowed to offer', () => {
   // Space isolation: the popup may only ever name documents this chat can read,
   // so it asks the one command that answers from the retrieval scope.
   it('asks for the documents of the space it was given', async () => {
-    const { result } = renderHook(() => useSpaceDocuments('space-thesis', 'halv'));
+    const { result } = renderHook(() => useSpaceDocuments('space-thesis', 'conv-1', 'halv'));
 
     await waitFor(() => expect(result.current.documents).toEqual([halvorsen]));
-    expect(listSpaceDocuments).toHaveBeenCalledWith('space-thesis', 'halv', 8);
+    expect(listSpaceDocuments).toHaveBeenCalledWith('space-thesis', 'conv-1', 'halv', 8);
   });
 
   it('asks nothing at all while nothing is being looked up', async () => {
-    const { result } = renderHook(() => useSpaceDocuments('space-thesis', null));
+    const { result } = renderHook(() => useSpaceDocuments('space-thesis', 'conv-1', null));
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(listSpaceDocuments).not.toHaveBeenCalled();
@@ -41,7 +41,7 @@ describe('what `@` is allowed to offer', () => {
 
   it('offers nothing when the lookup fails, rather than the last answer', async () => {
     const { result, rerender } = renderHook(
-      ({ query }: { query: string }) => useSpaceDocuments('space-thesis', query),
+      ({ query }: { query: string }) => useSpaceDocuments('space-thesis', 'conv-1', query),
       { initialProps: { query: 'halv' } }
     );
     await waitFor(() => expect(result.current.documents).toEqual([halvorsen]));

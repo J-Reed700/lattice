@@ -1,7 +1,11 @@
 //! The `WebIngestionService` type and its end-to-end ingestion workflow.
 
 use super::{WebIngestionConfig, WebIngestionServiceBuilder};
+use crate::application::ports::VectorSearchPort;
 use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::use_cases::index_file::{
+    publish_chunks_to_live_index, PublishedChunk,
+};
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
@@ -65,6 +69,8 @@ pub struct WebIngestionService {
     #[allow(dead_code)]
     pub(super) tokenizer: Arc<Tokenizer>,
     pub(super) config: WebIngestionConfig,
+    /// Live vector index; see [`WebIngestionServiceBuilder::vector_search`].
+    pub(super) vector_search: Option<Arc<dyn VectorSearchPort>>,
 }
 
 impl WebIngestionService {
@@ -91,6 +97,7 @@ impl WebIngestionService {
             index_storage,
             tokenizer,
             config: WebIngestionConfig::default(),
+            vector_search: None,
         }
     }
 
@@ -117,7 +124,16 @@ impl WebIngestionService {
             index_storage,
             tokenizer,
             config,
+            vector_search: None,
         })
+    }
+
+    pub(super) fn with_vector_search(
+        mut self,
+        vector_search: Option<Arc<dyn VectorSearchPort>>,
+    ) -> Self {
+        self.vector_search = vector_search;
+        self
     }
 }
 
@@ -182,12 +198,40 @@ impl WebIngestionServiceTrait for WebIngestionService {
                 &file_path,
                 "text/markdown",
                 chunks.clone(),
-                embeddings,
+                embeddings.clone(),
                 &model_identity,
             )
             .await?;
 
-        // 6. Return result
+        // 6. Publish to the live vector index, as file imports do. The rows
+        // above are only in SQLite; without this the article is missing from
+        // dense search until the next launch rebuilds the whole index.
+        if let Some(search) = self.vector_search.clone() {
+            let chunk_ids = self
+                .index_storage
+                .chunk_ids_in_order(&stored_doc_id)
+                .await?;
+            if chunk_ids.len() != chunks.len() {
+                return Err(AppError::InvalidState(format!(
+                    "Web import stored {} chunks but {} were prepared",
+                    chunk_ids.len(),
+                    chunks.len()
+                )));
+            }
+            let published = chunk_ids
+                .into_iter()
+                .zip(chunks.iter())
+                .zip(embeddings)
+                .map(|((chunk_id, chunk), embedding)| PublishedChunk {
+                    chunk_id,
+                    content: chunk.original_content.clone(),
+                    embedding,
+                })
+                .collect();
+            publish_chunks_to_live_index(search, &stored_doc_id, published).await?;
+        }
+
+        // 7. Return result
         Ok(WebIngestionResult {
             document_id: stored_doc_id,
             url: url.to_string(),

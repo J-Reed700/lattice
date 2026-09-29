@@ -186,6 +186,32 @@ pub struct BackupAdapter {
 }
 
 impl BackupAdapter {
+    /// `VACUUM INTO` the live database at `destination`, replacing an older
+    /// safety copy. `VACUUM INTO` refuses an existing file, and a stale copy
+    /// from an earlier restore is worth less than a current one.
+    async fn write_safety_copy(&self, destination: &Path) -> Result<()> {
+        match tokio::fs::remove_file(destination).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(AppError::FileSystem(format!(
+                    "Failed to replace the previous safety backup: {e}"
+                )))
+            }
+        }
+        let destination_str = destination.to_string_lossy().to_string();
+        validate_sql_safe_path(&destination_str)?;
+        let escaped = destination_str.replace('\'', "''");
+        sqlx::query(&format!("VACUUM INTO '{escaped}'"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                error!("Failed to create safety backup: {}", e);
+                AppError::Database(format!("Failed to create safety backup: {e}"))
+            })?;
+        Ok(())
+    }
+
     pub fn new(pool: SqlitePool, db_path: PathBuf) -> Self {
         Self { pool, db_path }
     }
@@ -477,15 +503,13 @@ impl BackupPort for BackupAdapter {
         // 1. Validate backup before restore
         self.validate_backup(&path).await?;
 
-        // 2. Create safety backup of current database
+        // 2. Create safety backup of current database. Through the open pool,
+        // not a file copy: the database runs in WAL mode, and a copy of the
+        // main file alone leaves out every committed transaction not yet
+        // checkpointed — the most recent chats and imports.
         let current_backup = self.db_path.with_extension("db.pre_restore");
         if self.db_path.exists() {
-            tokio::fs::copy(&self.db_path, &current_backup)
-                .await
-                .map_err(|e| {
-                    error!("Failed to create safety backup: {}", e);
-                    AppError::FileSystem(format!("Failed to create safety backup: {}", e))
-                })?;
+            self.write_safety_copy(&current_backup).await?;
             info!("Created safety backup at: {}", current_backup.display());
         }
 
@@ -1015,6 +1039,52 @@ mod tests {
         assert_eq!(count.0, 1);
 
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn safety_backup_includes_rows_still_in_the_wal() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("live.db");
+        // WAL as production opens it, with automatic checkpoints off so the
+        // last commit is guaranteed to sit in -wal only.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .create_if_missing(true)
+                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                    .pragma("wal_autocheckpoint", "0"),
+            )
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+        let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
+
+        sqlx::query("INSERT INTO documents (id, title, content) VALUES ('late', 'Late', 'committed just before restore')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let wal = PathBuf::from(format!("{}-wal", db_path.display()));
+        assert!(
+            fs::metadata(&wal).unwrap().len() > 0,
+            "the row must be in the WAL"
+        );
+
+        adapter.restore_backup(backup).await.unwrap();
+
+        let safety = db_path.with_extension("db.pre_restore");
+        let safety_pool = connect_fixture_pool(&safety).await;
+        let rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents WHERE id = 'late'")
+            .fetch_one(&safety_pool)
+            .await
+            .unwrap();
+        assert_eq!(rows.0, 1, "the safety copy lost a committed row");
+        safety_pool.close().await;
     }
 
     #[tokio::test]

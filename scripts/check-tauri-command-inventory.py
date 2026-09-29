@@ -132,6 +132,16 @@ def main() -> int:
 
     # Stale entries are worth reporting too: a permission for a command that no
     # longer exists grants nothing, but it hides the fact that it grants nothing.
+    for permission in sorted(permissions):
+        plugin, separator, operation = permission.partition(":allow-")
+        if separator and plugin in declared:
+            command = operation.replace("-", "_")
+            if command not in declared[plugin]:
+                problems.append(
+                    f"{permission} is in capabilities/main.json but has no command "
+                    f"declaration in build.rs — tauri-build will reject this permission"
+                )
+
     for plugin, commands in sorted(declared.items()):
         for command in sorted(commands - handlers.get(plugin, set())):
             problems.append(

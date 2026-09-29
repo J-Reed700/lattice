@@ -2,7 +2,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::{ChatResponse, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
 
@@ -17,16 +17,40 @@ pub(super) async fn persist_user_message_pending(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     user_message: &str,
+    attachment_names: &[String],
+    attachment_document_ids: &[String],
     llm: &Arc<dyn crate::application::ports::LLMPort>,
 ) -> Result<(String, usize)> {
     let message_tokens = llm.count_tokens(user_message);
+    // The files this turn brought into the conversation, stamped on the message
+    // so history shows where they entered. The names draw the chips; the ids
+    // are what a regenerate re-reads, so the second run of a turn sees the same
+    // files the first one did.
+    let metadata =
+        (!attachment_names.is_empty() || !attachment_document_ids.is_empty()).then(|| {
+            let mut payload = serde_json::Map::new();
+            if !attachment_names.is_empty() {
+                payload.insert(
+                    "attachments".to_string(),
+                    serde_json::json!(attachment_names),
+                );
+            }
+            if !attachment_document_ids.is_empty() {
+                payload.insert(
+                    "attachmentDocumentIds".to_string(),
+                    serde_json::json!(attachment_document_ids),
+                );
+            }
+            serde_json::Value::Object(payload).to_string()
+        });
     let user_msg = conv_service
-        .add_message_with_status(
+        .add_message_with_metadata(
             conversation_id,
             crate::domain::conversation::MessageRole::User,
             user_message.to_string(),
             message_tokens as i64,
             "pending".to_string(),
+            metadata,
         )
         .await?;
 
@@ -43,18 +67,29 @@ pub(super) async fn finalize_successful_turn(
     user_message: &str,
     assistant_response: String,
     context_len: usize,
-    sources: Vec<SourceDto>,
+    mut sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
+    memory_usage: Option<serde_json::Value>,
     retrieval_trace: Option<RetrievalTraceDto>,
     turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
-) -> Result<ChatResponse> {
+) -> Result<(ChatResponse, String)> {
+    super::source_snapshots::attach_cited_web_snapshots(
+        container,
+        conversation_id,
+        &assistant_response,
+        &mut sources,
+    )
+    .await;
     let response_tokens = llm.count_tokens(&assistant_response);
 
     let mut metadata_payload = serde_json::Map::new();
     if !sources.is_empty() {
         metadata_payload.insert("sources".to_string(), serde_json::json!(&sources));
+    }
+    if let Some(memory) = memory_usage {
+        metadata_payload.insert("memory".into(), memory);
     }
     if let Some(verification) = verification_metadata {
         metadata_payload.insert("verification".to_string(), verification);
@@ -77,15 +112,21 @@ pub(super) async fn finalize_successful_turn(
         serde_json::to_string(&serde_json::Value::Object(metadata_payload)).ok()
     };
 
-    let assistant_msg = conv_service
-        .complete_turn(
-            conversation_id,
-            user_message_id,
-            assistant_response.clone(),
-            response_tokens as i64,
-            metadata,
-        )
-        .await?;
+    let assistant_msg = commit_turn(
+        conv_service,
+        conversation_id,
+        user_message_id,
+        assistant_response.clone(),
+        response_tokens as i64,
+        metadata,
+    )
+    .await?;
+
+    record_cited_web_sources(container, conversation_id, &sources).await;
+    crate::features::conversation::compaction::consolidate_after_turn(
+        container.clone(),
+        conversation_id.to_string(),
+    );
 
     spawn_memory_indexing(
         container.clone(),
@@ -104,30 +145,20 @@ pub(super) async fn finalize_successful_turn(
         ],
     );
 
-    let aggregate = conv_service
-        .get_conversation(conversation_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Conversation {} not found", conversation_id)))?;
-
-    let messages: Vec<ConversationMessage> = aggregate
-        .messages()
-        .iter()
-        .map(|msg| ConversationMessage {
-            id: msg.id.clone(),
-            conversation_id: msg.conversation_id.as_str().to_string(),
-            tokens: msg.tokens,
-            role: match msg.role {
-                crate::domain::conversation::MessageRole::User => "user".to_string(),
-                crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
-                crate::domain::conversation::MessageRole::System => "system".to_string(),
-            },
-            content: msg.content.clone(),
-            status: msg.status.clone(),
-            created_at: msg.created_at.to_rfc3339(),
-            metadata: msg.metadata.clone(),
-        })
-        .collect();
-
+    let messages = turn_transcript(
+        conv_service
+            .get_conversation(conversation_id)
+            .await
+            .and_then(|aggregate| {
+                aggregate.ok_or_else(|| {
+                    AppError::NotFound(format!("Conversation {conversation_id} not found"))
+                })
+            }),
+        user_message_id,
+        user_message,
+        message_tokens,
+        &assistant_msg,
+    );
     let logger = crate::infrastructure::audit::get_audit_logger();
     crate::audit_success!(
         logger,
@@ -140,14 +171,199 @@ pub(super) async fn finalize_successful_turn(
     .await
     .ok();
 
-    Ok(ChatResponse {
-        conversation_id: conversation_id.to_string(),
-        message: assistant_response,
-        messages,
-        context_used: context_len,
-        sources,
-        timing_metrics: None,
-    })
+    Ok((
+        ChatResponse {
+            conversation_id: conversation_id.to_string(),
+            message: assistant_response,
+            messages,
+            context_used: context_len,
+            sources,
+            timing_metrics: None,
+        },
+        assistant_msg.id,
+    ))
+}
+
+/// Commit the answer and settle the question in one step, or mark the question
+/// failed.
+///
+/// A commit that fails (a busy database, or a turn truncated or deleted while
+/// it generated) would otherwise leave the question `pending` for good, and a
+/// pending question renders as still in flight.
+async fn commit_turn(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    user_message_id: &str,
+    content: String,
+    tokens: i64,
+    metadata: Option<String>,
+) -> Result<crate::domain::conversation::ConversationMessage> {
+    match conv_service
+        .complete_turn(conversation_id, user_message_id, content, tokens, metadata)
+        .await
+    {
+        Ok(message) => Ok(message),
+        Err(error) => {
+            mark_user_message_failed(conv_service, user_message_id).await;
+            Err(error)
+        }
+    }
+}
+
+fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> ConversationMessage {
+    ConversationMessage {
+        id: message.id.clone(),
+        conversation_id: message.conversation_id.as_str().to_string(),
+        tokens: message.tokens,
+        role: match message.role {
+            crate::domain::conversation::MessageRole::User => "user".to_string(),
+            crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
+            crate::domain::conversation::MessageRole::System => "system".to_string(),
+        },
+        content: message.content.clone(),
+        status: message.status.clone(),
+        created_at: message.created_at.to_rfc3339(),
+        metadata: message.metadata.clone(),
+    }
+}
+
+/// The conversation as it stands after the commit.
+///
+/// The answer is saved by the time this is read, so a failed read is not a
+/// failed turn: reporting it as one would show an error for an answer the
+/// user will find on reload, and would skip the grounding check. What the turn
+/// itself wrote is known without the read, so that is returned instead.
+fn turn_transcript(
+    read: Result<crate::domain::conversation::ConversationAggregate>,
+    user_message_id: &str,
+    user_message: &str,
+    message_tokens: usize,
+    answer: &crate::domain::conversation::ConversationMessage,
+) -> Vec<ConversationMessage> {
+    match read {
+        Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
+        Err(error) => {
+            warn!(%error, "Answer saved but the conversation could not be re-read; returning this turn only");
+            let answer = message_dto(answer);
+            let question = ConversationMessage {
+                id: user_message_id.to_string(),
+                role: "user".to_string(),
+                content: user_message.to_string(),
+                tokens: message_tokens as i64,
+                status: "completed".to_string(),
+                metadata: None,
+                ..answer.clone()
+            };
+            vec![question, answer]
+        }
+    }
+}
+
+/// How many of a turn's web citations are kept as conversation context.
+///
+/// The prompt side already takes only the ten most recent and truncates their
+/// excerpts, so a larger number here buys nothing for the next turn. It only
+/// governs how fast one long research turn can push earlier rounds out of that
+/// window, which is why it is smaller than a full result page.
+const CITED_WEB_SOURCES_KEPT_PER_TURN: usize = 8;
+
+/// Keep the pages a turn cited as context for the turns that follow.
+///
+/// Without this, web research ends with the turn that did it: the citations
+/// survive in the answer's own metadata and in the sources panel, but the next
+/// turn assembles its context from `conversation_web_sources`, which nothing
+/// was writing. So a chat could show thirty-seven sources in its sidebar and
+/// still enter the next turn with no grounded context at all, and say — truth-
+/// fully, from where it stood — that it had nothing to go on.
+///
+/// Failure here is logged and dropped. The turn is already finished and
+/// answered; losing tomorrow's context must not retract today's answer.
+async fn record_cited_web_sources(
+    container: &Container,
+    conversation_id: &str,
+    sources: &[SourceDto],
+) {
+    let repository = crate::features::conversation::repository::ConversationRepository::new(
+        container.db_pool().clone(),
+    );
+
+    let keepable = cited_web_sources(sources);
+    let recorded = keepable.len();
+    for source in keepable {
+        if let Err(error) = repository
+            .add_conversation_web_source(
+                conversation_id.to_string(),
+                source.url,
+                source.title,
+                source.excerpt,
+                Some(source.score),
+            )
+            .await
+        {
+            warn!(
+                conversation_id = conversation_id,
+                error = %error,
+                "Failed to keep a cited web source as conversation context"
+            );
+            return;
+        }
+    }
+
+    if recorded > 0 {
+        debug!(
+            conversation_id = conversation_id,
+            recorded, "Kept this turn's web citations as conversation context"
+        );
+    }
+}
+
+/// One web page a turn cited, in the shape the conversation keeps it.
+#[derive(Debug, PartialEq)]
+struct CitedWebSource {
+    url: String,
+    title: Option<String>,
+    excerpt: Option<String>,
+    score: f32,
+}
+
+/// Pick the web pages worth carrying forward out of a turn's citations.
+///
+/// Document sources are left alone: they are already reachable by searching the
+/// vault, and a copy here would compete with the passage that has a citation
+/// number. Two citations of one URL become one row, because the store is keyed
+/// by URL and the second would only overwrite the first.
+fn cited_web_sources(sources: &[SourceDto]) -> Vec<CitedWebSource> {
+    use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut keepable: Vec<CitedWebSource> = Vec::new();
+    for source in sources {
+        if keepable.len() >= CITED_WEB_SOURCES_KEPT_PER_TURN {
+            break;
+        }
+        // `file_path` holds the page URL for a web source; `document_id` is the
+        // same URL behind a prefix and is what marks it as one.
+        if !source.document_id.starts_with(WEB_SOURCE_PREFIX) {
+            continue;
+        }
+        let url = source.file_path.trim();
+        if url.is_empty() || !seen.insert(url.to_ascii_lowercase()) {
+            continue;
+        }
+        keepable.push(CitedWebSource {
+            url: url.to_string(),
+            // A result with no title carries its own URL as the file name;
+            // storing that as a title would render the link twice.
+            title: Some(source.file_name.trim())
+                .filter(|value| !value.is_empty() && *value != url)
+                .map(ToOwned::to_owned),
+            excerpt: Some(source.content.trim())
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            score: source.score,
+        });
+    }
+    keepable
 }
 
 pub(super) async fn mark_user_message_failed(
@@ -204,32 +420,22 @@ fn spawn_memory_indexing(
             let memory_id = uuid::Uuid::new_v4().to_string();
             let created_at = chrono::Utc::now().to_rfc3339();
 
-            let insert_result = sqlx::query(
-                r#"
-                INSERT INTO conversation_memory_vectors (
-                    id, conversation_id, message_id, role, content,
-                    embedding, dimension, embedding_model, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(message_id) DO UPDATE SET
-                    role = excluded.role,
-                    content = excluded.content,
-                    embedding = excluded.embedding,
-                    dimension = excluded.dimension,
-                    embedding_model = excluded.embedding_model,
-                    created_at = excluded.created_at
-                "#,
-            )
-            .bind(memory_id)
-            .bind(&conversation_id)
-            .bind(&memory.message_id)
-            .bind(&memory.role)
-            .bind(&memory.content)
-            .bind(embedding_blob)
-            .bind(dimension)
-            .bind(&embedding_model)
-            .bind(created_at)
-            .execute(container.db_pool())
-            .await;
+            let insert_result =
+                crate::features::conversation::repository::ConversationRepository::new(
+                    container.db_pool().clone(),
+                )
+                .persist_memory_vector(
+                    &conversation_id,
+                    &memory_id,
+                    &memory.message_id,
+                    &memory.role,
+                    &memory.content,
+                    embedding_blob,
+                    dimension,
+                    &embedding_model,
+                    &created_at,
+                )
+                .await;
 
             if let Err(e) = insert_result {
                 warn!(
@@ -346,5 +552,230 @@ mod memory_embedding_tests {
     #[tokio::test]
     async fn empty_memory_is_rejected() {
         assert!(embed_memory(&LimitedEmbedder, "").await.is_err());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod cited_web_source_tests {
+    use super::*;
+    use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
+
+    fn web(url: &str, title: &str, excerpt: &str) -> SourceDto {
+        SourceDto {
+            document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
+            chunk_id: "web-result-1".to_string(),
+            content: excerpt.to_string(),
+            score: 0.5,
+            path: Some(url.to_string()),
+            position: Some(1),
+            file_name: title.to_string(),
+            file_path: url.to_string(),
+            mime_type: "text/html".to_string(),
+            category: "Web Article".to_string(),
+            file_size_bytes: 0,
+            modified_at: "2026-09-21T00:00:00Z".to_string(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            page_number: None,
+            chunk_excerpts: None,
+            citation_id: None,
+
+            web_snapshot: None,
+        }
+    }
+
+    fn document(id: &str) -> SourceDto {
+        SourceDto {
+            document_id: id.to_string(),
+            chunk_id: format!("{id}-c1"),
+            content: "A passage from a file on disk.".to_string(),
+            score: 0.9,
+            path: Some(format!("/vault/{id}.md")),
+            position: Some(1),
+            file_name: format!("{id}.md"),
+            file_path: format!("/vault/{id}.md"),
+            mime_type: "text/markdown".to_string(),
+            category: "Markdown".to_string(),
+            file_size_bytes: 0,
+            modified_at: "2026-09-21T00:00:00Z".to_string(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            page_number: None,
+            chunk_excerpts: None,
+            citation_id: None,
+
+            web_snapshot: None,
+        }
+    }
+
+    #[test]
+    fn a_turns_web_citations_are_what_gets_kept() {
+        let kept = cited_web_sources(&[
+            document("doc-1"),
+            web(
+                "https://example.com/broccolini",
+                "Growing broccolini",
+                "Broccolini tolerates light frost.",
+            ),
+            document("doc-2"),
+        ]);
+
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].url, "https://example.com/broccolini");
+        assert_eq!(kept[0].title.as_deref(), Some("Growing broccolini"));
+        assert_eq!(
+            kept[0].excerpt.as_deref(),
+            Some("Broccolini tolerates light frost.")
+        );
+    }
+
+    /// The store is keyed by URL, so a second row for a page the turn cited
+    /// twice would only overwrite the first.
+    #[test]
+    fn one_page_cited_twice_is_kept_once() {
+        let kept = cited_web_sources(&[
+            web("https://example.com/a", "A", "first"),
+            web("https://EXAMPLE.com/a", "A again", "second"),
+        ]);
+
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].excerpt.as_deref(), Some("first"));
+    }
+
+    /// A deep-research turn can cite dozens of pages. The prompt window that
+    /// reads these takes ten, so one turn must not fill it on its own and push
+    /// every earlier round of the conversation out.
+    #[test]
+    fn one_turn_cannot_crowd_out_every_earlier_round() {
+        let sources: Vec<SourceDto> = (0..40)
+            .map(|i| web(&format!("https://example.com/{i}"), "Page", "text"))
+            .collect();
+
+        assert_eq!(
+            cited_web_sources(&sources).len(),
+            CITED_WEB_SOURCES_KEPT_PER_TURN
+        );
+    }
+
+    /// A result with no title carries its URL as its file name. Stored as a
+    /// title, the prompt entry would read `- <url> (<url>)`.
+    #[test]
+    fn a_url_standing_in_for_a_missing_title_is_not_stored_as_one() {
+        let url = "https://example.com/untitled";
+        let kept = cited_web_sources(&[web(url, url, "")]);
+
+        assert_eq!(kept[0].title, None, "{kept:?}");
+        assert_eq!(kept[0].excerpt, None, "{kept:?}");
+    }
+
+    #[test]
+    fn a_turn_that_cited_no_web_page_stores_nothing() {
+        assert!(cited_web_sources(&[document("doc-1")]).is_empty());
+        assert!(cited_web_sources(&[]).is_empty());
+    }
+}
+
+/// Explicit user memory notes use the same embedding writer as chat turns.
+pub(crate) fn index_memory_note(
+    container: Container,
+    conversation_id: String,
+    message_id: String,
+    content: String,
+) {
+    spawn_memory_indexing(
+        container,
+        conversation_id,
+        vec![MemoryToIndex {
+            message_id,
+            role: "user".into(),
+            content,
+        }],
+    );
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod turn_commit_tests {
+    use super::*;
+    use crate::domain::conversation::MessageRole;
+    use crate::features::conversation::{
+        repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
+    };
+
+    async fn service_with_pending_question() -> (
+        Arc<dyn ConversationServiceTrait>,
+        sqlx::SqlitePool,
+        String,
+        String,
+    ) {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(
+            Arc::new(ConversationRepository::new(pool.clone())),
+        ));
+        let conversation = service
+            .create_conversation("Chat".into(), "model".into(), None)
+            .await
+            .unwrap();
+        let id = conversation.id.to_string();
+        let user = service
+            .add_message_with_status(
+                &id,
+                MessageRole::User,
+                "question".into(),
+                2,
+                "pending".into(),
+            )
+            .await
+            .unwrap();
+        (service, pool, id, user.id)
+    }
+
+    async fn status_of(pool: &sqlx::SqlitePool, id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM conversation_messages WHERE id=?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_fails_leaves_the_question_failed_not_pending() {
+        let (service, pool, id, user_id) = service_with_pending_question().await;
+        sqlx::query("CREATE TRIGGER fail_assistant BEFORE INSERT ON conversation_messages WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+            .execute(&pool).await.unwrap();
+
+        let result = commit_turn(&service, &id, &user_id, "answer".into(), 3, None).await;
+
+        assert!(result.is_err());
+        assert_eq!(status_of(&pool, &user_id).await, "failed");
+    }
+
+    #[tokio::test]
+    async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
+        let (service, pool, id, user_id) = service_with_pending_question().await;
+        let answer = commit_turn(&service, &id, &user_id, "answer".into(), 3, None)
+            .await
+            .unwrap();
+
+        let messages = turn_transcript(
+            Err(AppError::Database("database is locked".into())),
+            &user_id,
+            "question",
+            2,
+            &answer,
+        );
+
+        assert_eq!(status_of(&pool, &user_id).await, "completed");
+        let roles: Vec<_> = messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, ["user", "assistant"]);
+        assert_eq!(messages[1].id, answer.id);
+        assert_eq!(messages[1].content, "answer");
+        assert_eq!(messages[0].status, "completed");
     }
 }

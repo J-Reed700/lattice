@@ -34,6 +34,7 @@ fn smoke_test_start_batch_file_import_dto() {
         file_paths: vec!["test.txt".to_string()],
 
         space_id: None,
+        owner_conversation_id: None,
     };
 
     assert_eq!(dto.file_paths.len(), 1);
@@ -47,6 +48,7 @@ fn smoke_test_start_batch_file_import_dto_empty() {
         indexing: None,
         file_paths: vec![],
         space_id: None,
+        owner_conversation_id: None,
     };
 
     assert_eq!(dto.file_paths.len(), 0);
@@ -63,6 +65,7 @@ fn smoke_test_start_batch_file_import_dto_large() {
         file_paths: large_batch.clone(),
 
         space_id: None,
+        owner_conversation_id: None,
     };
 
     assert_eq!(dto.file_paths.len(), 150);

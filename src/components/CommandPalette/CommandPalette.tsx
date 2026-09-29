@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import * as Dialog from '@radix-ui/react-dialog'
 import { Command } from 'cmdk'
 import {
   Bookmark,
@@ -27,7 +28,9 @@ import type { SearchResult } from '@/types'
 
 import { useCommandPalette } from '../../hooks/useCommandPalette'
 import VaultAPI from '../../lib/api'
+import { getErrorMessage } from '../../lib/errorUtils'
 import { selectPaletteGroups, usePaletteCommandsStore } from '../../stores/paletteCommandsStore'
+import { toast } from '../../stores/toastStore'
 import { logger } from '../../utils/logger'
 import { handleAsyncEvent } from '../../utils/promiseHandlers'
 import { CommandItem } from '../CommandItem'
@@ -149,12 +152,25 @@ export function CommandPalette() {
       try {
         const selected = await VaultAPI.selectMultipleFiles()
         if (!selected || selected.length === 0) return
+        // The palette has closed by now, so a failure the user cannot see
+        // is one they never learn about.
+        const failures: string[] = []
         for (const file of selected) {
           const result = await VaultAPI.indexFile(file)
-          if (!result.ok) logger.error('Failed to index file:', { file, error: result.error })
+          if (!result.ok) {
+            logger.error('Failed to index file:', { file, error: result.error })
+            failures.push(result.error)
+          }
+        }
+        if (failures.length > 0) {
+          toast.error(
+            `Couldn't add ${failures.length} of ${selected.length} file${selected.length !== 1 ? 's' : ''}`,
+            { message: failures[0] },
+          )
         }
       } catch (error) {
         logger.error('Failed to add files:', { error })
+        toast.error("Couldn't add files", { message: getErrorMessage(error) })
       }
     })
   }, [run])
@@ -165,9 +181,13 @@ export function CommandPalette() {
         const selected = await VaultAPI.selectFolder()
         if (!selected) return
         const result = await VaultAPI.startIndexing(selected, true)
-        if (!result.ok) logger.error('Failed to index directory:', { path: selected, error: result.error })
+        if (!result.ok) {
+          logger.error('Failed to index directory:', { path: selected, error: result.error })
+          toast.error("Couldn't add this folder", { message: result.error })
+        }
       } catch (error) {
         logger.error('Failed to add folder:', { error })
+        toast.error("Couldn't add this folder", { message: getErrorMessage(error) })
       }
     })
   }, [run])
@@ -175,7 +195,10 @@ export function CommandPalette() {
   const handleClearCache = useCallback(async () => {
     run(async () => {
       const result = await VaultAPI.clearCache()
-      if (!result.ok) logger.error('Failed to clear cache:', { error: result.error })
+      if (!result.ok) {
+        logger.error('Failed to clear cache:', { error: result.error })
+        toast.error("Couldn't clear the cache", { message: result.error })
+      }
     })
   }, [run])
 
@@ -247,11 +270,18 @@ export function CommandPalette() {
 
   return (
     <>
-      {isOpen && (
-        <>
-          <div className="command-palette-backdrop animate-in fade-in duration-fast" onClick={close} aria-hidden="true" />
+      {/* A modal dialog, not two floating divs: Radix gives it role="dialog",
+          aria-modal, a focus trap, and returns focus to where the user was. */}
+      <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) close() }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="command-palette-backdrop animate-in fade-in duration-fast" />
 
-          <div className="command-palette-container animate-in fade-in zoom-in-95 duration-fast">
+          <Dialog.Content
+            className="command-palette-container animate-in fade-in zoom-in-95 duration-fast"
+            aria-describedby={undefined}
+            aria-modal="true"
+          >
+            <Dialog.Title className="sr-only">Command palette</Dialog.Title>
             <Command className="command-palette" label="Command palette" shouldFilter={searchQuery.length < 2}>
               <div className="command-input-wrapper">
                 <Search className="command-input-icon" strokeWidth={1.75} />
@@ -403,9 +433,9 @@ export function CommandPalette() {
                 </span>
               </div>
             </Command>
-          </div>
-        </>
-      )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <KeyboardShortcutsModal isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </>

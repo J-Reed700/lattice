@@ -361,19 +361,10 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub custom_tools: Vec<CustomToolSettingsDto>,
 
-    /// Staged rollout switch for bounded, source-backed conversation memory.
-    ///
-    /// Off by default. The deterministic guarantees — quote provenance,
-    /// ownership, atomicity, budget enforcement — hold whenever this runs, but
-    /// whether the model reliably *finds* every constraint is a measured
-    /// question, and the evaluation gate in the design document has to be met
-    /// for a model configuration before it becomes the default for that
-    /// configuration. This is a release default, not an allowlist: a user may
-    /// turn it on with any model, and the UI must not describe memory as
-    /// reliable while it is off or rebuilding.
-    ///
-    /// Design: `docs/design/2026-09-19-conversation-memory.md` §18.
-    #[serde(default)]
+    /// Bounded, source-backed memory. Enabled for new settings and missing fields.
+    /// An explicitly saved false remains an opt-out. Model extraction quality is
+    /// evaluated separately from deterministic provenance and budget guarantees.
+    #[serde(default = "default_bounded_memory")]
     pub bounded_conversation_memory: bool,
 }
 
@@ -423,11 +414,42 @@ pub struct LLMPromptSettingsDto {
 }
 
 /// Verification settings for response grounding checks.
+///
+/// The judge's sampling lives here rather than being inherited from
+/// [`LLMSettingsDto`]: a verdict is a classification, not a composition, and
+/// running it at the chat model's creative temperature makes the same claim
+/// against the same passage come out differently from one turn to the next.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LLMVerificationSettingsDto {
     /// Enable grounding verification and metadata emission for assistant messages.
     pub enabled: bool,
+
+    /// Sampling temperature for the claim judge. Zero is greedy decoding, which
+    /// is what a verdict wants: the same evidence must produce the same answer.
+    #[serde(default = "default_verification_temperature")]
+    pub temperature: f32,
+
+    /// Nucleus sampling for the claim judge. One disables it, leaving the
+    /// temperature as the only knob that can introduce variance.
+    #[serde(default = "default_verification_top_p")]
+    pub top_p: f32,
+
+    /// Top-k sampling for the claim judge. One takes the argmax token.
+    #[serde(default = "default_verification_top_k")]
+    pub top_k: i32,
+}
+
+fn default_verification_temperature() -> f32 {
+    0.0
+}
+
+fn default_verification_top_p() -> f32 {
+    1.0
+}
+
+fn default_verification_top_k() -> i32 {
+    1
 }
 
 /// Tool output shaping settings (excerpts + truncation).
@@ -1081,8 +1103,7 @@ impl Default for LLMSettingsDto {
             router: RouterSettingsDto::default(),
             external_model_directories: Vec::new(),
             custom_tools: Vec::new(),
-            // Off until the evaluation gate is met for a model configuration.
-            bounded_conversation_memory: false,
+            bounded_conversation_memory: true,
         }
     }
 }
@@ -1093,7 +1114,7 @@ impl Default for LLMPromptSettingsDto {
             system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
             rag_prompt_template: "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:".to_string(),
-            no_context_prompt_template: "The user asked: \"{question}\"\n\nNo relevant documents were found in local documents for this turn. Respond helpfully using general knowledge when appropriate, and suggest web search or adding documents if they want sourced evidence.".to_string(),
+            no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
             tool_followup_prompt_template: "Tool results have been added to the context. Use them to answer the user's question. If excerpts are provided, quote them briefly and avoid repetition.\n\nQuestion: {question}\n{previous_response}\nAnswer:".to_string(),
         }
     }
@@ -1104,7 +1125,12 @@ impl Default for LLMVerificationSettingsDto {
         // Verification annotates the completed answer; it never rewrites or
         // suppresses it. Keep the safety signal on and let users who prefer
         // lower post-generation latency opt out.
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            temperature: default_verification_temperature(),
+            top_p: default_verification_top_p(),
+            top_k: default_verification_top_k(),
+        }
     }
 }
 
@@ -1186,6 +1212,9 @@ mod tests {
         );
         assert_eq!(settings.llm.model, "llama3.2:latest");
         assert!(settings.llm.verification.enabled);
+        // A judge that samples is a judge that disagrees with itself.
+        assert_eq!(settings.llm.verification.temperature, 0.0);
+        assert_eq!(settings.llm.verification.top_k, 1);
         assert_eq!(settings.ui.theme, "system");
     }
 
@@ -1237,5 +1266,28 @@ mod tests {
         assert!(result.valid);
         assert!(result.has_warnings());
         assert_eq!(result.warnings.get("llm").unwrap().len(), 1);
+    }
+}
+
+fn default_bounded_memory() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod memory_defaults_tests {
+    use super::*;
+    #[test]
+    fn memory_defaults_on_without_overriding_an_explicit_opt_out() {
+        assert!(LLMSettingsDto::default().bounded_conversation_memory);
+        let mut value = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("boundedConversationMemory");
+        let missing: LLMSettingsDto = serde_json::from_value(value.clone()).unwrap();
+        assert!(missing.bounded_conversation_memory);
+        value["boundedConversationMemory"] = serde_json::json!(false);
+        let disabled: LLMSettingsDto = serde_json::from_value(value).unwrap();
+        assert!(!disabled.bounded_conversation_memory);
     }
 }

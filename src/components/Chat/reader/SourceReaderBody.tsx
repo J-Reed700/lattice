@@ -3,7 +3,7 @@ import { type FC, useCallback, useEffect, useMemo, useRef, useState } from 'reac
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { X, Download, ExternalLink, Loader2, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Download, ExternalLink, Loader2, Maximize2, Minimize2, PanelRightClose } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { HTMLViewer } from '@/components/ContentViewer/renderers/HTMLViewer';
@@ -63,8 +63,6 @@ const normalizeCategory = (category: string): string =>
   category.toLowerCase().replace(/[_-]+/g, ' ').trim();
 
 const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value.trim());
-const isAbsolutePath = (value: string): boolean => value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value);
-
 const TITLE_CLASS =
   'break-words text-xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]';
 const CLOSE_CLASS =
@@ -91,10 +89,20 @@ export interface SourceReaderBodyProps {
    * the Library, Compare, the reference inbox — and then nothing is marked.
    */
   ownerKey?: string;
+  /** Citation-bearing text for surfaces outside a chat message. */
+  citationContent?: string;
+  /** Which of the answer's marks for this source was clicked, if one was. */
+  occurrence?: number | null;
   /** The reader at its largest. Owned by the surface, which changes size for it. */
   isFocused?: boolean;
   /** Omit to leave the expand toggle out (the full-screen dialog has nothing to expand into). */
   onToggleFocus?: () => void;
+  /**
+   * Omit to leave the minimize button out. The overlay sheet tucks itself down
+   * to a pill in the corner so the page underneath is fully readable; the
+   * docked pane and the full-screen dialog have nothing to minimize into.
+   */
+  onMinimize?: () => void;
 }
 
 export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
@@ -107,8 +115,11 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onCitationIndexChange,
   onLocationResolved,
   ownerKey,
+  citationContent,
+  occurrence = null,
   isFocused = false,
   onToggleFocus,
+  onMinimize,
 }) => {
   const navigate = useNavigate();
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
@@ -162,7 +173,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     mimeType.startsWith('image/') ||
     mimeType.startsWith('audio/');
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
-  /** A live web page, read out of the page cache rather than off disk. */
+  /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
@@ -214,33 +225,43 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     </label>
   );
 
+  const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
+
   useEffect(() => {
     let mounted = true;
     const resolvePreviewPath = async () => {
-      if (!shouldFetchContent) {
+      if (!shouldResolveDocumentPath) {
         setResolvedPreviewPath(undefined);
+        setIsResolvingPreviewPath(false);
         return;
       }
-      if (isAbsolutePath(source.filePath) || isHttpUrl(source.filePath) || !hasDocumentId) {
+
+      // Citation metadata can retain the path from when it was indexed. A
+      // stable document ID is authoritative when the file has moved.
+      if (isHttpUrl(source.filePath) || !hasDocumentId) {
         setResolvedPreviewPath(source.filePath);
+        setIsResolvingPreviewPath(false);
         return;
       }
+      setResolvedPreviewPath(undefined);
       setIsResolvingPreviewPath(true);
-      const result = await VaultAPI.getFilePathById(source.documentId);
-      if (!mounted) return;
-      if (result.ok) {
-        setResolvedPreviewPath(result.data);
-      } else {
+      try {
+        const result = await VaultAPI.getFilePathById(source.documentId);
+        if (!mounted) return;
+        setResolvedPreviewPath(result.ok ? result.data : source.filePath);
+      } catch {
+        if (!mounted) return;
         setResolvedPreviewPath(source.filePath);
+      } finally {
+        if (mounted) setIsResolvingPreviewPath(false);
       }
-      setIsResolvingPreviewPath(false);
     };
 
     void resolvePreviewPath();
     return () => {
       mounted = false;
     };
-  }, [source, shouldFetchContent, hasDocumentId]);
+  }, [source.documentId, source.filePath, shouldResolveDocumentPath, hasDocumentId]);
 
   useEffect(() => {
     if (defaultImportSpaceId) {
@@ -255,9 +276,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   }, [allowUnscopedImport, defaultImportSpaceId, spaces]);
 
   const { content, isLoading, error } = useFileContent(
-    shouldFetchContent ? resolvedPreviewPath : undefined,
+    shouldFetchContent ? (resolvedPreviewPath ?? (shouldResolveDocumentPath ? undefined : source.filePath)) : undefined,
     shouldFetchContent
   );
+  const savedCitationText = source.excerpt?.trim() || source.content.trim();
+  const showingSavedCitationText = Boolean(error && savedCitationText);
+  const previewFilePath = resolvedPreviewPath ?? source.filePath;
 
   const locatorChunkId = initialLocator?.chunkId;
   const locatorText = initialLocator?.text;
@@ -368,7 +392,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const sanitizedFileName = sanitizeFileName(source.fileName);
   const headerMeta = sourceHeaderMeta(source);
-  const matchNotice = passageMatchNotice(matchTier, Boolean(initialLocator));
+  const matchNotice = showingSavedCitationText
+    ? null
+    : passageMatchNotice(matchTier, Boolean(initialLocator));
   const primaryActionLabel = shouldUseUrlActions ? 'Open URL' : 'Open file';
   const platformRevealLabel =
     typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
@@ -545,6 +571,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
           url={openableUrl}
           source={source}
           ownerKey={ownerKey}
+          citationContent={citationContent}
+          occurrence={occurrence}
           onActivePassageChange={setActivePassage}
           actions={
             openableUrl && !isCompact ? (
@@ -581,6 +609,16 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (error) {
+      if (savedCitationText) {
+        return (
+          <div className="flex min-h-full flex-col">
+            <p role="status" className="mb-4 rounded-md border border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
+              The original file is unavailable. Showing saved citation text; this is not a full file snapshot.
+            </p>
+            <TextViewer content={savedCitationText} language="text" />
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center h-64 text-center">
           <p className="text-[hsl(var(--danger-fg))] mb-2">Couldn't load file</p>
@@ -598,7 +636,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     if (mimeType === 'application/pdf') {
       return (
         <PDFViewer
-          filePath={source.filePath}
+          filePath={previewFilePath}
           highlight={initialLocator}
           onLocationResolved={handleLocationResolved}
           onMatch={setMatchTier}
@@ -616,11 +654,11 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (mimeType.startsWith('audio/')) {
-      return <AudioViewer filePath={source.filePath} {...audioViewerPropsFromSource(source)} />;
+      return <AudioViewer filePath={previewFilePath} {...audioViewerPropsFromSource(source)} />;
     }
 
     if (mimeType.startsWith('image/')) {
-      return <ImageViewer filePath={source.filePath} />;
+      return <ImageViewer filePath={previewFilePath} />;
     }
 
     // Fallback: plain text
@@ -651,6 +689,14 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             title={isFocused ? 'Return to reading pane' : 'Expand reader'}
             onClick={onToggleFocus}>
             {isFocused ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+          </button>
+        )}
+        {onMinimize && (
+          <button type="button" className="rounded-md p-2 text-text-secondary hover:bg-surface-raised"
+            aria-label="Minimize reader"
+            title="Minimize reader"
+            onClick={onMinimize}>
+            <PanelRightClose size={18} />
           </button>
         )}
         {isDocked ? (

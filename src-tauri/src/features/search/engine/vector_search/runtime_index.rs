@@ -1,6 +1,6 @@
 //! A shared index handle that can bind the first downloaded model without restarting.
 //! Once bound, changing vector spaces still requires the normal restart migration.
-use super::USearchVectorIndex;
+use super::{IndexPersistence, USearchVectorIndex, VectorIndexCompression};
 use crate::application::contracts::search::SearchResultRecord;
 use crate::application::ports::vector_search_port::VectorIndexEntry;
 use crate::application::ports::{EmbeddingPort, VectorSearchPort};
@@ -12,27 +12,64 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+/// The name every file of one vector space shares: the embedding identity,
+/// plus the compression layout when there is one, because a compression switch
+/// reshapes stored vectors as completely as a model change does. `None`
+/// contributes no suffix, so an uncompressed vault keeps its filenames.
+pub fn generation_name(identity: Option<&str>, compression: &VectorIndexCompression) -> String {
+    let generation = match identity {
+        Some(id) => id.replace(':', "-"),
+        None => "unconfigured".to_string(),
+    };
+    match compression.layout_token() {
+        Some(layout) => format!("{generation}-{layout}"),
+        None => generation,
+    }
+}
+
 pub struct RuntimeVectorIndex {
     initial: Arc<USearchVectorIndex>,
     bound: OnceLock<(String, Arc<USearchVectorIndex>)>,
     path: PathBuf,
+    compression: VectorIndexCompression,
+    /// Writes the bound index and its manifest. Set at startup when a model is
+    /// already active, or by [`Self::bind_first`] for the first one.
+    persistence: OnceLock<Arc<IndexPersistence>>,
 }
 
 impl RuntimeVectorIndex {
-    pub fn new(initial: Arc<USearchVectorIndex>, identity: Option<String>, path: PathBuf) -> Self {
+    pub fn new(
+        initial: Arc<USearchVectorIndex>,
+        identity: Option<String>,
+        path: PathBuf,
+        compression: VectorIndexCompression,
+        persistence: Option<Arc<IndexPersistence>>,
+    ) -> Self {
         let bound = OnceLock::new();
         if let Some(identity) = identity {
             let _ = bound.set((identity, initial.clone()));
+        }
+        let persistence_slot = OnceLock::new();
+        if let Some(persistence) = persistence {
+            let _ = persistence_slot.set(persistence);
         }
         Self {
             initial,
             bound,
             path,
+            compression,
+            persistence: persistence_slot,
         }
     }
 
     pub fn identity(&self) -> Option<&str> {
         self.bound.get().map(|(id, _)| id.as_str())
+    }
+
+    /// Writes the index and its manifest. `None` until a model is bound.
+    /// Shutdown flushes through it so coalesced saves are not lost.
+    pub fn persistence(&self) -> Option<&Arc<IndexPersistence>> {
+        self.persistence.get()
     }
 
     fn current(&self) -> &USearchVectorIndex {
@@ -64,12 +101,21 @@ impl RuntimeVectorIndex {
         let rows =
             crate::features::embedding::generation::restore(pool, &identity, model.dimension())
                 .await?;
+        // Opened exactly as startup opens a bound index — same file name, same
+        // compression, coalesced saves and a manifest writer — so the next
+        // launch finds this index trustworthy instead of rebuilding it.
+        let generation = generation_name(Some(&identity), &self.compression);
         let path = self
             .path
-            .with_file_name(format!("usearch-{}.usearch", identity.replace(':', "-")));
+            .with_file_name(format!("usearch-{generation}.usearch"));
         let dimension = model.dimension();
+        let compression = self.compression.clone();
+        let index_path = path.clone();
         let index = tokio::task::spawn_blocking(move || {
-            let index = USearchVectorIndex::open_or_create(dimension, path)?;
+            let _layout = super::ensure_index_layout_match(&path, dimension, &compression)?;
+            let index =
+                USearchVectorIndex::open_or_create_with_compression(dimension, path, compression)?
+                    .with_coalesced_saves();
             let expected = rows.len();
             if index.rebuild_from_embeddings(rows)? != expected {
                 return Err(AppError::InvalidState(
@@ -82,9 +128,20 @@ impl RuntimeVectorIndex {
         .map_err(|e| {
             AppError::InternalError(format!("Vector index initialization failed: {e}"))
         })??;
+        let persistence = Arc::new(IndexPersistence::new(
+            Arc::clone(&index),
+            pool.clone(),
+            identity.clone(),
+            generation,
+            dimension,
+            index_path,
+        ));
         self.bound.set((identity, index)).map_err(|_| {
             AppError::InvalidState("Embedding index was already initialized".into())
         })?;
+        if self.persistence.set(Arc::clone(&persistence)).is_ok() {
+            crate::shared::background::spawn(persistence.run());
+        }
         Ok(())
     }
 }
@@ -189,6 +246,7 @@ mod tests {
             .unwrap();
         sqlx::query("CREATE TABLE text_chunks (id TEXT PRIMARY KEY, content TEXT, contextualized_content TEXT, document_id TEXT)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE vector_index_state (id INTEGER PRIMARY KEY, write_counter INTEGER NOT NULL DEFAULT 0)").execute(&pool).await.unwrap();
         pool
     }
 
@@ -201,6 +259,8 @@ mod tests {
             initial,
             None,
             dir.path().join("usearch-unconfigured.usearch"),
+            VectorIndexCompression::None,
+            None,
         ));
         // These handles exist before the user downloads their first model.
         let indexing: Arc<dyn VectorSearchPort> = runtime.clone();
@@ -235,6 +295,13 @@ mod tests {
             .await
             .is_err());
         assert_eq!(runtime.identity(), Some("sha256:first"));
+        // Saves are coalesced, as at startup; the manifest writer persists them.
+        assert!(runtime
+            .persistence()
+            .unwrap()
+            .flush_if_dirty()
+            .await
+            .unwrap());
         let reopened =
             USearchVectorIndex::open_or_create(2, dir.path().join("usearch-sha256-first.usearch"))
                 .unwrap();
@@ -249,6 +316,8 @@ mod tests {
             Arc::new(USearchVectorIndex::new(384, None).unwrap()),
             None,
             dir.path().join("index"),
+            VectorIndexCompression::None,
+            None,
         );
         sqlx::query("DROP TABLE text_embeddings")
             .execute(&pool)
@@ -266,5 +335,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(runtime.dimension(), 2);
+    }
+
+    #[tokio::test]
+    async fn first_bind_opens_the_index_as_startup_would() {
+        use super::super::{manifest::manifest_path_for, VectorQuantization};
+        let pool = database().await;
+        let dir = tempfile::tempdir().unwrap();
+        let compression = VectorIndexCompression::truncated(1, VectorQuantization::F32);
+        let runtime = RuntimeVectorIndex::new(
+            Arc::new(USearchVectorIndex::new(384, None).unwrap()),
+            None,
+            dir.path().join("usearch-unconfigured-mrl1f32.usearch"),
+            compression.clone(),
+            None,
+        );
+        runtime
+            .bind_first(&pool, &Model("sha256:first"), false)
+            .await
+            .unwrap();
+        assert_eq!(runtime.current().compression(), &compression);
+        runtime
+            .add_embedding_with_content(
+                "vector".into(),
+                vec![1., 0.],
+                "Chicago".into(),
+                "chunk".into(),
+                "doc".into(),
+            )
+            .unwrap();
+        assert!(
+            runtime.current().is_dirty(),
+            "saves must be coalesced, not immediate"
+        );
+        let path = dir.path().join(format!(
+            "usearch-{}.usearch",
+            generation_name(Some("sha256:first"), &compression)
+        ));
+        assert!(runtime
+            .persistence()
+            .unwrap()
+            .flush_if_dirty()
+            .await
+            .unwrap());
+        assert!(path.exists());
+        assert!(manifest_path_for(&path).exists());
     }
 }

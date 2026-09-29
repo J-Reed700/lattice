@@ -72,6 +72,7 @@ pub struct HybridSearchUseCase {
     /// same way: an explicit switch *and* the loaded model having a sparse head.
     sparse_search: Option<Arc<dyn SparseSearchTrait>>,
     sparse_enabled: bool,
+    chunk_repository: Option<Arc<dyn crate::application::ports::ChunkRepositoryPort>>,
 }
 
 impl HybridSearchUseCase {
@@ -93,7 +94,17 @@ impl HybridSearchUseCase {
             text_search,
             sparse_search: None,
             sparse_enabled: false,
+            chunk_repository: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_chunk_repository(
+        mut self,
+        repository: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
+    ) -> Self {
+        self.chunk_repository = Some(repository);
+        self
     }
 
     /// Attach the learned sparse branch, mirroring
@@ -136,7 +147,7 @@ impl HybridSearchUseCase {
         allowed_document_ids: Option<HashSet<String>>,
     ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
         let vector_search = Arc::clone(&self.vector_search);
-        tokio::task::spawn_blocking(move || {
+        let mut results = tokio::task::spawn_blocking(move || {
             vector_search.search_scoped(
                 &query_embedding,
                 top_k,
@@ -145,7 +156,22 @@ impl HybridSearchUseCase {
             )
         })
         .await
-        .map_err(|error| AppError::InternalError(format!("Vector search task failed: {error}")))?
+        .map_err(|error| {
+            AppError::InternalError(format!("Vector search task failed: {error}"))
+        })??;
+        if let Some(repository) = &self.chunk_repository {
+            let ids = results
+                .iter()
+                .map(|result| result.chunk_id.clone())
+                .collect::<Vec<_>>();
+            let content = repository.find_content_by_ids(&ids).await?;
+            for result in &mut results {
+                if let Some(text) = content.get(&result.chunk_id) {
+                    result.content.clone_from(text);
+                }
+            }
+        }
+        Ok(results)
     }
 
     /// Execute hybrid search.
@@ -187,7 +213,9 @@ impl HybridSearchUseCase {
             "HybridSearchUseCase execute"
         );
 
-        let query_time_ms = start.elapsed().as_millis() as u64;
+        // Every arm reports its time when it returns, not here before any
+        // branch has run.
+        let elapsed_ms = || start.elapsed().as_millis() as u64;
         match mode {
             SearchModeDto::Vector => {
                 let threshold = request.threshold.unwrap_or(0.5);
@@ -206,7 +234,7 @@ impl HybridSearchUseCase {
                     preview = Self::summarize_domain_results(&vector_results, 8),
                     "Vector-only search results"
                 );
-                Ok(SearchMapper::to_response_dto(vector_results, query_time_ms))
+                Ok(SearchMapper::to_response_dto(vector_results, elapsed_ms()))
             }
             SearchModeDto::BM25 => {
                 let text_port_dtos = self
@@ -219,7 +247,7 @@ impl HybridSearchUseCase {
                     preview = Self::summarize_domain_results(&text_results, 8),
                     "BM25-only search results"
                 );
-                Ok(SearchMapper::to_response_dto(text_results, query_time_ms))
+                Ok(SearchMapper::to_response_dto(text_results, elapsed_ms()))
             }
             SearchModeDto::Hybrid {
                 vector_weight,
@@ -304,7 +332,7 @@ impl HybridSearchUseCase {
                     "Hybrid merged results"
                 );
 
-                Ok(SearchMapper::to_response_dto(merged, query_time_ms))
+                Ok(SearchMapper::to_response_dto(merged, elapsed_ms()))
             }
         }
     }
@@ -716,8 +744,68 @@ impl HybridSearchUseCase {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::HybridSearchUseCase;
     use crate::domain::entities::search_result::SearchResult;
+    use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
+    use crate::shared::error::Result;
+
+    /// A keyword branch that takes a measurable while.
+    struct SlowTextSearch;
+
+    #[async_trait::async_trait]
+    impl crate::application::ports::TextSearchPort for SlowTextSearch {
+        async fn search(
+            &self,
+            _query: &str,
+            _top_k: usize,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            Ok(Vec::new())
+        }
+        async fn index_document(&self, _id: &str, _content: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn index_batch(&self, _documents: &[(&str, &str)]) -> Result<()> {
+            Ok(())
+        }
+        async fn remove_document(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn clear(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn count(&self) -> Result<usize> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn query_time_covers_the_search_itself() {
+        let use_case = HybridSearchUseCase::new(
+            Arc::new(crate::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded()),
+            Arc::new(
+                crate::features::search::engine::vector_search::usearch_index::USearchVectorIndex::new(
+                    4, None,
+                )
+                .unwrap(),
+            ),
+            Arc::new(SlowTextSearch),
+        );
+
+        let response = use_case
+            .execute(SearchRequestDto {
+                query: "anything".into(),
+                limit: Some(5),
+                threshold: None,
+                mode: SearchModeDto::BM25,
+            })
+            .await
+            .unwrap();
+
+        assert!(response.query_time_ms >= 30, "{}", response.query_time_ms);
+    }
 
     fn make_result(id: &str, snippet: &str, score: f32) -> SearchResult {
         SearchResult::with_metadata(

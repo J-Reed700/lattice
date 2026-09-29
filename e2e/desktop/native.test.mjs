@@ -8,6 +8,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { remote } from 'webdriverio';
+import { sampleProcessTree, scanNativeLeaks } from './resources.mjs';
 
 const output = path.resolve('e2e-results/desktop');
 const reports = path.join(output, 'reports', String(Date.now()));
@@ -40,7 +41,10 @@ async function launch() {
   const log = openSync(path.join(reports, `app-${++launches}.log`), 'w');
   app = spawn(manifest.binary, [], {
     cwd: path.dirname(manifest.binary),
-    env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port) },
+    env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port),
+      ...(process.platform === 'darwin' && process.env.LATTICE_NATIVE_LEAK_SCAN === '1'
+        ? { MallocStackLogging: '1' } : {}),
+    },
     stdio: ['ignore', log, log],
   });
   closeSync(log);
@@ -59,16 +63,24 @@ async function launch() {
   }
   browser = await remote({
     hostname: '127.0.0.1', port, logLevel: 'error',
-    connectionRetryCount: 0, connectionRetryTimeout: 15_000,
+    connectionRetryCount: 0,
+    connectionRetryTimeout: process.env.LATTICE_NATIVE_LEAK_SCAN === '1' ? 45_000 : 15_000,
     capabilities: { browserName: 'wry', 'wdio:tauriServiceOptions': { windowLabel: 'main' } },
   });
   await browser.setTimeout({ script: 30_000, implicit: 0 });
   await browser.waitUntil(async () => browser.execute(() => Boolean(window.__TAURI__?.core)), { timeout: 30_000 });
   assert.equal(await invoke('plugin:app|identifier'), manifest.identifier);
+  const titled = await browser.executeAsync(done => {
+    window.__TAURI__.window.getCurrentWindow()
+      .setTitle('Lattice Compatibility Test — isolated test library')
+      .then(() => done(true)).catch(() => done(false));
+  });
+  assert.equal(titled, true, 'The isolated test window must identify itself');
 }
 
 async function closeNormally() {
   const closing = app;
+  const descendants = (await sampleProcessTree(closing.pid)).processes.filter(row => row.pid !== closing.pid);
   // Exercise the real native close event and renderer save gate, without
   // clicking another element and accidentally committing a focused title first.
   await browser.execute(() => {
@@ -77,11 +89,26 @@ async function closeNormally() {
   const deadline = Date.now() + 30_000;
   while (closing.exitCode === null && closing.signalCode === null && Date.now() < deadline) await delay(100);
   assert.equal(closing.exitCode, 0, 'Normal native close must exit successfully after flushing saves');
+  const shutdownLog = await readFile(path.join(reports, `app-${launches}.log`), 'utf8');
+  assert.doesNotMatch(shutdownLog, /Graceful shutdown timed out|Database close timed out|forcing exit/i,
+    'A forced shutdown must not count as a successful lifecycle check');
+  assert.doesNotMatch(shutdownLog, /Reaped orphan llama-server process from previous Lattice run/,
+    'A clean preceding close must not leave sidecars for the next launch to reap');
+  const isAlive = pid => {
+    try { process.kill(pid, 0); return true; } catch (error) {
+      if (error.code === 'ESRCH') return false;
+      throw error;
+    }
+  };
+  const childDeadline = Date.now() + 3000;
+  while (descendants.some(row => isAlive(row.pid)) && Date.now() < childDeadline) await delay(100);
+  assert.deepEqual(descendants.filter(row => isAlive(row.pid)).map(row => row.pid), [],
+    'Native child processes must exit with their owner');
   app = undefined;
   browser = undefined;
 }
 
-test('packaged desktop: onboarding, native file access, editing, close and persistence', { timeout: 240_000 }, async t => {
+test('packaged desktop: onboarding, native file access, editing, close and persistence', { timeout: 480_000 }, async t => {
   // Re-running a candidate starts with an empty test library. Preserve the old
   // directory for debugging; the strict identity check excludes real user data.
   const dataRoot = process.platform === 'darwin' ? path.join(os.homedir(), 'Library/Application Support')
@@ -165,10 +192,42 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       await title.waitForDisplayed({ timeout: 30_000 });
       assert.equal(await title.getValue(), expectedTitle);
       await browser.saveScreenshot(path.join(reports, 'journal-after-restart.png'));
+      const samples = [];
+      for (let cycle = 0; cycle < 25; cycle++) {
+        await (await browser.$('button[aria-label="Show conversation and highlights"]')).click();
+        await (await browser.$('aside[aria-label="Beside this page"]')).waitForDisplayed({ timeout: 5000 });
+        await (await browser.$('button[aria-label="Hide panel"]')).click();
+        await (await browser.$('aside[aria-label="Beside this page"]')).waitForDisplayed({ reverse: true, timeout: 5000 });
+        // Exercise real IPC/result allocation as well as mount/unmount cleanup.
+        for (let read = 0; read < 10; read++) await invoke('plugin:dailynotes|list_workspace_notes', { request: { journalId: null } });
+        const renderer = await browser.execute(() => ({
+          domNodes: document.querySelectorAll('*').length,
+          jsHeapBytes: performance.memory?.usedJSHeapSize ?? null,
+        }));
+        samples.push({ cycle, ...renderer, ...await sampleProcessTree(app.pid) });
+      }
+      const settled = samples.slice(5);
+      const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+      const baseline = mean(settled.slice(0, 5).map(sample => sample.residentBytes));
+      const final = mean(settled.slice(-5).map(sample => sample.residentBytes));
+      const residentGrowthBytes = final - baseline;
+      results.resources = { workload: '25 panel open/close cycles and 250 native note reads',
+        coverage: 'Tauri parent and descendants; macOS WebKit XPC/Metal require separate profiling',
+        residentGrowthBytes, samples };
+      if (process.env.LATTICE_NATIVE_LEAK_SCAN === '1') {
+        results.nativeLeaks = await scanNativeLeaks(app.pid);
+        await writeFile(path.join(reports, 'native-leaks.txt'), results.nativeLeaks.output ?? results.nativeLeaks.reason);
+      }
+      // Warmup excluded. These are regression budgets, not claims of zero leaks.
+      assert.ok(residentGrowthBytes < 64 * 1024 * 1024, `Retained process-tree growth: ${residentGrowthBytes} bytes`);
+      assert.ok(Math.max(...settled.map(sample => sample.domNodes)) - Math.min(...settled.map(sample => sample.domNodes)) < 100,
+        'Closed panel cycles must not accumulate DOM nodes');
+      assert.ok(settled.at(-1).processes.length <= settled[0].processes.length + 2, 'Child processes must plateau');
+      results.checks.push('resource-churn');
       results.checks.push('restart-persistence');
       await closeNormally();
     });
-    results.passed = results.checks.length === 5;
+    results.passed = results.checks.length === 6;
     assert.equal(results.passed, true);
   } catch (error) {
     if (browser) {

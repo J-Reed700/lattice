@@ -15,6 +15,7 @@ struct ErrorBody {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match self {
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Validation(_) => StatusCode::BAD_REQUEST,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
@@ -35,6 +36,7 @@ mod tests {
     #[tokio::test]
     async fn errors_keep_status_contracts_and_hide_database_details() {
         for (error, status) in [
+            (AppError::Unauthorized, StatusCode::UNAUTHORIZED),
             (
                 AppError::Validation("bad input".into()),
                 StatusCode::BAD_REQUEST,

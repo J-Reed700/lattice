@@ -88,7 +88,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         noContextPromptTemplate: '',
         toolFollowupPromptTemplate: '',
       },
-      verification: { enabled: false },
+      verification: { enabled: false, temperature: 0, topP: 1, topK: 1 },
       toolOutput: {
         maxChars: 2000,
         excerptChars: 220,
@@ -113,7 +113,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       },
       externalModelDirectories: [],
       customTools: [],
-      boundedConversationMemory: false,
+      boundedConversationMemory: true,
     },
     ui: {
       theme: 'system',

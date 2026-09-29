@@ -8,6 +8,15 @@ const storeState = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
 }));
 
+const api = vi.hoisted(() => ({
+  addDocumentsToLibrary: vi.fn(),
+  openFileById: vi.fn(),
+}));
+
+vi.mock('../../../lib/api', () => ({
+  VaultAPI: api,
+}));
+
 vi.mock('../../../stores/conversationsStore', () => ({
   useConversationsStore: () => storeState.current,
 }));
@@ -69,5 +78,61 @@ describe('ConversationLinkedDocumentsPanel — scope release', () => {
 
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText(/Move this chat to General/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ConversationLinkedDocumentsPanel — attachments', () => {
+  const linkedDocument = (overrides: Record<string, unknown> = {}) => ({
+    documentId: 'doc-1',
+    fileName: 'Greens growing list.txt',
+    filePath: '/library/greens.txt',
+    fileType: 'txt',
+    category: 'Text',
+    indexedAt: new Date().toISOString(),
+    attachedToConversation: true,
+    lastReferencedAt: new Date().toISOString(),
+    referenceCount: 1,
+    ...overrides,
+  });
+
+  const storeWithDocument = (document: Record<string, unknown>) => ({
+    ...emptyStore(),
+    linkedDocumentsByConversationId: new Map([['conv-1', [document]]]),
+  });
+
+  beforeEach(() => {
+    api.addDocumentsToLibrary.mockReset();
+    api.addDocumentsToLibrary.mockResolvedValue({ ok: true, data: { status: 'added' } });
+    storeState.current = storeWithDocument(linkedDocument());
+  });
+
+  it('says an attached file is not in the library, and offers to file it', async () => {
+    render(<ConversationLinkedDocumentsPanel conversationId="conv-1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /Sources in this conversation/ }));
+
+    expect(
+      screen.getByText(/Attached to this chat\. Not in your library/)
+    ).toBeInTheDocument();
+    // The space checkboxes belong to library documents; an attachment is in no
+    // space, so offering to assign one would be a control over nothing.
+    expect(screen.queryByText(/^Scope:/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add to library' }));
+    expect(api.addDocumentsToLibrary).toHaveBeenCalledWith(['doc-1']);
+  });
+
+  it('leaves a library document its space controls and no filing offer', async () => {
+    storeState.current = storeWithDocument(
+      linkedDocument({ attachedToConversation: false })
+    );
+
+    render(<ConversationLinkedDocumentsPanel conversationId="conv-1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /Sources in this conversation/ }));
+
+    expect(screen.getByText(/Scope:/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add to library' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Attached to this chat/)).not.toBeInTheDocument();
   });
 });

@@ -8,19 +8,19 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::application::ports::{
-    DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
+    ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
 use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
 use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
-use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
+use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
-use crate::features::search::engine::vector_search::persistence::open_or_rebuild;
+use crate::features::search::engine::vector_search::persistence::open_or_rebuild_streaming;
 use crate::features::search::engine::vector_search::{
     IndexPersistence, USearchVectorIndex, VectorIndexCompression,
 };
@@ -57,11 +57,6 @@ pub struct SearchDi {
     // Ports (exported so IndexingModule can write to the same USearch index)
     pub vector_search: Arc<dyn VectorSearchPort>,
     pub document_repo: Arc<dyn DocumentRepository>,
-
-    /// Writes the index and its manifest. `None` until an embedding model is
-    /// active, because there is no generation to stamp a manifest with before
-    /// then. Held by the composition root so shutdown can flush.
-    pub index_persistence: Option<Arc<IndexPersistence>>,
 }
 
 pub async fn build(
@@ -122,14 +117,10 @@ pub async fn build_with_compression(
     // toggling it rebuilds into its own files instead of mixing two vector
     // spaces in one index. `None` contributes no suffix, so existing vaults keep
     // their current filenames byte for byte.
-    let generation = match &identity {
-        Some(id) => id.replace(':', "-"),
-        None => "unconfigured".to_string(),
-    };
-    let generation = match compression.layout_token() {
-        Some(layout) => format!("{}-{}", generation, layout),
-        None => generation,
-    };
+    let generation = super::engine::vector_search::runtime_index::generation_name(
+        identity.as_deref(),
+        &compression,
+    );
     // A backup restore leaves this marker because archives carry no vectors.
     let reembed_marker = usearch_index_path
         .parent()
@@ -180,14 +171,17 @@ pub async fn build_with_compression(
     let mut coverage: Option<(usize, usize)> = None;
     let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {
-        let restore = || {
+        let restore = |cursor: String| {
             let pool = db_pool.clone();
             let identity = identity.clone();
             async move {
-                crate::features::embedding::generation::restore(&pool, &identity, dimension).await
+                crate::features::embedding::generation::restore_page(
+                    &pool, &identity, dimension, &cursor, 128,
+                )
+                .await
             }
         };
-        open_or_rebuild(
+        open_or_rebuild_streaming(
             &usearch_index,
             &db_pool,
             &usearch_index_path,
@@ -227,7 +221,7 @@ pub async fn build_with_compression(
                 })??;
                 crate::features::embedding::generation::prepare(&db_pool, &model).await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
-                open_or_rebuild(
+                open_or_rebuild_streaming(
                     &usearch_index,
                     &db_pool,
                     &usearch_index_path,
@@ -256,7 +250,7 @@ pub async fn build_with_compression(
             dimension,
             usearch_index_path.clone(),
         ));
-        tokio::spawn(Arc::clone(&persistence).run());
+        crate::shared::background::spawn(Arc::clone(&persistence).run());
         index_persistence = Some(persistence);
     }
 
@@ -277,6 +271,8 @@ pub async fn build_with_compression(
             usearch_index,
             identity,
             usearch_index_path,
+            compression,
+            index_persistence,
         ),
     );
     let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;
@@ -311,6 +307,9 @@ pub async fn build_with_compression(
 
     let dynamic_embedding =
         Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
+    let chunk_repository = Arc::new(
+        crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
+    ) as Arc<dyn ChunkRepositoryPort>;
     // Both retrieval paths get the same third branch, wired unconditionally and
     // gated identically: `sparse_enabled` above is the product switch, and
     // `SparseSearchTrait::is_available` tracks whether the loaded model has a
@@ -324,20 +323,22 @@ pub async fn build_with_compression(
         HybridSearchService::new(
             search_service.clone(),
             bm25_search.clone(),
-            db_pool,
+            db_pool.clone(),
             search_enrichment_service.clone(),
             hybrid_config,
         )
+        .with_chunk_repository(Arc::clone(&chunk_repository))
         .with_reranker(Arc::clone(&reranker))
         .with_sparse_search(Arc::clone(&sparse_search)),
     ) as Arc<dyn HybridSearchTrait>;
 
-    let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
-        dynamic_embedding.clone(),
-        vector_search.clone(),
-    ));
+    let semantic_search_use_case = Arc::new(
+        SemanticSearchUseCase::new(dynamic_embedding.clone(), vector_search.clone())
+            .with_chunk_repository(Arc::clone(&chunk_repository)),
+    );
     let hybrid_search_use_case = Arc::new(
         HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
+            .with_chunk_repository(chunk_repository)
             .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED),
     );
 
@@ -352,7 +353,6 @@ pub async fn build_with_compression(
         search_enrichment_service,
         vector_search,
         document_repo,
-        index_persistence,
     })
 }
 
@@ -379,7 +379,15 @@ fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy)
         .iter()
         .all(|name| dir.join(name).is_file())
         && has_loadable_weights(&dir);
-    files_present.then(|| strategy_identity(artifact.as_str(), strategy))
+    // The document prefix is part of the key the loaded model reports, so it
+    // is resolved here exactly as the loader resolves it.
+    files_present.then(|| {
+        vector_identity(
+            artifact.as_str(),
+            strategy,
+            crate::features::embedding::candle_service::prefixes_for_model_dir(&dir),
+        )
+    })
 }
 
 /// Search's registrar surface on `Container`.
@@ -566,6 +574,29 @@ mod index_identity_tests {
                 index_identity(Some(&active), strategy),
                 Some(strategy_identity(recorded().as_str(), strategy))
             );
+        }
+    }
+
+    #[test]
+    fn a_prefixed_model_is_named_as_the_loaded_service_names_itself() {
+        use crate::application::ports::EmbeddingPort;
+        use crate::features::embedding::candle_service::CandleEmbeddingService;
+        let root = tempfile::tempdir().unwrap();
+        // Tiny real checkpoint; the directory name selects E5's `passage: `.
+        let dir = root.path().join("multilingual-e5-small");
+        std::fs::create_dir(&dir).unwrap();
+        crate::features::embedding::candle_service::tests::write_tiny_bert(&dir);
+        let active = model(local(&dir), Some(recorded()));
+        for strategy in [
+            EmbeddingStrategy::ChunkFirst,
+            EmbeddingStrategy::LateChunking,
+        ] {
+            let loaded = CandleEmbeddingService::open(&dir, recorded())
+                .unwrap()
+                .with_strategy(strategy);
+            let expected = EmbeddingPort::model_identity(&loaded);
+            assert!(expected.ends_with("+prefix-e5"), "{expected}");
+            assert_eq!(index_identity(Some(&active), strategy), Some(expected));
         }
     }
 

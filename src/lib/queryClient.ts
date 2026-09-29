@@ -1,4 +1,7 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryCache, MutationCache } from '@tanstack/react-query';
+
+import { diagnostics } from '../utils/diagnostics';
+
 
 /**
  * React Query Client Configuration
@@ -25,6 +28,8 @@ import { QueryClient } from '@tanstack/react-query';
  * ```
  */
 export const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: (error) => diagnostics.capture(error, 'Background query') }),
+  mutationCache: new MutationCache({ onError: (error) => diagnostics.capture(error, 'Save operation') }),
   defaultOptions: {
     queries: {
       // How long data is considered fresh (5 minutes)

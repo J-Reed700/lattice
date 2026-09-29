@@ -41,8 +41,10 @@ import {
   TurnRecordSchema,
   TurnStepSchema,
 } from '@/types/conversation';
+import { ChatStreamStatus } from '@/types/events';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
+import { createFrameBatcher } from '@/utils/frameBatcher';
 
 import { conversationKeys, type ConversationListParams } from './queries/conversationKeys';
 
@@ -138,6 +140,10 @@ const fetchWebSources = async (id: string): Promise<ConversationWebSourceDto[]> 
 const fetchMemberships = async (documentId: string): Promise<DocumentSpaceMembershipDto[]> =>
   unwrap(await VaultAPI.listDocumentSpaceMemberships(documentId));
 
+/** How many recent conversations keep linked-document and web-source observers. */
+export const MAX_OBSERVED_CONVERSATIONS = 20;
+export const MAX_OBSERVED_MEMBERSHIPS = 100;
+
 const addRequestedId = (
   field:
     | 'requestedLinkedConversationIds'
@@ -147,8 +153,30 @@ const addRequestedId = (
 ): void => {
   conversationUiStore.setState(state => {
     const next = new Set(state[field]);
+    // Re-inserting moves the id to the newest end, so the set is an LRU.
+    next.delete(id);
     next.add(id);
+    // Membership panels also outlive the documents that requested them unless
+    // evicted. Removing the observer lets React Query reclaim inactive data.
+    const capacity = field === 'requestedMembershipDocumentIds'
+      ? MAX_OBSERVED_MEMBERSHIPS
+      : MAX_OBSERVED_CONVERSATIONS;
+    for (const oldest of next) {
+      if (next.size <= capacity) break;
+      next.delete(oldest);
+    }
     return { [field]: next };
+  });
+};
+
+/** Stop observing a conversation's per-conversation queries (it was deleted). */
+const forgetRequestedConversation = (id: string): void => {
+  conversationUiStore.setState(state => {
+    const linked = new Set(state.requestedLinkedConversationIds);
+    const web = new Set(state.requestedWebSourceConversationIds);
+    linked.delete(id);
+    web.delete(id);
+    return { requestedLinkedConversationIds: linked, requestedWebSourceConversationIds: web };
   });
 };
 
@@ -203,6 +231,7 @@ const normalizeSource = (raw: unknown): Record<string, unknown> | null => {
     fileSizeBytes: value.fileSizeBytes ?? value.file_size_bytes ?? 0,
     modifiedAt: value.modifiedAt ?? value.modified_at ?? '',
     citationId: value.citationId ?? value.citation_id ?? undefined,
+    webSnapshot: value.webSnapshot ?? value.web_snapshot ?? undefined,
   };
 };
 
@@ -224,6 +253,8 @@ const parseVerification = (raw: unknown): MessageVerificationSummary | null => {
   const value = raw as Record<string, unknown>;
   const parsed = MessageVerificationSummarySchema.safeParse({
     enabled: Boolean(value.enabled),
+    pending: value.pending,
+    interrupted: value.interrupted,
     claimsEvaluated: value.claimsEvaluated ?? value.claims_evaluated,
     supportedClaims: value.supportedClaims ?? value.supported_claims,
     supportedClaimNotes: value.supportedClaimNotes ?? value.supported_claim_notes,
@@ -235,6 +266,65 @@ const parseVerification = (raw: unknown): MessageVerificationSummary | null => {
     judgeUsed: value.judgeUsed ?? value.judge_used,
   });
   return parsed.success ? parsed.data : null;
+};
+
+/** A grounding check that finished after its turn returned. */
+interface VerificationPatch {
+  messageId: string;
+  verification: unknown;
+  turn?: unknown;
+}
+
+/**
+ * How long a turn keeps listening for its answer's background check. The
+ * judge's own budget is ninety seconds; loading the utility model and reading
+ * the cited pages come on top. Past this the badge stays on "checking" until
+ * the next load reads the persisted result.
+ */
+const VERIFICATION_WAIT_MS = 5 * 60 * 1000;
+
+/** Write a finished check into a message's metadata, as the backend persisted it. */
+const applyVerificationPatch = (
+  messages: ConversationMessage[],
+  patch: VerificationPatch
+): ConversationMessage[] => messages.map(message => {
+  if (message.id !== patch.messageId) return message;
+  let metadata: Record<string, unknown> = {};
+  if (message.metadata) {
+    try {
+      metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+    } catch {
+      metadata = {};
+    }
+  }
+  metadata.verification = patch.verification;
+  if (patch.turn) metadata.turn = patch.turn;
+  return { ...message, metadata: JSON.stringify(metadata) };
+});
+
+/** Every message still waiting on its check is marked as never having got it. */
+const markVerificationInterrupted = (messages: ConversationMessage[]): ConversationMessage[] =>
+  messages.map(message => {
+    if (!isVerificationPending(message) || !message.metadata) return message;
+    try {
+      const metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+      const verification = metadata.verification as Record<string, unknown>;
+      metadata.verification = { ...verification, pending: false, interrupted: true };
+      return { ...message, metadata: JSON.stringify(metadata) };
+    } catch {
+      return message;
+    }
+  });
+
+/** Whether a message was persisted with its check still running. */
+const isVerificationPending = (message: ConversationMessage | undefined): boolean => {
+  if (!message?.metadata) return false;
+  try {
+    const metadata = JSON.parse(message.metadata) as { verification?: { pending?: unknown } };
+    return metadata.verification?.pending === true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -433,9 +523,22 @@ export function useConversationsController(): ConversationsState {
     }
   }, [queryClient]);
 
+  // Switching to another space leaves the open chat behind: it belongs to the
+  // space it was filed in, so keeping it on screen would show a conversation
+  // the sidebar no longer lists. "All spaces" lists every chat and keeps it.
+  const activeChatAfterSpaceChange = useCallback((spaceId: string | null): string | null => {
+    const activeId = conversationUiStore.getState().activeConversationId;
+    if (!activeId || !spaceId) return activeId;
+    const detail = queryClient.getQueryData<Conversation | null>(conversationKeys.detail(activeId));
+    return (detail?.spaceId ?? 'space_general') === spaceId ? activeId : null;
+  }, [queryClient]);
+
   const setSelectedSpace = useCallback((spaceId: string | null) => {
-    conversationUiStore.setState({ selectedSpaceId: spaceId });
-  }, []);
+    conversationUiStore.setState({
+      selectedSpaceId: spaceId,
+      activeConversationId: activeChatAfterSpaceChange(spaceId),
+    });
+  }, [activeChatAfterSpaceChange]);
   const setFilterMode = useCallback((filterMode: ConversationsState['filterMode']) => {
     conversationUiStore.setState({ filterMode });
   }, []);
@@ -455,6 +558,9 @@ export function useConversationsController(): ConversationsState {
       filterMode: params.filterMode,
       searchQuery: params.searchQuery,
       error: null,
+      ...(params.spaceId !== current.selectedSpaceId
+        ? { activeConversationId: activeChatAfterSpaceChange(params.spaceId) }
+        : {}),
     });
     try {
       await queryClient.fetchQuery({
@@ -465,7 +571,7 @@ export function useConversationsController(): ConversationsState {
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [queryClient, activeChatAfterSpaceChange]);
 
   const loadMessageBookmarks = useCallback(async (overrides?: LoadMessageBookmarksOverrides) => {
     const id = overrides?.conversationId ?? conversationUiStore.getState().activeConversationId;
@@ -621,8 +727,13 @@ export function useConversationsController(): ConversationsState {
 
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {
     const result = await VaultAPI.moveConversationToSpace({ conversationId: id, spaceId });
-    if (!result.ok) setUiError(result.error);
-    else await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
+    if (!result.ok) {
+      setUiError(result.error);
+      return;
+    }
+    queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
+      current ? { ...current, spaceId } : current);
+    await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
   }, [invalidateLists, queryClient]);
 
   const loadConversationLinkedDocuments = useCallback(async (conversationId: string) => {
@@ -725,17 +836,26 @@ export function useConversationsController(): ConversationsState {
     addRequestedId('requestedLinkedConversationIds', id);
     addRequestedId('requestedWebSourceConversationIds', id);
     try {
-      await Promise.all([
+      const [, detail] = await Promise.all([
         queryClient.fetchQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.linkedDocuments(id), queryFn: () => fetchLinkedDocuments(id), staleTime: 0 }),
         queryClient.fetchQuery({ queryKey: conversationKeys.webSources(id), queryFn: () => fetchWebSources(id), staleTime: 0 }),
       ]);
+      // The chat decides the space, not the other way round: a conversation
+      // opened from "All spaces", the spotlight or a link searches its own
+      // space's library, and a sidebar still showing another space would say
+      // otherwise. Skipped if the reader has already moved on to another chat.
+      const current = conversationUiStore.getState();
+      const spaceId = detail?.spaceId;
+      if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
+        await loadConversations({ spaceId });
+      }
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [queryClient, loadConversations]);
 
   /**
    * One generation turn, shared by `sendMessage` and `regenerateResponse`.
@@ -819,14 +939,57 @@ export function useConversationsController(): ConversationsState {
     };
 
     let unlisten: (() => void) | undefined;
+    let pendingStreamContent = '';
+    const flushStreamContent = () => {
+      const content = pendingStreamContent;
+      pendingStreamContent = '';
+      if (!content) return;
+      conversationUiStore.setState(current => {
+        const optimisticMessages = new Map(current.optimisticMessages);
+        const existing = optimisticMessages.get(assistantTempId);
+        if (!existing) return current;
+        optimisticMessages.set(assistantTempId, {
+          ...existing,
+          content: existing.content + content,
+        });
+        return { optimisticMessages };
+      });
+    };
+    const streamBatcher = createFrameBatcher(flushStreamContent);
+    // The answer returns before its grounding check finishes; the check
+    // arrives on this same channel afterwards. The listener stays up for it
+    // after the turn settles, and only for it.
+    let awaitingVerification = false;
+    let verificationConversationId = requestConversationId;
+    let verificationTimer: ReturnType<typeof setTimeout> | undefined;
+    let readyVerification: VerificationPatch | null = null;
+    const stopListening = () => {
+      if (verificationTimer) clearTimeout(verificationTimer);
+      unlisten?.();
+      unlisten = undefined;
+    };
     try {
       unlisten = await listen<ChatStreamEventDto>('llm-stream', event => {
         const payload = event.payload;
-        if (payload.conversationId !== requestConversationId || payload.requestId !== requestId) return;
-        if (payload.done) {
-          unlisten?.();
+        // Matched on the request alone: a turn that created its conversation
+        // reports the conversation's real id, not the one it was asked for.
+        if (payload.requestId !== requestId) return;
+        if (payload.status === ChatStreamStatus.Verification && payload.verification) {
+          const patch: VerificationPatch = {
+            messageId: payload.verification.messageId,
+            verification: payload.verification.verification,
+            turn: payload.verification.turn ?? undefined,
+          };
+          readyVerification = patch;
+          queryClient.setQueryData<ConversationMessage[]>(
+            conversationKeys.messages(payload.conversationId),
+            current => (current ? applyVerificationPatch(current, patch) : current)
+          );
+          if (awaitingVerification) stopListening();
           return;
         }
+        if (payload.conversationId !== requestConversationId) return;
+        if (payload.done) return;
         // A round can run for minutes without a single character of text. The
         // steps are the only thing distinguishing "still working" from "hung",
         // and unlike the note they replace they are kept: the same list is
@@ -861,26 +1024,26 @@ export function useConversationsController(): ConversationsState {
         // overwrite the bubble, so a turn that recovered showed the retry
         // notice where its answer should have been.
         if (!payload.content) return;
-        conversationUiStore.setState(current => {
-          const optimisticMessages = new Map(current.optimisticMessages);
-          const existing = optimisticMessages.get(assistantTempId);
-          if (existing) {
-            optimisticMessages.set(assistantTempId, {
-              ...existing,
-              content: existing.content + payload.content,
-            });
-          }
-          return { optimisticMessages };
-        });
+        pendingStreamContent += payload.content;
+        streamBatcher.schedule();
       });
 
       const result = await invoke(requestId);
+      // Do not let a fast terminal response drop the final few queued tokens.
+      streamBatcher.flush();
       if (!result.ok) {
         if (isUserInitiatedCancellation(requestId, result.details?.code)) {
           const refreshed = await fetchMessages(requestConversationId);
           queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
           settleOptimisticMessages();
-          conversationUiStore.setState({ error: null });
+          // A stop during retrieval ends the turn before the backend has
+          // persisted the question, so the bubble we just dropped was its only
+          // copy. Hand it back to the composer rather than lose it.
+          const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
+          const questionLost = showUserBubble && lastUser?.content !== content;
+          conversationUiStore.setState(questionLost
+            ? { error: null, composerDraft: content }
+            : { error: null });
           return 'cancelled';
         }
         const detail: unknown = result.details?.details;
@@ -893,12 +1056,19 @@ export function useConversationsController(): ConversationsState {
         sources?: SourceWithMetadata[];
       };
       const responseId = raw.conversationId ?? raw.conversation_id;
+      verificationConversationId = responseId ?? requestConversationId;
       if (!responseId) {
         settleOptimisticMessages('Chat response missing conversation ID. Please try again.');
         return 'failed';
       }
-      const responseMessages = raw.messages.map(toConversationMessage);
+      // The check may have landed while the response was on its way; the
+      // response itself was read before it did.
+      const persistedMessages = raw.messages.map(toConversationMessage);
+      const responseMessages = readyVerification
+        ? applyVerificationPatch(persistedMessages, readyVerification)
+        : persistedMessages;
       const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
+      awaitingVerification = isVerificationPending(lastAssistant);
       if (lastAssistant && raw.sources?.length && !lastAssistant.sources?.length) {
         lastAssistant.sources = parseSources(raw.sources);
       }
@@ -936,10 +1106,25 @@ export function useConversationsController(): ConversationsState {
       ]);
       return 'answered';
     } catch (error) {
+      streamBatcher.flush();
       settleOptimisticMessages(error instanceof Error ? error.message : String(error));
       return 'failed';
     } finally {
-      unlisten?.();
+      streamBatcher.cancel();
+      streamBatcher.flush();
+      if (awaitingVerification && unlisten) {
+        // A check that never reports must not leave the badge on "Checking…"
+        // until the conversation is reopened: mark it interrupted and stop.
+        const pendingMessages = conversationKeys.messages(verificationConversationId);
+        verificationTimer = setTimeout(() => {
+          queryClient.setQueryData<ConversationMessage[]>(pendingMessages, current =>
+            current ? markVerificationInterrupted(current) : current
+          );
+          stopListening();
+        }, VERIFICATION_WAIT_MS);
+      } else {
+        stopListening();
+      }
       pendingCancellationRequests.delete(requestId);
       conversationUiStore.setState(current => {
         const inFlightGenerations = new Map(current.inFlightGenerations);
@@ -958,7 +1143,9 @@ export function useConversationsController(): ConversationsState {
   const sendMessage = useCallback(async (
     content: string,
     conversationId?: string | null,
-    toolPreferences?: ToolPreferences
+    toolPreferences?: ToolPreferences,
+    attachmentNames?: string[],
+    attachmentDocumentIds?: string[]
   ) => {
     const state = conversationUiStore.getState();
     const requestConversationId = conversationId ?? state.activeConversationId ?? conversations[0]?.id ?? null;
@@ -974,7 +1161,9 @@ export function useConversationsController(): ConversationsState {
         requestConversationId,
         content,
         toolPreferences,
-        requestId
+        requestId,
+        attachmentNames,
+        attachmentDocumentIds
       ),
     });
   }, [conversations, runGeneration]);
@@ -1049,6 +1238,15 @@ export function useConversationsController(): ConversationsState {
     return newId;
   }, [invalidateLists, selectConversation]);
 
+  const continueInNewConversation = useCallback(async (conversationId: string): Promise<string> => {
+    const result = await VaultAPI.continueInNewConversation(conversationId);
+    if (!result.ok) throw new Error(result.error);
+    const newId = result.data.conversation.id;
+    await invalidateLists();
+    await selectConversation(newId);
+    return newId;
+  }, [invalidateLists, selectConversation]);
+
   /**
    * Fold the conversation's oldest messages into an LLM summary.
    *
@@ -1111,12 +1309,9 @@ export function useConversationsController(): ConversationsState {
   }, [invalidateLists, queryClient]);
 
   const deleteConversation = useCallback(async (id: string) => {
+    // No list pre-check: the open conversation can be one the current filter
+    // or search hides, and the backend is the authority on whether it exists.
     const snapshots = queryClient.getQueriesData<Conversation[]>({ queryKey: conversationKeys.lists });
-    const exists = snapshots.some(([, list]) => list?.some(item => item.id === id));
-    if (!exists) {
-      setUiError(`Conversation not found: ${id}`);
-      return;
-    }
     queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current =>
       current?.filter(item => item.id !== id)
     );
@@ -1129,6 +1324,9 @@ export function useConversationsController(): ConversationsState {
       setUiError(result.error);
       return;
     }
+    // Drop the observers before the caches, or they re-create the queries and
+    // refetch a conversation that no longer exists.
+    forgetRequestedConversation(id);
     queryClient.removeQueries({ queryKey: conversationKeys.detail(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.messages(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(id) });
@@ -1197,6 +1395,7 @@ export function useConversationsController(): ConversationsState {
     regenerateResponse,
     truncateAfter,
     forkConversation,
+    continueInNewConversation,
     compactConversation,
     setComposerDraft,
     cancelGeneration,
@@ -1205,7 +1404,7 @@ export function useConversationsController(): ConversationsState {
     clearError,
   }), [
     addConversationWebSource, bookmarkMessage, bookmarksQuery.isLoading, cancelGeneration,
-    clearError, compactConversation, conversations, conversationsQuery.isLoading,
+    clearError, compactConversation, continueInNewConversation, conversations, conversationsQuery.isLoading,
     createConversation, deleteConversation,
     deleteMessage, documentSpaceMembershipsByDocumentId, linkedDocumentsByConversationId,
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,

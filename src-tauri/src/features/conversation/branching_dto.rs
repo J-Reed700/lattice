@@ -39,3 +39,16 @@ pub struct ForkConversationResponseDto {
     pub conversation: crate::features::conversation::dto::ConversationDto,
     pub copied_message_count: u32,
 }
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinueInNewConversationRequestDto {
+    pub conversation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinueInNewConversationResponseDto {
+    /// The new conversation, in the same space, opening with the summary.
+    pub conversation: crate::features::conversation::dto::ConversationDto,
+}

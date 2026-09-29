@@ -112,7 +112,8 @@ pub fn init_otel_tracing(
     let tracer = provider.tracer("lattice-desktop");
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter()));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())
@@ -143,12 +144,32 @@ pub fn init_otel_tracing(
     Ok(true)
 }
 
+/// `tokenizers` warns once per added token when it loads the Qwen3 tokenizer
+/// (IDs it expected but the file leaves implicit) — two dozen lines on every
+/// startup for a tokenizer that loads and works.
+const DEFAULT_FILTER: &str = "info,tokenizers=error";
+const DEBUG_FILTER: &str = "info,lattice=debug,lattice_desktop=debug,tokenizers=error";
+
+/// Daily log files kept on disk. A week covers "it broke on Tuesday"; the
+/// files hold URLs read, paths and queries, so they are not kept forever.
+const MAX_LOG_FILES: usize = 7;
+
+/// The filter used when `RUST_LOG` is unset: debug for our crates in a debug
+/// build, info in a release build, whose logs are the user's to keep.
+fn default_filter() -> &'static str {
+    if cfg!(debug_assertions) {
+        DEBUG_FILTER
+    } else {
+        DEFAULT_FILTER
+    }
+}
+
 /// Initialize regular tracing (stdout + file, no OTEL).
 ///
 /// Called as fallback when OTEL is disabled or fails to initialize.
 pub fn init_regular_tracing() {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,lattice=debug,lattice_desktop=debug"));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter()));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())
@@ -219,7 +240,26 @@ fn file_writer() -> NonBlocking {
 
     eprintln!("[lattice] Log files: {}", log_dir.display());
 
-    background_writer(rolling::daily(&log_dir, "lattice.log"))
+    match daily_appender(&log_dir) {
+        Ok(appender) => background_writer(appender),
+        Err(e) => {
+            // No file log beats an unpruned one; stderr still gets every line.
+            eprintln!("[lattice] File logging disabled: {e}");
+            background_writer(std::io::sink())
+        }
+    }
+}
+
+/// `lattice.log.<date>` in `log_dir`, rotated daily, keeping the newest
+/// [`MAX_LOG_FILES`].
+fn daily_appender(
+    log_dir: &std::path::Path,
+) -> Result<rolling::RollingFileAppender, rolling::InitError> {
+    rolling::Builder::new()
+        .rotation(rolling::Rotation::DAILY)
+        .filename_prefix("lattice.log")
+        .max_log_files(MAX_LOG_FILES)
+        .build(log_dir)
 }
 
 /// Hand `writer` to a background worker and retain its guard for the process.
@@ -258,6 +298,36 @@ fn log_directory() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_builds_default_to_info() {
+        if cfg!(debug_assertions) {
+            assert_eq!(default_filter(), DEBUG_FILTER);
+        } else {
+            assert_eq!(default_filter(), DEFAULT_FILTER);
+        }
+        assert!(!DEFAULT_FILTER.contains("debug"));
+    }
+
+    #[test]
+    fn the_daily_log_keeps_at_most_a_week_of_files() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        for day in 1..=12 {
+            std::fs::write(
+                dir.path().join(format!("lattice.log.2026-09-{day:02}")),
+                b"old",
+            )
+            .unwrap();
+        }
+        let mut appender = daily_appender(dir.path()).unwrap();
+        appender.write_all(b"today\n").unwrap();
+        appender.flush().unwrap();
+        drop(appender);
+
+        let kept = std::fs::read_dir(dir.path()).unwrap().count();
+        assert!(kept <= MAX_LOG_FILES, "{kept} log files kept");
+    }
 
     #[test]
     fn test_log_directory_is_reasonable() {

@@ -38,9 +38,13 @@ pub async fn load_memory_details(
         "ready"
     };
 
+    let suppressed = memory.suppressed_item_ids(conversation_id).await?;
     let mut items = Vec::new();
     let mut conflicts = 0i64;
     for item in &snapshot.active_items {
+        if suppressed.iter().any(|id| id == item.id.as_str()) {
+            continue;
+        }
         let dto = to_dto(memory, conversation_id, item).await?;
         // An item counts as needing attention when its reading is unsettled, or
         // when nothing it quotes resolves any more.
@@ -67,8 +71,8 @@ pub async fn load_memory_details(
         memory_revision: snapshot.state.memory_revision,
         transcript_revision: snapshot.transcript_revision,
         processed_through_sequence: snapshot.state.processed_through_sequence,
-        active_mandatory_count: snapshot.mandatory_items().len() as i64,
-        active_optional_count: snapshot.optional_items().len() as i64,
+        active_mandatory_count: items.iter().filter(|i| i.is_mandatory).count() as i64,
+        active_optional_count: items.iter().filter(|i| !i.is_mandatory).count() as i64,
         conflict_count: conflicts,
         summary: snapshot.summary.clone(),
         items,

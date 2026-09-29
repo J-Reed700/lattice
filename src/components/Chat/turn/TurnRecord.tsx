@@ -10,7 +10,7 @@ import type {
 import { hasWebResearch } from './research';
 import { ResearchDeck } from './ResearchDeck';
 import { roundCount, roundOf } from './rounds';
-import { formatDuration } from './StepRow';
+import { TurnClockContext, formatDuration } from './StepRow';
 
 import './turn-record.css';
 
@@ -45,6 +45,14 @@ interface TurnRecordProps {
   record: TurnRecordData | null;
   /** Only while the turn is in flight. */
   liveSteps: TurnStep[] | null;
+  /**
+   * When the in-flight turn began, as a wall clock, for the running steps'
+   * clocks. A step knows only its offset from the turn's start, so without
+   * this a running step can only be timed from when its row was drawn — and a
+   * reader who folded the record and opened it again would watch every clock
+   * start over. `null` once the turn is over.
+   */
+  turnStartedAt?: number | null;
   isPending: boolean;
   /**
    * The answer has text on screen. A generation step alone does not mean that:
@@ -59,6 +67,7 @@ export function TurnRecord({
   trace,
   record,
   liveSteps,
+  turnStartedAt = null,
   isPending,
   isWriting,
   verification,
@@ -116,17 +125,19 @@ export function TurnRecord({
         </span>
       </button>
       {open && (
-        // Cards float; a sunken box around them would pin them back down.
-        <div className="turn-record-body" data-deck={hasWebResearch(steps)}>
-          <TurnNote trace={trace} />
-          <ResearchDeck steps={steps} live={isPending} />
-          {record?.router?.rationale && (
-            <p className="turn-record-rationale">
-              Routed as {routerActionLabel(record.router.action)} —{' '}
-              {record.router.rationale}
-            </p>
-          )}
-        </div>
+        <TurnClockContext.Provider value={isPending ? turnStartedAt : null}>
+          {/* Cards float; a sunken box around them would pin them back down. */}
+          <div className="turn-record-body" data-deck={hasWebResearch(steps)}>
+            <TurnNote trace={trace} />
+            <ResearchDeck steps={steps} live={isPending} />
+            {record?.router?.rationale && (
+              <p className="turn-record-rationale">
+                Routed as {routerActionLabel(record.router.action)} —{' '}
+                {record.router.rationale}
+              </p>
+            )}
+          </div>
+        </TurnClockContext.Provider>
       )}
     </div>
   );

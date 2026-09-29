@@ -400,6 +400,17 @@ async fn recall_availability_is_reported_even_when_nothing_was_found() {
         "a no-hit note must say it is not proof of absence: {}",
         built.recall_note
     );
+    assert!(
+        built.plan.messages.iter().any(|message| matches!(
+            message,
+            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+                if role == "user"
+                    && content.contains("Automatic recall status")
+                    && content.contains("found nothing")
+                    && content.contains("not new requests")
+        )),
+        "the availability note must reach generation as historical user context"
+    );
 }
 
 #[tokio::test]
@@ -429,6 +440,86 @@ async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruct
         matches!(error, crate::shared::error::AppError::InvalidInput(_)),
         "{error:?}"
     );
+}
+
+#[test]
+fn retrieval_is_budgeted_against_the_plans_history_not_the_whole_window() {
+    use super::super::retrieval::available_rag_budget;
+
+    let llm = llm();
+    let window = llm.max_context_tokens();
+    let question = 10;
+    // A long chat: the string context was filled to (nearly) the whole window.
+    let string_history = window - 1_000;
+    assert_eq!(
+        available_rag_budget(window, question, string_history, 0),
+        0,
+        "the string total leaves retrieval nothing"
+    );
+
+    let history =
+        history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, string_history);
+    let rag = available_rag_budget(window, question, history, 0);
+    assert!(
+        rag > 0,
+        "bounded history must leave retrieval room: {history}"
+    );
+
+    // Retrieval sized this way still fits the plan's own input budget.
+    let capacity = ModelCapacity::new(llm.model_name(), window);
+    let allocation = BudgetAllocation::plan(&capacity, 0).unwrap();
+    assert!(llm.count_tokens("You are helpful.") + question + rag <= allocation.input_budget);
+
+    // A short chat is charged what it has, plus the plan's safety margin.
+    let short = history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, 100);
+    assert_eq!(short, 100 + allocation.safety_margin);
+}
+
+#[tokio::test]
+async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unprocessed_source() {
+    let pool = database().await;
+    let repository = ConversationRepository::new(pool.clone());
+    let id = repository
+        .create_conversation("Big pastes", "test-model", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    // 64 messages of 20 KB: 1.28 MB, well past the 512 KB candidate cap.
+    for index in 0..RECENT_CANDIDATE_MESSAGES {
+        let role = if index % 2 == 0 {
+            crate::domain::conversation::MessageRole::User
+        } else {
+            crate::domain::conversation::MessageRole::Assistant
+        };
+        let content = format!("{index:04} {}", "x".repeat(20 * 1024));
+        repository
+            .add_message(&id, role, &content, 10, None)
+            .await
+            .unwrap();
+    }
+    let snapshot = repository.load_memory_snapshot(&id).await.unwrap();
+    let latest = snapshot.latest_sequence;
+
+    // The ledger covers all but the last three messages.
+    let (recent, unread) = load_recent(&repository, &id, &snapshot, latest - 3)
+        .await
+        .unwrap();
+    assert!(!unread, "source the ledger covers is not missing");
+    assert_eq!(
+        recent.last().unwrap().sequence,
+        latest,
+        "the newest is kept"
+    );
+    assert!(
+        recent.len() < RECENT_CANDIDATE_MESSAGES,
+        "the cap still binds"
+    );
+    assert!(recent.first().unwrap().sequence <= latest - 3);
+
+    // Without a ledger, the same cut really does leave source unaccounted for.
+    let (_, unread) = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    assert!(unread);
 }
 
 mod preparation;

@@ -4,6 +4,7 @@ use crate::application::ports::EmbeddingPort;
 use crate::domain::entities::{chunk::Chunk, document::Document};
 use crate::domain::value_objects::section_identifier::SectionIdentifier;
 use crate::domain::value_objects::source_context::StructureMode;
+use crate::features::indexing::engine::extraction::is_code_mime;
 use crate::shared::error::{AppError, Result};
 
 /// One structure span's embedding input: the span text with its context prefix
@@ -49,9 +50,13 @@ pub fn prepare_structured_with_spans(
     if text.trim().is_empty() {
         return Ok((document, Vec::new()));
     }
-    let by_sections = document
-        .source_context()
-        .is_none_or(|c| c.group.structure == StructureMode::Sections);
+    // In source code a `# ` line is a comment, so a code file is never split
+    // into sections: one commented script would otherwise become many tiny
+    // spans, each with a comment for a breadcrumb.
+    let by_sections = !is_code_mime(document.mime_type())
+        && document
+            .source_context()
+            .is_none_or(|c| c.group.structure == StructureMode::Sections);
     let spans = structure_spans(&text, pages, by_sections)?;
     let mut chunks = Vec::new();
     let mut groups: Vec<SpanEmbeddingGroup> = Vec::new();
@@ -205,6 +210,7 @@ fn structure_spans(
     let mut covered = 0;
     let mut spans = Vec::new();
     let mut headings: Vec<(usize, String)> = Vec::new();
+    let mut fence = CodeFence::default();
     for (page, start, end) in ranges {
         if start != covered
             || end < start
@@ -220,6 +226,10 @@ fn structure_spans(
         let mut segment_start = start;
         let mut offset = start;
         for line in text[start..end].split_inclusive('\n') {
+            if sections && fence.track(line) {
+                offset += line.len();
+                continue;
+            }
             if sections {
                 if let Some((level, title)) = heading(line) {
                     if level == 1
@@ -270,6 +280,42 @@ fn structure_spans(
         ));
     }
     Ok(spans)
+}
+
+/// Markdown fenced code blocks (``` or ~~~). A `# ` line inside one is code,
+/// not a heading. The fence state carries across page ranges, as a code block
+/// can run over a page break.
+#[derive(Default)]
+struct CodeFence {
+    open: Option<(char, usize)>,
+}
+
+impl CodeFence {
+    /// Whether `line` is a fence line or inside a fenced block.
+    fn track(&mut self, line: &str) -> bool {
+        let trimmed = line.trim_start_matches(' ');
+        // A fence may be indented at most three spaces.
+        let indented = line.len() - trimmed.len() > 3;
+        let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        let run = marker.map_or(0, |m| trimmed.chars().take_while(|c| *c == m).count());
+        match (self.open, marker) {
+            (Some((open, len)), Some(m))
+                if !indented
+                    && m == open
+                    && run >= len
+                    && trimmed[run * m.len_utf8()..].trim().is_empty() =>
+            {
+                self.open = None;
+                true
+            }
+            (Some(_), _) => true,
+            (None, Some(m)) if !indented && run >= 3 => {
+                self.open = Some((m, run));
+                true
+            }
+            (None, _) => false,
+        }
+    }
 }
 
 /// Conservative structural headings. Ordinary prose and numbered list sentences
@@ -344,6 +390,15 @@ mod tests {
         assert!(structure_spans(text, &[(1, 1, text.len())], true).is_err());
         assert!(heading("1. Do this first.").is_none());
         assert!(heading("706.07 Rejection on Prior Art").is_some());
+    }
+
+    #[test]
+    fn hash_lines_inside_a_markdown_fence_are_not_headings() {
+        let text = "# Setup\nRun this:\n```sh\n# not a heading\npip install x\n```\nDone.\n~~~~\n## also code\n~~~\n~~~~\n## Usage\nCall it.\n";
+        let spans = structure_spans(text, &[], true).unwrap();
+        let headings: Vec<_> = spans.iter().map(|s| s.heading.as_deref()).collect();
+        assert_eq!(headings, vec![Some("Setup"), Some("Setup > Usage")]);
+        assert!(text[spans[0].start..spans[0].end].contains("# not a heading\npip install x"));
     }
 
     #[test]
@@ -437,11 +492,17 @@ mod late_chunking_tests {
     }
 
     fn document(text: &str) -> Document {
-        let path =
-            ValidatedFilePath::new(std::path::PathBuf::from("/tmp/lattice-late/notes.md")).unwrap();
+        document_named(text, "notes.md", "text/markdown")
+    }
+
+    fn document_named(text: &str, name: &str, mime: &str) -> Document {
+        let path = ValidatedFilePath::new(std::path::PathBuf::from(format!(
+            "/tmp/lattice-late/{name}"
+        )))
+        .unwrap();
         let metadata = FileMetadata::new(
-            "notes.md".to_owned(),
-            "text/markdown".to_owned(),
+            name.to_owned(),
+            mime.to_owned(),
             text.len() as i64,
             chrono::Utc::now(),
         )
@@ -498,6 +559,24 @@ mod late_chunking_tests {
             expected_index += span.chunk_ranges.len();
         }
         assert_eq!(expected_index, document.chunks().len());
+    }
+
+    #[test]
+    fn a_commented_code_file_is_one_span() {
+        let script = "import os\n# install deps\nos.system('pip install x')\n# run it\nmain()\n";
+        let embedder = RecordingEmbedder::new(true, 1024);
+        let (prepared, spans) = prepare_structured_with_spans(
+            document_named(script, "setup.py", "text/x-python"),
+            &embedder,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(spans.len(), 1);
+        assert!(prepared.chunks().iter().all(|c| c.section().is_none()));
+        // The same text as markdown would split at each `# ` line.
+        let (_, markdown_spans) =
+            prepare_structured_with_spans(document(script), &embedder, &[]).unwrap();
+        assert!(markdown_spans.len() > 1);
     }
 
     #[tokio::test]

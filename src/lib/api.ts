@@ -10,6 +10,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 // Enhanced API Result types
 import { parseApiError } from './errorHandling';
+import { diagnostics } from '../utils/diagnostics';
 
 import type * as Wire from './bindings';
 import type {
@@ -42,7 +43,6 @@ import type {
   RemoveTagFromDocumentRequest,
   GetDocumentTagsRequest,
   DocumentTagsResponse,
-  QAResponse,
   LLMHealthStatus,
   CacheMetrics,
   HealthStatus,
@@ -224,8 +224,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   generate_tags_for_document: { domain: 'tags', command: 'generate_tags_for_document' },
 
   // QA domain
-  ask_question: { domain: 'qa', command: 'ask_question_wrapper' },
-  ask_question_stream: { domain: 'qa', command: 'ask_question_stream_wrapper' },
   check_llm_health: { domain: 'qa', command: 'check_llm_health_wrapper' },
   generate_chat_starters: { domain: 'qa', command: 'generate_chat_starters_wrapper' },
 
@@ -271,11 +269,14 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   list_document_space_memberships: { domain: 'conversation', command: 'list_document_space_memberships' },
   set_document_space_membership: { domain: 'conversation', command: 'set_document_space_membership' },
   set_documents_space_membership: { domain: 'conversation', command: 'set_documents_space_membership' },
+  add_documents_to_library: { domain: 'conversation', command: 'add_documents_to_library' },
   synthesize_journal_entries: { domain: 'conversation', command: 'synthesize_journal_entries' },
   truncate_conversation_after: { domain: 'conversation', command: 'truncate_conversation_after' },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
+  continue_in_new_conversation: { domain: 'conversation', command: 'continue_in_new_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
   compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
+  manage_knowledge: { domain: 'conversation', command: 'manage_knowledge' },
   get_conversation_memory: { domain: 'conversation', command: 'get_conversation_memory' },
 
   // Passage references
@@ -386,6 +387,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   ingest_web_url: { domain: 'web', command: 'ingest_web_url' },
   fetch_url_preview: { domain: 'web', command: 'fetch_url_preview' },
   extract_article: { domain: 'web', command: 'extract_article' },
+  read_web_page: { domain: 'web', command: 'read_web_page' },
   check_for_updates: { domain: 'updates', command: 'check_for_updates' },
   execute_function: { domain: 'functions', command: 'execute_function' },
   list_available_functions: { domain: 'functions', command: 'list_available_functions' },
@@ -428,21 +430,28 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
 };
 
 /**
+ * Tauri's own rejection when no handler owns the invoked route: the core's
+ * `Command {cmd} not found` / `plugin {name} not found`, and the ACL's
+ * `… not allowed. Command not found` / `Plugin not found`. Only these mean
+ * "try another route"; a backend error that merely contains "not found"
+ * (e.g. "Space not found: x") is a real answer and must reach the caller.
+ */
+const UNKNOWN_COMMAND_PATTERNS: readonly RegExp[] = [
+  /^Command \S+ not found$/,
+  /^plugin \S+ not found$/,
+  /not allowed\. (Command|Plugin) not found$/,
+];
+
+export function isUnknownCommandError(error: unknown): boolean {
+  const message = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+  return UNKNOWN_COMMAND_PATTERNS.some((pattern) => pattern.test(message.trim()));
+}
+
+/**
  * Wrap a Tauri command invocation with ApiResult type
  * Routes through Plugin Pattern using plugin:domain|command syntax
  */
-function shouldRetryCommandRoute(error: unknown): boolean {
-  const message = String(error).toLowerCase();
-  return (
-    message.includes('not allowed') ||
-    message.includes('command not found') ||
-    message.includes('unknown command') ||
-    message.includes('not found')
-  );
-}
-
 async function invokeCommandWithFallback<T>(
-  command: string,
   args: Record<string, unknown> | undefined,
   domain: string,
   pluginCommand: string
@@ -453,22 +462,20 @@ async function invokeCommandWithFallback<T>(
     pluginCommand,
   ];
 
-  let lastError: unknown = null;
+  // A route whose handler answered, even with an error, ends the search.
+  // When every route is unknown, the first (canonical) route's error is the
+  // one worth showing; the fallbacks' "not found" would only hide it.
+  let firstError: unknown = null;
   for (let idx = 0; idx < attempts.length; idx += 1) {
-    const signature = attempts[idx];
     try {
-      return await invoke<T>(signature, args || {});
+      return await invoke<T>(attempts[idx], args || {});
     } catch (error) {
-      lastError = error;
-      const canRetry = idx < attempts.length - 1 && shouldRetryCommandRoute(error);
-      if (!canRetry) {
-        throw error;
-      }
-      console.warn(`[API] Falling back from '${signature}' for command '${command}':`, error);
+      if (idx === 0) firstError = error;
+      if (!isUnknownCommandError(error)) throw error;
     }
   }
 
-  throw lastError;
+  throw firstError;
 }
 
 async function apiCall<T>(command: string, args?: Record<string, unknown>): Promise<ApiResult<T>> {
@@ -482,7 +489,6 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
 
   try {
     const data = await invokeCommandWithFallback<T>(
-      command,
       args,
       pluginRoute.domain,
       pluginRoute.command
@@ -491,6 +497,7 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
     return { ok: true, data };
   } catch (error) {
     const apiError = parseApiError(error);
+    diagnostics.capture(apiError, `API · ${command}`, error instanceof Error ? { stack: error.stack } : undefined);
     return {
       ok: false,
       error: apiError.message,
@@ -1461,7 +1468,15 @@ const VaultAPI = {
    * @param content - Text content to append to today's note
    * @returns Which page the capture landed on, so the UI can name it
    */
-  quickCapture: async (content: string): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<Wire.QuickCaptureResultDto>('quick_capture', { content }),
+  quickCapture: async (
+    content: string,
+    sources?: Wire.SourceDto[],
+    conversationIds?: string[],
+  ): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<Wire.QuickCaptureResultDto>('quick_capture', {
+    content,
+    ...(sources !== undefined ? { sources } : {}),
+    ...(conversationIds !== undefined ? { conversationIds } : {}),
+  }),
 
   /**
    * Retrieves all daily notes within a date range.
@@ -1790,34 +1805,6 @@ const VaultAPI = {
 
 
   /**
-   * Asks a question and retrieves an AI-generated answer based on indexed content.
-   * Uses retrieval-augmented generation (RAG) to find relevant documents
-   * and generate contextual answers.
-   *
-   * @param question - Question to answer
-   * @param contextLimit - Optional limit for number of context documents (default: 5)
-   * @returns Answer object with generated text and source references
-   */
-  askQuestion: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, context_limit: contextLimit };
-    return apiCall<QAResponse>('ask_question', { request });
-  },
-
-  /**
-   * Asks a question with streaming response.
-   * Returns answer incrementally as it's generated for better UX.
-   * Note: Currently falls back to non-streaming implementation.
-   *
-   * @param question - Question to answer
-   * @param contextLimit - Optional limit for number of context documents (default: 5)
-   * @returns Answer object with generated text (streaming not yet implemented)
-   */
-  askQuestionStream: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, context_limit: contextLimit };
-    return apiCall<QAResponse>('ask_question_stream', { request });
-  },
-
-  /**
    * Checks if the LLM (Large Language Model) service is healthy and accessible.
    * Verifies API key, endpoint connectivity, and model availability.
    *
@@ -2102,11 +2089,19 @@ const VaultAPI = {
    * Indexes multiple files in a single batch operation with progress tracking.
    *
    * @param filePaths - Array of absolute file paths to import
+   * @param ownerConversationId - Set when these files were attached to a chat
+   *   rather than added to the library. Files this job imports then belong to
+   *   that conversation: they stay out of the library and out of every other
+   *   chat's searches, and they are deleted with it. Leave it out for a real
+   *   library import.
    * @returns Batch job ID for tracking progress
    */
-  startBatchFileImport: async (filePaths: string[]): Promise<ApiResult<string>> => {
+  startBatchFileImport: async (
+    filePaths: string[],
+    ownerConversationId?: string
+  ): Promise<ApiResult<string>> => {
     const result = await apiCall<Wire.StartBatchFileImportResponseDto>('batch_import_files', {
-      request: { filePaths },
+      request: { filePaths, ownerConversationId },
     });
     if (!result.ok) {
       return result;
@@ -2414,18 +2409,24 @@ const VaultAPI = {
    *
    * @param conversationId - ID of existing conversation, or null to create new one
    * @param message - User's message text
+   * @param attachmentNames - File names to stamp on the message, for the chips in history
+   * @param attachmentDocumentIds - Documents this message brought in; the turn reads them whole
    * @returns Response containing conversation ID, all messages, and context usage
    */
   chatWithConversation: async (
     conversationId: string | null,
     message: string,
     toolPreferences?: ToolPreferences,
-    requestId?: string
+    requestId?: string,
+    attachmentNames?: string[],
+    attachmentDocumentIds?: string[]
   ): Promise<ApiResult<Wire.ChatResponse>> => apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
       message,
       requestId,
       toolPreferences,
+      attachmentNames,
+      attachmentDocumentIds,
     }),
 
   /**
@@ -2681,11 +2682,13 @@ const VaultAPI = {
    */
   listSpaceDocuments: async (
     spaceId: string | null,
+    conversationId: string | null,
     query: string,
     limit: number
   ): Promise<ApiResult<SpaceDocument[]>> =>
     apiCall<Wire.SpaceDocumentDto[]>('list_space_documents', {
       spaceId,
+      conversationId,
       query,
       limit,
     }),
@@ -2828,6 +2831,18 @@ const VaultAPI = {
     }),
 
   /**
+   * Summarizes a conversation and opens a new one in the same space whose
+   * first message is that summary. One or more full generations: minutes on
+   * a local model.
+   */
+  continueInNewConversation: async (
+    conversationId: string
+  ): Promise<ApiResult<{ conversation: Conversation }>> =>
+    apiCall('continue_in_new_conversation', {
+      request: { conversationId },
+    }),
+
+  /**
    * Re-runs the last user message. Streams over `llm-stream` exactly like
    * `chatWithConversation`; the user message is not duplicated.
    */
@@ -2859,13 +2874,15 @@ const VaultAPI = {
    * the active items with the quotations behind them, the counts, and the
    * `mode` that says whether any of it is usable.
    *
-   * Read-only on purpose. There is no companion write command, because an
-   * editable memory item would be a requirement with no source behind it —
-   * exactly the failure this layer exists to prevent.
+   * This read view resolves original quotations. manageKnowledge preserves
+   * new user-authored source messages for additions and corrections.
    *
    * `includeHistory` also returns superseded and resolved items, for "what was
    * my original budget?".
    */
+  manageKnowledge: async (request: Wire.KnowledgeRequestDto): Promise<ApiResult<Wire.KnowledgeResponseDto>> =>
+    apiCall<Wire.KnowledgeResponseDto>('manage_knowledge', { request }),
+
   getConversationMemory: async (
     conversationId: string,
     includeHistory?: boolean
@@ -2887,6 +2904,21 @@ const VaultAPI = {
 
       spaceId,
       assigned,
+    }),
+
+  /**
+   * Files a chat's attachments in the library.
+   *
+   * An attached file belongs to the conversation it arrived in: it is not
+   * listed in the library, no other chat can search it, and it is deleted with
+   * the conversation. This is the one way out of that — afterwards it is an
+   * ordinary document. Documents that were never attachments are untouched.
+   */
+  addDocumentsToLibrary: async (
+    documentIds: string[]
+  ): Promise<ApiResult<RenameConversationResponse>> =>
+    apiCall<Wire.RenameConversationResponseDto>('add_documents_to_library', {
+      documentIds,
     }),
 
 

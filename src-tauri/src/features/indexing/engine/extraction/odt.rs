@@ -1,9 +1,10 @@
 //! OpenDocument Text (ODT) extraction.
 
+use super::archive_budget::{run_archive_work, ArchiveBudget};
+use super::markup::{attr, decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -26,9 +27,7 @@ pub async fn extract_odt(path: &Path, max_file_size: u64) -> Result<ExtractedCon
     }
 
     let path_clone = path.to_path_buf();
-    let text = tokio::task::spawn_blocking(move || extract_odt_sync(&path_clone))
-        .await
-        .map_err(|e| IndexingError::Other(format!("Task join error: {}", e)))??;
+    let text = run_archive_work(path.to_path_buf(), move || extract_odt_sync(&path_clone)).await?;
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -56,73 +55,66 @@ fn extract_odt_sync(path: &Path) -> Result<String> {
         path: path.display().to_string(),
         reason: format!("Failed to open ODT as ZIP: {}", e),
     })?;
-
-    let mut content_xml =
-        archive
-            .by_name("content.xml")
-            .map_err(|e| IndexingError::ContentExtraction {
-                path: path.display().to_string(),
-                reason: format!("Failed to find content.xml in ODT: {}", e),
-            })?;
-
-    let mut xml_content = String::new();
-    content_xml
-        .read_to_string(&mut xml_content)
-        .map_err(|e| IndexingError::ContentExtraction {
-            path: path.display().to_string(),
-            reason: format!("Failed to read content.xml: {}", e),
-        })?;
+    let mut budget = ArchiveBudget::default();
+    budget.check_members(&archive, path)?;
+    let xml_content = budget.read_part(&mut archive, "content.xml", path)?;
 
     Ok(extract_text_from_odt_xml(&xml_content))
 }
 
+/// ODT element names do not collide by prefix the way OOXML's do, but it
+/// shares the tag cursor so tabs (`<text:tab/>`), runs of spaces
+/// (`<text:s text:c="3"/>`) and numeric character references survive.
 fn extract_text_from_odt_xml(xml: &str) -> String {
-    let normalized = xml
-        .replace("</text:p>", "\n")
-        .replace("</text:h>", "\n")
-        .replace("</text:list-item>", "\n")
-        .replace("<text:line-break/>", "\n")
-        .replace("<text:line-break />", "\n");
-
-    let stripped = strip_xml_tags(&normalized);
-    decode_xml_entities(&stripped)
-}
-
-fn strip_xml_tags(input: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-
-    for ch in input.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ => {
-                if !in_tag {
-                    result.push(ch);
-                }
+    let mut out = String::new();
+    let mut in_body = false;
+    for event in MarkupCursor::new(xml) {
+        match event {
+            Markup::Open {
+                name: "office:body",
+                ..
+            } => in_body = true,
+            Markup::Close {
+                name: "office:body",
+            } => in_body = false,
+            _ if !in_body => {}
+            Markup::Close {
+                name: "text:p" | "text:h" | "text:list-item",
             }
+            | Markup::Open {
+                name: "text:line-break",
+                ..
+            } => out.push('\n'),
+            Markup::Open {
+                name: "text:tab", ..
+            } => out.push('\t'),
+            Markup::Open {
+                name: "text:s",
+                attrs,
+                ..
+            } => {
+                let count = attr(attrs, "text:c")
+                    .and_then(|c| c.parse::<usize>().ok())
+                    .unwrap_or(1);
+                out.extend(std::iter::repeat_n(' ', count.min(64)));
+            }
+            Markup::Text(text) => out.push_str(&decode_entities(text)),
+            _ => {}
         }
     }
-
-    result
-}
-
-fn decode_xml_entities(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
+    tidy_lines(&out)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::decode_xml_entities;
+    use super::*;
 
     #[test]
-    fn test_odt_entity_decoding() {
-        let input = "Hello &amp; goodbye &lt;world&gt;";
-        let output = decode_xml_entities(input);
-        assert_eq!(output, "Hello & goodbye <world>");
+    fn odt_body_keeps_paragraphs_tabs_spaces_and_entities() {
+        let xml = r#"<?xml version="1.0"?><office:document-content><office:automatic-styles><style:style style:name="P1"/></office:automatic-styles><office:body><office:text><text:h text:outline-level="1">Title</text:h><text:p>Hello &amp; goodbye<text:tab/>x<text:s text:c="2"/>y &#8212; z</text:p></office:text></office:body></office:document-content>"#;
+        assert_eq!(
+            extract_text_from_odt_xml(xml),
+            "Title\nHello & goodbye\tx  y \u{2014} z"
+        );
     }
 }

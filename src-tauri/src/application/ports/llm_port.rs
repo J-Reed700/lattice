@@ -301,6 +301,15 @@ pub trait LLMPort: Send + Sync {
         "unknown"
     }
 
+    /// Whether the process behind this port is still there to answer. Cheap:
+    /// no network round trip. The role caches drop a port that says no, so a
+    /// local server that crashed is started again on the next request instead
+    /// of failing every turn until restart. Remote and in-process ports have
+    /// nothing of their own to die and stay `true`.
+    fn is_alive(&self) -> bool {
+        true
+    }
+
     /// Generate a streaming response with optional tool definitions.
     ///
     /// When tools are provided, the stream may yield `StreamChunk::ToolCalls`
@@ -357,12 +366,44 @@ pub enum CompletionInput {
     },
 }
 
+/// Sampling for one request, overriding the provider's configured defaults.
+///
+/// Most callers want the model the user tuned. A classifier does not: a verdict
+/// or a label is a decision about evidence, and sampling one from a soft
+/// distribution makes the same input answerable two ways on two turns. Fields
+/// left `None` keep the provider's own setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct SamplingOverride {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<i32>,
+}
+
+impl SamplingOverride {
+    /// Greedy decoding: the same prompt returns the same answer every time.
+    pub fn deterministic() -> Self {
+        Self {
+            temperature: Some(0.0),
+            top_p: Some(1.0),
+            top_k: Some(1),
+        }
+    }
+
+    /// Whether this override asks for anything at all.
+    pub fn is_empty(&self) -> bool {
+        self.temperature.is_none() && self.top_p.is_none() && self.top_k.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub input: Vec<CompletionInput>,
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// Sampling for this request. `None` keeps the provider's configuration.
+    #[serde(default)]
+    pub sampling: Option<SamplingOverride>,
     /// Caps generated tokens for this request, overriding the provider's own
     /// configured ceiling when it is lower.
     ///
@@ -375,6 +416,12 @@ pub struct CompletionRequest {
     /// so this only needs to exceed the longest legitimate generation.
     #[serde(skip)]
     pub time_budget: Option<Duration>,
+    /// Ask for the log-probabilities of the first generated token and its top
+    /// alternatives. A classifier reads its answer's probability from these
+    /// rather than trusting one sampled word. Providers that cannot report
+    /// them ignore the flag and return `None`.
+    #[serde(default)]
+    pub want_logprobs: bool,
 }
 
 impl CompletionRequest {
@@ -404,6 +451,37 @@ pub struct CompletionResponse {
     pub finish_reason: String,
     /// Opaque native output items for replaying provider-specific reasoning state.
     pub provider_output: serde_json::Value,
+    /// The first generated token's top alternatives as `(token, logprob)`,
+    /// most likely first. Present only when the request asked for them and the
+    /// provider reports them.
+    #[serde(default)]
+    pub first_token_logprobs: Option<Vec<(String, f32)>>,
+}
+
+/// How many alternatives to request for the first token. Enough to hold every
+/// spelling of a one-word label a tokenizer might start it with.
+pub const FIRST_TOKEN_TOP_LOGPROBS: u8 = 10;
+
+/// Read the first token's alternatives from an OpenAI-shaped `logprobs` object
+/// (`{"content":[{"token","logprob","top_logprobs":[{"token","logprob"}]}]}`),
+/// as llama-server returns it on a choice or on a stream chunk's choice.
+pub fn first_token_logprobs(logprobs: &serde_json::Value) -> Option<Vec<(String, f32)>> {
+    let first = logprobs.get("content")?.as_array()?.first()?;
+    let entry = |value: &serde_json::Value| -> Option<(String, f32)> {
+        let token = value.get("token")?.as_str()?.to_string();
+        let logprob = value.get("logprob")?.as_f64()? as f32;
+        logprob.is_finite().then_some((token, logprob))
+    };
+    let mut alternatives: Vec<(String, f32)> = first
+        .get("top_logprobs")
+        .and_then(serde_json::Value::as_array)
+        .map(|top| top.iter().filter_map(entry).collect())
+        .unwrap_or_default();
+    if alternatives.is_empty() {
+        alternatives.push(entry(first)?);
+    }
+    alternatives.sort_by(|a, b| b.1.total_cmp(&a.1));
+    Some(alternatives)
 }
 
 #[cfg(test)]
@@ -447,5 +525,31 @@ mod tests {
             zero.effective_max_output_tokens(provider_limit),
             provider_limit
         );
+    }
+
+    #[test]
+    fn first_token_alternatives_are_read_from_the_openai_logprobs_shape() {
+        let logprobs = serde_json::json!({"content":[
+            {"token":"supported","logprob":-0.1,"top_logprobs":[
+                {"token":"uns","logprob":-2.5},
+                {"token":"supported","logprob":-0.1}
+            ]},
+            {"token":"!","logprob":-3.0}
+        ]});
+        let alternatives = first_token_logprobs(&logprobs).expect("first token present");
+        assert_eq!(alternatives[0], ("supported".to_string(), -0.1));
+        assert_eq!(alternatives[1], ("uns".to_string(), -2.5));
+
+        // No alternatives offered: the chosen token alone still counts.
+        let bare = serde_json::json!({"content":[{"token":"contr","logprob":-0.3}]});
+        assert_eq!(
+            first_token_logprobs(&bare),
+            Some(vec![("contr".to_string(), -0.3)])
+        );
+        assert_eq!(
+            first_token_logprobs(&serde_json::json!({"content":[]})),
+            None
+        );
+        assert_eq!(first_token_logprobs(&serde_json::Value::Null), None);
     }
 }

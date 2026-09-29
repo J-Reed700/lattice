@@ -37,11 +37,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/**",
           "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$APPCACHE/**",
-          "/Volumes/**"
+          "$HOME/.lattice/files/**"
         ]
       }
     }
@@ -49,7 +46,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "resources": [],
     "externalBin": [
       "binaries/llama-server"

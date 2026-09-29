@@ -14,8 +14,13 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Reuses completed work only when both model artifacts and source content match.
-/// Long legacy passages are represented by a normalized, length-weighted mean
-/// of all their segments, preserving existing chunk IDs and citation anchors.
+/// A passage the new model's window cannot take in one pass is represented by
+/// a normalized, length-weighted mean of its segments, preserving existing
+/// chunk IDs and citation anchors.
+///
+/// The text embedded is `contextualized_content` — the context prefix plus the
+/// chunk, exactly what the indexer embedded — so the prefix never has to be
+/// rebuilt from the document row here.
 pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usize> {
     ensure_schema(pool).await?;
     let identity = model.model_identity();
@@ -36,7 +41,10 @@ pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usi
                 completed += 1;
                 continue;
             }
-            let parts = model.split_text(&text, "")?;
+            // Not `split_text`: that sizes to the chunk target, and a stored
+            // chunk already fills the target *plus* its context prefix, so it
+            // would cut nearly every full chunk in two and store an average.
+            let parts = model.window_parts(&text)?;
             if parts.is_empty() {
                 continue;
             }
@@ -85,13 +93,45 @@ pub async fn restore(
     dimension: usize,
 ) -> Result<Vec<(String, Vec<f32>, String, String, String)>> {
     ensure_schema(pool).await?;
-    type RestoredRow = (String, Vec<u8>, String, String, Option<String>, String);
-    let rows: Vec<RestoredRow> = sqlx::query_as(
-        "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.content, tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE te.embedding IS NOT NULL OR eg.embedding IS NOT NULL")
-        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).fetch_all(pool).await?;
     let mut result = Vec::new();
-    for (id, bytes, content, doc_id, hash, source) in rows {
-        if hash.is_some_and(|h| h != content_hash(&source)) {
+    let mut cursor = String::new();
+    loop {
+        let page = restore_page(pool, identity, dimension, &cursor, 128).await?;
+        if page.cursor.is_empty() {
+            break;
+        }
+        cursor = page.cursor;
+        result.extend(page.entries);
+    }
+    Ok(result)
+}
+
+/// Read and decode one bounded keyset page. `chunk_id` is kept in each row so
+/// the caller can advance without offset scans or retaining all embeddings.
+pub struct RestorePage {
+    pub entries: Vec<(String, Vec<f32>, String, String, String)>,
+    pub cursor: String,
+}
+
+pub async fn restore_page(
+    pool: &SqlitePool,
+    identity: &str,
+    dimension: usize,
+    after_chunk_id: &str,
+    limit: i64,
+) -> Result<RestorePage> {
+    ensure_schema(pool).await?;
+    type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
+    let rows: Vec<RestoredRow> = sqlx::query_as(
+        "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE (te.embedding IS NOT NULL OR eg.embedding IS NOT NULL) AND tc.id > ? ORDER BY tc.id LIMIT ?")
+        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).await?;
+    let cursor = rows.last().map(|row| row.0.clone()).unwrap_or_default();
+    let mut result = Vec::with_capacity(rows.len());
+    for (id, bytes, doc_id, hash, source) in rows {
+        if hash
+            .as_ref()
+            .is_some_and(|expected| *expected != content_hash(&source))
+        {
             continue;
         }
         let vector = super::encoding::decode_embedding(&bytes)?;
@@ -101,22 +141,45 @@ pub async fn restore(
         result.push((
             super::encoding::vector_key(&id),
             vector,
-            content,
+            String::new(),
             id,
             doc_id,
         ));
     }
-    Ok(result)
+    Ok(RestorePage {
+        entries: result,
+        cursor,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::embedding_port::EmbeddingTextChunk;
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Model {
         identity: &'static str,
         calls: AtomicUsize,
         fail_at: usize,
+        split_batches: AtomicUsize,
+    }
+    fn part(text: &str, start: usize) -> EmbeddingTextChunk {
+        EmbeddingTextChunk {
+            text: text.to_owned(),
+            start,
+            end: start + text.len(),
+            token_count: text.len(),
+        }
+    }
+    impl Model {
+        fn new(identity: &'static str, fail_at: usize) -> Self {
+            Self {
+                identity,
+                calls: AtomicUsize::new(0),
+                fail_at,
+                split_batches: AtomicUsize::new(0),
+            }
+        }
     }
     #[async_trait::async_trait]
     impl EmbeddingPort for Model {
@@ -132,7 +195,24 @@ mod tests {
         async fn embed_single(&self, _: &str) -> Result<Vec<f32>> {
             Ok(vec![1.0, 0.0])
         }
+        /// A chunk-target split that always halves, as the real one does for a
+        /// stored chunk that carries its context prefix.
+        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
+            let mid = text.len() / 2;
+            Ok(vec![part(&text[..mid], 0), part(&text[mid..], mid)])
+        }
+        /// A window of eight bytes.
+        fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+            if text.len() > 8 {
+                self.split_text(text, "")
+            } else {
+                Ok(vec![part(text, 0)])
+            }
+        }
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if texts.len() > 1 {
+                self.split_batches.fetch_add(1, Ordering::SeqCst);
+            }
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             if call == self.fail_at {
                 return Err(AppError::InvalidState("injected interruption".into()));
@@ -154,17 +234,9 @@ mod tests {
     #[tokio::test]
     async fn interrupted_generation_resumes_and_never_restores_another_vector_space() {
         let pool = database().await;
-        let first = Model {
-            identity: "new",
-            calls: AtomicUsize::new(0),
-            fail_at: 1,
-        };
+        let first = Model::new("new", 1);
         assert!(prepare(&pool, &first).await.is_err());
-        let resumed = Model {
-            identity: "new",
-            calls: AtomicUsize::new(0),
-            fail_at: usize::MAX,
-        };
+        let resumed = Model::new("new", usize::MAX);
         assert_eq!(prepare(&pool, &resumed).await.unwrap(), 2);
         assert_eq!(
             resumed.calls.load(Ordering::SeqCst),
@@ -188,5 +260,22 @@ mod tests {
         prepare(&pool, &resumed).await.unwrap();
         assert_eq!(resumed.calls.load(Ordering::SeqCst), 2);
         assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_stored_chunk_that_fits_the_window_is_embedded_whole() {
+        let pool = database().await;
+        sqlx::query(
+            "INSERT INTO text_chunks VALUES ('c', 'a much longer stored chunk', NULL, 'doc')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let model = Model::new("new", usize::MAX);
+        assert_eq!(prepare(&pool, &model).await.unwrap(), 3);
+        // 'alpha' and 'beta' fit the window and go in one piece; only the
+        // chunk past the window is split.
+        assert_eq!(model.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(model.split_batches.load(Ordering::SeqCst), 1);
     }
 }

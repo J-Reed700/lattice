@@ -228,6 +228,20 @@ impl MemoryCommitError {
 /// The authoritative ledger: consistent reads, bounded paging, atomic commit.
 #[async_trait]
 pub trait ConversationMemoryPort: Send + Sync {
+    async fn suppressed_item_ids(&self, _conversation_id: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// Resolve ledger evidence, explicit sharing and validity against live data.
+    /// None keeps legacy/fake adapters compatible; production supplies this.
+    async fn prepare_memory(
+        &self,
+        _conversation_id: &str,
+        _query: &str,
+    ) -> Result<Option<PreparedMemory>> {
+        Ok(None)
+    }
+
     /// One consistent read of state, active items with their evidence, the
     /// working summary, and both revisions.
     ///
@@ -239,6 +253,22 @@ pub trait ConversationMemoryPort: Send + Sync {
     /// Original messages in `(after_sequence, through_sequence]`, oldest first,
     /// stopping at whichever limit binds first.
     async fn page_source_messages(
+        &self,
+        conversation_id: &str,
+        after_sequence: i64,
+        through_sequence: i64,
+        limits: SourceReadLimits,
+    ) -> Result<SourcePage>;
+
+    /// The newest original messages in `(after_sequence, through_sequence]`,
+    /// filled from `through_sequence` downwards until a limit binds and
+    /// returned oldest first. `has_more` means older messages in the range were
+    /// left unread; `next_after_sequence` stays `after_sequence`.
+    ///
+    /// Newest first because a prompt's candidates must keep the latest turns
+    /// when a limit cuts the page, and the cut then falls on old source the
+    /// memory ledger may already cover.
+    async fn page_recent_source_messages(
         &self,
         conversation_id: &str,
         after_sequence: i64,
@@ -297,6 +327,18 @@ pub trait ConversationMemoryPort: Send + Sync {
 /// which is what stops a tool call reaching into another thread.
 #[async_trait]
 pub trait ConversationMemoryReadPort: Send + Sync {
+    /// Source-backed facts explicitly available to this conversation, including
+    /// optional correction history. The caller cannot choose another scope.
+    async fn search_shared_knowledge(
+        &self,
+        _conversation_id: &str,
+        _query: &str,
+        _history: bool,
+        _max_bytes: usize,
+    ) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"items":[],"unavailable":true}))
+    }
+
     /// Lexical and exact-identifier candidates, ranked.
     async fn search_source_messages(
         &self,
@@ -343,4 +385,13 @@ pub trait ConversationMemoryReadPort: Send + Sync {
         query: &str,
         limit: usize,
     ) -> Result<Vec<MemoryId>>;
+}
+
+/// Resolved and scope-checked ledger entries, ready for bounded assembly.
+#[derive(Debug, Clone, Default)]
+pub struct PreparedMemory {
+    /// Current conversation revisions checked around evidence preparation.
+    pub revisions: Option<(i64, i64)>,
+    pub mandatory: Vec<String>,
+    pub optional: Vec<String>,
 }

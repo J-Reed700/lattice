@@ -135,6 +135,12 @@ pub enum MemoryKind {
     Preference,
     /// Something left unanswered.
     OpenQuestion,
+    /// A fact about the world the conversation established from an explicit
+    /// source — a cited page, a named document, a URL. The one kind whose
+    /// authority may be an assistant passage, because that passage carries
+    /// its provenance with it: later turns may rely on the fact without
+    /// fetching the source again.
+    EstablishedFact,
     /// Host-created. Records that valid source text could not support a
     /// confident transition, keeping both passages visible without pretending
     /// the ambiguity is settled.
@@ -162,6 +168,7 @@ impl MemoryKind {
             Self::UserFact => "user_fact",
             Self::Preference => "preference",
             Self::OpenQuestion => "open_question",
+            Self::EstablishedFact => "established_fact",
             Self::UnresolvedChange => "unresolved_change",
         }
     }
@@ -178,6 +185,7 @@ impl std::str::FromStr for MemoryKind {
             "user_fact" => Ok(Self::UserFact),
             "preference" => Ok(Self::Preference),
             "open_question" => Ok(Self::OpenQuestion),
+            "established_fact" => Ok(Self::EstablishedFact),
             "unresolved_change" => Ok(Self::UnresolvedChange),
             other => Err(AppError::InvalidInput(format!(
                 "Unknown memory kind: {other}"
@@ -737,6 +745,8 @@ pub enum MemoryValidationError {
     StaleSource(String),
     #[error("item '{0}' has no user assertion; assistant or tool text cannot create one")]
     NoUserAssertion(String),
+    #[error("established_fact '{0}' has no assertion; a sourced statement is what makes it one")]
+    NoAssertion(String),
     #[error("item '{0}' uses assistant or system text as authoritative evidence")]
     NonUserAuthority(String),
     #[error("item '{item}' uses evidence purpose '{actual}' where '{expected}' is required")]
@@ -787,6 +797,7 @@ impl MemoryValidationError {
             Self::AmbiguousOccurrence(_, _) => "ambiguous_occurrence",
             Self::StaleSource(_) => "stale_source",
             Self::NoUserAssertion(_) => "no_user_assertion",
+            Self::NoAssertion(_) => "no_assertion",
             Self::NonUserAuthority(_) => "non_user_authority",
             Self::InvalidEvidencePurpose { .. } => "invalid_evidence_purpose",
             Self::IneligibleSource(_) => "ineligible_source",
@@ -819,6 +830,15 @@ impl ValidatedAddition {
         self.evidence
             .iter()
             .any(|span| span.purpose == EvidencePurpose::Assertion && span.role == SourceRole::User)
+    }
+
+    /// Any assertion at all, regardless of who said it. That is the bar for
+    /// [`MemoryKind::EstablishedFact`], whose authority is the sourced
+    /// passage itself rather than the person quoting it.
+    pub fn has_assertion(&self) -> bool {
+        self.evidence
+            .iter()
+            .any(|span| span.purpose == EvidencePurpose::Assertion)
     }
 
     /// Lowest assertion sequence, or lowest sequence when there is somehow no
@@ -1072,7 +1092,13 @@ pub fn validate_patch(
         for item in &proposed.evidence {
             let span = validate_evidence(item, sources, &proposed.candidate_id)?;
             match span.purpose {
-                EvidencePurpose::Assertion if span.role != SourceRole::User => {
+                // An established fact may stand on a sourced assistant passage:
+                // the passage names where the claim came from, so the quote
+                // itself is the authority. Every other kind still needs the
+                // user's own words.
+                EvidencePurpose::Assertion
+                    if span.role != SourceRole::User && kind != MemoryKind::EstablishedFact =>
+                {
                     return Err(MemoryValidationError::NonUserAuthority(
                         proposed.candidate_id.clone(),
                     ));
@@ -1095,8 +1121,16 @@ pub fn validate_patch(
             evidence,
         };
         // Rule 7: assistant text, tool output and quoted third parties can
-        // explain a user memory but cannot create one.
-        if !addition.has_user_assertion() {
+        // explain a user memory but cannot create one. Established facts are
+        // the carve-out: they are created by the sourced statement, whoever
+        // brought it into the conversation.
+        if kind == MemoryKind::EstablishedFact {
+            if !addition.has_assertion() {
+                return Err(MemoryValidationError::NoAssertion(
+                    proposed.candidate_id.clone(),
+                ));
+            }
+        } else if !addition.has_user_assertion() {
             return Err(MemoryValidationError::NoUserAssertion(
                 proposed.candidate_id.clone(),
             ));
@@ -1128,16 +1162,18 @@ pub fn validate_patch(
     let mut targeted: HashSet<&str> = HashSet::new();
     let mut transitions = Vec::with_capacity(patch.transitions.len());
     for proposed in &patch.transitions {
-        let (target, target_changed_at) =
+        let (target, target_changed_at, target_kind) =
             if let Some(item) = active_by_id.get(proposed.item_id.as_str()) {
                 (
                     ValidatedTransitionTarget::Existing(item.id.clone()),
                     item.changed_at_sequence,
+                    item.kind,
                 )
             } else if let Some(candidate) = candidates_by_id.get(proposed.item_id.as_str()) {
                 (
                     ValidatedTransitionTarget::Candidate(candidate.candidate_id.clone()),
                     candidate.changed_at_sequence(),
+                    candidate.kind,
                 )
             } else {
                 return Err(MemoryValidationError::UnknownTransitionTarget(
@@ -1197,7 +1233,7 @@ pub fn validate_patch(
                     actual: span.purpose.as_str().to_string(),
                 });
             }
-            if span.role != SourceRole::User {
+            if span.role != SourceRole::User && target_kind != MemoryKind::EstablishedFact {
                 return Err(MemoryValidationError::NonUserAuthority(
                     proposed.item_id.clone(),
                 ));
@@ -1217,7 +1253,8 @@ pub fn validate_patch(
             ));
         }
         // A user retirement needs a user source, for the same reason an
-        // assertion does.
+        // assertion does — unless the target is an established fact, which a
+        // later sourced passage may correct whoever brought it.
         transitions.push(ValidatedTransition {
             target,
             state,
@@ -1811,6 +1848,149 @@ mod tests {
             validated.additions[0].evidence[0].purpose,
             EvidencePurpose::Antecedent
         );
+    }
+
+    #[test]
+    fn a_sourced_assistant_passage_can_create_an_established_fact() {
+        let messages = vec![
+            message("m1", 1, SourceRole::User, "What should I plant first?"),
+            message(
+                "m2",
+                2,
+                SourceRole::Assistant,
+                "Broccoli is a cool-season crop [1] (https://example.edu/broccoli).",
+            ),
+        ];
+        let sources = SourceIndex::new(&messages);
+
+        let validated = validate_patch(
+            &patch(
+                vec![ProposedItem {
+                    candidate_id: "c1".into(),
+                    kind: "established_fact".into(),
+                    label: "Broccoli is a cool-season crop (example.edu)".into(),
+                    evidence: vec![evidence(
+                        "m2",
+                        "Broccoli is a cool-season crop [1] (https://example.edu/broccoli).",
+                        "assertion",
+                    )],
+                }],
+                vec![],
+            ),
+            &sources,
+            &[],
+            &[],
+        )
+        .expect("a sourced assistant passage is the authority for an established fact");
+
+        let addition = &validated.additions[0];
+        assert_eq!(addition.kind, MemoryKind::EstablishedFact);
+        assert_eq!(addition.evidence[0].role, SourceRole::Assistant);
+        assert!(!addition.kind.is_mandatory());
+    }
+
+    #[test]
+    fn an_established_fact_without_an_assertion_is_not_one() {
+        let messages = vec![message(
+            "m2",
+            2,
+            SourceRole::Assistant,
+            "Broccoli is a cool-season crop (https://example.edu/broccoli).",
+        )];
+        let sources = SourceIndex::new(&messages);
+
+        let error = validate_patch(
+            &patch(
+                vec![ProposedItem {
+                    candidate_id: "c1".into(),
+                    kind: "established_fact".into(),
+                    label: "Broccoli is a cool-season crop".into(),
+                    evidence: vec![evidence(
+                        "m2",
+                        "Broccoli is a cool-season crop",
+                        "antecedent",
+                    )],
+                }],
+                vec![],
+            ),
+            &sources,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "no_assertion");
+    }
+
+    #[test]
+    fn a_later_sourced_passage_can_correct_an_established_fact() {
+        let messages = vec![message(
+            "m3",
+            5,
+            SourceRole::Assistant,
+            "Correction: potatoes need a warm season [2] (https://example.edu/potatoes).",
+        )];
+        let sources = SourceIndex::new(&messages);
+        let existing = vec![item(
+            "i1",
+            MemoryKind::EstablishedFact,
+            1,
+            "Potatoes are a cool-season crop",
+        )];
+
+        let validated = validate_patch(
+            &patch(
+                vec![ProposedItem {
+                    candidate_id: "c1".into(),
+                    kind: "established_fact".into(),
+                    label: "Potatoes need a warm season (example.edu)".into(),
+                    evidence: vec![evidence(
+                        "m3",
+                        "potatoes need a warm season [2] (https://example.edu/potatoes).",
+                        "assertion",
+                    )],
+                }],
+                vec![ProposedTransition {
+                    item_id: "i1".into(),
+                    state: "superseded".into(),
+                    replacement_candidate_id: Some("c1".into()),
+                    evidence: vec![evidence(
+                        "m3",
+                        "Correction: potatoes need a warm season",
+                        "transition",
+                    )],
+                }],
+            ),
+            &sources,
+            &existing,
+            &[],
+        )
+        .expect("a later sourced assistant passage may correct an established fact");
+
+        assert_eq!(validated.transitions.len(), 1);
+
+        // The carve-out ends there: an assistant passage still cannot retire a
+        // user requirement.
+        let constraint = vec![item("i2", MemoryKind::Constraint, 1, "Do not deploy")];
+        let rejected = validate_patch(
+            &patch(
+                vec![],
+                vec![ProposedTransition {
+                    item_id: "i2".into(),
+                    state: "resolved".into(),
+                    replacement_candidate_id: None,
+                    evidence: vec![evidence(
+                        "m3",
+                        "Correction: potatoes need a warm season",
+                        "transition",
+                    )],
+                }],
+            ),
+            &sources,
+            &constraint,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(rejected.code(), "non_user_authority");
     }
 
     #[test]

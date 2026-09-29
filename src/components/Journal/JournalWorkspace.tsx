@@ -20,6 +20,7 @@ import { EntryList } from './EntryList';
 import { pageTitle as rawPageTitle } from './PageList';
 import {
   appendToNote,
+  appendSynthesisContent,
   buildSynthesisBlock,
   resolveWeekPage,
   weekPageTitle,
@@ -79,10 +80,6 @@ function writeSidebarCollapsed(value: boolean): void {
 
 function defaultJournalTitle(spaceName: string): string {
   return `Journal · ${spaceName}`;
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
 }
 
 const SYNTHESIS_HEADINGS: Record<SynthesisScope, string> = {
@@ -684,9 +681,19 @@ export function JournalWorkspace() {
         // page happens to be open.
         if (scope === 'week') {
           const page = await resolveWeekPage(weekPageTitle());
-          const saved = await appendToNote(page, block);
+          const saved = await appendToNote(
+            page,
+            block,
+            result.data.sources ?? [],
+            result.data.conversationIds,
+          );
           if (saved.id === activeNote.id) {
-            updateNote((note: WorkspaceNote) => ({ ...note, content: saved.content }));
+            updateNote((note: WorkspaceNote) => ({
+              ...note,
+              content: saved.content,
+              sources: saved.sources,
+              linkedConversationIds: saved.linkedConversationIds,
+            }));
           }
           void refetchWeekCandidates();
           void refreshPages();
@@ -700,14 +707,14 @@ export function JournalWorkspace() {
           return true;
         }
 
-        updateNote((note: WorkspaceNote) => ({
-          ...note,
-          content: note.content.trim() ? `${note.content.trim()}\n\n${block}` : block,
-          linkedConversationIds: unique([
-            ...note.linkedConversationIds,
-            ...result.data.conversationIds,
-          ]),
-        }));
+        updateNote((note: WorkspaceNote) =>
+          appendSynthesisContent(
+            note,
+            block,
+            result.data.sources ?? [],
+            result.data.conversationIds,
+          ),
+        );
         notify(
           'success',
           `Synthesis complete for ${result.data.entryCount} entr${

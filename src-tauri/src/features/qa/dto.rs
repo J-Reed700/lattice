@@ -158,6 +158,22 @@ pub struct SourceDto {
     /// chunks — therefore rendered footnotes that opened the wrong document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation_id: Option<u32>,
+
+    /// Durable copy of a cited web page as it was read. The short `content`
+    /// and `excerpt` fields keep their existing meanings for prompts/UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_snapshot: Option<WebSnapshotDto>,
+}
+
+/// Page evidence captured for a web citation, independent of the live site.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSnapshotDto {
+    pub url: String,
+    pub title: Option<String>,
+    pub text: String,
+    pub fetched_at: Option<String>,
+    pub truncated: bool,
 }
 
 /// Metadata about Q&A response generation.
@@ -247,6 +263,8 @@ mod tests {
                 chunk_index: Some(0),
                 chunk_excerpts: None,
                 citation_id: None,
+
+                web_snapshot: None,
             }],
             confidence: Some(0.85),
             metadata: Some(QAMetadataDto {
@@ -287,6 +305,8 @@ mod tests {
             chunk_index: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         };
 
         let json = serde_json::to_string(&source).unwrap();

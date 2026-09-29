@@ -143,8 +143,9 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   continuation model may call, and the same retrieval run automatically for
   providers and QA paths that have no tools.
 - `features/conversation/memory_dto.rs` and `memory_details.rs` are the
-  read-only details view. There is no edit-memory shape, because a free-form
-  editor creates requirements with no source behind them. Quotations are
+  details view. `knowledge_dto.rs` and `repository/knowledge.rs` own explicit
+  sharing, validity intervals and user corrections. A correction appends an exact
+  user-authored source message and supersedes the old item atomically. Quotations are
   resolved from the original messages on every read and never cached beside the
   item, so deleting a message deletes its quotation from this view too.
 
@@ -169,9 +170,9 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
 - Archives omit derivable tables (embeddings, sparse terms, clusters, chat
   starters). Restore leaves `shared::constants::REEMBED_MARKER_FILE` in the app
   data directory; search startup clears it once vector coverage is complete.
-- The schema is a single migration, `src-tauri/migrations/20260916000000_init_schema.sql`.
-  There is no legacy data to migrate: change that file directly and delete
-  local databases when the schema changes.
+- The schema starts with `20260916000000_init_schema.sql` and evolves through
+  additive migrations. Preserve existing libraries; verify migrations against
+  temporary databases rather than deleting a user's database.
 
 ## Library blobs
 
@@ -229,10 +230,8 @@ Rust compiler, so they are the parts that bite a newcomer.
   commit states the pair it read; a mismatch fails the commit and the run retries
   from a fresh snapshot instead of overwriting a newer ledger. Re-running the
   same operation id does not apply a second time.
-- Schema changes go directly into
-  `src-tauri/migrations/20260916000000_init_schema.sql`. There is no migration
-  chain and no compatibility shim, so a schema change means deleting local
-  databases.
+- Add schema changes as migrations under `src-tauri/migrations`. Existing
+  migrations are immutable once used by a library; do not reset user databases.
 - Tests run the real migration through `sqlx::migrate!("./migrations")`. Two
   hand-rolled test schemas existed and had drifted from it, hiding trigger
   behavior and column defaults from exactly the tests that depended on them;
@@ -248,7 +247,7 @@ cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
 cargo check --manifest-path src-tauri/Cargo.toml --all-targets
-cargo run --manifest-path src-tauri/Cargo.toml --bin export_bindings -- --check
+cargo run --manifest-path src-tauri/Cargo.toml --features bindings-export --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib
 cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored
 cargo test --manifest-path src-tauri/Cargo.toml --test conversation_memory_evals -- --list
@@ -301,3 +300,35 @@ This is not a claim of “10/10” architecture or production readiness.
 Keep structural refactors distinct from changes to authentication, sync conflict
 semantics, delivery guarantees, and user-visible retention policy. Document and
 test those decisions before calling the backend production-ready.
+
+## Shared memory lifecycle
+
+Bounded memory defaults on; a saved explicit opt-out remains respected. This
+product default is independent of model-quality evaluation results. After an
+answer commits, a serialized background maintenance job extracts and reviews
+completed turns and updates the existing ledger and working summary. It uses
+the utility model when configured, otherwise the conversation model. Failure
+leaves the answer and the previous committed memory intact.
+
+`conversation_memory_attributes` attaches explicit conversation, space, or
+personal scope and validity/verification dates to existing item IDs. Nothing is
+shared automatically. Corrections inherit scope unless the user explicitly
+changes it. Deleted source evidence is never replaced with cached quotations.
+Forgetting resolves the saved item and records source-span suppression so a
+rebuild cannot recreate the same saved assertion. Original transcript messages
+remain available through conversation history.
+
+The repository resolves mandatory evidence beyond the recent-message window.
+Shared requirements enter the same mandatory token budget; optional facts are
+ranked by lexical overlap and compatible source-message embeddings. Transcript
+recall fuses lexical, exact-identifier and semantic candidates with reciprocal
+rank fusion. Embedding model identity, dimension and live source bytes must
+match. Bounded scans report truncation; no retrieval miss proves absence.
+
+`search_saved_knowledge` reads explicitly available memories and optional
+correction history within the turn's shared tool budget. The inspector shows
+scope, provenance, valid dates and the IDs included in the latest answer's
+initial context. User controls use React Query; their writes invalidate both
+memory views and conversation messages. The original extraction, repeated
+compaction and continuation evaluation remains the model-quality gate, separate
+from deterministic repository and budget tests.

@@ -27,6 +27,9 @@ The build helper assigns a unique identifier. Before each full run the runner
 moves that candidate's existing test library aside, so onboarding starts fresh
 and failed-run data remains available for debugging. The close/reopen portion
 uses the same library across both processes.
+Build artifacts default to `src-tauri/target/desktop-e2e`, keeping the normal
+development executable unchanged. Set `CARGO_TARGET_DIR` only to override this
+with another dedicated test build directory.
 
 ## Coverage
 
@@ -80,3 +83,23 @@ These instrumented candidates are testing artifacts, not shipping installers.
 The driver requires Tauri 2.10, so the Rust core and JavaScript API/CLI are on
 the same 2.10 minor line. The suite uses WebdriverIO's standard WebDriver API
 against `tauri-plugin-wdio-webdriver`, without the command-mocking plugin.
+
+## Resource regression workload
+
+The native scenario also runs 25 context-panel open/close cycles and 250 native
+notes reads. Its JSON report records DOM nodes and the candidate process tree's
+RSS (Windows: working set). After five warmup cycles, final five-sample mean
+growth must be below 64 MiB, closed-panel DOM variation below 100 nodes, and
+child-process count must plateau. These portable budgets detect substantial
+retention in this workload; they are not proof of zero leaks or latency benchmarks.
+Normal close also checks that sampled child processes exit, and rejects
+shutdown timeouts or orphan-sidecar recovery on the next launch.
+macOS WebKit XPC processes and Metal allocations need separate Instruments
+measurements. The workload uses only the isolated compatibility library.
+
+On macOS, `LATTICE_NATIVE_LEAK_SCAN=1 npm run test:desktop` additionally captures
+Apple `leaks` output for the candidate before shutdown in `native-leaks.txt`.
+The candidate launches with `MallocStackLogging=1` so findings include allocation
+stacks. This instrumentation adds overhead; use a separate ordinary run for RSS.
+This diagnostic is reported separately from the portable RSS/DOM budgets;
+inspect its exit code and output for allocator findings or permission errors.

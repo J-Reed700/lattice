@@ -241,11 +241,29 @@ impl ConversationRepository {
         let Some(space_id) = space_id.filter(|id| !id.trim().is_empty()) else {
             return Ok(None);
         };
-        let ids = self.space_document_scope(&space_id).await?;
+        let mut ids = self.space_document_scope(&space_id).await?;
+        // Files attached to *this* chat. They are in no space — that is what
+        // keeps them out of the library and out of everyone else's searches —
+        // so the space query above cannot return them, and without this the
+        // conversation that owns an attachment could not retrieve from it on
+        // any turn after the one that carried it in.
+        let attachments = sqlx::query_scalar::<_, String>(
+            "SELECT d.id FROM documents d
+             WHERE d.owner_conversation_id = ?
+               AND EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)",
+        )
+        .bind(conversation_id)
+        .fetch_all(&self.pool)
+        .await?;
+        ids.extend(attachments);
         Ok(Some((space_id, ids)))
     }
 
     /// The same rule, asked by space instead of by conversation.
+    ///
+    /// A file attached to a chat belongs to no space and is excluded here, in
+    /// the one statement every space-scoped path reads. `retrieval_document_scope`
+    /// adds back the asking conversation's own attachments.
     ///
     /// The chat starters need a space's documents before any conversation is
     /// involved — they used to read the whole vault, so a Movies chat opened
@@ -256,6 +274,7 @@ impl ConversationRepository {
         let ids = sqlx::query_scalar::<_, String>(
             "SELECT d.id FROM documents d
              WHERE EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)
+               AND d.owner_conversation_id IS NULL
                AND (
                  EXISTS (
                    SELECT 1 FROM document_space_memberships m
@@ -274,17 +293,24 @@ impl ConversationRepository {
         Ok(ids.into_iter().collect())
     }
 
-    /// The documents a chat in `space_id` may name, newest first.
+    /// The documents a chat may name, newest first.
     ///
-    /// Derived from [`Self::space_document_scope`] and then narrowed — never
+    /// Derived from the chat's retrieval scope and then narrowed — never
     /// widened — by a case-insensitive substring match on the file name. The
     /// composer's `@` picker is the one place the user is told "these are the
     /// documents this chat can use", so it has to be exactly the set retrieval
     /// would search. A blank or unknown space means General, matching the
     /// conversation default.
+    ///
+    /// With a `conversation_id` the answer comes from
+    /// [`Self::retrieval_document_scope`], so a chat can name the files
+    /// attached to it as well as the ones filed in its space. Without one it
+    /// falls back to the space alone, and attachments — which belong to no
+    /// space — are not on offer.
     pub async fn space_documents(
         &self,
         space_id: Option<&str>,
+        conversation_id: Option<&str>,
         query: &str,
         limit: usize,
     ) -> Result<Vec<SpaceDocumentDto>, AppError> {
@@ -298,7 +324,16 @@ impl ConversationRepository {
             .filter(|id| !id.is_empty())
             .unwrap_or(DEFAULT_SPACE_ID);
         let limit = limit.clamp(1, MAX_RESULTS);
-        let allowed = self.space_document_scope(space_id).await?;
+        let conversation_id = conversation_id.map(str::trim).filter(|id| !id.is_empty());
+        let allowed = match conversation_id {
+            Some(conversation) => match self.retrieval_document_scope(conversation).await? {
+                Some((_, ids)) => ids,
+                // A conversation the caller named but that no longer exists:
+                // answer for the space rather than for nothing.
+                None => self.space_document_scope(space_id).await?,
+            },
+            None => self.space_document_scope(space_id).await?,
+        };
         if allowed.is_empty() {
             return Ok(Vec::new());
         }
@@ -387,12 +422,13 @@ mod tests {
             .await
             .unwrap();
         sqlx::raw_sql("CREATE TABLE conversations (id TEXT, space_id TEXT);
-            CREATE TABLE documents (id TEXT);
+            CREATE TABLE documents (id TEXT, owner_conversation_id TEXT);
             CREATE TABLE text_chunks (document_id TEXT);
             CREATE TABLE document_space_memberships (document_id TEXT, space_id TEXT);
             INSERT INTO conversations VALUES ('general', 'space_general'), ('patent', 'patent'), ('empty', 'empty');
-            INSERT INTO documents VALUES ('filed_general'), ('filed_patent'), ('filed_both'), ('unfiled'), ('unindexed');
-            INSERT INTO text_chunks VALUES ('filed_general'), ('filed_patent'), ('filed_both'), ('unfiled');
+            INSERT INTO documents VALUES ('filed_general', NULL), ('filed_patent', NULL), ('filed_both', NULL), ('unfiled', NULL), ('unindexed', NULL),
+                ('attached_to_general', 'general'), ('attached_to_patent', 'patent');
+            INSERT INTO text_chunks VALUES ('filed_general'), ('filed_patent'), ('filed_both'), ('unfiled'), ('attached_to_general'), ('attached_to_patent');
             INSERT INTO document_space_memberships VALUES
                 ('filed_general', 'space_general'),
                 ('filed_patent', 'patent'),
@@ -446,9 +482,22 @@ mod tests {
     async fn a_named_space_sees_only_its_own_members() {
         let repo = scope_fixture().await;
 
+        // The space itself holds exactly what was filed into it.
+        assert_eq!(
+            repo.space_document_scope("patent").await.unwrap(),
+            ["filed_patent".to_string(), "filed_both".to_string()].into()
+        );
+        // A chat in that space reaches the same documents plus the files
+        // attached to it — which are in no space, and are why the two answers
+        // are no longer identical.
         assert_eq!(
             scope_of(&repo, "patent").await,
-            ["filed_patent".to_string(), "filed_both".to_string(),].into()
+            [
+                "filed_patent".to_string(),
+                "filed_both".to_string(),
+                "attached_to_patent".to_string(),
+            ]
+            .into()
         );
     }
 
@@ -462,19 +511,55 @@ mod tests {
     }
 
     /// The chat starters ask by space, with no conversation to ask through.
-    /// Both doors must open on the same room.
+    /// Both doors must open on the same room — on the filed documents, which
+    /// are the only ones a space has.
+    ///
+    /// The one deliberate difference: a conversation additionally reaches the
+    /// files attached to it. Those belong to no space, so the space door cannot
+    /// show them and must not. Take them out and the two answers have to agree
+    /// exactly, which is what keeps the starters from drifting away from what a
+    /// chat in that space can actually read.
     #[tokio::test]
     async fn asking_by_space_gives_the_same_scope_as_asking_through_a_conversation() {
         let repo = scope_fixture().await;
 
-        assert_eq!(
-            repo.space_document_scope("patent").await.unwrap(),
-            scope_of(&repo, "patent").await
-        );
-        assert_eq!(
-            repo.space_document_scope("space_general").await.unwrap(),
-            scope_of(&repo, "general").await
-        );
+        for (space, conversation, attachment) in [
+            ("patent", "patent", "attached_to_patent"),
+            ("space_general", "general", "attached_to_general"),
+        ] {
+            let mut through_conversation = scope_of(&repo, conversation).await;
+            assert!(
+                through_conversation.remove(attachment),
+                "{conversation} should reach its own attachment"
+            );
+            assert_eq!(
+                repo.space_document_scope(space).await.unwrap(),
+                through_conversation
+            );
+        }
+    }
+
+    /// A file attached to one chat is that chat's alone. It is in no space, so
+    /// nothing else can reach it, and the owning chat can still retrieve from it
+    /// on every later turn rather than only on the turn that carried it in.
+    #[tokio::test]
+    async fn an_attachment_is_visible_only_to_the_conversation_that_owns_it() {
+        let repo = scope_fixture().await;
+
+        let general = scope_of(&repo, "general").await;
+        assert!(general.contains("attached_to_general"));
+        assert!(!general.contains("attached_to_patent"));
+
+        let patent = scope_of(&repo, "patent").await;
+        assert!(patent.contains("attached_to_patent"));
+        assert!(!patent.contains("attached_to_general"));
+
+        // Not even through the space the owning chat belongs to.
+        assert!(!repo
+            .space_document_scope("space_general")
+            .await
+            .unwrap()
+            .contains("attached_to_general"));
     }
 
     #[tokio::test]
@@ -498,17 +583,18 @@ mod tests {
             .await
             .unwrap();
         sqlx::raw_sql(
-            "CREATE TABLE documents (id TEXT, file_name TEXT, category TEXT, modified_at TEXT);
+            "CREATE TABLE documents (id TEXT, file_name TEXT, category TEXT, modified_at TEXT, owner_conversation_id TEXT);
             CREATE TABLE text_chunks (document_id TEXT);
             CREATE TABLE document_space_memberships (document_id TEXT, space_id TEXT);
             INSERT INTO documents VALUES
-                ('general_old', 'Halvorsen 2019.pdf', 'PDF Document', '2019-01-01T00:00:00Z'),
-                ('general_new', 'HALVORSEN 2024.pdf', 'PDF Document', '2024-01-01T00:00:00Z'),
-                ('general_other', 'Thesis outline.md', 'Markdown', '2023-01-01T00:00:00Z'),
-                ('filed_movies', 'Halvorsen at the movies.pdf', 'PDF Document', '2026-01-01T00:00:00Z'),
-                ('unindexed', 'Halvorsen scan.pdf', 'PDF Document', '2026-06-01T00:00:00Z');
+                ('general_old', 'Halvorsen 2019.pdf', 'PDF Document', '2019-01-01T00:00:00Z', NULL),
+                ('general_new', 'HALVORSEN 2024.pdf', 'PDF Document', '2024-01-01T00:00:00Z', NULL),
+                ('general_other', 'Thesis outline.md', 'Markdown', '2023-01-01T00:00:00Z', NULL),
+                ('filed_movies', 'Halvorsen at the movies.pdf', 'PDF Document', '2026-01-01T00:00:00Z', NULL),
+                ('unindexed', 'Halvorsen scan.pdf', 'PDF Document', '2026-06-01T00:00:00Z', NULL),
+                ('attached', 'Halvorsen chat attachment.txt', 'Text', '2026-07-01T00:00:00Z', 'some-chat');
             INSERT INTO text_chunks VALUES
-                ('general_old'), ('general_new'), ('general_other'), ('filed_movies');
+                ('general_old'), ('general_new'), ('general_other'), ('filed_movies'), ('attached');
             INSERT INTO document_space_memberships VALUES ('filed_movies', 'movies');",
         )
         .execute(&pool)
@@ -525,7 +611,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         let general: Vec<_> = repo
-            .space_documents(None, "halvorsen", 8)
+            .space_documents(None, None, "halvorsen", 8)
             .await
             .unwrap()
             .into_iter()
@@ -534,6 +620,42 @@ mod tests {
 
         assert_eq!(general, vec!["general_new", "general_old"]);
         assert!(!general.contains(&"filed_movies".to_string()));
+        // A file attached to some chat is not a library document, so it is not
+        // on offer here either — even though its name matches and it is chunked.
+        assert!(!general.contains(&"attached".to_string()));
+    }
+
+    /// Asked on a chat's behalf, the picker offers that chat's own attachments
+    /// too — otherwise a file you attached on turn one cannot be named on turn
+    /// three, though retrieval can still read it.
+    #[tokio::test]
+    async fn the_picker_offers_the_asking_chat_its_own_attachments() {
+        let repo = picker_fixture().await;
+        sqlx::raw_sql(
+            "CREATE TABLE conversations (id TEXT, space_id TEXT);
+             INSERT INTO conversations VALUES ('some-chat', 'space_general'), ('other-chat', 'space_general');",
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        let own: Vec<_> = repo
+            .space_documents(None, Some("some-chat"), "halvorsen", 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|document| document.document_id)
+            .collect();
+        assert!(own.contains(&"attached".to_string()));
+
+        let other: Vec<_> = repo
+            .space_documents(None, Some("other-chat"), "halvorsen", 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|document| document.document_id)
+            .collect();
+        assert!(!other.contains(&"attached".to_string()));
     }
 
     #[tokio::test]
@@ -541,7 +663,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         let movies: Vec<_> = repo
-            .space_documents(Some("movies"), "", 8)
+            .space_documents(Some("movies"), None, "", 8)
             .await
             .unwrap()
             .into_iter()
@@ -557,8 +679,14 @@ mod tests {
     async fn the_name_match_ignores_case() {
         let repo = picker_fixture().await;
 
-        let upper = repo.space_documents(None, "HALVORSEN", 8).await.unwrap();
-        let lower = repo.space_documents(None, "halvorsen", 8).await.unwrap();
+        let upper = repo
+            .space_documents(None, None, "HALVORSEN", 8)
+            .await
+            .unwrap();
+        let lower = repo
+            .space_documents(None, None, "halvorsen", 8)
+            .await
+            .unwrap();
 
         assert_eq!(upper.len(), 2);
         assert_eq!(
@@ -572,7 +700,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         let all: Vec<_> = repo
-            .space_documents(None, "   ", 8)
+            .space_documents(None, None, "   ", 8)
             .await
             .unwrap()
             .into_iter()
@@ -588,7 +716,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         assert_eq!(
-            repo.space_documents(Some("   "), "halvorsen", 8)
+            repo.space_documents(Some("   "), None, "halvorsen", 8)
                 .await
                 .unwrap()
                 .len(),
@@ -603,7 +731,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         assert!(repo
-            .space_documents(None, "scan", 8)
+            .space_documents(None, None, "scan", 8)
             .await
             .unwrap()
             .is_empty());
@@ -613,11 +741,17 @@ mod tests {
     async fn the_limit_is_honoured_and_clamped() {
         let repo = picker_fixture().await;
 
-        assert_eq!(repo.space_documents(None, "", 1).await.unwrap().len(), 1);
+        assert_eq!(
+            repo.space_documents(None, None, "", 1).await.unwrap().len(),
+            1
+        );
         // 5,000 asked for, 50 the most the command will ever return, 3 that
         // exist.
         assert_eq!(
-            repo.space_documents(None, "", 5_000).await.unwrap().len(),
+            repo.space_documents(None, None, "", 5_000)
+                .await
+                .unwrap()
+                .len(),
             3
         );
     }
@@ -627,7 +761,7 @@ mod tests {
         let repo = picker_fixture().await;
 
         assert!(repo
-            .space_documents(Some("no-such-space"), "", 8)
+            .space_documents(Some("no-such-space"), None, "", 8)
             .await
             .unwrap()
             .is_empty());

@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
-pub(super) struct Decoder {
+pub(crate) struct Decoder {
     buffer: Vec<u8>,
     received_bytes: usize,
     done: bool,
@@ -14,7 +14,30 @@ pub(super) struct Decoder {
     reasoning: BTreeMap<String, String>,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
+    /// The first chunk's `logprobs`, when the request asked for them: the
+    /// first generated token is the only one a classifier reads.
+    first_logprobs: Option<Value>,
 }
+
+/// The server's own label for a failure: its status code and error type.
+///
+/// Never its message, which is free text and may quote the prompt. The type is
+/// an identifier, so anything that does not look like one is dropped.
+fn error_kind(error: &Value) -> String {
+    let code = error.get("code").and_then(Value::as_u64);
+    let kind = error.get("type").and_then(Value::as_str).filter(|kind| {
+        !kind.is_empty()
+            && kind.len() <= 48
+            && kind.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+    });
+    match (code, kind) {
+        (Some(code), Some(kind)) => format!(" ({code} {kind})"),
+        (Some(code), None) => format!(" ({code})"),
+        (None, Some(kind)) => format!(" ({kind})"),
+        (None, None) => String::new(),
+    }
+}
+
 impl Decoder {
     pub fn for_completion() -> Self {
         Self {
@@ -52,10 +75,11 @@ impl Decoder {
             }
             let event: Value = serde_json::from_str(data.trim())
                 .map_err(|_| AppError::Network("Invalid llama.cpp stream event".into()))?;
-            if event.get("error").is_some() {
-                return Err(AppError::Network(
-                    "llama.cpp reported a generation error".into(),
-                ));
+            if let Some(error) = event.get("error") {
+                return Err(AppError::Network(format!(
+                    "llama.cpp reported a generation error{}",
+                    error_kind(error)
+                )));
             }
             if let Some(usage) = event.get("usage").filter(|value| value.is_object()) {
                 self.usage = usage.clone();
@@ -66,12 +90,24 @@ impl Decoder {
                 .and_then(|c| c.first())
             {
                 if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
-                    if reason != "stop" && !(self.allow_tool_calls && reason == "tool_calls") {
+                    // Running out of answer room still leaves an answer. The
+                    // reason travels with the text so the caller decides what
+                    // a cut-short answer is worth; failing here threw it away.
+                    let expected = matches!(reason, "stop" | "length")
+                        || (self.allow_tool_calls && reason == "tool_calls");
+                    if !expected {
                         return Err(AppError::Network(format!(
                             "llama.cpp generation stopped: {reason}"
                         )));
                     }
                     self.finish_reason = Some(reason.into());
+                }
+                if self.first_logprobs.is_none() {
+                    self.first_logprobs = choice
+                        .pointer("/logprobs/content/0")
+                        .is_some()
+                        .then(|| choice.get("logprobs").cloned())
+                        .flatten();
                 }
                 if let Some(content) = choice
                     .pointer("/delta/content")
@@ -192,7 +228,11 @@ impl Decoder {
             );
         }
         super::parse_completion(json!({
-            "choices": [{"message": message, "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into())}],
+            "choices": [{
+                "message": message,
+                "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
+                "logprobs": self.first_logprobs,
+            }],
             "usage": self.usage,
         }))
     }

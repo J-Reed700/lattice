@@ -36,9 +36,12 @@
 //! OpenAI-compatible backend later (vLLM, mistralrs-server, etc.)
 //! without changing this file.
 
+use crate::application::ports::llm_port::{CompletionResponse, SamplingOverride};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::traits::{ChatMessage, GenerationConfig, LLMClient};
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::llama_cpp::{parse_completion, streaming::Decoder};
+use crate::shared::error::{AppError, Result as AppResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -52,20 +55,84 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tokio_stream::Stream;
 
-/// How long to wait for the first byte of a streamed response. The
-/// server has to load the model into VRAM, run the prompt prefill, and
-/// emit the first token. On a 7B Q4_K_M GGUF this is sub-second on
-/// Apple Silicon but can be 10s+ on cold Windows Vulkan.
+/// Floor on how long to wait for the next frame of a streamed response
+/// before the model has generated anything. The server may be loading the
+/// model into VRAM or running the prompt prefill; on a 7B Q4_K_M GGUF that
+/// is sub-second on Apple Silicon but can be 10s+ on cold Windows Vulkan.
+/// [`prefill_allowance`] adds time for the prompt on top of this.
 const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// llama-server's default logical batch. With `return_progress` it reports
+/// after each batch it processes, so one batch is the most prompt that can
+/// pass between two frames however long the prompt is.
+const PREFILL_BATCH_TOKENS: usize = 2048;
+
+/// Slowest prefill rate the allowance plans for: a CPU-only box runs a
+/// near-full RAG prompt at roughly 30-60 tok/s, so a batch there takes over a
+/// minute and a flat 60 s failed the turn before its first token.
+const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 
 /// Per-chunk timeout once a stream is active. If the model goes silent
 /// for this long mid-generation, the connection is dead and we should
 /// surface an error rather than hang.
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Total timeout for non-streaming `generate()` calls. A 1024-token
-/// completion at ~30 tok/s is ~30s; doubled for safety on slow hardware.
+/// Total timeout for a non-streaming call whose caller set no budget. A
+/// 1024-token completion at ~30 tok/s is ~30s; doubled for safety on slow
+/// hardware.
 const NON_STREAM_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The caller's budget when it sets one, whatever its length: memory
+/// extraction asking for 8192 tokens at 20-30 tok/s needs minutes, and a cap
+/// here cut it off while the caller still had budget. A query rewrite allowed
+/// twenty seconds still gets twenty. The constant only covers callers that
+/// set no budget.
+fn non_stream_timeout(time_budget: Option<Duration>) -> Duration {
+    time_budget.unwrap_or(NON_STREAM_TIMEOUT)
+}
+
+/// How long to wait for a frame before generation starts: the floor plus one
+/// batch of this prompt at the slowest prefill rate. Progress frames reset the
+/// wait, so it only has to cover the gap between two of them — or, from a
+/// server that sends none, the whole prompt, which is why short prompts are
+/// not given the full batch. Tokens are estimated at four bytes each.
+fn prefill_allowance(messages: &[Value]) -> Duration {
+    let bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
+    let tokens = (bytes / 4).min(PREFILL_BATCH_TOKENS);
+    FIRST_TOKEN_TIMEOUT + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
+}
+
+/// The wait for each frame of a stream. Before the first generated delta the
+/// server is still processing the prompt and every frame it sends (progress
+/// included) restarts the prefill allowance; once it is generating, silence
+/// for [`CHUNK_TIMEOUT`] is a stall.
+struct FrameClock {
+    watch: crate::features::llm::llama_cpp::ProgressWatch,
+    generating: bool,
+    prefill: Duration,
+}
+
+impl FrameClock {
+    fn new(prefill: Duration) -> Self {
+        Self {
+            watch: Default::default(),
+            generating: false,
+            prefill,
+        }
+    }
+
+    fn wait(&self) -> Duration {
+        if self.generating {
+            CHUNK_TIMEOUT
+        } else {
+            self.prefill
+        }
+    }
+
+    fn saw(&mut self, chunk: &[u8]) {
+        self.generating |= self.watch.carries_generated_delta(chunk);
+    }
+}
 
 /// Health check timeout — should be milliseconds; if it isn't, the
 /// sidecar is in trouble and we should report unhealthy fast.
@@ -84,7 +151,10 @@ struct ChatCompletionRequest<'a> {
     /// killing and respawning the sidecar, matching LM Studio's
     /// per-runtime model lifecycle.
     model: &'a str,
-    messages: Vec<WireMessage<'a>>,
+    /// OpenAI chat messages. Values rather than role/content pairs because a
+    /// tool round carries `tool_calls` on assistant turns and `tool_call_id`
+    /// on tool turns.
+    messages: Vec<Value>,
     stream: bool,
     temperature: f32,
     /// Nucleus sampling.
@@ -109,34 +179,35 @@ struct ChatCompletionRequest<'a> {
     chat_template_kwargs: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+    /// Rendered through the GGUF's own chat template (the server runs with
+    /// `--jinja`), which is what gives each model its native call format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a Value>,
+    /// Asks for a final usage frame on a stream, so a streamed typed
+    /// completion reports tokens the way a non-streamed one does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<Value>,
+    /// First-token log-probabilities, for a caller that reads its one-word
+    /// answer's probability rather than the word alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_logprobs: Option<u8>,
+    /// Streams only: prompt-processing frames while the prompt is prefilled,
+    /// so a long prompt shows the server working instead of looking stalled.
+    /// The remote adapter sends the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_progress: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatChoiceMessage,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct Usage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,15 +222,16 @@ struct ChatCompletionChunk {
 
 #[derive(Debug, Deserialize)]
 struct ChatChunkChoice {
+    #[serde(default)]
     delta: ChatDelta,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct ChatDelta {
-    /// Absent on the first/last chunks; present with the next token
-    /// piece on content chunks. Default to "" if missing.
+    /// Absent on the first/last chunks, `null` on prompt-progress frames,
+    /// and the next token piece on content chunks.
     #[serde(default)]
-    content: String,
+    content: Option<String>,
 }
 
 /// Per-request knobs the `LLMClient` trait has no room for.
@@ -172,15 +244,15 @@ pub struct RequestTuning<'a> {
     pub json_schema: Option<&'a Value>,
     /// Wall-clock allowance for the whole exchange, when the caller sets one.
     pub time_budget: Option<Duration>,
-}
-
-/// A non-streaming completion, with the bookkeeping the typed port reports.
-#[derive(Debug, Default)]
-pub struct CompletionOutcome {
-    pub text: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub finish_reason: String,
+    /// Sampling for this request, over the client's configured defaults.
+    pub sampling: Option<SamplingOverride>,
+    /// Output ceiling for this request. Only ever tightens the configured one,
+    /// so a caller cannot generate past what the user allowed.
+    pub max_output_tokens: Option<u32>,
+    /// OpenAI-shaped tool definitions, already built by the caller.
+    pub tools: Option<&'a Value>,
+    /// Ask for the first token's top alternatives with their log-probabilities.
+    pub want_logprobs: bool,
 }
 
 /// LLM client that talks to a bundled llama-server sidecar.
@@ -207,6 +279,19 @@ pub struct SidecarLLMClient {
 
     /// Mutable generation config for `generation_config_mut()`.
     config: GenerationConfig,
+}
+
+/// A failed status as an error that is safe to show and log. A template error
+/// quotes the prompt back in its body; the remote adapter's check keeps the
+/// status and the causes it recognises and drops the free text.
+async fn redacted_status(response: reqwest::Response) -> Result<reqwest::Response, LLMError> {
+    crate::features::llm::llama_cpp::check_status(response)
+        .await
+        .map_err(|err| LLMError::GenerationFailed(err.to_string()))
+}
+
+fn typed_error(err: LLMError) -> AppError {
+    AppError::Other(format!("LLM completion failed: {err}"))
 }
 
 /// Incremental parser for the server's SSE frames.
@@ -335,16 +420,19 @@ impl SseDecoder {
                 match serde_json::from_str::<ChatCompletionChunk>(payload) {
                     Ok(chunk) => {
                         if let Some(choice) = chunk.choices.into_iter().next() {
-                            let content = choice.delta.content;
-                            if !content.is_empty() {
+                            if let Some(content) = choice.delta.content.filter(|c| !c.is_empty()) {
                                 out.push(content);
                             }
                         }
                     }
                     Err(err) => {
+                        // The payload is generated text, and serde's message
+                        // can quote it; the category and position are enough.
                         tracing::warn!(
                             target: "sidecar_client",
-                            "Skipping malformed SSE chunk ({err}): {payload}"
+                            category = ?err.classify(),
+                            column = err.column(),
+                            "Skipping malformed SSE chunk"
                         );
                     }
                 }
@@ -356,6 +444,13 @@ impl SseDecoder {
 }
 
 impl SidecarLLMClient {
+    /// Whether the server this client talks to is still running. Reads the
+    /// handle's child slot, which the event drain empties when the process
+    /// exits on its own — so a crashed server reads as dead without a request.
+    pub fn is_alive(&self) -> bool {
+        self.sidecar.is_running()
+    }
+
     /// Create a client wrapping the given sidecar handle.
     pub fn new(
         sidecar: Arc<SidecarHandle>,
@@ -399,12 +494,12 @@ impl SidecarLLMClient {
         format!("{}{}", self.sidecar.endpoint(), path)
     }
 
-    fn build_messages(system: Option<&str>, prompt: &str) -> Vec<(&'static str, String)> {
-        let mut msgs: Vec<(&'static str, String)> = Vec::with_capacity(2);
+    fn build_messages(system: Option<&str>, prompt: &str) -> Vec<Value> {
+        let mut msgs = Vec::with_capacity(2);
         if let Some(sys) = system {
-            msgs.push(("system", sys.to_string()));
+            msgs.push(json!({"role": "system", "content": sys}));
         }
-        msgs.push(("user", prompt.to_string()));
+        msgs.push(json!({"role": "user", "content": prompt}));
         msgs
     }
 
@@ -412,25 +507,23 @@ impl SidecarLLMClient {
     /// without a live sidecar process behind it.
     fn build_request<'a>(
         config: &GenerationConfig,
-        messages: &'a [(&'a str, String)],
+        messages: Vec<Value>,
         stream: bool,
         tuning: RequestTuning<'a>,
     ) -> ChatCompletionRequest<'a> {
+        let sampling = tuning.sampling.unwrap_or_default();
         ChatCompletionRequest {
             model: "local",
-            messages: messages
-                .iter()
-                .map(|(role, content)| WireMessage {
-                    role,
-                    content: content.as_str(),
-                })
-                .collect(),
+            messages,
             stream,
-            temperature: config.temperature,
-            top_p: config.top_p,
-            top_k: config.top_k,
+            temperature: sampling.temperature.unwrap_or(config.temperature),
+            top_p: sampling.top_p.unwrap_or(config.top_p),
+            top_k: sampling.top_k.unwrap_or(config.top_k),
             repeat_penalty: config.repeat_penalty,
-            max_tokens: config.max_tokens,
+            max_tokens: match tuning.max_output_tokens {
+                Some(requested) if requested > 0 => (requested as usize).min(config.max_tokens),
+                _ => config.max_tokens,
+            },
             reasoning_effort: tuning.reasoning_effort,
             chat_template_kwargs: tuning.reasoning_effort.map(|effort| {
                 if effort == "none" {
@@ -442,25 +535,29 @@ impl SidecarLLMClient {
             response_format: tuning.json_schema.map(|schema| {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}})
             }),
+            tools: tuning.tools,
+            stream_options: stream.then(|| json!({"include_usage": true})),
+            return_progress: stream.then_some(true),
+            logprobs: tuning.want_logprobs.then_some(true),
+            top_logprobs: tuning
+                .want_logprobs
+                .then_some(crate::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
         }
     }
 
     async fn post_chat_completion(
         &self,
-        messages: &[(&str, String)],
+        messages: Vec<Value>,
         stream: bool,
         tuning: RequestTuning<'_>,
-    ) -> Result<reqwest::Response, LLMError> {
+    ) -> Result<(reqwest::Response, Duration), LLMError> {
+        let prefill = prefill_allowance(&messages);
         let body = Self::build_request(&self.config, messages, stream, tuning);
         let request_timeout = if stream {
-            FIRST_TOKEN_TIMEOUT
+            // The server may hold the headers until its first frame.
+            prefill
         } else {
-            // A caller's own budget is the tighter of the two whenever it has
-            // one: a query rewrite that is allowed twenty seconds must not sit
-            // here for two minutes because this constant says it may.
-            tuning
-                .time_budget
-                .map_or(NON_STREAM_TIMEOUT, |budget| budget.min(NON_STREAM_TIMEOUT))
+            non_stream_timeout(tuning.time_budget)
         };
 
         let response = timeout(
@@ -474,81 +571,129 @@ impl SidecarLLMClient {
         .map_err(|_| LLMError::Timeout)?
         .map_err(|err| LLMError::Network(format!("HTTP error to sidecar: {err}")))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LLMError::GenerationFailed(format!(
-                "llama-server returned {status}: {body}"
-            )));
-        }
-
-        Ok(response)
-    }
-
-    async fn extract_completion(
-        response: reqwest::Response,
-    ) -> Result<CompletionOutcome, LLMError> {
-        let parsed: ChatCompletionResponse = response.json().await.map_err(|err| {
-            LLMError::GenerationFailed(format!("Failed to parse sidecar response: {err}"))
-        })?;
-
-        let usage = parsed.usage.unwrap_or_default();
-        let choice =
-            parsed.choices.into_iter().next().ok_or_else(|| {
-                LLMError::GenerationFailed("Sidecar returned zero choices".into())
-            })?;
-
-        Ok(CompletionOutcome {
-            text: choice.message.content,
-            input_tokens: usage.prompt_tokens,
-            output_tokens: usage.completion_tokens,
-            finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
-        })
+        Ok((redacted_status(response).await?, prefill))
     }
 
     async fn extract_completion_text(response: reqwest::Response) -> Result<String, LLMError> {
-        Self::extract_completion(response).await.map(|out| out.text)
+        let parsed: ChatCompletionResponse = response.json().await.map_err(|err| {
+            LLMError::GenerationFailed(format!("Failed to parse sidecar response: {err}"))
+        })?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|choice| choice.message.content)
+            .ok_or_else(|| LLMError::GenerationFailed("Sidecar returned zero choices".into()))
     }
 
-    /// Typed-completion entry point for the `LLMPort` adapter.
+    /// Typed completion for the `LLMPort` adapter, in one response.
     ///
     /// Separate from `generate_chat` because the trait cannot carry a reasoning
-    /// effort or a response schema, and dropping them is what let a reasoning
-    /// model spend minutes thinking about a one-line query rewrite.
-    pub async fn complete_messages(
+    /// effort, a response schema or tools, and dropping the first two is what
+    /// let a reasoning model spend minutes thinking about a one-line query
+    /// rewrite. The response is parsed by the remote llama.cpp adapter's own
+    /// parser: same server, same tool-call shape.
+    pub async fn complete_typed(
         &self,
-        messages: &[(&str, String)],
+        messages: Vec<Value>,
         tuning: RequestTuning<'_>,
-    ) -> Result<CompletionOutcome, LLMError> {
-        let response = self.post_chat_completion(messages, false, tuning).await?;
-        Self::extract_completion(response).await
+    ) -> AppResult<CompletionResponse> {
+        let (response, _) = self
+            .post_chat_completion(messages, false, tuning)
+            .await
+            .map_err(typed_error)?;
+        let value: Value = response
+            .json()
+            .await
+            .map_err(|err| AppError::Other(format!("Failed to parse sidecar response: {err}")))?;
+        parse_completion(value)
     }
 
-    fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<(&'static str, String)> {
+    /// Typed completion that hands answer text to `on_text` as it streams,
+    /// while tool-call fragments are assembled into whole calls.
+    ///
+    /// The tool loop takes this path whenever it offers tools; without it a
+    /// tool-capable local model would write its whole final answer before the
+    /// user saw a word of it.
+    pub async fn complete_typed_streaming(
+        &self,
+        messages: Vec<Value>,
+        tuning: RequestTuning<'_>,
+        on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+    ) -> AppResult<CompletionResponse> {
+        let (response, prefill) = self
+            .post_chat_completion(messages, true, tuning)
+            .await
+            .map_err(typed_error)?;
+        Self::drain_typed_stream(response.bytes_stream(), prefill, on_text).await
+    }
+
+    /// Split from the request so the frame timing can be driven by a scripted
+    /// stream on a paused clock.
+    async fn drain_typed_stream<S, B, E>(
+        bytes: S,
+        prefill: Duration,
+        on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+    ) -> AppResult<CompletionResponse>
+    where
+        S: Stream<Item = Result<B, E>> + Unpin,
+        B: AsRef<[u8]>,
+        E: std::fmt::Display,
+    {
+        let mut bytes = bytes;
+        let mut decoder = Decoder::for_completion();
+        let mut clock = FrameClock::new(prefill);
+        while let Some(chunk) = timeout(clock.wait(), bytes.next())
+            .await
+            .map_err(|_| typed_error(LLMError::Timeout))?
+        {
+            let chunk = chunk.map_err(|err| {
+                typed_error(LLMError::Network(format!("SSE byte stream error: {err}")))
+            })?;
+            let chunk = chunk.as_ref();
+            clock.saw(chunk);
+            for text in decoder.push(chunk)? {
+                on_text(text)?;
+            }
+            if decoder.done() {
+                break;
+            }
+        }
+        decoder.into_response()
+    }
+
+    fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<Value> {
         messages
             .into_iter()
             .map(|m| {
-                let role: &'static str = match m.role.as_str() {
+                let role = match m.role.as_str() {
                     "system" => "system",
                     "assistant" => "assistant",
                     _ => "user",
                 };
-                (role, m.content)
+                json!({"role": role, "content": m.content})
             })
             .collect()
     }
 
     /// Drive the SSE stream into a token-string stream. Centralized so
     /// `generate_stream` and `generate_chat_stream` share the parser.
-    fn parse_sse_stream(
-        response: reqwest::Response,
-    ) -> Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>> {
+    fn parse_sse_stream<S, B, E>(
+        bytes: S,
+        prefill: Duration,
+    ) -> Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>>
+    where
+        S: Stream<Item = Result<B, E>> + Send + Unpin + 'static,
+        B: AsRef<[u8]> + Send,
+        E: std::fmt::Display + Send,
+    {
         Box::pin(stream! {
-            let mut bytes = response.bytes_stream();
+            let mut bytes = bytes;
             let mut decoder = SseDecoder::new();
+            let mut clock = FrameClock::new(prefill);
 
             loop {
-                let next = match timeout(CHUNK_TIMEOUT, bytes.next()).await {
+                let next = match timeout(clock.wait(), bytes.next()).await {
                     Ok(next) => next,
                     Err(_) => {
                         yield Err(LLMError::Timeout);
@@ -558,7 +703,8 @@ impl SidecarLLMClient {
 
                 match next {
                     Some(Ok(b)) => {
-                        for content in decoder.push(&b) {
+                        clock.saw(b.as_ref());
+                        for content in decoder.push(b.as_ref()) {
                             yield Ok(content);
                         }
                         if decoder.is_done() {
@@ -592,8 +738,8 @@ impl LLMClient for SidecarLLMClient {
         _images: Option<Vec<String>>,
     ) -> Result<String, LLMError> {
         let messages = Self::build_messages(system, prompt);
-        let response = self
-            .post_chat_completion(&messages, false, RequestTuning::default())
+        let (response, _) = self
+            .post_chat_completion(messages, false, RequestTuning::default())
             .await?;
         Self::extract_completion_text(response).await
     }
@@ -605,10 +751,10 @@ impl LLMClient for SidecarLLMClient {
         _images: Option<Vec<String>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let messages = Self::build_messages(system, prompt);
-        let response = self
-            .post_chat_completion(&messages, true, RequestTuning::default())
+        let (response, prefill) = self
+            .post_chat_completion(messages, true, RequestTuning::default())
             .await?;
-        Ok(Self::parse_sse_stream(response))
+        Ok(Self::parse_sse_stream(response.bytes_stream(), prefill))
     }
 
     async fn health_check(&self) -> bool {
@@ -633,8 +779,8 @@ impl LLMClient for SidecarLLMClient {
 
     async fn generate_chat(&self, messages: Vec<ChatMessage>) -> Result<String, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
-        let response = self
-            .post_chat_completion(&pairs, false, RequestTuning::default())
+        let (response, _) = self
+            .post_chat_completion(pairs, false, RequestTuning::default())
             .await?;
         Self::extract_completion_text(response).await
     }
@@ -644,10 +790,10 @@ impl LLMClient for SidecarLLMClient {
         messages: Vec<ChatMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
-        let response = self
-            .post_chat_completion(&pairs, true, RequestTuning::default())
+        let (response, prefill) = self
+            .post_chat_completion(pairs, true, RequestTuning::default())
             .await?;
-        Ok(Self::parse_sse_stream(response))
+        Ok(Self::parse_sse_stream(response.bytes_stream(), prefill))
     }
 
     fn supports_chat(&self) -> bool {
@@ -808,28 +954,13 @@ mod tests {
 
     #[test]
     fn build_request_serializes_to_openai_shape() {
-        let cfg = GenerationConfig::default();
-        let messages = [
-            ("system", "You are helpful.".to_string()),
-            ("user", "Hi.".to_string()),
-        ];
-
-        let body = ChatCompletionRequest {
-            model: "local",
-            messages: messages
-                .iter()
-                .map(|(role, content)| WireMessage { role, content })
-                .collect(),
-            stream: false,
-            temperature: cfg.temperature,
-            top_p: cfg.top_p,
-            top_k: cfg.top_k,
-            repeat_penalty: cfg.repeat_penalty,
-            max_tokens: cfg.max_tokens,
-            reasoning_effort: None,
-            chat_template_kwargs: None,
-            response_format: None,
-        };
+        let messages = SidecarLLMClient::build_messages(Some("You are helpful."), "Hi.");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            false,
+            RequestTuning::default(),
+        );
 
         let json = serde_json::to_value(&body).expect("serialize");
         assert_eq!(json["model"], "local");
@@ -840,6 +971,105 @@ mod tests {
         assert_eq!(messages_json[0]["content"], "You are helpful.");
         assert_eq!(messages_json[1]["role"], "user");
         assert_eq!(messages_json[1]["content"], "Hi.");
+        assert!(json.get("tools").is_none(), "{json}");
+        assert!(json.get("stream_options").is_none(), "{json}");
+    }
+
+    /// A tool round has to reach llama-server in the same shape the remote
+    /// adapter sends: `tools` on the request, the assistant's call and the
+    /// tool's result as their own typed messages, not flattened into text.
+    #[test]
+    fn a_tool_round_goes_out_in_openai_tool_shape() {
+        use crate::application::ports::llm_port::{CompletionInput, ToolDefinition};
+
+        let input = [
+            CompletionInput::Message {
+                role: "system".into(),
+                content: "Answer from the library.".into(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: "What does the lease say?".into(),
+            },
+            CompletionInput::ToolCall {
+                id: "call_1".into(),
+                name: "semantic_search".into(),
+                arguments: json!({"query": "lease term"}),
+            },
+            CompletionInput::ToolResult {
+                id: "call_1".into(),
+                output: "The term is 12 months.".into(),
+            },
+        ];
+        let tools = crate::features::llm::llama_cpp::tool_specs(&[ToolDefinition {
+            name: "semantic_search".into(),
+            description: "Search the library".into(),
+            parameters: json!({"type": "object"}),
+        }]);
+        let messages = crate::features::llm::llama_cpp::chat_messages(&input).expect("messages");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            true,
+            RequestTuning {
+                tools: Some(&tools),
+                ..RequestTuning::default()
+            },
+        );
+
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["tools"][0]["function"]["name"], "semantic_search");
+        assert_eq!(json["stream_options"]["include_usage"], true);
+        let messages = json["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            messages[2]["tool_calls"][0]["function"]["arguments"],
+            r#"{"query":"lease term"}"#
+        );
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
+    }
+
+    /// Tool-call fragments arrive spread over several frames; the shared
+    /// decoder must hand back one whole call and no answer text for it.
+    #[test]
+    fn a_streamed_tool_call_is_reassembled_into_one_call() {
+        use crate::application::ports::llm_port::CompletionInput;
+
+        let frames = [
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_7","type":"function","function":{"name":"semantic_search","arguments":"{\"query\":"}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"lease\"}"}}]}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":9}}),
+        ];
+        let mut decoder = Decoder::for_completion();
+        let mut text = Vec::new();
+        for frame in frames {
+            text.extend(
+                decoder
+                    .push(format!("data: {frame}\n\n").as_bytes())
+                    .expect("frame"),
+            );
+        }
+        decoder.push(b"data: [DONE]\n\n").expect("done");
+        assert!(text.is_empty());
+
+        let response = decoder.into_response().expect("response");
+        assert_eq!(response.finish_reason, "tool_calls");
+        assert_eq!(response.input_tokens, 40);
+        match response.tool_calls.as_slice() {
+            [CompletionInput::ToolCall {
+                id,
+                name,
+                arguments,
+            }] => {
+                assert_eq!(id, "call_7");
+                assert_eq!(name, "semantic_search");
+                assert_eq!(arguments, &json!({"query": "lease"}));
+            }
+            other => panic!("expected one tool call, got {other:?}"),
+        }
     }
 
     /// The llama.cpp chat template is the only layer that can stop a Qwen3-style
@@ -848,15 +1078,19 @@ mod tests {
     /// sends to the same server.
     #[test]
     fn no_reasoning_disables_thinking_in_the_chat_template() {
-        let messages = [("user", "Rewrite this.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Rewrite this.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning {
                 reasoning_effort: Some("none"),
                 json_schema: None,
                 time_budget: None,
+                sampling: None,
+                max_output_tokens: None,
+                tools: None,
+                want_logprobs: false,
             },
         );
 
@@ -867,15 +1101,19 @@ mod tests {
 
     #[test]
     fn a_real_reasoning_effort_reaches_the_chat_template_as_itself() {
-        let messages = [("user", "Think about this.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Think about this.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning {
                 reasoning_effort: Some("low"),
                 json_schema: None,
                 time_budget: None,
+                sampling: None,
+                max_output_tokens: None,
+                tools: None,
+                want_logprobs: false,
             },
         );
 
@@ -884,14 +1122,41 @@ mod tests {
         assert_eq!(json["chat_template_kwargs"]["reasoning_effort"], "low");
     }
 
+    #[test]
+    fn a_logprobs_request_asks_for_the_first_tokens_alternatives() {
+        let messages = SidecarLLMClient::build_messages(None, "Answer in one word.");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages.clone(),
+            false,
+            RequestTuning {
+                want_logprobs: true,
+                ..RequestTuning::default()
+            },
+        );
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["logprobs"], true);
+        assert!(json["top_logprobs"].as_u64().expect("count") > 1);
+
+        let plain = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            false,
+            RequestTuning::default(),
+        );
+        let json = serde_json::to_value(&plain).expect("serialize");
+        assert!(json.get("logprobs").is_none());
+        assert!(json.get("top_logprobs").is_none());
+    }
+
     /// The legacy text API has no reasoning hint; those fields must then stay
     /// off the wire entirely rather than going out as nulls.
     #[test]
     fn an_untuned_request_sends_no_reasoning_fields() {
-        let messages = [("user", "Hi.".to_string())];
+        let messages = SidecarLLMClient::build_messages(None, "Hi.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
-            &messages,
+            messages,
             false,
             RequestTuning::default(),
         );
@@ -908,14 +1173,160 @@ mod tests {
         let payload = r#"{"choices":[{"delta":{}}]}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(payload).expect("parse");
         assert_eq!(chunk.choices.len(), 1);
-        assert_eq!(chunk.choices[0].delta.content, "");
+        assert_eq!(chunk.choices[0].delta.content, None);
+    }
+
+    /// llama-server's prompt-progress frame carries `content: null`; the old
+    /// `String` field rejected it and logged every one as malformed.
+    #[test]
+    fn a_prompt_progress_frame_is_not_malformed_and_not_text() {
+        let mut decoder = SseDecoder::new();
+        let out = decoder.push(PROGRESS_FRAME.as_bytes());
+        assert!(out.is_empty());
+    }
+
+    const PROGRESS_FRAME: &str = "data: {\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null}}],\"prompt_progress\":{\"total\":4000,\"cache\":0,\"processed\":2048,\"time_ms\":1}}\n\n";
+
+    /// Frames delivered at virtual times, for driving the stream clocks on a
+    /// paused runtime.
+    fn scripted(
+        frames: Vec<(u64, String)>,
+    ) -> impl Stream<Item = Result<Vec<u8>, std::io::Error>> + Send + Unpin + 'static {
+        Box::pin(futures::stream::unfold(
+            frames.into_iter(),
+            |mut frames| async move {
+                let (delay, frame) = frames.next()?;
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+                Some((Ok(frame.into_bytes()), frames))
+            },
+        ))
+    }
+
+    /// Ninety seconds of prompt processing, reported every 45, then the answer.
+    /// The flat 60 s first-token wait failed this turn; progress frames are
+    /// liveness, so it must now succeed on both stream paths.
+    fn slow_prefill() -> Vec<(u64, String)> {
+        let answer = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Answer\"},\"finish_reason\":null}]}\n\n";
+        let finish = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        vec![
+            (45, PROGRESS_FRAME.to_string()),
+            (45, PROGRESS_FRAME.to_string()),
+            (10, answer.to_string()),
+            (1, finish.to_string()),
+        ]
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn typed_stream_survives_ninety_seconds_of_prompt_progress() {
+        let prefill = prefill_allowance(&[json!({"role":"user","content":"hi"})]);
+        assert_eq!(
+            prefill, FIRST_TOKEN_TIMEOUT,
+            "a short prompt gets the floor"
+        );
+        let response =
+            SidecarLLMClient::drain_typed_stream(scripted(slow_prefill()), prefill, &|_| Ok(()))
+                .await
+                .unwrap();
+        assert_eq!(response.text, "Answer");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn legacy_stream_survives_ninety_seconds_of_prompt_progress() {
+        let mut stream =
+            SidecarLLMClient::parse_sse_stream(scripted(slow_prefill()), FIRST_TOKEN_TIMEOUT);
+        let mut text = String::new();
+        while let Some(piece) = stream.next().await {
+            text.push_str(&piece.unwrap());
+        }
+        assert_eq!(text, "Answer");
+    }
+
+    /// Once the model is generating, silence is a stall again.
+    #[tokio::test(start_paused = true)]
+    async fn silence_after_generation_starts_is_still_a_stall() {
+        let answer = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n";
+        let frames = vec![(1, answer.to_string()), (45, answer.to_string())];
+        let result = SidecarLLMClient::drain_typed_stream(
+            scripted(frames),
+            FIRST_TOKEN_TIMEOUT,
+            &|_| Ok(()),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    /// A long prompt with no progress frames gets one batch at the floor rate.
+    #[test]
+    fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
+        let long = json!({"role":"user","content":"x".repeat(40_000)});
+        assert_eq!(
+            prefill_allowance(&[long]),
+            FIRST_TOKEN_TIMEOUT
+                + Duration::from_secs((PREFILL_BATCH_TOKENS / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
+        );
+    }
+
+    #[test]
+    fn a_stream_asks_for_prompt_progress() {
+        let stream = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            Vec::new(),
+            true,
+            RequestTuning::default(),
+        );
+        let json = serde_json::to_value(&stream).unwrap();
+        assert_eq!(json["return_progress"], true);
+        let once = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            Vec::new(),
+            false,
+            RequestTuning::default(),
+        );
+        assert!(serde_json::to_value(&once)
+            .unwrap()
+            .get("return_progress")
+            .is_none());
+    }
+
+    /// Memory extraction asks for 8192 tokens under an 8-minute budget; the
+    /// 120 s cap cut it off with most of that budget left.
+    #[test]
+    fn a_non_stream_call_gets_the_callers_whole_budget() {
+        let eight_minutes = Duration::from_secs(8 * 60);
+        assert_eq!(non_stream_timeout(Some(eight_minutes)), eight_minutes);
+        assert_eq!(
+            non_stream_timeout(Some(Duration::from_secs(20))),
+            Duration::from_secs(20)
+        );
+        assert_eq!(non_stream_timeout(None), NON_STREAM_TIMEOUT);
+    }
+
+    /// A chat-template 500 quotes the prompt; none of it may reach the error.
+    #[tokio::test]
+    async fn a_server_error_body_is_not_copied_into_the_error() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(
+                r#"{"error":{"code":500,"message":"template failed near: my secret diary entry"}}"#,
+            ))
+            .mount(&server)
+            .await;
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/chat/completions", server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let err = redacted_status(response).await.unwrap_err().to_string();
+        assert!(err.contains("500"), "{err}");
+        assert!(!err.contains("secret diary"), "{err}");
     }
 
     #[test]
     fn deserialize_chunk_extracts_content() {
         let payload = r#"{"choices":[{"delta":{"content":"hello"}}]}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(payload).expect("parse");
-        assert_eq!(chunk.choices[0].delta.content, "hello");
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hello"));
     }
 
     #[test]

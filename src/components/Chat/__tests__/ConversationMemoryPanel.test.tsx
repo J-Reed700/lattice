@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,7 +14,7 @@ import type {
 const getConversationMemory = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../lib/api', () => ({
-  VaultAPI: { getConversationMemory },
+  VaultAPI: { getConversationMemory, manageKnowledge: vi.fn().mockResolvedValue({ok:true,data:{items:[],hasMore:false,lastAnswerMemoryIds:[]}}) },
 }));
 
 const quote = (overrides: Partial<MemoryEvidenceDto> = {}): MemoryEvidenceDto => ({
@@ -70,12 +71,12 @@ function resolveWith(value: ConversationMemoryDetailsDto) {
 function renderPanel(props: { onClose?: () => void; messageContentById?: Map<string, string> } = {}) {
   const onClose = props.onClose ?? vi.fn();
   const view = render(
-    <ConversationMemoryPanel
+    <QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><ConversationMemoryPanel
       conversationId="conv-1"
       isOpen
       onClose={onClose}
       messageContentById={props.messageContentById}
-    />
+    /></QueryClientProvider>
   );
   return { ...view, onClose };
 }
@@ -228,7 +229,7 @@ describe('ConversationMemoryPanel', () => {
     resolveWith(
       details({ history: [item({ id: 'old-1', state: 'superseded', label: 'Budget was $1,000.' })] })
     );
-    await userEvent.click(screen.getByRole('button', { name: /show earlier versions/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /show earlier versions/i }));
 
     await waitFor(() => expect(getConversationMemory).toHaveBeenLastCalledWith('conv-1', true));
     expect(await screen.findByText('Budget was $1,000.')).toBeInTheDocument();
@@ -317,16 +318,12 @@ describe('ConversationMemoryPanel', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('offers no way to edit or add a memory item', async () => {
-    // Read-only is the guarantee: an editable item would be a requirement with
-    // no source behind it.
+  it('offers explicit memory capture without editing an extracted quotation in place', async () => {
     resolveWith(details());
     renderPanel();
-
     await screen.findByTestId('memory-item');
-    expect(screen.queryAllByRole('textbox')).toHaveLength(0);
-    for (const label of [/edit/i, /add/i, /save/i, /delete/i, /remove/i]) {
-      expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
-    }
+    expect(screen.getByLabelText('Memory text')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name:'Remember'})).toBeDisabled();
+    expect(screen.getByTestId('memory-evidence-quote')).toBeInTheDocument();
   });
 });

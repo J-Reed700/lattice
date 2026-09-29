@@ -8,22 +8,30 @@
 //! and opposite meaning look identical to a token counter.
 //!
 //! The judge is an improvement on the lexical verdict, never a precondition
-//! for one. Without an LLM handle, or when it times out or answers with
-//! nonsense, escalated claims remain unsupported rather than receiving a
-//! positive verdict from vocabulary overlap alone. With no judge configured,
+//! for one. An escalated claim the judge never reached — the budget ran out,
+//! the call failed — keeps its lexical verdict, except one carrying a number,
+//! date or negation: overlap cannot settle those, so it reads as unverified
+//! rather than borrowing a positive verdict from shared vocabulary. Unverified
+//! is its own state and never counts as unsupported: "not checked" and "not
+//! found in the source" are different findings. With no judge configured,
 //! reports remain explicitly lexical.
 
 use std::sync::Arc;
 
 use tracing::{debug, info};
 
+use crate::application::contracts::settings::LLMVerificationSettingsDto;
 use crate::application::ports::LLMPort;
 use crate::features::qa::dto::SourceDto;
 
+mod background;
 mod judge;
 mod lexical;
 
-use self::judge::ClaimJudge;
+pub use self::background::VerificationReadyDto;
+pub(super) use self::background::{pending_metadata, BackgroundVerification};
+
+use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
 
 /// How a claim stands against the passages it cites.
@@ -32,6 +40,8 @@ pub(super) enum ClaimVerdict {
     Supported,
     Contradicted,
     Unsupported,
+    /// Nothing checked it. See [`UnverifiedReason`].
+    Unverified,
 }
 
 impl ClaimVerdict {
@@ -40,6 +50,32 @@ impl ClaimVerdict {
             Self::Supported => "supported",
             Self::Contradicted => "contradicted",
             Self::Unsupported => "unsupported",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
+/// Why a claim was left unverified, so the UI can say which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnverifiedReason {
+    /// The judge's time budget ran out before it reached the claim.
+    Budget,
+    /// The judge was asked and returned nothing usable.
+    JudgeFailed,
+    /// The cited source has no archived text to check against.
+    NoText,
+    /// The judge returned a label, but its probability was too low to present
+    /// that label as a finding.
+    LowConfidence,
+}
+
+impl UnverifiedReason {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Budget => "budget",
+            Self::JudgeFailed => "judge_failed",
+            Self::NoText => "no_text",
+            Self::LowConfidence => "low_confidence",
         }
     }
 }
@@ -72,6 +108,12 @@ pub(super) struct ClaimAssessment {
     /// A span from a cited passage, verified to actually appear in it.
     pub(super) evidence_quote: Option<String>,
     pub(super) method: VerificationMethod,
+    /// The judge's probability for `verdict`, when the provider reports one.
+    pub(super) confidence: Option<f32>,
+    /// A short factual comparison supplied by the judge, when available.
+    pub(super) reason: Option<String>,
+    /// Set exactly when `verdict` is `Unverified`.
+    pub(super) unverified_reason: Option<UnverifiedReason>,
 }
 
 impl ClaimAssessment {
@@ -86,13 +128,50 @@ impl ClaimAssessment {
             },
             evidence_quote: None,
             method: VerificationMethod::Lexical,
+            confidence: None,
+            reason: None,
+            unverified_reason: None,
         }
+    }
+
+    fn mark_unverified(&mut self, reason: UnverifiedReason) {
+        self.verdict = ClaimVerdict::Unverified;
+        self.unverified_reason = Some(reason);
+        self.evidence_quote = None;
+        self.reason = None;
     }
 }
 
-/// Emitting more than this many per-claim verdicts would overflow what the UI
-/// will accept and cost the whole summary, so the tail is dropped instead.
+/// The limits the UI's summary schema (`src/types/conversation.ts`) enforces.
+/// It discards the whole summary on any violation, so everything emitted is
+/// cut to fit here instead; the counts stay the true totals.
 const MAX_EMITTED_VERDICTS: usize = 60;
+const MAX_SUPPORTED_NOTES: usize = 40;
+const MAX_LISTED_CLAIMS: usize = 20;
+const MAX_SENTENCE_UNITS: usize = 2000;
+const MAX_QUOTE_UNITS: usize = 1000;
+const MAX_CLAIM_CITATIONS: usize = 24;
+const CITATION_ID_RANGE: std::ops::RangeInclusive<u32> = 1..=1000;
+
+/// Cut to at most `max` UTF-16 code units — the unit a JavaScript string's
+/// length counts — without splitting a character.
+fn fit_utf16(text: &str, max: usize) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= max
+        })
+        .collect()
+}
+
+fn fit_sentences(sentences: &[String], max: usize) -> Vec<String> {
+    sentences
+        .iter()
+        .take(max)
+        .map(|sentence| fit_utf16(sentence, MAX_SENTENCE_UNITS))
+        .collect()
+}
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct GroundingReport {
@@ -103,6 +182,8 @@ pub(super) struct GroundingReport {
     /// existing badge counts this list and a contradiction is the worst case.
     pub(super) unsupported_claims: Vec<String>,
     pub(super) contradicted_claims: Vec<String>,
+    /// Claims nothing checked. Not in `unsupported_claims`.
+    pub(super) unverified_claims: usize,
     pub(super) claims: Vec<ClaimAssessment>,
     pub(super) judge_used: bool,
 }
@@ -128,6 +209,7 @@ impl GroundingReport {
                 ClaimVerdict::Unsupported => {
                     report.unsupported_claims.push(claim.sentence.clone());
                 }
+                ClaimVerdict::Unverified => report.unverified_claims += 1,
             }
         }
 
@@ -150,11 +232,34 @@ impl GroundingReport {
             .count()
     }
 
+    /// Supported over checked. An unchecked claim is neither grounded nor
+    /// ungrounded, so it is left out of both sides; nothing checked is 1.0 in
+    /// the same sense that nothing to check is.
     pub(super) fn grounded_ratio(&self) -> f32 {
-        if self.claims_evaluated == 0 {
+        let checked = self.claims_evaluated.saturating_sub(self.unverified_claims);
+        if checked == 0 {
             return 1.0;
         }
-        self.supported_claims as f32 / self.claims_evaluated as f32
+        self.supported_claims as f32 / checked as f32
+    }
+
+    /// What the "Checking the answer" step says it found.
+    ///
+    /// An answer with nothing to check is not an answer that failed its check,
+    /// so it says so in those words rather than reporting "0 of 0 backed".
+    pub(super) fn result_line(&self) -> String {
+        if self.claims_evaluated == 0 {
+            return "nothing to check against sources".to_string();
+        }
+        let backed = format!(
+            "{} of {} claims backed",
+            self.supported_claims, self.claims_evaluated
+        );
+        if self.unverified_claims == 0 {
+            backed
+        } else {
+            format!("{backed}, {} not checked", self.unverified_claims)
+        }
     }
 
     /// The metadata blob persisted with the assistant message.
@@ -166,12 +271,28 @@ impl GroundingReport {
             .iter()
             .take(MAX_EMITTED_VERDICTS)
             .map(|claim| {
+                let citation_ids: Vec<u32> = claim
+                    .citation_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| CITATION_ID_RANGE.contains(id))
+                    .take(MAX_CLAIM_CITATIONS)
+                    .collect();
                 serde_json::json!({
-                    "sentence": claim.sentence,
-                    "citationIds": claim.citation_ids,
+                    "sentence": fit_utf16(&claim.sentence, MAX_SENTENCE_UNITS),
+                    "citationIds": citation_ids,
                     "verdict": claim.verdict.as_str(),
-                    "evidenceQuote": claim.evidence_quote,
+                    "evidenceQuote": claim
+                        .evidence_quote
+                        .as_deref()
+                        .map(|quote| fit_utf16(quote, MAX_QUOTE_UNITS)),
                     "method": claim.method.as_str(),
+                    "confidence": claim.confidence,
+                    "reason": claim
+                        .reason
+                        .as_deref()
+                        .map(|reason| fit_utf16(reason, MAX_QUOTE_UNITS)),
+                    "unverifiedReason": claim.unverified_reason.map(UnverifiedReason::as_str),
                 })
             })
             .collect();
@@ -180,16 +301,18 @@ impl GroundingReport {
             "enabled": true,
             "claimsEvaluated": self.claims_evaluated,
             "supportedClaims": self.supported_claims,
-            "supportedClaimNotes": self.supported_claim_notes,
-            "unsupportedClaims": self.unsupported_claims,
+            "supportedClaimNotes": fit_sentences(&self.supported_claim_notes, MAX_SUPPORTED_NOTES),
+            "unsupportedClaims": fit_sentences(&self.unsupported_claims, MAX_LISTED_CLAIMS),
             "groundedRatio": self.grounded_ratio(),
-            "contradictedClaims": self.contradicted_claims,
+            "contradictedClaims": fit_sentences(&self.contradicted_claims, MAX_LISTED_CLAIMS),
             "verdictCounts": {
                 "supported": self.supported_claims,
                 "contradicted": self.contradicted_claims.len(),
                 "unsupported": self.claims_evaluated
                     .saturating_sub(self.supported_claims)
-                    .saturating_sub(self.contradicted_claims.len()),
+                    .saturating_sub(self.contradicted_claims.len())
+                    .saturating_sub(self.unverified_claims),
+                "unverified": self.unverified_claims,
             },
             "claimVerdicts": verdicts,
             "judgeUsed": self.judge_used,
@@ -248,6 +371,16 @@ impl GroundingVerifier {
         Self { judge: None }
     }
 
+    /// Apply the user's verification settings to the judge, if there is one.
+    ///
+    /// Without this the judge decodes greedily, which is the right default; the
+    /// settings exist so someone can trade that determinism away deliberately
+    /// rather than inheriting it from whatever the chat model is tuned to.
+    pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
+        self.judge = self.judge.map(|judge| judge.with_tuning(tuning));
+        self
+    }
+
     pub(super) async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
         let claims = lexical::lexical_pass(response, sources);
         if claims.is_empty() {
@@ -261,30 +394,71 @@ impl GroundingVerifier {
             return GroundingReport::from_assessments(assessments, false);
         };
 
-        let pending: Vec<usize> = claims
-            .iter()
-            .enumerate()
-            .filter(|(_, claim)| lexical::needs_judge(claim))
-            .map(|(index, _)| index)
-            .collect();
-        if pending.is_empty() {
+        // What each escalated claim can be judged against. A cited page with
+        // no text is unverified whatever the lexical pass made of it: there
+        // was nothing to find the claim in, so "not found" would be false.
+        let mut requests = Vec::new();
+        for (index, claim) in claims.iter().enumerate() {
+            if !lexical::needs_judge(claim) {
+                continue;
+            }
+            match evidence_for(claim, sources) {
+                Evidence::Found(evidence) => {
+                    requests.push((index, claim.claim_text.as_str(), evidence));
+                }
+                Evidence::NoText => {
+                    if let Some(assessment) = assessments.get_mut(index) {
+                        assessment.mark_unverified(UnverifiedReason::NoText);
+                    }
+                }
+                Evidence::NoCitation => {}
+            }
+        }
+        if requests.is_empty() {
             return GroundingReport::from_assessments(assessments, false);
         }
 
-        // Escalated claims are unresolved until the semantic judge returns.
-        // A timeout or malformed reply must not certify a numeric contradiction
-        // merely because it shares vocabulary with the source.
-        for index in &pending {
-            if let Some(assessment) = assessments.get_mut(*index) {
-                assessment.verdict = ClaimVerdict::Unsupported;
-            }
-        }
-        let outcomes = judge.judge_claims(&claims, &pending, sources).await;
-        for (index, outcome) in outcomes {
-            if let Some(assessment) = assessments.get_mut(index) {
-                assessment.verdict = outcome.verdict;
-                assessment.evidence_quote = outcome.quote;
-                assessment.method = VerificationMethod::Judge;
+        let judgments = judge.judge_claims(&requests).await;
+        for (index, judgment) in judgments {
+            let Some(assessment) = assessments.get_mut(index) else {
+                continue;
+            };
+            let unreached = match judgment {
+                ClaimJudgment::Judged(outcome) => {
+                    assessment.confidence = outcome.confidence;
+                    assessment.method = VerificationMethod::Judge;
+                    if outcome
+                        .confidence
+                        .is_some_and(|confidence| confidence < MIN_VERDICT_CONFIDENCE)
+                    {
+                        let confidence = outcome.confidence.unwrap_or_default();
+                        assessment.mark_unverified(UnverifiedReason::LowConfidence);
+                        // `mark_unverified` keeps the lexical method for
+                        // failed calls; this one did run, it simply did not
+                        // earn the right to present a red/green finding.
+                        assessment.method = VerificationMethod::Judge;
+                        assessment.reason = Some(format!(
+                            "The checker was only {:.0}% sure, so this sentence was not marked as a finding.",
+                            confidence * 100.0
+                        ));
+                        continue;
+                    }
+                    assessment.verdict = outcome.verdict;
+                    assessment.evidence_quote = outcome.quote;
+                    assessment.reason = outcome.reason;
+                    continue;
+                }
+                ClaimJudgment::OutOfTime => UnverifiedReason::Budget,
+                ClaimJudgment::Unusable => UnverifiedReason::JudgeFailed,
+            };
+            // Unreached: the lexical verdict stands where overlap can speak
+            // for the claim. Where it cannot — a number, a date, a negation —
+            // a match certifies nothing, and a miss is not a finding either.
+            if claims
+                .get(index)
+                .is_some_and(|claim| claim.contradiction_prone)
+            {
+                assessment.mark_unverified(unreached);
             }
         }
 
@@ -339,6 +513,8 @@ pub(super) mod test_support {
             chunk_index: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 }
@@ -361,6 +537,7 @@ mod tests {
         replies: Vec<String>,
         delay: Duration,
         calls: AtomicUsize,
+        logprobs: Option<Vec<(String, f32)>>,
     }
 
     impl ScriptedLlm {
@@ -369,6 +546,7 @@ mod tests {
                 replies: replies.into_iter().map(str::to_string).collect(),
                 delay: Duration::ZERO,
                 calls: AtomicUsize::new(0),
+                logprobs: None,
             }
         }
 
@@ -379,6 +557,11 @@ mod tests {
 
         fn call_count(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
+        }
+
+        fn with_logprobs(mut self, logprobs: Vec<(String, f32)>) -> Self {
+            self.logprobs = Some(logprobs);
+            self
         }
     }
 
@@ -412,7 +595,24 @@ mod tests {
         }
 
         async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-            unimplemented!("typed completions are not enabled for this mock")
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if !self.delay.is_zero() {
+                tokio::time::sleep(self.delay).await;
+            }
+            Ok(CompletionResponse {
+                text: self
+                    .replies
+                    .get(call)
+                    .or_else(|| self.replies.last())
+                    .cloned()
+                    .unwrap_or_default(),
+                first_token_logprobs: self.logprobs.clone(),
+                ..Default::default()
+            })
+        }
+
+        fn supports_typed_completions(&self) -> bool {
+            self.logprobs.is_some()
         }
 
         fn model_name(&self) -> &str {
@@ -435,6 +635,9 @@ mod tests {
     const CONTRADICTION_SOURCE: &str =
         "Across both seasons, salicylic acid treatment reduced measured cold tolerance in \
          blueberry plants by 12 percent relative to untreated controls.";
+
+    const EXPLAINED_CONTRADICTION: &str =
+        "contradicted\nReason: The claim says improved; the source says reduced.\nSource quote: Across both seasons, salicylic acid treatment reduced measured cold tolerance in blueberry plants by 12 percent relative to untreated controls.";
 
     /// Lexically indistinguishable from the source: same vocabulary, opposite claim.
     const CONTRADICTING_RESPONSE: &str =
@@ -496,9 +699,7 @@ mod tests {
             "the pre-filter cannot see the inversion"
         );
 
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"contradicted","quote":"reduced measured cold tolerance in blueberry plants by 12 percent"}]}"#,
-        ]));
+        let llm = Arc::new(ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]));
         let report = GroundingVerifier::new(Some(llm))
             .verify(CONTRADICTING_RESPONSE, &sources)
             .await;
@@ -508,10 +709,12 @@ mod tests {
         assert_eq!(report.contradicted_count(), 1);
         assert_eq!(report.unsupported_count(), 1, "contradictions stay flagged");
         assert_eq!(report.claims[0].method, VerificationMethod::Judge);
-        assert_eq!(
-            report.claims[0].evidence_quote.as_deref(),
-            Some("reduced measured cold tolerance in blueberry plants by 12 percent")
-        );
+        // The quote is the page's own sentence, not one the model wrote.
+        assert!(report.claims[0]
+            .evidence_quote
+            .as_deref()
+            .unwrap()
+            .contains("reduced measured cold tolerance in blueberry plants by 12 percent"));
         assert!(report.judge_used);
     }
 
@@ -549,21 +752,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fabricated_support_quote_cannot_certify_a_claim() {
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"supported","quote":"fabricated evidence that is absent"}]}"#,
-        ]));
-        let report = GroundingVerifier::new(Some(llm))
-            .verify(CONTRADICTING_RESPONSE, &[source(CONTRADICTION_SOURCE)])
-            .await;
-        assert_eq!(report.supported_claims, 0);
-    }
-
-    #[tokio::test]
     async fn invalid_citation_is_not_rescued_by_the_judge() {
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"supported","quote":"reduced measured cold tolerance"}]}"#,
-        ]));
+        let llm = Arc::new(ScriptedLlm::new(vec!["supported"]));
         let response = CONTRADICTING_RESPONSE.replace("[1]", "[99]");
         let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
             .verify(&response, &[source(CONTRADICTION_SOURCE)])
@@ -583,8 +773,43 @@ mod tests {
 
         assert_eq!(llm.call_count(), 1);
         assert_eq!(report.supported_claims, 0);
+        // Not checked is not "not found": the claim is neither certified by
+        // overlap nor reported as missing from its source.
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
+        assert_eq!(
+            report.claims[0].unverified_reason,
+            Some(UnverifiedReason::JudgeFailed)
+        );
+        assert_eq!(report.unsupported_count(), 0);
         assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
         assert!(!report.judge_used);
+    }
+
+    #[tokio::test]
+    async fn a_low_confidence_negative_is_not_presented_as_a_contradiction() {
+        let llm = Arc::new(
+            ScriptedLlm::new(vec![
+                "contradicted\nReason: The claim says improved; the source says reduced.\nSource quote: Across both seasons, salicylic acid treatment reduced measured cold tolerance in blueberry plants by 12 percent relative to untreated controls.",
+            ])
+            .with_logprobs(vec![
+                ("contradicted".into(), (0.46f32).ln()),
+                ("supported".into(), (0.40f32).ln()),
+                ("unsupported".into(), (0.14f32).ln()),
+            ]),
+        );
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(CONTRADICTING_RESPONSE, &[source(CONTRADICTION_SOURCE)])
+            .await;
+
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
+        assert_eq!(
+            report.claims[0].unverified_reason,
+            Some(UnverifiedReason::LowConfidence)
+        );
+        assert_eq!(report.claims[0].method, VerificationMethod::Judge);
+        assert_eq!(report.contradicted_count(), 0);
+        assert!(report.claims[0].reason.as_deref().unwrap().contains("46%"));
+        assert_eq!(report.metadata_json()["verdictCounts"]["unverified"], 1);
     }
 
     #[tokio::test]
@@ -594,9 +819,7 @@ mod tests {
         let sources = vec![source(
             "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
         )];
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"unsupported","quote":""}]}"#,
-        ]));
+        let llm = Arc::new(ScriptedLlm::new(vec!["unsupported"]));
 
         let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
             .verify(response, &sources)
@@ -611,7 +834,7 @@ mod tests {
     /// not enabled for this crate. One 200ms call against a 400ms budget leaves
     /// too little for a second, with wide margins on either side of the check.
     #[tokio::test]
-    async fn time_budget_leaves_later_claims_on_their_lexical_verdict() {
+    async fn time_budget_leaves_later_numeric_claims_unverified() {
         let response = "Yields rose by 42 percent in treated plots [1].\n\
                         Frost damage fell by 18 percent in treated plots [1].\n\
                         Harvest weight increased by 7 percent in treated plots [1].";
@@ -620,15 +843,12 @@ mod tests {
         )];
 
         let llm = Arc::new(
-            ScriptedLlm::new(vec![
-                r#"{"verdicts":[{"id":1,"verdict":"contradicted","quote":""}]}"#,
-            ])
-            .with_delay(Duration::from_millis(200)),
+            ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_millis(200)),
         );
         let verifier = GroundingVerifier {
             judge: Some(
                 ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
-                    .with_batch_size(1)
+                    .with_concurrency(1)
                     .with_time_budget(Duration::from_millis(400)),
             ),
         };
@@ -642,8 +862,59 @@ mod tests {
             "the budget must stop further judge calls"
         );
         assert_eq!(report.claims[0].method, VerificationMethod::Judge);
-        assert_eq!(report.claims[1].method, VerificationMethod::Lexical);
-        assert_eq!(report.claims[2].method, VerificationMethod::Lexical);
+        // Unreached and carrying a figure: not checked, and said so.
+        for claim in &report.claims[1..] {
+            assert_eq!(claim.method, VerificationMethod::Lexical);
+            assert_eq!(claim.verdict, ClaimVerdict::Unverified);
+            assert_eq!(claim.unverified_reason, Some(UnverifiedReason::Budget));
+        }
+        assert_eq!(
+            report.unsupported_count(),
+            1,
+            "only the judged contradiction"
+        );
+        assert_eq!(report.metadata_json()["verdictCounts"]["unverified"], 2);
+    }
+
+    /// The same three claims and the same budget, which serves one call in a
+    /// row: judged side by side, all three fit. The whole point of running
+    /// claims concurrently.
+    #[tokio::test]
+    async fn concurrent_calls_judge_more_claims_inside_the_same_budget() {
+        let response = "Yields rose by 42 percent in treated plots [1].\n\
+                        Frost damage fell by 18 percent in treated plots [1].\n\
+                        Harvest weight increased by 7 percent in treated plots [1].";
+        let sources = vec![source(
+            "Treated plots recorded changes in yields, frost damage, and harvest weight across the trial.",
+        )];
+
+        let llm = Arc::new(
+            ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_millis(200)),
+        );
+        let verifier = GroundingVerifier {
+            judge: Some(
+                ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
+                    .with_concurrency(3)
+                    .with_time_budget(Duration::from_millis(400)),
+            ),
+        };
+
+        let started = std::time::Instant::now();
+        let report = verifier.verify(response, &sources).await;
+
+        assert_eq!(llm.call_count(), 3);
+        assert!(
+            report
+                .claims
+                .iter()
+                .all(|claim| claim.method == VerificationMethod::Judge),
+            "every claim was judged: {:?}",
+            report.claims.iter().map(|c| c.method).collect::<Vec<_>>()
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(600),
+            "three 200ms calls ran side by side, not in a row"
+        );
     }
 
     #[tokio::test]
@@ -660,9 +931,7 @@ mod tests {
     #[tokio::test]
     async fn the_judge_can_be_turned_off_explicitly() {
         let sources = vec![source(CONTRADICTION_SOURCE)];
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"contradicted","quote":""}]}"#,
-        ]));
+        let llm = Arc::new(ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]));
 
         let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
             .with_judge_enabled(false)
@@ -676,9 +945,7 @@ mod tests {
     #[tokio::test]
     async fn metadata_keeps_the_existing_keys_and_adds_the_new_ones() {
         let sources = vec![source(CONTRADICTION_SOURCE)];
-        let llm = Arc::new(ScriptedLlm::new(vec![
-            r#"{"verdicts":[{"id":1,"verdict":"contradicted","quote":"reduced measured cold tolerance"}]}"#,
-        ]));
+        let llm = Arc::new(ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]));
 
         let metadata = GroundingVerifier::new(Some(llm))
             .verify(CONTRADICTING_RESPONSE, &sources)
@@ -696,6 +963,7 @@ mod tests {
         assert_eq!(metadata["verdictCounts"]["supported"], 0);
         assert_eq!(metadata["verdictCounts"]["contradicted"], 1);
         assert_eq!(metadata["verdictCounts"]["unsupported"], 0);
+        assert_eq!(metadata["verdictCounts"]["unverified"], 0);
         assert_eq!(metadata["judgeUsed"], true);
 
         let verdicts = metadata["claimVerdicts"].as_array().unwrap();
@@ -703,9 +971,118 @@ mod tests {
         assert_eq!(verdicts[0]["verdict"], "contradicted");
         assert_eq!(verdicts[0]["method"], "judge");
         assert_eq!(verdicts[0]["citationIds"][0], 1);
+        assert!(verdicts[0]["evidenceQuote"]
+            .as_str()
+            .unwrap()
+            .contains("reduced measured cold tolerance"));
+        // The scripted judge reports no logprobs, so no probability is claimed.
+        assert!(verdicts[0]["confidence"].is_null());
+    }
+
+    /// The UI drops the whole summary on any schema violation, so the lists
+    /// are cut to its limits while the counts keep the true totals.
+    #[test]
+    fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
+        let claim = |sentence: String, citation_ids: Vec<u32>| ClaimAssessment {
+            sentence,
+            citation_ids,
+            verdict: ClaimVerdict::Unsupported,
+            evidence_quote: None,
+            method: VerificationMethod::Lexical,
+            confidence: None,
+            reason: None,
+            unverified_reason: None,
+        };
+        let mut claims: Vec<ClaimAssessment> = (0..25)
+            .map(|i| claim(format!("claim {i}"), vec![1]))
+            .collect();
+        claims[0] = claim("🙂".repeat(1500), (0..40).collect());
+
+        let metadata = GroundingReport::from_assessments(claims, false).metadata_json();
+
+        assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 20);
+        assert_eq!(metadata["claimsEvaluated"], 25);
+        assert_eq!(metadata["verdictCounts"]["unsupported"], 25);
+        let first = &metadata["claimVerdicts"][0];
         assert_eq!(
-            verdicts[0]["evidenceQuote"],
-            "reduced measured cold tolerance"
+            first["sentence"].as_str().unwrap().encode_utf16().count(),
+            2000
         );
+        let ids: Vec<u64> = first["citationIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
+    }
+
+    /// A plain claim the judge never reached keeps what overlap said about it:
+    /// "not checked by the model" is not a reason to call it missing.
+    #[tokio::test]
+    async fn an_unreached_plain_claim_keeps_its_lexical_verdict() {
+        // Supported on overlap, but not strongly enough to skip the judge.
+        let response = "Blueberry growers noticed hardier bushes, better cold tolerance and sturdier stems after salicylic acid treatment [1].";
+        let sources = vec![source(
+            "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
+        )];
+        let llm = Arc::new(ScriptedLlm::new(vec!["I cannot say."]));
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(response, &sources)
+            .await;
+
+        assert_eq!(llm.call_count(), 1, "the claim was escalated");
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Supported);
+        assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
+        assert!(report.claims[0].unverified_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_cited_page_with_no_archived_text_is_not_checked_rather_than_missing() {
+        let llm = Arc::new(ScriptedLlm::new(vec!["supported"]));
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(CONTRADICTING_RESPONSE, &[source("")])
+            .await;
+
+        assert_eq!(llm.call_count(), 0);
+        assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
+        assert_eq!(
+            report.claims[0].unverified_reason,
+            Some(UnverifiedReason::NoText)
+        );
+        assert_eq!(report.unsupported_count(), 0);
+        let metadata = report.metadata_json();
+        assert_eq!(metadata["claimVerdicts"][0]["verdict"], "unverified");
+        assert_eq!(metadata["claimVerdicts"][0]["unverifiedReason"], "no_text");
+    }
+
+    #[test]
+    fn unverified_claims_count_against_neither_side_of_the_ratio() {
+        let claim = |verdict, reason| ClaimAssessment {
+            sentence: "claim".into(),
+            citation_ids: vec![1],
+            verdict,
+            evidence_quote: None,
+            method: VerificationMethod::Lexical,
+            confidence: None,
+            reason: None,
+            unverified_reason: reason,
+        };
+        let report = GroundingReport::from_assessments(
+            vec![
+                claim(ClaimVerdict::Supported, None),
+                claim(ClaimVerdict::Unsupported, None),
+                claim(ClaimVerdict::Unverified, Some(UnverifiedReason::Budget)),
+                claim(ClaimVerdict::Unverified, Some(UnverifiedReason::Budget)),
+            ],
+            true,
+        );
+        assert_eq!(report.unsupported_count(), 1);
+        assert!((report.grounded_ratio() - 0.5).abs() < f32::EPSILON);
+        let metadata = report.metadata_json();
+        assert_eq!(metadata["verdictCounts"]["supported"], 1);
+        assert_eq!(metadata["verdictCounts"]["unsupported"], 1);
+        assert_eq!(metadata["verdictCounts"]["unverified"], 2);
+        assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 1);
     }
 }

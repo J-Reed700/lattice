@@ -36,6 +36,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,
 };
+use crate::infrastructure::services::intent::{IntentClassifier, IntentInput, TurnIntent};
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -47,23 +48,32 @@ use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tracing::{info, warn};
 
+mod attachments;
 mod cancellation;
+mod document_text;
 mod fetch_memory;
 mod focus;
+mod prior_evidence;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
 pub mod memory_context;
 mod persistence;
+pub(crate) use persistence::index_memory_note;
 mod prompting;
-// Public so the retrieval evaluation harness can reuse the pipeline's own
-// sufficiency judgement instead of reimplementing it.
+pub(crate) mod source_snapshots; // Public so the retrieval evaluation harness can reuse the pipeline's own
+                                 // sufficiency judgement instead of reimplementing it.
 pub mod retrieval;
 mod tool_loop;
 pub mod turn_record;
 mod verification;
 mod web_steps;
 
+use self::attachments::{attachment_token_budget, build_turn_attachments, TurnAttachments};
+
+/// How much of an attachment the web-query rewriter is shown. Enough to name
+/// the subject, small enough that the utility model stays fast.
+const ATTACHMENT_DIGEST_CHARS: usize = 900;
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
 use self::focus::FocusScope;
 use self::persistence::{
@@ -73,8 +83,9 @@ use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptM
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::WEB_SOURCE_PREFIX;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
-    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, available_rag_budget, citation_ids_by_chunk, confine_document_context,
+    deduplicate_sources, load_recent_document_metadata, response_token_budget,
+    run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
@@ -83,7 +94,8 @@ pub use self::turn_record::{
     TurnModelDto, TurnRecordDto, TurnRouterDto, TurnStepDto, TurnStepKind, TurnStepState,
     TurnTimingDto, TurnTokensDto,
 };
-use self::verification::{GroundingReport, GroundingVerifier};
+pub use self::verification::VerificationReadyDto;
+use self::verification::{pending_metadata, BackgroundVerification};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -270,6 +282,11 @@ pub struct ChatStreamEventDto {
     /// the timeline under the finished answer is this same list.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<TurnStepDto>,
+
+    /// A grounding check that finished after the turn returned. Arrives once
+    /// per verified answer, possibly well after `done`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationReadyDto>,
 }
 
 impl ChatStreamEventDto {
@@ -456,6 +473,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     request_id: Option<String>,
+    attachment_names: Option<Vec<String>>,
+    attachment_document_ids: Option<Vec<String>>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
@@ -597,7 +616,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
     let max_tokens = llm.max_context_tokens();
     let context_build_start = Instant::now();
-    let (context, conversation_document_context, linked_web_sources_context) =
+    let (context, conversation_document_context, linked_web_sources_context, system_prompt) =
         build_conversation_context(
             container.conversation_context(),
             container.conversation_history(),
@@ -608,11 +627,104 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         )
         .await?;
     flow_metrics.context_build_ms = elapsed_ms(context_build_start);
+    // Conversation prompt, else the space's, else the global one. The memory
+    // plan takes it as a typed policy rather than the `System:` context entry.
+    let system_prompt = system_prompt.unwrap_or_default();
     let conversation_document_context =
         confine_document_context(container, &conv_id, conversation_document_context).await;
     // Pages linked to the conversation are outside material too.
     let linked_web_sources_context =
         linked_web_sources_context.filter(|_| !search_flags.closed_book);
+
+    // The utility model infers what an unflagged turn needs (vault search, web,
+    // follow-up) so an obvious case retrieves even with every toggle on its
+    // default. Enable-only: it can add retrieval, never take any away.
+    let search_flags = infer_turn_intent_flags(
+        container,
+        &llm,
+        tool_preferences.as_ref(),
+        search_flags,
+        &validated_message,
+        &context,
+    )
+    .await;
+
+    // The files this turn brought in are read, not searched for. Retrieval can
+    // miss them, and on a forced-web turn the vault is not searched at all, so
+    // carrying them is the only way an attachment reliably reaches the model.
+    // `closed_book` still wins: that turn carries its own material by
+    // definition and reads nothing else.
+    let question_tokens = llm.count_tokens(&validated_message);
+    let context_history_tokens: usize = context.iter().map(|entry| llm.count_tokens(entry)).sum();
+    // With bounded memory on, the plan — not this string context — carries the
+    // history, and it spends at most its own history pools on it.
+    let context_history_tokens = if settings.llm.bounded_conversation_memory {
+        memory_context::history_tokens_for_rag_budget(
+            llm.as_ref(),
+            &system_prompt,
+            question_tokens,
+            context_history_tokens,
+        )
+    } else {
+        context_history_tokens
+    };
+    let attachment_names = attachment_names.unwrap_or_default();
+    let attachment_ids = attachment_document_ids.unwrap_or_default();
+    let attachments = if search_flags.closed_book {
+        TurnAttachments::default()
+    } else if attachment_ids.is_empty() {
+        // Files that never made it into the library — an import still running
+        // when the message was sent, or one that failed. The chip is on the
+        // message either way, so the turn says the file arrived and could not
+        // be read rather than denying it.
+        TurnAttachments::still_importing(&attachment_names)
+    } else {
+        build_turn_attachments(
+            container,
+            &conv_service,
+            &conv_id,
+            &attachment_ids,
+            attachment_token_budget(available_rag_budget(
+                max_tokens,
+                question_tokens,
+                context_history_tokens,
+                0,
+            )),
+            &llm,
+            &highlight_terms,
+            tool_output_settings.excerpt_chars as usize,
+        )
+        .await
+    };
+    let attachment_tokens = attachments.prompt_tokens(&llm);
+    if !attachments.is_empty() {
+        let carried = attachments.carried_count();
+        let unreadable = attachments.unreadable_names().len();
+        recorder.note(
+            turn_record::TurnStepKind::OpenDocument,
+            if carried == 1 && unreadable == 0 {
+                "Read the attached file".to_string()
+            } else {
+                "Read the attached files".to_string()
+            },
+            None,
+            Some(match (carried, unreadable) {
+                (0, _) => "attached, but no readable text yet".to_string(),
+                (_, 0) => format!("{carried} file{}", if carried == 1 { "" } else { "s" }),
+                _ => format!("{carried} read, {unreadable} unreadable"),
+            }),
+        );
+    }
+    let available_for_rag = available_rag_budget(
+        max_tokens,
+        question_tokens,
+        context_history_tokens,
+        attachment_tokens,
+    );
+    // A message that only points at a file ("reference the chat I attached")
+    // has no subject of its own, so the web-query rewrite has to read one off
+    // the attachment or it searches for the request instead of the question.
+    let attachment_digest = attachments.subject_digest(ATTACHMENT_DIGEST_CHARS);
 
     let router_start = Instant::now();
     let (router_decision, router_record) = resolve_router_decision(
@@ -637,6 +749,33 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         "chat_with_conversation: Context built, starting LLM generation"
     );
 
+    // Evidence recall runs independently of web/KB search toggles. Forced web
+    // research supplements a conversation; it does not reset its source set.
+    let mut allowed_prior_documents: HashSet<String> = conversation_document_context
+        .iter()
+        .map(|reference| reference.document_id.clone())
+        .collect();
+    focus.confine(&mut allowed_prior_documents);
+    let prior_sources = if search_flags.closed_book {
+        Vec::new()
+    } else {
+        prior_evidence::recall(
+            container,
+            &conv_id,
+            &validated_message,
+            &allowed_prior_documents,
+            &attachments.sources(),
+            (available_for_rag / 4).min(4000),
+            &llm,
+        )
+        .await?
+    };
+    let prior_evidence_tokens = prior_evidence::render(&prior_sources)
+        .as_deref()
+        .map(|text| llm.count_tokens(text))
+        .unwrap_or(0);
+    let available_for_rag = available_for_rag.saturating_sub(prior_evidence_tokens);
+
     let retrieval_start = Instant::now();
     let mut retrieval = run_retrieval_pipeline(
         container,
@@ -650,8 +789,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         search_flags,
         &conversation_document_context,
         &highlight_terms,
-        &context,
-        max_tokens,
+        available_for_rag,
+        attachment_digest.as_deref(),
         &tool_output_settings,
         &settings.search,
         &focus,
@@ -665,14 +804,28 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     }
 
     let prompt_build_start = Instant::now();
+    // An attachment is in the prompt whole, so the same document coming back
+    // as search passages is a second copy of text the model already has and a
+    // footnote pointing at the same file twice.
+    let carried_attachment_ids = attachments.carried_document_ids();
+    if !carried_attachment_ids.is_empty() {
+        retrieval.search_response.results.retain(|result| {
+            result
+                .document_id
+                .as_deref()
+                .map(|id| !carried_attachment_ids.contains(id))
+                .unwrap_or(true)
+        });
+    }
     // Fetched web pages are carried whole where the window allows, so they are
     // no longer small enough to ignore: what they fill is not there for the
     // user's own passages.
-    let web_context_tokens = retrieval
+    // Counted before the numbers exist; a label is a token or two either way.
+    let web_context_tokens: usize = retrieval
         .web_context
-        .as_deref()
-        .map(|text| llm.count_tokens(text))
-        .unwrap_or(0);
+        .iter()
+        .map(|item| llm.count_tokens(&item.render(0)))
+        .sum();
     let budgeted_results = budget_search_results_for_prompt(
         &retrieval.search_response.results,
         retrieval
@@ -693,24 +846,74 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             "RAG context truncated by token budget"
         );
     }
+    retrieval::drop_unbudgeted_sources(
+        &mut retrieval.sources,
+        &retrieval.search_response.results,
+        &budgeted_results,
+    );
 
-    let followup_context_text =
-        if let Some((context_text, followup_sources)) = retrieval.followup_context.take() {
+    let followup_document = match retrieval.followup_context.take() {
+        // The document under discussion and the file just attached are the
+        // same document: it is already carried whole, and reusing it as well
+        // would put the same text in the prompt twice under two headings.
+        Some((_, followup_sources))
+            if !followup_sources.is_empty()
+                && followup_sources
+                    .iter()
+                    .all(|source| carried_attachment_ids.contains(&source.document_id)) =>
+        {
+            None
+        }
+        Some((document, mut followup_sources)) => {
             info!(
                 conversation_id = conv_id.as_str(),
                 "Follow-up detected: reusing conversation document context"
             );
+            // Ahead of any web results the turn also fetched, which stay: the
+            // prompt shows them, so the list has to number them.
+            followup_sources.append(&mut retrieval.sources);
             retrieval.sources = deduplicate_sources(followup_sources);
-            Some(context_text)
-        } else {
-            None
-        };
+            Some(document)
+        }
+        None => None,
+    };
+
+    // Attachments lead the list: they are the reader's own material. Whatever
+    // is left pointing at a carried document goes: the whole text is already
+    // there.
+    if !attachments.is_empty() {
+        retrieval
+            .sources
+            .retain(|source| !carried_attachment_ids.contains(&source.document_id));
+        let mut sources = attachments.sources();
+        sources.append(&mut retrieval.sources);
+        retrieval.sources = deduplicate_sources(sources);
+    }
+
+    let prior_start = retrieval.sources.len();
+    let existing_prior_keys: HashSet<_> = retrieval
+        .sources
+        .iter()
+        .map(prior_evidence::source_key)
+        .collect();
+    retrieval
+        .sources
+        .extend(prior_sources.into_iter().filter(|source| {
+            !carried_attachment_ids.contains(&source.document_id)
+                && !existing_prior_keys.contains(&prior_evidence::source_key(source))
+        }));
 
     // Number the sources *after* every step that can reorder or replace the
     // list (including the follow-up swap above), then build the prompt from
     // those same numbers. Assigning earlier would let the follow-up path
     // renumber behind the prompt's back.
     assign_citation_ids(&mut retrieval.sources);
+    let attachment_context = attachments.render(&retrieval.sources);
+    let followup_context_text =
+        followup_document.and_then(|document| document.render(&retrieval.sources));
+    let web_context = retrieval::render_web_context(&retrieval.web_context, &retrieval.sources);
+    let prior_evidence_context =
+        prior_evidence::render(retrieval.sources.get(prior_start..).unwrap_or_default());
 
     // Emitted before generation so the frontend can show retrieval progress.
     // so the UI can show its reading before its writing, and persisted into the
@@ -775,11 +978,13 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &citation_ids_by_chunk(&retrieval.sources),
     );
     let has_linked_web_sources_context = linked_web_sources_context.is_some();
-    let retrieval_web_context = retrieval.web_context.is_some();
-    let has_grounded_context = followup_context_text.is_some()
+    let retrieval_web_context = web_context.is_some();
+    let has_grounded_context = attachment_context.is_some()
+        || followup_context_text.is_some()
         || kb_context.is_some()
         || retrieval_web_context
-        || has_linked_web_sources_context;
+        || has_linked_web_sources_context
+        || prior_evidence_context.is_some();
 
     let enhanced_message = PromptMessageBuilder::new(
         &prompt_settings,
@@ -787,19 +992,29 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         retrieval.interpretation.query_type == QueryType::Greeting,
         search_flags,
     )
+    .with_prior_evidence_context(prior_evidence_context)
+    .with_attachment_context(attachment_context)
     .with_followup_context(followup_context_text)
     .with_kb_context(kb_context)
     .with_linked_web_sources_context(linked_web_sources_context)
-    .with_web_context(retrieval.web_context.clone())
+    .with_web_context(web_context)
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
+    .with_kb_attempted(retrieval.kb_attempted)
     .with_kb_sufficiency(retrieval.sufficiency.as_ref())
     .build();
     flow_metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
 
     let persist_user_message_start = Instant::now();
-    let (user_message_id, message_tokens) =
-        persist_user_message_pending(&conv_service, &conv_id, &validated_message, &llm).await?;
+    let (user_message_id, message_tokens) = persist_user_message_pending(
+        &conv_service,
+        &conv_id,
+        &validated_message,
+        &attachment_names,
+        &attachment_ids,
+        &llm,
+    )
+    .await?;
     flow_metrics.persist_user_message_ms = elapsed_ms(persist_user_message_start);
 
     let tool_prep_start = Instant::now();
@@ -809,6 +1024,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &llm,
         tool_preferences.as_ref(),
         &settings.llm.custom_tools,
+        retrieval_web_context || has_linked_web_sources_context,
     );
     let force_tools_for_turn = tool_preferences
         .as_ref()
@@ -868,27 +1084,26 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let memory_plan_start = Instant::now();
     let repository = crate::features::conversation::repository::ConversationRepository::new(
         container.db_pool().clone(),
-    );
-    let tool_schema_tokens: usize = tools_ref
-        .map(|tools| {
-            tools
-                .iter()
-                .map(|tool| llm.count_tokens(&tool.name) + llm.count_tokens(&tool.description))
-                .sum()
-        })
-        .unwrap_or(0);
+    )
+    .with_memory_embedding(container.get_or_load_embedding().await.ok());
+    // Counted as sent: the JSON `parameters` of every tool are prompt text the
+    // model reads, and on a 4k-token local window they are a large share of it.
+    let tool_schema_tokens: usize = tools_ref.map_or(0, |tools| {
+        llm.count_tokens(&tool_loop::tool_schema_text(tools))
+    });
     let memory_turn = memory_context::prepare_memory_turn(
         || async {
-            let turn = memory_context::build_memory_plan(
+            let turn = memory_context::build_memory_plan_for_query(
                 &repository,
                 &repository,
                 &llm,
                 &conv_id,
-                &prompt_settings.system_prompt,
+                &system_prompt,
                 &enhanced_message,
                 tool_schema_tokens,
                 Vec::new(),
                 settings.llm.bounded_conversation_memory,
+                &validated_message,
             )
             .await?;
 
@@ -915,6 +1130,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     )
     .await;
 
+    let memory_usage = memory_turn
+        .as_ref()
+        .ok()
+        .and_then(|turn| turn.as_ref())
+        .map(|turn| {
+            serde_json::json!({
+                "items": turn.plan.used_memory_ids,
+                "revision": turn.plan.memory_revision,
+                "recallPassages": turn.plan.retrieval.passages_selected,
+            })
+        });
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
@@ -949,6 +1175,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     &focus,
                     &recorder,
                     memory_turn.as_ref().map(|turn| &turn.plan),
+                    response_token_budget(max_tokens),
+                    tool_loop::max_tool_rounds(search_flags.deep_research_mode),
                 )
                 .await
                 {
@@ -993,57 +1221,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             // it against — judging it only reports every sentence unsupported.
             let verification_enabled =
                 settings.llm.verification.enabled && !search_flags.closed_book;
-            let verify_step = verification_enabled
-                .then(|| recorder.begin(TurnStepKind::Verify, "Checking the answer", None));
-            let grounding_report = if verification_enabled {
-                // The utility model judges claims so a chat turn is not charged a
-                // second pass through the large model. Without one configured the
-                // chat LLM stands in, exactly as retrieval planning does; only a
-                // hard load failure drops back to lexical-only verification.
-                let judge_llm = match container.get_or_load_utility_llm().await {
-                    Ok(Some(utility)) => Some(utility),
-                    Ok(None) => Some(Arc::clone(&llm)),
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "Utility LLM load failed — grounding stays lexical for this turn"
-                        );
-                        None
-                    }
-                };
-                GroundingVerifier::new(judge_llm)
-                    .verify(&assistant_response, &sources)
-                    .await
-            } else {
-                GroundingReport::default()
-            };
-            if let Some(step) = verify_step {
-                recorder.end(
-                    &step,
-                    TurnStepState::Done,
-                    Some(verification_result_line(&grounding_report)),
-                );
+            // Begun here and left running: the check itself happens after the
+            // answer is persisted and returned (see `BackgroundVerification`),
+            // which finishes this step in the persisted record when it lands.
+            if verification_enabled {
+                recorder.begin(TurnStepKind::Verify, "Checking the answer", None);
             }
-            if verification_enabled && grounding_report.claims_evaluated > 0 {
-                info!(
-                    conversation_id = conv_id.as_str(),
-                    claims_evaluated = grounding_report.claims_evaluated,
-                    supported_claims = grounding_report.supported_claims,
-                    unsupported_claims = grounding_report.unsupported_count(),
-                    contradicted_claims = grounding_report.contradicted_count(),
-                    judged_claims = grounding_report.judged_claim_count(),
-                    grounded_ratio = grounding_report.grounded_ratio(),
-                    verification_ms = elapsed_ms(verification_start),
-                    "Response grounding verification complete"
-                );
-            }
-            let verification_metadata = if verification_enabled {
-                Some(grounding_report.metadata_json())
+            let verification_metadata = Some(if verification_enabled {
+                pending_metadata()
             } else {
-                Some(serde_json::json!({
-                    "enabled": false
-                }))
-            };
+                serde_json::json!({ "enabled": false })
+            });
             flow_metrics.verification_ms = elapsed_ms(verification_start);
 
             // Built here rather than after persistence so `totalMs` is time to
@@ -1070,8 +1258,19 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 router: router_record,
             };
 
+            let background_verification = verification_enabled.then(|| {
+                (
+                    assistant_response.clone(),
+                    sources.clone(),
+                    turn_record.clone(),
+                )
+            });
+
             let finalize_start = Instant::now();
-            let mut chat_response = finalize_successful_turn(
+            // Finalization marks the question failed itself when the commit
+            // does not land, and reports success once it has: a failure after
+            // the answer is saved is not a failed turn.
+            let (mut chat_response, answer_id) = finalize_successful_turn(
                 container,
                 &conv_service,
                 &conv_id,
@@ -1081,6 +1280,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 context.len(),
                 sources,
                 verification_metadata,
+                memory_usage,
                 retrieval_trace.clone(),
                 Some(turn_record),
                 message_tokens,
@@ -1088,6 +1288,29 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             )
             .await?;
             flow_metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
+
+            if let Some((response, sources, turn)) = background_verification {
+                let message_id = answer_id;
+                let window = window.clone();
+                BackgroundVerification {
+                    container: container.clone(),
+                    conversation_id: conv_id.clone(),
+                    request_id: turn_id.clone(),
+                    message_id,
+                    response,
+                    sources,
+                    tuning: settings.llm.verification.clone(),
+                    chat_llm: Arc::clone(&llm),
+                    turn: Some(turn),
+                    started: verification_start,
+                    emit: Box::new(move |payload| {
+                        if let Err(error) = window.emit("llm-stream", payload) {
+                            warn!(%error, "Failed to emit a finished grounding check");
+                        }
+                    }),
+                }
+                .spawn();
+            }
             flow_metrics.total_ms = elapsed_ms(flow_start);
             let retrieval_sub = retrieval_subtimings_or_default(&flow_metrics);
             let generation_sub = generation_subtimings_or_default(&flow_metrics);
@@ -1205,20 +1428,6 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// What the `verify` step says it found.
-///
-/// An answer with nothing to check is not an answer that failed its check, so
-/// it says so in those words rather than reporting "0 of 0 backed".
-fn verification_result_line(report: &GroundingReport) -> String {
-    if report.claims_evaluated == 0 {
-        return "nothing to check against sources".to_string();
-    }
-    format!(
-        "{} of {} claims backed",
-        report.supported_claims, report.claims_evaluated
-    )
-}
-
 /// Generation allowance for one turn, shared by tool rounds and provider retries.
 /// Deep research reads many sources and reasons for much longer than a reply.
 fn generation_time_budget(search_flags: SearchFlags) -> Duration {
@@ -1261,10 +1470,7 @@ async fn validate_and_guard_chat_request(container: &Container, message: &str) -
     let validated_message = container
         .security_context()
         .input_validator()
-        .validate_search_query(message)?;
-    if validated_message.trim().is_empty() {
-        return Err(AppError::InvalidInput("Message cannot be empty".into()));
-    }
+        .validate_chat_message(message)?;
 
     Ok(validated_message)
 }
@@ -1294,9 +1500,10 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     const LEGACY_GREETING_TEMPLATE_SIGNATURE: u64 = 0xa8c8_948b_d572_9258;
     const UPDATED_GREETING_TEMPLATE: &str =
         "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.";
-    const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURE: u64 = 0x5384_8234_c2d7_4254;
+    const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES: [u64; 2] =
+        [0x5384_8234_c2d7_4254, 0x4de7_593e_1cc6_dd55];
     const UPDATED_NO_CONTEXT_TEMPLATE: &str =
-        "The user asked: \"{question}\"\n\nNo relevant documents were found in local documents for this turn. Respond helpfully using general knowledge when appropriate, and suggest web search or adding documents if they want sourced evidence.";
+        "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
     const UPDATED_RAG_TEMPLATE: &str =
         "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
@@ -1308,9 +1515,9 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     {
         prompt_settings.greeting_prompt_template = UPDATED_GREETING_TEMPLATE.to_string();
     }
-    if stable_prompt_signature(&prompt_settings.no_context_prompt_template)
-        == LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURE
-    {
+    if LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES.contains(&stable_prompt_signature(
+        &prompt_settings.no_context_prompt_template,
+    )) {
         prompt_settings.no_context_prompt_template = UPDATED_NO_CONTEXT_TEMPLATE.to_string();
     }
     if stable_prompt_signature(&prompt_settings.rag_prompt_template)
@@ -1361,6 +1568,102 @@ fn stable_prompt_signature(input: &str) -> u64 {
         .fold(OFFSET_BASIS, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
         })
+}
+
+/// Recent turns handed to the intent classifier, most recent last.
+const INTENT_CONTEXT_TURNS: usize = 4;
+
+/// Ask the utility model what an unflagged turn needs, and fold the answer
+/// into the search flags. Skipped the moment the user said anything explicit —
+/// a toggle, a turn mode, a closed book — because inference exists to fill in
+/// defaults, not to second-guess a decision.
+async fn infer_turn_intent_flags(
+    container: &Container,
+    chat_llm: &Arc<dyn crate::application::ports::LLMPort>,
+    tool_preferences: Option<&ToolPreferences>,
+    search_flags: SearchFlags,
+    validated_message: &str,
+    context: &[String],
+) -> SearchFlags {
+    if !should_infer_turn_intent(tool_preferences, search_flags) {
+        return search_flags;
+    }
+
+    // Resolved the way the grounding judge below resolves its model: the
+    // utility LLM when one is configured, the chat LLM otherwise, and no
+    // classification at all when loading one fails.
+    let classifier_llm = match container.get_or_load_utility_llm().await {
+        Ok(Some(utility)) => utility,
+        Ok(None) => Arc::clone(chat_llm),
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Utility LLM load failed — skipping turn-intent classification"
+            );
+            return search_flags;
+        }
+    };
+
+    let recent_context: Vec<String> = context
+        .iter()
+        .skip(context.len().saturating_sub(INTENT_CONTEXT_TURNS))
+        .cloned()
+        .collect();
+    let intent = IntentClassifier::new(classifier_llm)
+        .classify(&IntentInput {
+            message: validated_message.to_string(),
+            recent_context,
+        })
+        .await;
+
+    info!(
+        needs_knowledge_base = intent.needs_knowledge_base,
+        needs_web = intent.needs_web,
+        is_followup = intent.is_followup,
+        confidence = intent.confidence,
+        "chat_with_conversation: inferred turn intent"
+    );
+
+    apply_turn_intent(search_flags, &intent)
+}
+
+/// Inference runs only when every routing control is on its default. Any
+/// forced flag — including the ones `from_preferences` derives from an
+/// explicit turn mode — means the user already decided this turn.
+fn should_infer_turn_intent(
+    tool_preferences: Option<&ToolPreferences>,
+    search_flags: SearchFlags,
+) -> bool {
+    if search_flags.closed_book
+        || search_flags.force_kb_search
+        || search_flags.force_web_search
+        || search_flags.force_wiki_search
+        || search_flags.force_followup_mode
+        || search_flags.deep_research_mode
+    {
+        return false;
+    }
+    let turn_mode = tool_preferences
+        .and_then(|preferences| preferences.turn_mode.as_deref())
+        .map(str::trim)
+        .filter(|mode| !mode.is_empty())
+        .map(|mode| mode.to_ascii_lowercase());
+    matches!(turn_mode.as_deref(), None | Some("auto"))
+}
+
+/// Enable-only: inference may add retrieval to a turn, never take away what
+/// the user or the focus scope asked for. A closed book stays closed — the
+/// gate already skips it, and the merge refuses to reopen it.
+fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
+    if search_flags.closed_book {
+        return search_flags;
+    }
+    SearchFlags {
+        force_kb_search: search_flags.force_kb_search || intent.needs_knowledge_base,
+        force_web_search: search_flags.force_web_search || intent.needs_web,
+        force_followup_mode: search_flags.force_followup_mode || intent.is_followup,
+        ..search_flags
+    }
 }
 
 /// Route the turn, and keep what the router said about it.
@@ -1502,11 +1805,32 @@ fn build_optional_tool_allowlist(
         })
 }
 
+/// Whether an optional built-in tool may be offered this turn.
+///
+/// `fetch_url_content` gets one exception to the explicit-allowlist rule:
+/// opening a page the turn already knows about — cited by an earlier turn and
+/// carried as conversation context, or returned by this turn's own search — is
+/// not a web search. The prompt names it as the way to re-read such a page, so
+/// withholding the tool behind the web-search toggle hands the model an
+/// instruction it cannot follow and it either errors on the call or searches
+/// the web again for a page it already had.
+fn optional_builtin_tool_allowed(
+    tool_name: &str,
+    allowlist: Option<&HashSet<String>>,
+    allow_url_fetch: bool,
+) -> bool {
+    if tool_name == "fetch_url_content" && allow_url_fetch {
+        return true;
+    }
+    allowlist.is_some_and(|list| list.contains(tool_name))
+}
+
 fn build_llm_tool_definitions(
     container: &Container,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     custom_tools: &[CustomToolSettingsDto],
+    allow_url_fetch: bool,
 ) -> Vec<crate::application::ports::ToolDefinition> {
     if !llm.supports_tool_calling() {
         return Vec::new();
@@ -1532,9 +1856,11 @@ fn build_llm_tool_definitions(
             }
 
             if OPTIONAL_BUILTIN_TOOL_NAMES.contains(&tool_name) {
-                return optional_allowlist
-                    .as_ref()
-                    .is_some_and(|allowlist| allowlist.contains(tool_name));
+                return optional_builtin_tool_allowed(
+                    tool_name,
+                    optional_allowlist.as_ref(),
+                    allow_url_fetch,
+                );
             }
 
             if !enabled_custom_tools.contains_key(tool_name) {
@@ -1635,6 +1961,7 @@ mod tests {
             page_number: None,
             chunk_excerpts: None,
             citation_id: None,
+            web_snapshot: None,
         }
     }
 
@@ -1955,6 +2282,31 @@ mod tests {
     }
 
     #[test]
+    fn fetch_url_content_is_offered_when_the_turn_already_knows_the_page() {
+        let no_allowlist: Option<HashSet<String>> = None;
+        // No allowlist at all: still offered, because the conversation carries
+        // the page as context and the prompt names this tool for re-reading it.
+        assert!(optional_builtin_tool_allowed(
+            "fetch_url_content",
+            no_allowlist.as_ref(),
+            true
+        ));
+        // The exception covers only re-reading a known page — searching the
+        // web stays behind the explicit toggle.
+        assert!(!optional_builtin_tool_allowed(
+            "web_search",
+            no_allowlist.as_ref(),
+            true
+        ));
+        // And without carried pages the old rule applies unchanged.
+        assert!(!optional_builtin_tool_allowed(
+            "fetch_url_content",
+            no_allowlist.as_ref(),
+            false
+        ));
+    }
+
+    #[test]
     fn optional_builtin_tools_require_an_explicit_per_turn_allowlist() {
         let no_preferences = build_optional_tool_allowlist(None);
         assert!(no_preferences.is_none());
@@ -1970,5 +2322,142 @@ mod tests {
         assert!(explicit
             .as_ref()
             .is_some_and(|allowlist| allowlist.contains("fetch_url_content")));
+    }
+
+    #[test]
+    fn intent_inference_runs_when_everything_is_on_defaults() {
+        let flags = SearchFlags::from_preferences(None);
+        assert!(should_infer_turn_intent(None, flags));
+        assert!(should_infer_turn_intent(
+            Some(&ToolPreferences::default()),
+            flags
+        ));
+
+        // "auto" (and an empty string) mean the same as unset.
+        let auto = ToolPreferences {
+            turn_mode: Some("auto".to_string()),
+            ..ToolPreferences::default()
+        };
+        assert!(should_infer_turn_intent(Some(&auto), flags));
+        let blank = ToolPreferences {
+            turn_mode: Some("  ".to_string()),
+            ..ToolPreferences::default()
+        };
+        assert!(should_infer_turn_intent(Some(&blank), flags));
+    }
+
+    #[test]
+    fn intent_inference_is_skipped_when_anything_is_explicit() {
+        // An explicit turn mode, even one that forces no flag by itself.
+        for mode in ["followup", "query"] {
+            let prefs = ToolPreferences {
+                turn_mode: Some(mode.to_string()),
+                ..ToolPreferences::default()
+            };
+            assert!(!should_infer_turn_intent(
+                Some(&prefs),
+                SearchFlags::from_preferences(Some(&prefs))
+            ));
+        }
+
+        // Any single toggle set is enough to stand down.
+        for prefs in [
+            ToolPreferences {
+                knowledge_base: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                web_search: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                deep_research_mode: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                followup_mode: true,
+                ..ToolPreferences::default()
+            },
+            ToolPreferences {
+                enabled_tools: Some(vec!["wiki_search".to_string()]),
+                ..ToolPreferences::default()
+            },
+        ] {
+            assert!(!should_infer_turn_intent(
+                Some(&prefs),
+                SearchFlags::from_preferences(Some(&prefs))
+            ));
+        }
+
+        // A closed book is absolute, and a focus pin counts as an explicit ask.
+        let closed = ToolPreferences {
+            closed_book: true,
+            ..ToolPreferences::default()
+        };
+        assert!(!should_infer_turn_intent(
+            Some(&closed),
+            SearchFlags::from_preferences(Some(&closed))
+        ));
+        let focused = SearchFlags {
+            force_kb_search: true,
+            ..SearchFlags::from_preferences(None)
+        };
+        assert!(!should_infer_turn_intent(None, focused));
+    }
+
+    #[test]
+    fn turn_intent_merge_enables_inferred_retrieval() {
+        let flags = SearchFlags::from_preferences(None);
+        let intent = TurnIntent {
+            needs_knowledge_base: true,
+            needs_web: false,
+            is_followup: true,
+            confidence: 0.9,
+        };
+
+        let merged = apply_turn_intent(flags, &intent);
+
+        assert!(merged.force_kb_search);
+        assert!(merged.force_followup_mode);
+        assert!(!merged.force_web_search);
+        assert!(!merged.force_wiki_search);
+        assert!(!merged.deep_research_mode);
+        assert!(!merged.closed_book);
+    }
+
+    #[test]
+    fn turn_intent_merge_never_clears_a_set_flag() {
+        let every_flag_set = SearchFlags {
+            force_kb_search: true,
+            force_web_search: true,
+            force_wiki_search: true,
+            deep_research_mode: true,
+            force_followup_mode: true,
+            closed_book: false,
+        };
+
+        let merged = apply_turn_intent(every_flag_set, &TurnIntent::fallback());
+
+        assert!(merged.force_kb_search);
+        assert!(merged.force_web_search);
+        assert!(merged.force_wiki_search);
+        assert!(merged.deep_research_mode);
+        assert!(merged.force_followup_mode);
+
+        // Closed book stays exactly as it was, whatever the model said.
+        let closed = SearchFlags {
+            closed_book: true,
+            ..SearchFlags::from_preferences(None)
+        };
+        let eager = TurnIntent {
+            needs_knowledge_base: true,
+            needs_web: true,
+            is_followup: true,
+            confidence: 1.0,
+        };
+        let merged = apply_turn_intent(closed, &eager);
+        assert!(merged.closed_book);
+        assert!(!merged.force_kb_search);
+        assert!(!merged.force_web_search);
     }
 }

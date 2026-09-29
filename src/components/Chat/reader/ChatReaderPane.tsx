@@ -200,6 +200,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
         onCitationIndexChange={setIndex}
         onLocationResolved={handleLocationResolved}
         ownerKey={session.ownerKey}
+        occurrence={session.occurrence}
       />
     );
   }
@@ -238,6 +239,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
         onCitationIndexChange={setIndex}
         onLocationResolved={handleLocationResolved}
         ownerKey={session.ownerKey}
+        occurrence={session.occurrence}
         isFocused={isFocused}
         onToggleFocus={() => setIsFocused((value) => !value)}
       />

@@ -154,3 +154,44 @@ async fn progress_write_cannot_revert_a_terminal_state() {
         "a late progress tick must not resurrect a terminal session"
     );
 }
+
+#[tokio::test]
+async fn slow_progress_persistence_coalesces_flood_and_flushes_before_pause() {
+    let repository =
+        Arc::new(MockDownloadRepository::new().with_progress_delay(Duration::from_millis(30)));
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let id = start_one(&manager, &engine, "coalesced.bin").await;
+    let callback = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(call) = engine.get_last_call() {
+                if let Some(callback) = call.progress_callback {
+                    break callback;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("transfer starts");
+    // No await: the callback must have constant storage and not spawn work.
+    for bytes in 1..=100_000 {
+        callback(bytes, 1024.0);
+    }
+    manager.pause_download(&id).await.unwrap();
+    let paused = repository.get(&id).await.unwrap().unwrap();
+    assert_eq!(paused.state(), &DownloadState::Paused);
+    assert_eq!(paused.progress().bytes_downloaded(), 100_000);
+    assert!(
+        repository.progress_write_count() <= 3,
+        "one latest progress slot, no callback backlog"
+    );
+    let writes = repository.progress_write_count();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        repository.progress_write_count(),
+        writes,
+        "joined worker cannot write after pause"
+    );
+    assert!(manager.active_downloads.read().await.is_empty());
+}

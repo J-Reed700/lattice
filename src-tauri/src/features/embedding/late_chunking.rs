@@ -16,6 +16,7 @@
 
 use std::ops::Range;
 
+use crate::features::embedding::prefixes::EmbeddingPrefixes;
 use crate::shared::error::AppError;
 
 /// Marker mixed into `model_identity()` when late chunking is active. Vectors
@@ -82,6 +83,27 @@ pub fn strategy_identity(artifact_identity: &str, strategy: EmbeddingStrategy) -
         EmbeddingStrategy::LateChunking => {
             format!("{artifact_identity}+{LATE_CHUNKING_IDENTITY_MARKER}")
         }
+    }
+}
+
+/// The key of the stored vector space: artifact, strategy and — when the model
+/// puts an instruction in front of every passage — the document prefix. The
+/// search index is bound under this key before the model loads, and the loaded
+/// model reports it afterwards, so both sides must build it here.
+///
+/// A policy that only prefixes queries leaves stored vectors alone and so
+/// leaves the identity alone, which is why Qwen3, whose instruction is
+/// query-side only, keeps the bare strategy identity.
+pub fn vector_identity(
+    artifact_identity: &str,
+    strategy: EmbeddingStrategy,
+    prefixes: &EmbeddingPrefixes,
+) -> String {
+    let identity = strategy_identity(artifact_identity, strategy);
+    if prefixes.document.is_empty() {
+        identity
+    } else {
+        format!("{identity}+prefix-{}", prefixes.id)
     }
 }
 
@@ -343,6 +365,19 @@ mod tests {
         assert!(late.starts_with(base));
         assert!(late.contains(LATE_CHUNKING_IDENTITY_MARKER));
         assert_eq!(EmbeddingStrategy::default(), EmbeddingStrategy::ChunkFirst);
+    }
+
+    #[test]
+    fn only_a_document_prefix_joins_the_vector_identity() {
+        use crate::features::embedding::prefixes::{E5, NONE, QWEN3_INSTRUCT};
+        let base = "sha256:abc123";
+        let chunk_first = EmbeddingStrategy::ChunkFirst;
+        assert_eq!(vector_identity(base, chunk_first, &NONE), base);
+        assert_eq!(vector_identity(base, chunk_first, &QWEN3_INSTRUCT), base);
+        assert_eq!(
+            vector_identity(base, chunk_first, &E5),
+            "sha256:abc123+prefix-e5"
+        );
     }
 
     #[test]

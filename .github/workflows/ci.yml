@@ -100,7 +100,7 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          cargo test --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
+          cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -125,7 +125,7 @@ jobs:
 
       - name: Desktop Rust unit and repository tests
         working-directory: src-tauri
-        run: cargo test --lib --bin export_bindings --test sidecar_guard_test
+        run: cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test
 
       - name: Audit and credential backend integration tests
         working-directory: src-tauri
@@ -139,7 +139,7 @@ jobs:
 
       - name: generated bindings are current
         working-directory: src-tauri
-        run: cargo run --bin export_bindings -- --check
+        run: cargo run --features bindings-export --bin export_bindings -- --check
 
       - name: cargo fmt --check
         working-directory: src-tauri
@@ -298,6 +298,21 @@ jobs:
       - run: python3 scripts/check-sql-contracts.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Desktop advisories
+        working-directory: src-tauri
+        run: cargo audit --deny yanked
+      - name: API advisories
+        working-directory: api-rust
+        run: cargo audit
+
   frontend:
     name: frontend (type-check, lint, test)
     runs-on: ubuntu-latest
@@ -313,6 +328,9 @@ jobs:
 
       - run: npm ci
 
+      - name: npm vulnerability audit
+        run: npm audit --audit-level=high
+
       - name: Type-check
         run: npm run type-check
 
@@ -327,6 +345,9 @@ jobs:
 
       - name: Renderer production build
         run: npx vite build
+
+      - name: Initial renderer JavaScript budget
+        run: node scripts/check-initial-js-budget.mjs dist
 
       - name: Install browsers for smoke tests
         run: npx playwright install --with-deps chromium webkit

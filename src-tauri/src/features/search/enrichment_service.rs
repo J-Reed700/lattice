@@ -186,6 +186,12 @@ impl SearchEnrichmentService {
             FROM text_chunks tc
             JOIN documents d ON tc.document_id = d.id
             WHERE tc.id IN ({})
+              -- A file attached to a chat is not part of the vault. Its chunks
+              -- are indexed so that chat can read and cite it, and every
+              -- vault-wide search command resolves its hits through this one
+              -- statement, so refusing it a document here is what keeps it off
+              -- the search page. The callers drop a hit they cannot resolve.
+              AND d.owner_conversation_id IS NULL
             "#,
             placeholders
         );

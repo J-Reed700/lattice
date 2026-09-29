@@ -11,9 +11,12 @@ export function useFileContent(filePath: string | undefined, enabled = true) {
     if (!filePath || !enabled) {
       setContent('');
       setError(null);
+      setIsLoading(false);
       return;
     }
 
+    let active = true;
+    setContent('');
     const fetchContent = async () => {
       setIsLoading(true);
       setError(null);
@@ -21,16 +24,21 @@ export function useFileContent(filePath: string | undefined, enabled = true) {
       try {
         const result = await VaultAPI.readFileContent(filePath);
         if (!result.ok) throw new Error(result.error);
-        setContent(result.data);
+        if (active) setContent(result.data);
       } catch (err) {
-        console.error('Failed to load file:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load file');
+        if (active) {
+          console.error('Failed to load file:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load file');
+        }
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
     };
 
     fetchContent();
+    return () => {
+      active = false;
+    };
   }, [filePath, enabled]);
 
   return { content, isLoading, error };

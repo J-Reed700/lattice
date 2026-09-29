@@ -84,6 +84,20 @@ impl CloudLlm {
             {
                 set_field(&mut body, "reasoning", json!({"effort":effort}))?;
             }
+            // Reasoning models reject both knobs outright, so an override that
+            // would 400 the request is dropped rather than sent: the caller
+            // wanted determinism, not a failed call.
+            if let Some(sampling) = request
+                .sampling
+                .filter(|_| !is_openai_reasoning_model(&self.model))
+            {
+                if let Some(temperature) = sampling.temperature {
+                    set_field(&mut body, "temperature", json!(temperature))?;
+                }
+                if let Some(top_p) = sampling.top_p {
+                    set_field(&mut body, "top_p", json!(top_p))?;
+                }
+            }
             Ok(body)
         } else {
             let mut system = Vec::new();
@@ -103,6 +117,17 @@ impl CloudLlm {
                 }
             }
             let mut body = json!({"model":self.model,"messages":messages,"max_tokens":request.effective_max_output_tokens(self.max_tokens),"stream":stream});
+            if let Some(sampling) = request.sampling {
+                if let Some(temperature) = sampling.temperature {
+                    set_field(&mut body, "temperature", json!(temperature))?;
+                }
+                if let Some(top_p) = sampling.top_p {
+                    set_field(&mut body, "top_p", json!(top_p))?;
+                }
+                if let Some(top_k) = sampling.top_k {
+                    set_field(&mut body, "top_k", json!(top_k))?;
+                }
+            }
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
@@ -516,6 +541,12 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// `low` on the o-series, so a request for no reasoning is clamped to whichever
 /// the target model understands. A non-reasoning model needs no clamp — it never
 /// thinks in the first place.
+/// Whether this OpenAI model is a reasoning model, which takes an effort
+/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
+fn is_openai_reasoning_model(model: &str) -> bool {
+    model.starts_with("gpt-5") || model.starts_with('o')
+}
+
 fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
     let floor = if model.starts_with("gpt-5") {

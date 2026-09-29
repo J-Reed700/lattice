@@ -18,6 +18,28 @@ use crate::domain::conversation_memory::{
 };
 use crate::features::conversation::repository::ConversationRepository;
 
+async fn write_test_vector(
+    repository: &ConversationRepository,
+    conversation_id: &str,
+    vector_id: &str,
+    message_id: &str,
+    content: &str,
+) -> crate::shared::error::Result<u64> {
+    repository
+        .persist_memory_vector(
+            conversation_id,
+            vector_id,
+            message_id,
+            "user",
+            content,
+            vec![1, 2, 3, 4],
+            1,
+            "model-a",
+            "2026-09-28T00:00:00Z",
+        )
+        .await
+}
+
 /// A conversation with `user`/`assistant` turns whose text is predictable.
 async fn seed_memory_thread(pool: &SqlitePool) -> String {
     sqlx::query(
@@ -49,6 +71,144 @@ async fn seed_memory_thread(pool: &SqlitePool) -> String {
         .await;
     }
     "conv-mem".to_string()
+}
+
+#[tokio::test]
+async fn memory_vector_write_skips_deleted_moved_or_edited_sources() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let other = ConversationRepository::new(pool.clone())
+        .create_conversation("Other", "model", None)
+        .await
+        .unwrap();
+    seed_message(
+        &pool,
+        &other.id.to_string(),
+        "other-message",
+        "user",
+        "other thread text",
+        3,
+        "2026-09-01T10:00:00Z",
+    )
+    .await;
+    let repository = ConversationRepository::new(pool.clone());
+
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-mm1",
+            "mm1",
+            "Do not deploy until I approve."
+        )
+        .await
+        .unwrap(),
+        1
+    );
+
+    // The production trigger removes an existing vector on a source rewrite;
+    // a slow embedding of the old snapshot must not put it back afterward.
+    sqlx::query("UPDATE conversation_messages SET content = 'Edited source' WHERE id = 'mm1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-mm1-old",
+            "mm1",
+            "Do not deploy until I approve."
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    // Even a live message cannot be attached to a different conversation.
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-wrong-conversation",
+            "other-message",
+            "other thread text"
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    sqlx::query("DELETE FROM conversation_messages WHERE id = 'mm2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-deleted-message",
+            "mm2",
+            "Understood, I will wait."
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-deleted-conversation",
+            "mm1",
+            "Edited source"
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_memory_vectors")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+async fn memory_vector_write_propagates_unrelated_database_errors() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repository = ConversationRepository::new(pool.clone());
+    sqlx::query(
+        "CREATE TRIGGER reject_memory_vector BEFORE INSERT ON conversation_memory_vectors BEGIN SELECT RAISE(ABORT, 'sentinel'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = repository
+        .persist_memory_vector(
+            &conversation_id,
+            "vector-error",
+            "mm1",
+            "user",
+            "Do not deploy until I approve.",
+            vec![1, 2, 3, 4],
+            1,
+            "model-a",
+            "2026-09-28T00:00:00Z",
+        )
+        .await;
+    assert!(error.is_err());
 }
 
 /// An evidence span over the whole of one seeded message.
@@ -193,6 +353,51 @@ async fn a_commit_makes_ledger_summary_watermark_and_revision_durable_together()
         summary_revision, 1,
         "summary must name the revision it belongs to"
     );
+}
+
+#[tokio::test]
+async fn an_established_fact_round_trips_through_the_schema() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    let id = MemoryId::new();
+    // The authority for an established fact is the sourced passage itself,
+    // which here lives in an assistant message.
+    let span = whole_message_span(&pool, "mm2", EvidencePurpose::Assertion).await;
+    let commit = MemoryCommit {
+        inserts: vec![item(
+            &id,
+            &conversation_id,
+            MemoryKind::EstablishedFact,
+            span,
+        )],
+        updates: Vec::new(),
+        summary: None,
+        processed_through_sequence: 2,
+    };
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.clone(),
+            expected_transcript_revision: before.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-fact".into(),
+        },
+        &candidate(commit, before.transcript_revision, None),
+    )
+    .await
+    .expect("the widened CHECK accepts established_fact");
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    let stored = after
+        .active_items
+        .iter()
+        .find(|item| item.id == id)
+        .expect("the fact survived the round trip");
+    assert_eq!(stored.kind, MemoryKind::EstablishedFact);
+    assert_eq!(stored.evidence[0].role, SourceRole::Assistant);
 }
 
 #[tokio::test]
@@ -1239,4 +1444,124 @@ async fn event_retention_is_bounded_and_never_removes_item_evidence() {
     let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
     assert_eq!(after.active_items.len(), 1);
     assert_eq!(after.active_items[0].evidence.len(), 1);
+}
+
+/// Commit one extracted item citing `extracted_from` and one citing
+/// `user_edited_from` that the user then acted on (the attributes row a
+/// verify, scope or correct action writes), with a summary through mm2.
+async fn seed_extracted_and_user_items(
+    pool: &SqlitePool,
+    repo: &ConversationRepository,
+    conversation_id: &str,
+    extracted_from: &str,
+    user_edited_from: &str,
+) -> (MemoryId, MemoryId) {
+    let snapshot = repo.load_memory_snapshot(conversation_id).await.unwrap();
+    let extracted = MemoryId::new();
+    let user_edited = MemoryId::new();
+    let extracted_span = whole_message_span(pool, extracted_from, EvidencePurpose::Assertion).await;
+    let user_span = whole_message_span(pool, user_edited_from, EvidencePurpose::Assertion).await;
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.to_string(),
+            expected_transcript_revision: snapshot.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-regen".into(),
+        },
+        &candidate(
+            MemoryCommit {
+                inserts: vec![
+                    item(
+                        &extracted,
+                        conversation_id,
+                        MemoryKind::Constraint,
+                        extracted_span,
+                    ),
+                    item(
+                        &user_edited,
+                        conversation_id,
+                        MemoryKind::Decision,
+                        user_span,
+                    ),
+                ],
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            snapshot.transcript_revision,
+            Some(SummaryUpdate {
+                summary_text: "The user forbade deploying.".into(),
+                up_to_message_id: "mm2".into(),
+                original_message_count: 2,
+                original_tokens: 20,
+                summary_tokens: 5,
+            }),
+        ),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO conversation_memory_attributes (item_id, verified_at) VALUES (?, ?)")
+        .bind(user_edited.as_str())
+        .bind("2026-09-23T10:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    (extracted, user_edited)
+}
+
+#[tokio::test]
+async fn regenerating_a_turn_no_memory_cites_keeps_the_ledger_and_clamps_the_watermark() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm1", "mm2").await;
+
+    // Regenerate takes back mm3 and mm4; nothing in the ledger cites either.
+    repo.take_last_user_turn(&conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(after.state.validity, MemoryValidity::Ready);
+    assert_eq!(
+        after.active_items.len(),
+        2,
+        "no rebuild for an uncited delete"
+    );
+    assert_eq!(
+        after.state.processed_through_sequence, 2,
+        "the watermark no longer claims the deleted turn"
+    );
+    assert!(
+        after.summary.is_some(),
+        "the summary ends before the deleted turn"
+    );
+}
+
+#[tokio::test]
+async fn regenerating_a_cited_turn_rebuilds_extraction_but_keeps_what_the_user_edited() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let (_, user_edited) =
+        seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm3", "mm1").await;
+
+    repo.take_last_user_turn(&conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(after.state.validity, MemoryValidity::RebuildRequired);
+    assert_eq!(after.state.processed_through_sequence, 0);
+    assert!(after.summary.is_none());
+    let kept: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM conversation_memory_items WHERE conversation_id = ?")
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, vec![user_edited.as_str().to_string()]);
 }

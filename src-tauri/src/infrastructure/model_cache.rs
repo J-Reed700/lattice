@@ -6,12 +6,32 @@ struct State<K, V> {
     entry: Option<(K, V)>,
 }
 
+/// What the cache needs to know about a value beyond cloning it: whether it
+/// can still serve. A local model server can die under a cached port (jetsam,
+/// a Metal fault, a GPU reset after wake); handing that port out again would
+/// fail every request until the app restarts, so a dead value is a miss.
+pub(crate) trait CachedModel {
+    fn is_alive(&self) -> bool;
+}
+
+impl CachedModel for std::sync::Arc<dyn crate::application::ports::LLMPort> {
+    fn is_alive(&self) -> bool {
+        crate::application::ports::LLMPort::is_alive(self.as_ref())
+    }
+}
+
+impl CachedModel for std::sync::Arc<dyn crate::application::ports::EmbeddingPort> {
+    fn is_alive(&self) -> bool {
+        true
+    }
+}
+
 pub(crate) struct ModelCache<K, V> {
     state: RwLock<State<K, V>>,
     load_lock: tokio::sync::Mutex<()>,
 }
 
-impl<K: PartialEq, V: Clone> ModelCache<K, V> {
+impl<K: PartialEq, V: Clone + CachedModel> ModelCache<K, V> {
     pub(crate) fn new() -> Self {
         Self {
             state: RwLock::new(State {
@@ -45,8 +65,19 @@ impl<K: PartialEq, V: Clone> ModelCache<K, V> {
         state
             .entry
             .as_ref()
-            .filter(|(k, _)| k == key)
+            .filter(|(k, v)| k == key && v.is_alive())
             .map(|(_, v)| v.clone())
+    }
+
+    /// Clear an entry whose value has died, so the load that follows replaces
+    /// it. Called under the load lock; the generation is left alone because
+    /// nothing about the configuration changed, only the process behind it.
+    fn evict_dead(&self) {
+        let mut state = self.state.write().unwrap_or_else(|p| p.into_inner());
+        if state.entry.as_ref().is_some_and(|(_, v)| !v.is_alive()) {
+            tracing::warn!("Cached model's server is no longer running; starting it again");
+            state.entry = None;
+        }
     }
 
     /// Errors and absent models are retryable, never cached. Cancellation
@@ -87,6 +118,7 @@ impl<K: PartialEq, V: Clone> ModelCache<K, V> {
         if let Some(value) = self.get(&key, generation) {
             return Ok(Some(value));
         }
+        self.evict_dead();
         let (value, cacheable) = load().await?;
         if let Some(value) = value.as_ref().filter(|_| cacheable) {
             let mut state = self.state.write().unwrap_or_else(|p| p.into_inner());
@@ -115,6 +147,101 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    impl CachedModel for i32 {
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    /// A port over a process that can be killed from the test.
+    struct Killable {
+        alive: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for Killable {
+        async fn generate(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> crate::shared::error::Result<String> {
+            Ok(String::new())
+        }
+        async fn generate_streaming(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> crate::shared::error::Result<
+            Box<
+                dyn futures::Stream<Item = crate::shared::error::Result<String>>
+                    + Send
+                    + Unpin
+                    + '_,
+            >,
+        > {
+            Ok(Box::new(futures::stream::empty()))
+        }
+        fn model_name(&self) -> &str {
+            "killable"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len()
+        }
+        async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+            Ok(true)
+        }
+        fn is_alive(&self) -> bool {
+            self.alive.load(Ordering::SeqCst)
+        }
+    }
+
+    #[tokio::test]
+    async fn dead_server_is_a_miss_and_the_next_request_reloads() {
+        let cache: ModelCache<(), Arc<dyn LLMPort>> = ModelCache::new();
+        let loads = AtomicUsize::new(0);
+        let first_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let load = |alive: Arc<std::sync::atomic::AtomicBool>| {
+            let loads = &loads;
+            move || async move {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(Some(Arc::new(Killable { alive }) as Arc<dyn LLMPort>))
+            }
+        };
+        let generation = cache.generation();
+        cache
+            .get_or_load((), generation, load(first_alive.clone()))
+            .await
+            .unwrap();
+        cache
+            .get_or_load((), generation, load(first_alive.clone()))
+            .await
+            .unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), 1, "a live server is reused");
+
+        // The child exits: the drain task empties the handle's slot.
+        first_alive.store(false, Ordering::SeqCst);
+        assert!(cache.get(&(), generation).is_none());
+
+        let fresh = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let reloaded = cache
+            .get_or_load((), generation, load(fresh))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loads.load(Ordering::SeqCst),
+            2,
+            "the dead server is replaced"
+        );
+        assert!(reloaded.is_alive());
+        assert!(cache.get(&(), generation).is_some());
+    }
 
     #[tokio::test]
     async fn chat_provider_tracks_invalidation_without_revoking_existing_handles() {

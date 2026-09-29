@@ -7,18 +7,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebouncedEvent};
 use sqlx::SqlitePool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
-use crate::features::daily_notes::repository::{
-    DailyNotesRepository, NoteTimestampRecord, VaultNoteUpsert,
-};
+use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
 use crate::shared::time::parse_db_timestamp;
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(800);
+static RESCAN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Keyed by filename, not `PathBuf`: OS-level path normalization differs
 /// between writer and watcher (Windows `\\?\` prefixes, macOS case-folding,
@@ -67,7 +68,7 @@ pub fn start_vault_watcher(
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
 ) {
-    tokio::spawn(async move {
+    crate::shared::background::spawn(async move {
         let settings = match settings_uc.execute().await {
             Ok(s) => s,
             Err(e) => {
@@ -129,44 +130,45 @@ async fn run_watcher(
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
 ) {
-    // Debouncer callback runs on its own worker thread, not a tokio
-    // worker; bridge into tokio via mpsc.
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<DebouncedEvent>>();
-
-    let mut debouncer = match new_debouncer(
-        DEBOUNCE_WINDOW,
-        None,
-        move |result: notify_debouncer_full::DebounceEventResult| match result {
-            Ok(events) => {
-                if let Err(e) = tx.send(events) {
-                    tracing::debug!(error = %e, "vault watcher: failed to forward debounced events");
+    // Queue paths, never arbitrarily large callback batches. Overflow is a
+    // request to reconcile the directory; it cannot silently lose an edit.
+    const PATH_CAPACITY: usize = 256;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<PathBuf>(PATH_CAPACITY);
+    let overflow = Arc::new(AtomicBool::new(false));
+    let wake = Arc::new(tokio::sync::Notify::new());
+    let callback_overflow = overflow.clone();
+    let callback_wake = wake.clone();
+    let mut debouncer =
+        match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+            match result {
+                Ok(event) => {
+                    for path in event.paths {
+                        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                            continue;
+                        }
+                        if tx.try_send(path).is_err() {
+                            callback_overflow.store(true, Ordering::Release);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Vault watcher requires reconciliation");
+                    callback_overflow.store(true, Ordering::Release);
                 }
             }
-            Err(errors) => {
-                for err in errors {
-                    tracing::warn!(error = %err, "vault watcher: notify error");
-                }
+            callback_wake.notify_one();
+        }) {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                emit_watcher_error(
+                    &app_handle,
+                    &format!("Vault watcher failed to start: {error}"),
+                );
+                return;
             }
-        },
-    ) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "vault watcher: failed to create debouncer — not starting"
-            );
-            emit_watcher_error(
-                &app_handle,
-                &format!("Vault watcher failed to start: {}", e),
-            );
-            return;
-        }
-    };
+        };
 
-    if let Err(e) = debouncer
-        .watcher()
-        .watch(&vault_root, RecursiveMode::Recursive)
-    {
+    if let Err(e) = debouncer.watch(&vault_root, RecursiveMode::Recursive) {
         tracing::warn!(
             vault_root = %vault_root.display(),
             error = %e,
@@ -189,60 +191,80 @@ async fn run_watcher(
         "vault watcher started"
     );
 
-    // `debouncer` must stay in scope; dropping it stops the watch.
-    while let Some(batch) = rx.recv().await {
-        for event in batch {
-            handle_event(
-                event,
+    let cancel = crate::shared::background::cancellation_token();
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break,
+            _ = wake.notified() => {}
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(DEBOUNCE_WINDOW) => {}
+        }
+        let mut paths = std::collections::HashSet::with_capacity(PATH_CAPACITY);
+        for _ in 0..PATH_CAPACITY {
+            match rx.try_recv() {
+                Ok(path) => {
+                    paths.insert(path);
+                }
+                Err(_) => break,
+            }
+        }
+        // A single worker serializes updates/deletes to the same note. There
+        // are no detached path tasks and the pending set has a hard bound.
+        if overflow.swap(false, Ordering::AcqRel) {
+            if let Err(error) = rescan_vault(
                 db_pool.clone(),
-                app_handle.clone(),
+                vault_root.clone(),
                 suppression.clone(),
-            );
+                app_handle.clone(),
+            )
+            .await
+            {
+                emit_watcher_error(&app_handle, &error);
+            }
+        }
+        for path in paths {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if !suppression.was_just_written(&path).await {
+                import_one(&path, &db_pool, &app_handle).await;
+            }
         }
     }
-
-    tracing::info!("vault watcher: event channel closed — exiting");
+    tracing::info!("Vault watcher stopped");
 }
 
-/// Spawn per-event so a bulk find-and-replace parallelizes instead of
-/// serializing through one worker.
-fn handle_event(
-    event: DebouncedEvent,
-    db_pool: SqlitePool,
-    app_handle: tauri::AppHandle,
-    suppression: WriteSuppressionRegistry,
-) {
-    for path in event.event.paths {
-        // Filters out our `<id>.md.<uuid>.tmp` staging files (extension == tmp).
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
+const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 
-        let pool = db_pool.clone();
-        let handle = app_handle.clone();
-        let supp = suppression.clone();
-
-        tokio::spawn(async move {
-            if supp.was_just_written(&path).await {
-                tracing::debug!(
-                    path = %path.display(),
-                    "vault watcher: skipping our own write"
-                );
-                return;
-            }
-
-            // No `EventKind::Remove` fast-path: atomic saves
-            // (rename-away/write-new) emit Remove for a file that's
-            // back on disk before we'd read it. import_one's NotFound
-            // fallback handles real deletes safely.
-            import_one(&path, &pool, &handle).await;
-        });
+async fn read_note(path: &Path) -> std::io::Result<String> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut contents = String::new();
+    file.take(MAX_NOTE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .await?;
+    if contents.len() as u64 > MAX_NOTE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Vault note exceeds 4 MiB",
+        ));
     }
+    Ok(contents)
 }
 
 /// Pub(crate) so focus-rescan reuses the same parse/UPSERT/emit path.
-pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &tauri::AppHandle) {
-    let contents = match tokio::fs::read_to_string(path).await {
+///
+/// Returns the id of the note it imported, which is the front-matter id and
+/// not necessarily the file stem: a note renamed in Finder keeps its id.
+pub(crate) async fn import_one(
+    path: &Path,
+    db_pool: &SqlitePool,
+    app_handle: &tauri::AppHandle,
+) -> Option<String> {
+    let contents = match read_note(path).await {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Atomic-save gap: editor renamed old file away and hasn't
@@ -255,10 +277,23 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
                     path = %path.display(),
                     "vault watcher: file reappeared after atomic-save gap — skipping delete"
                 );
-                return;
+                return None;
+            }
+            // A rename in Finder arrives as a Remove for the old name. The
+            // note is still on disk under the new one, carrying its id in
+            // the front matter; import that file instead of deleting.
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Some(renamed) = find_renamed_note(path, stem).await {
+                    tracing::info!(
+                        from = %path.display(),
+                        to = %renamed.display(),
+                        "vault watcher: note renamed on disk — keeping it"
+                    );
+                    return Box::pin(import_one(&renamed, db_pool, app_handle)).await;
+                }
             }
             handle_external_delete(path, db_pool, app_handle).await;
-            return;
+            return None;
         }
         Err(e) => {
             tracing::debug!(
@@ -266,7 +301,7 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
                 error = %e,
                 "vault watcher: read failed — skipping"
             );
-            return;
+            return None;
         }
     };
 
@@ -274,7 +309,7 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
         Ok(p) => p,
         Err(super::parse::ParseError::NotOurs) => {
             tracing::debug!(path = %path.display(), "vault watcher: untracked .md file — skipping");
-            return;
+            return None;
         }
         Err(e) => {
             tracing::warn!(
@@ -282,23 +317,31 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
                 error = %e,
                 "vault watcher: parse failed — skipping"
             );
-            return;
+            return None;
         }
     };
 
-    // Enforce that frontmatter id matches file stem — a copy of
-    // `abc.md` to `duplicate.md` still has `id: abc` in frontmatter
-    // and would overwrite the original on every rescan.
-    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-        if parsed.id != stem {
-            tracing::warn!(
-                path = %path.display(),
-                stem = %stem,
-                frontmatter_id = %parsed.id,
-                "vault watcher: id mismatch — skipping to prevent data corruption"
-            );
-            return;
-        }
+    // A committed application edit/delete takes precedence until its mirror
+    // has reached disk. Otherwise a focus scan can re-import the stale file
+    // and resurrect a deleted note while its durable writeback is pending.
+    if super::repository::has_pending(db_pool, &parsed.id)
+        .await
+        .unwrap_or(true)
+    {
+        return Some(parsed.id);
+    }
+
+    // A front-matter id that differs from the file stem is either a copy
+    // (`abc.md` duplicated to `duplicate.md`, both carrying `id: abc`) or a
+    // rename. A copy would overwrite the original on every rescan, so it is
+    // skipped; a rename leaves no `abc.md` behind and is the same note.
+    if !is_importable_name(path, &parsed.id).await {
+        tracing::warn!(
+            path = %path.display(),
+            frontmatter_id = %parsed.id,
+            "vault watcher: id mismatch while the note's own file exists — skipping copy"
+        );
+        return None;
     }
 
     // ON CONFLICT: only the fields that round-trip through markdown.
@@ -306,7 +349,7 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
     // etc.) are preserved.
     let repository = DailyNotesRepository::new(db_pool.clone());
     let result = repository
-        .upsert_from_vault(VaultNoteUpsert {
+        .upsert_from_vault_if_unqueued(VaultNoteUpsert {
             id: &parsed.id,
             title: &parsed.title,
             content: &parsed.body,
@@ -316,20 +359,65 @@ pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &t
         .await;
 
     match result {
-        Ok(()) => {
+        Ok(true) => {
             tracing::info!(
                 id = %parsed.id,
                 path = %path.display(),
                 "vault watcher: imported external edit"
             );
             emit_note_imported(app_handle, &parsed.id);
+            Some(parsed.id)
         }
-        Err(e) => tracing::warn!(
-            path = %path.display(),
-            error = %e,
-            "vault watcher: SQL upsert failed"
-        ),
+        Ok(false) => Some(parsed.id),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "vault watcher: SQL upsert failed"
+            );
+            None
+        }
     }
+}
+
+/// Whether the file at `path` may be imported as note `id`. Its own name is
+/// always fine; another name is a rename only while `<id>.md` is absent from
+/// the same folder, and otherwise a copy.
+async fn is_importable_name(path: &Path, id: &str) -> bool {
+    if path.file_stem().and_then(|s| s.to_str()) == Some(id) {
+        return true;
+    }
+    let own_file = path.with_file_name(format!("{id}.md"));
+    // repository-barrier-allow: watcher checks the watched vault folder for the note's own file.
+    !matches!(tokio::fs::try_exists(&own_file).await, Ok(true) | Err(_))
+}
+
+/// Another `.md` file in the removed note's folder whose front-matter id is
+/// `id`: where a note renamed in Finder now lives.
+async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
+    let dir = removed.parent()?;
+    // repository-barrier-allow: watcher searches the watched vault folder for a renamed note.
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(dir = %dir.display(), %error, "vault watcher: could not list notes to look for a rename");
+            return None;
+        }
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let candidate = entry.path();
+        if candidate == removed || candidate.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        // repository-barrier-allow: watcher reads a candidate note in the watched vault folder.
+        let Ok(contents) = read_note(&candidate).await else {
+            continue;
+        };
+        if super::parse::parse_note(&contents).is_ok_and(|note| note.id == id) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Trusts the writer's `<id>.md` naming invariant — id is the file stem.
@@ -342,8 +430,15 @@ async fn handle_external_delete(path: &Path, db_pool: &SqlitePool, app_handle: &
         return;
     };
 
+    if super::repository::has_pending(db_pool, id)
+        .await
+        .unwrap_or(true)
+    {
+        return;
+    }
+
     let repository = DailyNotesRepository::new(db_pool.clone());
-    let result = repository.delete(id).await;
+    let result = repository.delete_from_vault_if_unqueued(id).await;
 
     match result {
         Ok(true) => {
@@ -387,17 +482,17 @@ pub async fn rescan_vault(
         });
     }
 
-    // Mutable: disk walk removes each id it sees; whatever remains
-    // after the walk = file deleted from disk.
     let repository = DailyNotesRepository::new(db_pool.clone());
-    let rows = repository
-        .list_timestamps()
+    const DB_PAGE: i64 = 128;
+    let _rescan_lock = RESCAN_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let (run_id, total_rows) = super::repository::begin_rescan(&db_pool)
         .await
-        .map_err(|e| format!("focus-rescan: SQL read failed: {}", e))?;
-
-    let total_rows = rows.len();
-    let mut sql_rows: HashMap<String, NoteTimestampRecord> =
-        rows.into_iter().map(|r| (r.id.clone(), r)).collect();
+        .map_err(|e| format!("focus-rescan: repository setup failed: {e}"))?;
+    let mut membership_guard = RescanMembershipGuard {
+        pool: db_pool.clone(),
+        run_id: run_id.clone(),
+        active: true,
+    };
 
     // repository-barrier-allow: rescan enumerates the configured vault resource.
     let mut entries = match tokio::fs::read_dir(&notes_dir).await {
@@ -436,26 +531,45 @@ pub async fn rescan_vault(
         }
         scanned += 1;
 
+        let stem = path.file_stem().and_then(|s| s.to_str());
+        if let Some(id) = stem {
+            super::repository::mark_rescan_seen(&db_pool, &run_id, id)
+                .await
+                .map_err(|e| format!("focus-rescan: could not mark note as seen: {e}"))?;
+            if super::repository::has_pending(&db_pool, id)
+                .await
+                .unwrap_or(true)
+            {
+                continue;
+            }
+        }
+
         if suppression.was_just_written(&path).await {
             // Still mark as seen so the ghost-sweep doesn't delete it.
-            if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
-                sql_rows.remove(id);
-            }
             continue;
         }
 
-        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+        let Some(id) = stem else {
             continue;
         };
 
-        let sql_row = sql_rows.remove(id);
-        let needs_import = match sql_row.as_ref() {
+        let sql_row = repository
+            .get_timestamp(id)
+            .await
+            .map_err(|e| format!("focus-rescan: timestamp lookup failed: {e}"))?;
+        let needs_import = match sql_row {
             None => true,
             Some(row) => is_disk_newer_than_sql(&entry, &row.updated_at).await,
         };
 
         if needs_import {
-            import_one(&path, &db_pool, &app_handle).await;
+            if let Some(imported_id) = import_one(&path, &db_pool, &app_handle).await {
+                super::repository::mark_rescan_seen(&db_pool, &run_id, &imported_id)
+                    .await
+                    .map_err(|e| {
+                        format!("focus-rescan: could not mark imported note as seen: {e}")
+                    })?;
+            }
             imported += 1;
         }
     }
@@ -471,17 +585,47 @@ pub async fn rescan_vault(
     // deletes the entire notes database on one window-focus rescan, with no
     // undo. The database is the SSOT; the filesystem only gets to *suggest*
     // deletions, and only when the evidence is coherent.
+    // Count eligible missing rows in keyset pages before deleting any. This
+    // preserves the mass-disappearance guard while keeping memory bounded.
+    let mut candidates = 0usize;
+    let mut cursor: Option<String> = None;
+    loop {
+        let rows =
+            super::repository::rescan_note_page(&db_pool, &run_id, cursor.as_deref(), DB_PAGE)
+                .await
+                .map_err(|e| format!("focus-rescan: ghost candidate page failed: {e}"))?;
+        if rows.is_empty() {
+            break;
+        }
+        let Some(last) = rows.last() else { break };
+        cursor = Some(last.id.clone());
+        for row in rows {
+            if super::repository::has_pending(&db_pool, &row.id)
+                .await
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            if parse_db_timestamp(&row.created_at).is_ok_and(|dt| {
+                chrono::Utc::now().signed_duration_since(dt) >= chrono::Duration::seconds(30)
+            }) {
+                candidates += 1;
+            }
+        }
+    }
     if let Some(reason) =
-        ghost_sweep_block_reason(walk_complete, scanned, sql_rows.len(), total_rows)
+        ghost_sweep_block_reason(walk_complete, scanned, candidates, total_rows as usize)
     {
         tracing::error!(
             scanned,
-            candidates = sql_rows.len(),
+            candidates,
             total_rows,
             reason,
             "focus-rescan: refusing ghost-sweep; vault looks incomplete rather than edited"
         );
-        emit_rescan_blocked(&app_handle, reason, sql_rows.len(), total_rows);
+        emit_rescan_blocked(&app_handle, reason, candidates, total_rows as usize);
+        let _ = super::repository::finish_rescan(&db_pool, &run_id).await;
+        membership_guard.active = false;
         return Ok(RescanSummary {
             scanned,
             imported,
@@ -492,52 +636,52 @@ pub async fn rescan_vault(
     let now = chrono::Utc::now();
     let creation_grace = chrono::Duration::seconds(30);
 
-    for (id, row) in sql_rows {
-        // Try RFC-3339 first, then fall back to SQLite's native format
-        // (`'YYYY-MM-DD HH:MM:SS'`). If we can't parse it, skip deletion
-        // to be safe — better to keep a ghost row than delete a live one.
-        let created_ok = parse_db_timestamp(&row.created_at);
-
-        match created_ok {
-            Ok(dt) => {
-                let created_age = now.signed_duration_since(dt);
-                if created_age < creation_grace {
-                    tracing::debug!(
-                        id = %id,
-                        created_age_secs = created_age.num_seconds(),
-                        "focus-rescan: skipping ghost-sweep for fresh row (writer queue may not have flushed)"
-                    );
-                    continue;
-                }
-            }
-            Err(_) => {
-                tracing::warn!(
-                    id = %id,
-                    created_at = %row.created_at,
-                    "focus-rescan: unparseable created_at, skipping ghost-sweep to be safe"
-                );
+    cursor = None;
+    loop {
+        let rows =
+            super::repository::rescan_note_page(&db_pool, &run_id, cursor.as_deref(), DB_PAGE)
+                .await
+                .map_err(|e| format!("focus-rescan: ghost deletion page failed: {e}"))?;
+        if rows.is_empty() {
+            break;
+        }
+        let Some(last) = rows.last() else { break };
+        cursor = Some(last.id.clone());
+        for row in rows {
+            if !parse_db_timestamp(&row.created_at)
+                .is_ok_and(|dt| now.signed_duration_since(dt) >= creation_grace)
+            {
                 continue;
             }
-        }
-
-        let result = repository.delete(&id).await;
-        match result {
-            Ok(true) => {
-                tracing::info!(
-                    id = %id,
-                    "focus-rescan: deleted ghost note (file gone from vault)"
-                );
-                emit_note_imported(&app_handle, &id);
-                deleted += 1;
+            let Some(note_id) = super::writeback::safe_note_id(&row.id).then_some(row.id.as_str())
+            else {
+                continue;
+            };
+            // repository-barrier-allow: focus rescan checks the mirrored note file before ghost deletion.
+            if tokio::fs::try_exists(notes_dir.join(format!("{note_id}.md")))
+                .await
+                .unwrap_or(true)
+            {
+                continue;
             }
-            Ok(false) => {}
-            Err(e) => tracing::warn!(
-                id = %id,
-                error = %e,
-                "focus-rescan: ghost-sweep DELETE failed"
-            ),
+            match repository.delete_from_vault_if_unqueued(&row.id).await {
+                Ok(true) => {
+                    tracing::info!(id = %row.id, "focus-rescan: deleted ghost note (file gone from vault)");
+                    emit_note_imported(&app_handle, &row.id);
+                    deleted += 1;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(id = %row.id, error = %e, "focus-rescan ghost DELETE failed")
+                }
+            }
         }
     }
+
+    super::repository::finish_rescan(&db_pool, &run_id)
+        .await
+        .map_err(|e| format!("focus-rescan: membership cleanup failed: {e}"))?;
+    membership_guard.active = false;
 
     if imported > 0 || deleted > 0 {
         tracing::info!(scanned, imported, deleted, "focus-rescan complete");
@@ -579,6 +723,25 @@ pub struct RescanSummary {
     pub scanned: usize,
     pub imported: usize,
     pub deleted: usize,
+}
+
+struct RescanMembershipGuard {
+    pool: SqlitePool,
+    run_id: String,
+    active: bool,
+}
+
+impl Drop for RescanMembershipGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let pool = self.pool.clone();
+        let run_id = self.run_id.clone();
+        let _ = crate::shared::background::spawn(async move {
+            let _ = crate::features::vault::repository::finish_rescan(&pool, &run_id).await;
+        });
+    }
 }
 
 fn emit_note_imported(app_handle: &tauri::AppHandle, note_id: &str) {
@@ -662,6 +825,49 @@ fn emit_watcher_error(app_handle: &tauri::AppHandle, error: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn oversized_vault_note_is_rejected_without_reading_the_whole_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oversized.md");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_NOTE_BYTES + 1024).unwrap();
+        assert_eq!(
+            read_note(&path).await.unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    fn note(id: &str) -> String {
+        format!("---\nid: {id}\ntitle: \"t\"\ncreated_at: t\nupdated_at: t\ntags: []\n---\n\nbody")
+    }
+
+    #[tokio::test]
+    async fn a_note_renamed_in_finder_is_found_under_its_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("other.md"), note("other")).unwrap();
+        std::fs::write(dir.path().join("My title.md"), note("abc")).unwrap();
+        let removed = dir.path().join("abc.md");
+
+        assert_eq!(
+            find_renamed_note(&removed, "abc").await,
+            Some(dir.path().join("My title.md"))
+        );
+        assert_eq!(find_renamed_note(&removed, "gone").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_renamed_file_is_importable_but_a_copy_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let renamed = dir.path().join("My title.md");
+        std::fs::write(&renamed, note("abc")).unwrap();
+        assert!(is_importable_name(&renamed, "abc").await);
+        assert!(is_importable_name(&dir.path().join("abc.md"), "abc").await);
+
+        // The original is still there: this is a copy, not a rename.
+        std::fs::write(dir.path().join("abc.md"), note("abc")).unwrap();
+        assert!(!is_importable_name(&renamed, "abc").await);
+    }
 
     #[test]
     fn ghost_sweep_allows_ordinary_deletion() {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 import {
   AlertCircle,
@@ -6,8 +6,12 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  MessageSquareShare,
+  Paperclip,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  ShieldEllipsis,
   ShieldOff,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -38,6 +42,18 @@ import type { GenerationOutcome } from '../../stores/conversationsStore.types';
 import type { DisplayMessage, SourceWithMetadata } from '../../types/conversation';
 
 /**
+ * One entry per checked sentence, separated by a rule.
+ *
+ * Claims are printed as the model wrote them, citation markers included, so an
+ * entry routinely ends in `[24]`. Spacing alone left that marker sitting
+ * directly above the next claim's first word, where it read as that claim's
+ * citation — and an uncited sentence looked cited.
+ */
+const CLAIM_LIST_CLASS = 'divide-y divide-border-subtle';
+const CLAIM_ITEM_CLASS =
+  'py-2 first:pt-0 last:pb-0 text-sm leading-relaxed text-[hsl(var(--text-secondary))]';
+
+/**
  * What to say about a regenerate that failed.
  *
  * A cancelled turn is not a failure and never reaches here — only `'failed'`
@@ -59,12 +75,12 @@ interface MessageProps {
   previousMessageId?: string;
 }
 
-export function Message({
+export const Message = memo(({
   message,
   isFresh = false,
   isLastTurn = false,
   previousMessageId,
-}: MessageProps) {
+}: MessageProps) => {
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const verificationPanelId = useId();
@@ -92,6 +108,7 @@ export function Message({
   const regenerateResponse = useConversationsStore((s) => s.regenerateResponse);
   const truncateAfter = useConversationsStore((s) => s.truncateAfter);
   const forkConversation = useConversationsStore((s) => s.forkConversation);
+  const selectConversation = useConversationsStore((s) => s.selectConversation);
   const sendMessage = useConversationsStore((s) => s.sendMessage);
   const createConversation = useConversationsStore((s) => s.createConversation);
 
@@ -126,6 +143,35 @@ export function Message({
   const citationMap = useMemo(() => createCitationMap(sources), [sources]);
   const isAssistantWithSources = !isUser && sources.length > 0;
 
+  // The files this message brought into the conversation, stamped on it when
+  // it was sent. Absent metadata or a parse failure is "no attachments",
+  // never an error — older messages simply have no record.
+  const attachmentNames = useMemo(() => {
+    if (!isUser || !('metadata' in message) || !message.metadata) return [] as string[];
+    try {
+      const parsed: unknown = JSON.parse(message.metadata);
+      const names = (parsed as { attachments?: unknown })?.attachments;
+      if (!Array.isArray(names)) return [] as string[];
+      return names.filter((name): name is string => typeof name === 'string');
+    } catch {
+      return [] as string[];
+    }
+  }, [isUser, message]);
+
+  // A chat continued from another opens with a summary of it. That turn was
+  // written from the old thread, not in answer to anything here, so it says
+  // where it came from and links back.
+  const continuedFrom = useMemo(() => {
+    if (isUser || !('metadata' in message) || !message.metadata) return null;
+    try {
+      const parsed = (JSON.parse(message.metadata) as { continuedFrom?: { conversationId?: unknown; title?: unknown } })?.continuedFrom;
+      if (typeof parsed?.conversationId !== 'string') return null;
+      return { conversationId: parsed.conversationId, title: typeof parsed.title === 'string' ? parsed.title : 'the earlier chat' };
+    } catch {
+      return null;
+    }
+  }, [isUser, message]);
+
   // The ordered list behind the citation numbers — what `[` / `]` travel over.
   const citationSources = useMemo(
     () =>
@@ -139,24 +185,29 @@ export function Message({
   const ownerKey = messageId ?? domMessageId ?? '';
 
   const openCitation = useCallback(
-    (index: number) => {
+    (index: number, occurrence: number | null = null) => {
       if (index < 0 || !ownerKey) return;
-      openReader(ownerKey, citationSources, index);
+      openReader(ownerKey, citationSources, index, occurrence);
     },
     [ownerKey, openReader, citationSources]
   );
 
-  /** Open the reader on a source by identity, whatever its position. */
+  /**
+   * Open the reader on a source by identity, whatever its position.
+   *
+   * `occurrence` is the mark that was clicked, when one was: the answer cites a
+   * source from several sentences and the reader opens on the one that was meant.
+   */
   const openSource = useCallback(
-    (source: SourceWithMetadata) => {
+    (source: SourceWithMetadata, occurrence: number | null = null) => {
       const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
       // A passage the answer never numbered — two chunks that share a citation
       // id keep one of them out of the map — still opens, on its own.
       if (index < 0) {
-        if (ownerKey) openReader(ownerKey, [source], 0);
+        if (ownerKey) openReader(ownerKey, [source], 0, occurrence);
         return;
       }
-      openCitation(index);
+      openCitation(index, occurrence);
     },
     [citationSources, openCitation, openReader, ownerKey]
   );
@@ -188,6 +239,21 @@ export function Message({
     return messageId ? messageRetrieval.get(messageId) ?? null : null;
   }, [isUser, isPending, conversationId, liveRetrieval, messageId, messageRetrieval]);
 
+  /**
+   * When this turn began, for the clocks on its running steps.
+   *
+   * A step records only its offset from the start of the turn, and the pending
+   * bubble was created at that start — so its timestamp is the origin the
+   * offsets are measured from. Reading it from the message rather than from
+   * the moment a row is drawn is what lets a clock survive the record being
+   * folded and opened again.
+   */
+  const turnStartedAt = useMemo(() => {
+    if (isUser || !isPending) return null;
+    const started = Date.parse(message.createdAt);
+    return Number.isNaN(started) ? null : started;
+  }, [isUser, isPending, message.createdAt]);
+
   const claimsEvaluated = verificationSummary?.claimsEvaluated ?? 0;
   const supportedClaims = verificationSummary?.supportedClaimNotes ?? [];
   // Memoized because the `?? []` fallback is a fresh array on every render,
@@ -207,11 +273,22 @@ export function Message({
     [verificationSummary]
   );
   const contradictedCount = contradictedClaims.length;
-  const unverifiedClaims = useMemo(() => {
+  const ungroundedClaims = useMemo(() => {
     if (contradictedCount === 0) return unsupportedClaims;
     const contradicted = new Set(contradictedClaims);
     return unsupportedClaims.filter((claim) => !contradicted.has(claim));
   }, [contradictedClaims, contradictedCount, unsupportedClaims]);
+  // Claims nothing checked: the judge ran out of time or the page had no
+  // saved text. Kept apart from the ungrounded ones — "not looked at" is not
+  // "not found".
+  const uncheckedClaims = useMemo(
+    () => (verificationSummary?.claimVerdicts ?? [])
+      .filter((verdict) => verdict.verdict === 'unverified')
+      .map((verdict) => verdict.sentence),
+    [verificationSummary]
+  );
+  const uncheckedCount = verificationSummary?.verdictCounts?.unverified ?? uncheckedClaims.length;
+  const verificationPending = verificationSummary?.enabled === true && verificationSummary.pending === true;
   /** The passage the judge read, keyed by the claim it ruled on. */
   const evidenceByClaim = useMemo(() => {
     const quotes = new Map<string, string>();
@@ -220,8 +297,15 @@ export function Message({
     }
     return quotes;
   }, [verificationSummary]);
+  const reasonByClaim = useMemo(() => {
+    const reasons = new Map<string, string>();
+    for (const verdict of verificationSummary?.claimVerdicts ?? []) {
+      if (verdict.reason) reasons.set(verdict.sentence, verdict.reason);
+    }
+    return reasons;
+  }, [verificationSummary]);
   const canExpandVerification =
-    verificationSummary?.enabled === true && claimsEvaluated > 0;
+    verificationSummary?.enabled === true && !verificationPending && claimsEvaluated > 0;
   // Drawn on the sentences themselves, so a doubtful figure is doubtful where
   // it is read and not in a list under a badge.
   const claimVerdicts = useMemo(
@@ -232,9 +316,9 @@ export function Message({
   const visibleVerifiedClaims = showAllVerifiedClaims
     ? supportedClaims
     : supportedClaims.slice(0, 5);
-  const visibleUnverifiedClaims = showAllUnverifiedClaims
-    ? unverifiedClaims
-    : unverifiedClaims.slice(0, 5);
+  const visibleUngroundedClaims = showAllUnverifiedClaims
+    ? ungroundedClaims
+    : ungroundedClaims.slice(0, 5);
 
   const verificationBadge = useMemo(() => {
     if (isUser || !verificationSummary) return null;
@@ -246,12 +330,40 @@ export function Message({
           'border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
+    // The answer is readable while its check runs; say so quietly rather
+    // than showing a verdict the check has not reached yet.
+    if (verificationPending) {
+      return {
+        label: 'Checking…',
+        icon: ShieldEllipsis,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
+    // The check never reported: the app closed under it, or the wait ran
+    // out. Say that, rather than "nothing to verify", which would be a lie.
+    if (verificationSummary.interrupted) {
+      return {
+        label: 'Not checked',
+        icon: ShieldOff,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
     if (claimsEvaluated === 0) {
       return {
         label: 'Nothing to verify',
         icon: ShieldOff,
         className:
           'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+      };
+    }
+    if (unsupportedCount === 0 && uncheckedCount > 0) {
+      return {
+        label: `Partly checked · ${uncheckedCount} not checked`,
+        icon: ShieldCheck,
+        className:
+          'border-subtle bg-surface text-[hsl(var(--text-secondary))]',
       };
     }
     if (unsupportedCount === 0) {
@@ -279,7 +391,15 @@ export function Message({
       className:
         'border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))]',
     };
-  }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount, contradictedCount]);
+  }, [
+    claimsEvaluated,
+    isUser,
+    verificationSummary,
+    verificationPending,
+    unsupportedCount,
+    contradictedCount,
+    uncheckedCount,
+  ]);
 
   const normalizedMarkdownContent = useMemo(
     () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
@@ -487,12 +607,18 @@ export function Message({
     if (next) article.querySelectorAll(next).forEach((element) => element.classList.add('is-lit'));
   }, []);
 
-  // The open citation is lit in the text as long as the reader shows it.
+  // The open citation is lit in the text as long as the reader shows it: the
+  // one mark that was clicked, since the same number further down stands for a
+  // different passage — or every mark of the source, when it was opened whole.
+  const readerOccurrence = readerSession?.occurrence ?? null;
   useEffect(() => {
-    restingLitRef.current =
-      readerCitationNumber === null ? null : `[data-cite="${readerCitationNumber}"]`;
+    if (readerCitationNumber === null) restingLitRef.current = null;
+    else if (readerOccurrence === null) restingLitRef.current = `[data-cite="${readerCitationNumber}"]`;
+    else {
+      restingLitRef.current = `[data-cite="${readerCitationNumber}"][data-cite-at="${readerOccurrence}"]`;
+    }
     setLit(null);
-  }, [readerCitationNumber, setLit]);
+  }, [readerCitationNumber, readerOccurrence, setLit]);
 
   // Resting on a sentence says why it is trusted; clicking it is how the
   // sentence leaves the chat.
@@ -505,7 +631,8 @@ export function Message({
       if (!source) return;
       event.preventDefault();
       setCitationHover(null);
-      openSource(source);
+      const at = Number(chip.dataset.citeAt);
+      openSource(source, Number.isInteger(at) ? at : null);
       return;
     }
 
@@ -600,6 +727,17 @@ export function Message({
         <header className={`mb-1.5 flex items-center gap-3 ${isUser ? 'justify-end' : 'justify-between'}`}>
           <div className="flex min-w-0 items-center gap-2">
             <span className="sr-only">{isUser ? 'You' : 'Assistant'}</span>
+            {continuedFrom && (
+              <button
+                type="button"
+                onClick={() => { void selectConversation(continuedFrom.conversationId); }}
+                title={`Open "${continuedFrom.title}"`}
+                className="inline-flex min-w-0 items-center gap-1 rounded-sm text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <MessageSquareShare className="h-3 w-3 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+                <span className="truncate">Summary of {continuedFrom.title}</span>
+              </button>
+            )}
             {isPending && (
               <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-muted))]">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -611,6 +749,18 @@ export function Message({
                 <AlertCircle className="h-3 w-3" />
                 {errorMessage || "Message didn't send"}
               </span>
+            )}
+            {/* Only the last question: regenerate re-asks whatever came last. */}
+            {isFailed && isUser && isLastTurn && conversationId && (
+              <button
+                type="button"
+                onClick={() => void handleRegenerate()}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] disabled:opacity-50"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Try again
+              </button>
             )}
             {verificationBadge && (
               <button
@@ -628,7 +778,9 @@ export function Message({
                 title={
                   !verificationSummary?.enabled
                     ? 'Verification is off. Turn on in settings.'
-                    : canExpandVerification
+                    : verificationPending
+                      ? 'Checking the answer against its sources'
+                      : canExpandVerification
                       ? (isVerificationPanelExpanded ? 'Hide verification details' : 'Show verification details')
                       : 'Nothing in this message to verify.'
                 }
@@ -659,7 +811,7 @@ export function Message({
           <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-subtle bg-surface p-4">
             <p className="mb-1 text-sm font-medium text-text-primary">Verification details</p>
             <p className="text-xs text-[hsl(var(--text-muted))]">
-              {verificationSummaryLine(claimsEvaluated, unsupportedCount)}
+              {verificationSummaryLine(claimsEvaluated, unsupportedCount, uncheckedCount)}
             </p>
 
             <div className="mt-3 grid gap-4 lg:grid-cols-2">
@@ -668,17 +820,24 @@ export function Message({
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--danger-fg))]">
                     Contradicted by your sources
                   </p>
-                  <ul className="space-y-2">
+                  {/* Ruled, not just spaced. A claim ends in its own citation
+                      marker, so with nothing but a gap between entries the
+                      `[24]` closing one sentence reads as though it belongs to
+                      the sentence printed underneath it. */}
+                  <ul className={CLAIM_LIST_CLASS}>
                     {contradictedClaims.map((claim, idx) => (
-                      <li
-                        key={`contradicted-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                      <li key={`contradicted-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
+                        {reasonByClaim.get(claim) && (
+                          <span className="mt-1 block text-xs leading-relaxed text-[hsl(var(--text-secondary))]">
+                            {reasonByClaim.get(claim)}
+                          </span>
+                        )}
                         {/* The passage the judge read. Without it the verdict is
                             an assertion; with it the reader can check. */}
                         {evidenceByClaim.get(claim) && (
                           <span className="mt-1 block border-l-2 border-[hsl(var(--danger-muted))] pl-2 text-xs italic text-[hsl(var(--text-muted))]">
+                            <span className="not-italic font-medium">What the source says: </span>
                             &ldquo;{evidenceByClaim.get(claim)}&rdquo;
                           </span>
                         )}
@@ -693,12 +852,9 @@ export function Message({
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
                     Verified claims
                   </p>
-                  <ul className="space-y-2">
+                  <ul className={CLAIM_LIST_CLASS}>
                     {visibleVerifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`verified-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                      <li key={`verified-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                       </li>
                     ))}
@@ -717,22 +873,19 @@ export function Message({
                 </div>
               )}
 
-              {unverifiedClaims.length > 0 && (
+              {ungroundedClaims.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
-                    Unverified claims
+                    Not found in your sources
                   </p>
-                  <ul className="space-y-2">
-                    {visibleUnverifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`unsupported-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
+                  <ul className={CLAIM_LIST_CLASS}>
+                    {visibleUngroundedClaims.map((claim, idx) => (
+                      <li key={`unsupported-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
                       </li>
                     ))}
                   </ul>
-                  {unverifiedClaims.length > 5 && (
+                  {ungroundedClaims.length > 5 && (
                     <button
                       type="button"
                       onClick={() => setShowAllUnverifiedClaims((prev) => !prev)}
@@ -740,9 +893,29 @@ export function Message({
                     >
                       {showAllUnverifiedClaims
                         ? 'Show fewer'
-                        : `Show all ${unverifiedClaims.length}`}
+                        : `Show all ${ungroundedClaims.length}`}
                     </button>
                   )}
+                </div>
+              )}
+
+              {uncheckedClaims.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-muted))]">
+                    Not checked
+                  </p>
+                  <ul className={CLAIM_LIST_CLASS}>
+                      {uncheckedClaims.map((claim, idx) => (
+                        <li key={`unchecked-${idx}`} className={CLAIM_ITEM_CLASS}>
+                          {claim}
+                          {reasonByClaim.get(claim) && (
+                            <span className="mt-1 block text-xs leading-relaxed text-[hsl(var(--text-secondary))]">
+                              {reasonByClaim.get(claim)}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
                 </div>
               )}
             </div>
@@ -753,6 +926,7 @@ export function Message({
           trace={retrievalTrace}
           record={messageId ? messageTurn.get(messageId) ?? null : null}
           liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
+          turnStartedAt={turnStartedAt}
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
@@ -794,6 +968,21 @@ export function Message({
             </span>
           )}
         </div>
+        )}
+
+        {/* The files this message brought into the conversation. */}
+        {isUser && attachmentNames.length > 0 && (
+          <div className="mt-1.5 ml-auto flex w-fit max-w-[85%] flex-wrap justify-end gap-1.5">
+            {attachmentNames.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-[hsl(var(--text-secondary))] shadow-sheet"
+              >
+                <Paperclip className="h-3 w-3" strokeWidth={1.6} />
+                {name}
+              </span>
+            ))}
+          </div>
         )}
 
         {/* The narrow form of the evidence; the margin replaces it where there is room. */}
@@ -875,4 +1064,4 @@ export function Message({
       )}
     </>
   );
-}
+});

@@ -75,6 +75,19 @@ function updateDownloadCache(
   );
 }
 
+const TERMINAL_STATES: ReadonlySet<DownloadStatus['state']> = new Set(['Completed', 'Failed', 'Cancelled']);
+const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(['completed', 'error', 'cancelled']);
+
+/**
+ * A progress snapshot that lands after the row already finished. Events are
+ * not ordered against each other, so a late `downloading` tick would turn a
+ * Completed row back into a running one. A retry or resume is not affected:
+ * those actions re-read the list from the backend, which is authoritative.
+ */
+function isLateProgress(existing: DownloadStatus | undefined, status: string): boolean {
+  return Boolean(existing && TERMINAL_STATES.has(existing.state) && !TERMINAL_SNAPSHOT_STATUSES.has(status));
+}
+
 /**
  * Reconcile an event snapshot into the query cache.
  *
@@ -91,6 +104,7 @@ export function applyDownloadSnapshot(
 
   if (snapshot.kind === 'single') {
     const existingEntry = findByBackendId(current, snapshot.id);
+    if (isLateProgress(existingEntry?.[1], snapshot.status)) return current;
     const storeKey = existingEntry?.[0] ?? snapshot.id;
     next.set(storeKey, toDownloadStatus(snapshot.id, snapshot, {
       existing: existingEntry?.[1],
@@ -102,6 +116,8 @@ export function applyDownloadSnapshot(
     const storeKey = `${snapshot.id}:${file.filename}`;
     const existingEntry = findByBackendId(next, file.id);
     const existing = next.get(storeKey) ?? existingEntry?.[1];
+
+    if (isLateProgress(existing, file.status)) continue;
 
     if (existingEntry && existingEntry[0] !== storeKey) {
       next.delete(existingEntry[0]);
@@ -174,9 +190,11 @@ export function useDownloadsListener(): void {
     let unlistenProgress: (() => void) | null = null;
     let unlistenFailed: (() => void) | null = null;
 
+    // Listen first, then read the list: a failed list must not leave the
+    // session with no progress listener, and events that fire while the list
+    // loads must not fall between the two.
     void (async () => {
       try {
-        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap });
         const progressListener = await listenValidated(
           TauriEventNames.Downloads.Event,
           EventSchemas.Downloads.StateSnapshot,
@@ -223,11 +241,19 @@ export function useDownloadsListener(): void {
         } else {
           progressListener();
           failedListener();
+          return;
         }
       } catch (error) {
         if (!mounted) return;
         console.error('[useDownloadsListener] Setup error:', error);
         setListenerError(error instanceof Error ? error.message : 'Failed to setup download listener');
+      }
+      try {
+        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap });
+      } catch (error) {
+        if (!mounted) return;
+        console.error('[useDownloadsListener] Initial download list failed:', error);
+        setListenerError(error instanceof Error ? error.message : 'Failed to load downloads');
       }
     })();
 

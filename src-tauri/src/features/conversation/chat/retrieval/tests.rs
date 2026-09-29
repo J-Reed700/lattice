@@ -163,9 +163,10 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         ),
         search_response: empty_search_response(),
         followup_context: None,
-        web_context: None,
+        web_context: Vec::new(),
         web_search_error: None,
         kb_unavailable_reason: None,
+        kb_attempted: false,
         sources: Vec::new(),
         available_for_rag: 0,
         sub_timings: RetrievalSubTimingMetrics::default(),
@@ -186,7 +187,15 @@ fn external_result(url: &str, context: Option<&str>) -> pipeline::ExternalSearch
     };
     pipeline::ExternalSearchResult {
         sources: build_web_source_citations(&[citation], &[], 200),
-        context: context.map(str::to_string),
+        context: context
+            .map(|detail| {
+                vec![WebContextItem {
+                    url: url.to_string(),
+                    title: url.to_string(),
+                    detail: detail.to_string(),
+                }]
+            })
+            .unwrap_or_default(),
         error: None,
         elapsed_ms: 7,
         pages: Default::default(),
@@ -236,10 +245,12 @@ fn external_results_merge_wiki_before_web() {
     );
     pipeline::attach_web_results(&mut outcome, web);
 
-    assert_eq!(
-        outcome.web_context.as_deref(),
-        Some("wiki context\n\nweb context")
-    );
+    let details: Vec<_> = outcome
+        .web_context
+        .iter()
+        .map(|item| item.detail.as_str())
+        .collect();
+    assert_eq!(details, ["wiki context", "web context"]);
     let urls: Vec<_> = outcome
         .sources
         .iter()
@@ -257,13 +268,14 @@ fn empty_wiki_search_leaves_web_context_alone() {
     let mut outcome = empty_pipeline_outcome();
 
     pipeline::attach_wiki_results(&mut outcome, pipeline::ExternalSearchResult::default());
-    assert!(outcome.web_context.is_none());
+    assert!(outcome.web_context.is_empty());
 
     pipeline::attach_web_results(
         &mut outcome,
         external_result("https://example.com/web", Some("web context")),
     );
-    assert_eq!(outcome.web_context.as_deref(), Some("web context"));
+    assert_eq!(outcome.web_context.len(), 1);
+    assert_eq!(outcome.web_context[0].detail, "web context");
     assert!(outcome.web_search_error.is_none());
 }
 
@@ -521,4 +533,68 @@ fn a_remembered_document_outside_the_space_is_forgotten() {
         ["still_here"]
     );
     assert!(super::keep_references_in_scope(vec![reference("any")], &HashSet::new()).is_empty());
+}
+
+#[test]
+fn web_query_timeout_keeps_grow_light_subject_and_discards_tracking_ids() {
+    let raw = r#"Also, too, what types of grow lights, what I need. So, because, for example, I have it to war for blueberry plant, it's in a one-gallon bucket, and I have it just facing a window, and it seems to be getting enough light, because there's a ton of growth on it, and it's growing really well. I have Sansi growlites, which are very good growlites. Like I buy a giant one, I guess it's only like 30 watts, but it's super fucking bright, and it gives off a lot of light. I feel like pointing just one of those light bulbs right at the plant would be enough, because it's just a lot of these produce a ton of light. I don't know, maybe look it up and see if it's enough.
+
+Grow light: https://www.sansiled.com/products/br30-36w-led-grow-light-bulb?currency=USD&country=US&variant=43716789043426&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=e3067c49e087&gad_source=1&gad_campaignid=23836680380&gbraid=0AAAAAoPQO5oRdg3iBkBYv0p1o7_GLgAIW&gclid=Cj0KCQjw8c3VBhCsARIsAA_xJ91otG_q8tN8C19x05OVlvViMxInRhI3QZk187rS3Tk1DtDU4XJBxj8aAoPqEALw_wcB"#;
+    let interpretation =
+        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Followup);
+    let anchors = ["research", "smaller", "sunlight"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let query = select_web_search_query(raw, &interpretation, Some(&anchors));
+    assert!(query.contains("grow"), "{query}");
+    assert!(query.contains("light"), "{query}");
+    assert!(query.contains("blueberry"), "{query}");
+    assert!(!query.contains("campaign"), "{query}");
+    assert!(!query.contains("0aaaa"), "{query}");
+    assert!(!query.contains("e3067"), "{query}");
+    assert!(
+        !query.contains("research"),
+        "stale anchor displaced subject: {query}"
+    );
+}
+
+#[test]
+fn web_query_strips_tracking_even_for_a_short_product_link() {
+    let raw = "https://example.com/products/36w-grow-light?gclid=opaqueidentifier&utm_campaign=unrelated#tracking";
+    let interpretation =
+        crate::domain::qa::hyde::HyDEInterpretation::raw_only(raw, QueryType::Question);
+    let query = select_web_search_query(raw, &interpretation, None);
+    assert!(query.contains("grow light"), "{query}");
+    assert!(!query.contains("opaqueidentifier"), "{query}");
+    assert!(!query.contains("unrelated"), "{query}");
+}
+
+/// The intent classifier wanting the web used to switch the vault off: its
+/// `needs_web` became `force_web_search`, and the plan read that as "web
+/// instead of the library". Web now adds to the vault, and the two run side by
+/// side so both sets of sources reach the answer.
+#[test]
+fn an_intent_that_needs_the_web_still_searches_the_vault() {
+    let intent = crate::infrastructure::services::intent::TurnIntent {
+        needs_knowledge_base: false,
+        needs_web: true,
+        is_followup: false,
+        confidence: 0.9,
+    };
+    let merged = super::super::apply_turn_intent(SearchFlags::from_preferences(None), &intent);
+    assert!(merged.force_web_search);
+    assert!(!merged.force_kb_search);
+
+    let decision = RouterDecisionOutcome {
+        action: RouterAction::NewSearch,
+        recent_doc_meta: None,
+        clarify_message: None,
+    };
+    let plan =
+        RetrievalPlan::from_router(&RouterSettingsDto::default(), &decision, "latest", merged);
+
+    assert!(plan.should_search_kb);
+    assert!(plan.should_search_web);
+    assert!(kb_can_run_alongside_external(merged));
 }

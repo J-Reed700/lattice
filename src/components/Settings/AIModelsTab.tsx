@@ -12,7 +12,10 @@
 
 import { useMemo, useState } from 'react';
 
+import { useSettingsQuery } from '../../hooks/queries/useSettingsQuery';
 import { PageHeader, SidebarSearch, TooltipProvider } from '../ui';
+import { activeRemoteRow } from './modelRoles/activeRemoteRow';
+import { LlamaCppMetaRow } from './modelRoles/LlamaCppMetaRow';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';
 import { ModelRolesProvider, useModelRoles } from './modelRoles/ModelRolesContext';
@@ -20,7 +23,8 @@ import { OllamaMetaRow } from './modelRoles/OllamaMetaRow';
 import { EmptyState } from '../EmptyState/EmptyState';
 
 function AIModelsTabContent() {
-  const { localModels, isLoading } = useModelRoles();
+  const { localModels, isLoading, error, refresh } = useModelRoles();
+  const { data: settings } = useSettingsQuery();
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredLocal = useMemo(() => {
@@ -62,12 +66,20 @@ function AIModelsTabContent() {
                 No models match &ldquo;{searchQuery}&rdquo;.
               </div>
             ) : null}
-            <OllamaMetaRow />
+            {activeRemoteRow(settings?.llm) === 'llamacpp' ? <LlamaCppMetaRow /> : <OllamaMetaRow />}
           </>
         )}
       </div>
 
-      {!isLoading && localModels.length === 0 && (
+      {!isLoading && error ? (
+        <EmptyState
+          title="Couldn't load your models."
+          description={error}
+          action={{ label: 'Try again', onClick: () => void refresh() }}
+        />
+      ) : null}
+
+      {!isLoading && !error && localModels.length === 0 && (
         <EmptyState
           title="No models downloaded."
           action={{

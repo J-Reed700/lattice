@@ -99,7 +99,159 @@ describe('finding the passage an answer sentence matches', () => {
   });
 });
 
+describe('an answer sentence that condenses a whole section', () => {
+  // The shape of a real page: a numbered section whose facts sit five
+  // sentences apart, and an answer that put them all in one bullet.
+  const SECTIONS = [
+    '5. Radishes',
+    'Radishes have shallow roots and are one of the easiest crops for beginners.',
+    'Sow seeds every 2 weeks for a continuous harvest of roots and leaves.',
+    'Seed to harvest: 24 to 30 days',
+    '6. Beets',
+    'Beets can be grown indoors for their roots as well as their leafy greens.',
+    'The greens look and taste very similar to swiss chard.',
+    'A beet seed actually comprises a cluster of tiny seeds.',
+    'When they germinate, they need to be thinned 3 to 6 inches apart.',
+    'Treat the thinnings as microgreens and put them in salads.',
+    'Seed to harvest: 40 days for baby beets, 50 to 65 days to maturity',
+    '7. Carrots',
+    'Round carrots like Tonda di Parigi are perfect for pots.',
+  ].join('\n\n');
+  const BEETS =
+    'Beets — double yield: roots plus chard-like greens you can eat; thinned seedlings work as microgreens; baby beets in about 40 days.';
+
+  it('finds the section when no three sentences of it carry enough', () => {
+    const [passage, ...rest] = findSourcedPassages(SECTIONS, [BEETS]);
+    expect(rest).toEqual([]);
+    const text = SECTIONS.slice(passage!.start, passage!.end);
+    expect(text).toContain('swiss chard');
+    expect(text).toContain('40 days for baby beets');
+    expect(text).not.toContain('Radishes');
+    expect(text).not.toContain('Tonda di Parigi');
+  });
+
+  it('still prefers the tight window when one is enough', () => {
+    const [passage] = findSourcedPassages(SECTIONS, [
+      'Radishes — sow every 2 weeks for a continuous harvest; 24 to 30 days.',
+    ]);
+    const text = SECTIONS.slice(passage!.start, passage!.end);
+    expect(text).toContain('Sow seeds every 2 weeks');
+    expect(text).toContain('24 to 30 days');
+    expect(text).not.toContain('Beets');
+  });
+
+  it('holds the wider window to the same bar', () => {
+    expect(
+      findSourcedPassages(SECTIONS, [
+        'Salad greens, radishes, beets, carrots, scallions, garlic greens, bush beans, peas, potatoes, chives, mint and micro tomatoes.',
+      ])
+    ).toEqual([]);
+  });
+});
+
+describe('an answer sentence that credits two sources', () => {
+  // Each page backs one clause of it, and neither holds half of the whole.
+  const CHIVES =
+    '- **Chives & mint** — tolerate lower light and irregular watering better than almost any other herb; chives from seed or transplant in a spot with 6–8 hours of bright light, growing within ~2 weeks [1][9].';
+
+  const SECOND_PAGE = [
+    'Basil grows in any south- or east-facing window.',
+    'To grow chives from seed, fill a small container with pre-moistened potting mix.',
+    'Locate in an area with six to eight hours of bright light.',
+    'Chives should start growing within two weeks.',
+    'Parsley is slower and wants a deeper pot than most people give it.',
+  ].join('\n\n');
+
+  it('finds the clause the second page backs', () => {
+    const [passage] = findSourcedPassages(SECOND_PAGE, [CHIVES]);
+    const text = SECOND_PAGE.slice(passage!.start, passage!.end);
+
+    expect(text).toContain('six to eight hours of bright light');
+    expect(text).not.toContain('Parsley');
+  });
+
+  it('reads a spelled-out number as the number', () => {
+    const page = 'Herbs are forgiving.\n\nGive seedlings six to eight hours of bright light for two weeks.';
+    const sentence = 'Seedlings want 6–8 hours of bright light for 2 weeks.';
+
+    expect(findSourcedPassages(page, [sentence])).toHaveLength(1);
+  });
+
+  it('holds a clause to the same bar as a sentence', () => {
+    const page = 'Chives are a herb.\n\nMint spreads quickly; keep it in a pot of its own.';
+
+    expect(findSourcedPassages(page, [CHIVES])).toEqual([]);
+  });
+});
+
+describe('a page that changes subject at a heading', () => {
+  // From the greens turn: the lettuce sentence's highlight ran through the
+  // heading under it and lit the whole broccoli section, because "well" is a
+  // word the section below happened to share with it.
+  const SECTIONED = [
+    'Lettuce For Cut-And-Come-Again Harvests',
+    '',
+    'Varieties like Red Oak Leaf, Buttercrunch, and Salad Bowl offer different colors, textures and flavors.',
+    '',
+    'Broccoli For Strong Spring Crops',
+    '',
+    'Broccoli needs a long growing season but does not tolerate heat well, which is why Illinois gardeners start the seeds indoors.',
+  ].join('\n');
+
+  it('stops a passage at the heading below it', () => {
+    const [passage, ...rest] = findSourcedPassages(SECTIONED, [
+      'Varieties like Red Oak Leaf and Buttercrunch work well [2][7].',
+    ]);
+
+    expect(rest).toEqual([]);
+    const text = SECTIONED.slice(passage!.start, passage!.end);
+    expect(text).toContain('Red Oak Leaf');
+    expect(text).not.toContain('Broccoli');
+  });
+
+  it('lets a passage begin at a heading, which is the section saying what it is about', () => {
+    const [passage] = findSourcedPassages(SECTIONED, [
+      'Broccoli needs a long season and does not tolerate heat, so Illinois gardeners start it indoors [2].',
+    ]);
+
+    expect(SECTIONED.slice(passage!.start, passage!.end)).toContain('long growing season');
+  });
+
+  it('reads a short line that is not titled as the prose it is', () => {
+    // "Seed to harvest: 24 to 30 days" ends a section rather than opening one.
+    const page = [
+      'Radishes',
+      '',
+      'Sow seeds every 2 weeks for a continuous harvest of roots and leaves.',
+      '',
+      'Seed to harvest: 24 to 30 days',
+    ].join('\n');
+
+    const [passage] = findSourcedPassages(page, [
+      'Radishes — sow every 2 weeks for a continuous harvest; 24 to 30 days [1].',
+    ]);
+    const text = page.slice(passage!.start, passage!.end);
+
+    expect(text).toContain('Sow seeds every 2 weeks');
+    expect(text).toContain('24 to 30 days');
+  });
+});
+
 describe('merging passages', () => {
+  it('keeps a mark either side of a heading apart, though only blank lines divide them', () => {
+    const page = 'Salad Bowl lettuce is mild.\n\nBroccoli For Strong Spring Crops\n\nBroccoli needs a long season.';
+    const passages = mergePassages(
+      [
+        { start: 0, end: 27, sentenceIndex: 0, score: 0.8 },
+        { start: 29, end: page.length, sentenceIndex: 1, score: 0.7 },
+      ],
+      page
+    );
+
+    expect(passages).toHaveLength(2);
+    expect(page.slice(passages[0]!.start, passages[0]!.end)).toBe('Salad Bowl lettuce is mild.');
+  });
+
   it('folds overlapping spans together and keeps the stronger match', () => {
     expect(
       mergePassages([

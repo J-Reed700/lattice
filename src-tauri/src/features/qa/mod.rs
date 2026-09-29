@@ -7,7 +7,6 @@
 //! ## Public surface
 //!
 //! - `crate::features::qa::dto` — QA DTOs
-//! - `crate::features::qa::use_cases` — QA use cases
 //! - `crate::features::qa::conversational_service` — ConversationalQAService
 //! - `crate::features::qa::commands` — Tauri command handlers
 //! - `crate::features::qa::plugin::init()` — Tauri plugin
@@ -29,7 +28,6 @@ pub mod plugin;
 pub mod starters;
 pub mod starters_dto;
 pub mod traits;
-pub mod use_cases;
 
 #[cfg(test)]
 pub mod mocks;

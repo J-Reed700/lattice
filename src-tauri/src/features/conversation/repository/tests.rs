@@ -6,9 +6,11 @@ use sqlx::SqlitePool;
 mod conversations;
 mod document_references;
 mod fork;
+mod knowledge;
 mod memory;
 mod messages;
 mod pruning;
+mod web_sources;
 
 async fn create_test_pool() -> SqlitePool {
     SqlitePoolOptions::new().connect(":memory:").await.unwrap()

@@ -325,6 +325,22 @@ pub fn random_proxy_url() -> Option<&'static str> {
     })
 }
 
+/// Host names of the configured proxies. The web client's resolver refuses
+/// private addresses, and a proxy the user runs on this machine or the LAN is
+/// exactly such an address; its name is the one thing exempt.
+pub fn proxy_hosts() -> Vec<String> {
+    PROXY_POOL
+        .as_ref()
+        .map(|proxies| {
+            proxies
+                .iter()
+                .filter_map(|proxy| reqwest::Url::parse(proxy).ok())
+                .filter_map(|url| url.host_str().map(str::to_ascii_lowercase))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Get the FlareSolverr client (if `RECALL_FLARESOLVERR_URL` is set).
 pub fn flaresolverr() -> Option<&'static FlareSolverrClient> {
     FLARESOLVERR.as_ref()
@@ -416,26 +432,48 @@ impl FlareSolverrClient {
 // ─── Stealth Client Builder ─────────────────────────────────────────────────
 
 /// Reqwest `ClientBuilder` with stealth features:
-/// - Cookie jar for session persistence
 /// - Proxy rotation (when configured)
+/// - No cookie jar: one client serves every turn and conversation, so a jar
+///   would replay a search engine's cookies on every later query and let it
+///   link searches from unrelated conversations. The hidden browser reader is
+///   incognito for the same reason.
 ///
 /// Does **not** set `User-Agent` — use [`browser_headers`] per-request for rotation.
 pub fn stealth_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = super::http_client::reqwest_client_builder().cookie_store(true);
+    let mut builder = super::http_client::reqwest_client_builder().cookie_store(false);
 
     if let Some(proxy_url) = random_proxy_url() {
+        let shown = redact_url_credentials(proxy_url);
         match reqwest::Proxy::all(proxy_url) {
             Ok(proxy) => {
-                debug!(proxy = %proxy_url, "Stealth: using proxy");
+                debug!(proxy = %shown, "Stealth: using proxy");
                 builder = builder.proxy(proxy);
             }
             Err(e) => {
-                warn!(proxy = %proxy_url, error = %e, "Stealth: invalid proxy URL, skipping");
+                warn!(proxy = %shown, error = %e, "Stealth: invalid proxy URL, skipping");
             }
         }
     }
 
     builder
+}
+
+/// `url` with any `user:password@` replaced, for logging. A proxy URL carries
+/// its credentials inline, and the log files outlive the session. A string
+/// that does not parse is hidden whole, since where its secret sits is unknown.
+pub fn redact_url_credentials(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(mut parsed) => {
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                // Both setters only fail on URLs that cannot carry credentials,
+                // and such a URL has none to hide.
+                let _ = parsed.set_username("redacted");
+                let _ = parsed.set_password(None);
+            }
+            parsed.to_string()
+        }
+        Err(_) => "<unparseable proxy URL>".to_string(),
+    }
 }
 
 /// Infer the search-engine origin from a request URL for the Referer header.
@@ -454,6 +492,20 @@ pub fn search_referer_for_url(url: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_credentials_are_redacted_for_logs() {
+        let shown = redact_url_credentials("http://alice:s3cret@proxy.example:8080");
+        assert!(!shown.contains("s3cret"), "{shown}");
+        assert!(!shown.contains("alice"), "{shown}");
+        assert!(shown.contains("proxy.example:8080"), "{shown}");
+
+        assert_eq!(
+            redact_url_credentials("socks5://proxy.example:1080"),
+            "socks5://proxy.example:1080"
+        );
+        assert!(!redact_url_credentials("not a url with secret").contains("secret"));
+    }
 
     #[test]
     fn test_profile_rotation_wraps_around() {

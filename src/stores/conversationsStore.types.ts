@@ -124,7 +124,9 @@ export interface ConversationsState {
   sendMessage: (
     _content: string,
     _conversationId?: string | null,
-    _toolPreferences?: ToolPreferences
+    _toolPreferences?: ToolPreferences,
+    _attachmentNames?: string[],
+    _attachmentDocumentIds?: string[]
   ) => Promise<void>;
   /**
    * Re-run the last user message. Resolves with how the turn ended; only
@@ -144,6 +146,11 @@ export interface ConversationsState {
     _conversationId: string,
     _upToMessageId?: string
   ) => Promise<string | null>;
+  /**
+   * Summarize a conversation into a new one in the same space and open it.
+   * Resolves with the new id; throws on failure so the caller can say so.
+   */
+  continueInNewConversation: (_conversationId: string) => Promise<string>;
   /**
    * Fold the conversation's oldest messages into an LLM summary so the context
    * window carries the distilled past. Resolves with the applied compaction

@@ -14,6 +14,33 @@ use std::sync::Arc;
 use tokio::time::Duration;
 
 #[tokio::test]
+async fn retry_rejects_active_transfer_before_deleting_its_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("active.bin");
+    tokio::fs::write(&path, b"partial transfer").await.unwrap();
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine, directory.path().to_path_buf());
+    let mut session = DownloadSession::new(
+        "active".into(),
+        "https://example.com/active.bin".into(),
+        path.clone(),
+        Some(100),
+        None,
+    )
+    .unwrap();
+    session.start().unwrap();
+    repository.create(&session).await.unwrap();
+    assert!(manager.retry_download("active").await.is_err());
+    assert_eq!(tokio::fs::read(&path).await.unwrap(), b"partial transfer");
+    assert_eq!(
+        repository.get("active").await.unwrap().unwrap().state(),
+        &DownloadState::Downloading
+    );
+}
+
+#[tokio::test]
 async fn test_start_download() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());

@@ -3,7 +3,8 @@ use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::dto::{
-    DocumentResult, SearchMode, SemanticSearchInput, SemanticSearchOutput,
+    AttachmentItem, DocumentResult, ListAttachmentsOutput, SearchMode, SemanticSearchInput,
+    SemanticSearchOutput,
 };
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
 use crate::interfaces::di::Container;
@@ -17,7 +18,10 @@ use crate::shared::error::{AppError, Result};
 /// with no space scope at all, which is exactly the leak this module exists to
 /// prevent. `every_vault_tool_is_scoped` fails when that happens.
 pub(super) fn reads_the_vault(name: &str) -> bool {
-    matches!(name, "semantic_search" | "get_document" | "list_documents")
+    matches!(
+        name,
+        "semantic_search" | "get_document" | "list_documents" | "list_attachments"
+    )
 }
 
 pub(super) async fn execute(
@@ -30,7 +34,7 @@ pub(super) async fn execute(
         return container.function_executor().execute(call).await;
     }
     let repository = ConversationRepository::new(container.db_pool().clone());
-    let (space, mut allowed) = repository
+    let (_, mut allowed) = repository
         .retrieval_document_scope(conversation_id)
         .await?
         .ok_or_else(|| {
@@ -46,6 +50,12 @@ pub(super) async fn execute(
             "This chat is pinned to documents outside its space, so {}",
             focus.unavailable_reason()
         )));
+    }
+    if call.name == "list_attachments" {
+        // Answered here rather than in the executor because this is the only
+        // layer that knows which conversation is asking — and the answer is
+        // meaningless without that.
+        return list_attachments(container, conversation_id, &allowed).await;
     }
     if call.name == "list_documents" {
         // Browsing is a read of the vault like any other. Left unscoped it
@@ -65,33 +75,65 @@ pub(super) async fn execute(
         return container.function_executor().execute(call).await;
     }
     let input: SemanticSearchInput = serde_json::from_value(call.arguments.clone())?;
-    let request = SearchRequestDto {
-        query: input.query.clone(),
-        limit: Some(input.limit.clamp(1, 50)),
-        threshold: Some(input.threshold.clamp(0.0, 1.0)),
-        mode: match input.search_mode {
-            SearchMode::Semantic => SearchModeDto::Vector,
-            SearchMode::Keyword => SearchModeDto::BM25,
-            SearchMode::Hybrid => SearchModeDto::Hybrid {
-                vector_weight: 0.5,
-                bm25_weight: 0.5,
-            },
-        },
+    let limit = input.limit.clamp(1, 50);
+    let (hits, query_time_ms) = match input.search_mode {
+        // The default mode, and the one the model almost always sends: searched
+        // with first-pass retrieval's own branches and fusion, so a follow-up
+        // search ranks this space the way the search that opened the turn did.
+        SearchMode::Hybrid => {
+            let start = std::time::Instant::now();
+            let hits = crate::features::conversation::chat::retrieval::fused_search(
+                container.semantic_search_use_case().as_ref(),
+                container.hybrid_search_use_case().as_ref(),
+                &input.query,
+                &allowed,
+                limit,
+            )
+            .await?;
+            (hits, start.elapsed().as_millis() as u64)
+        }
+        // A single branch the model asked for by name.
+        SearchMode::Semantic | SearchMode::Keyword => {
+            let request = SearchRequestDto {
+                query: input.query.clone(),
+                limit: Some(limit),
+                threshold: Some(input.threshold.clamp(0.0, 1.0)),
+                mode: if matches!(input.search_mode, SearchMode::Semantic) {
+                    SearchModeDto::Vector
+                } else {
+                    SearchModeDto::BM25
+                },
+            };
+            let response = container
+                .hybrid_search_use_case()
+                // `allowed` is the space plus the chat's attachments; a membership
+                // filter as well would hide the attachments from keyword search.
+                .execute_scoped(request, None, Some(&allowed))
+                .await?;
+            (response.results, response.query_time_ms)
+        }
     };
-    let response = container
-        .hybrid_search_use_case()
-        .execute_scoped(
-            request,
-            (space != "space_general").then_some(space.as_str()),
-            Some(&allowed),
-        )
-        .await?;
-    let documents = container.document_repository().list_metadata().await?;
+    // Only the hit documents: this runs several times a turn, and the library
+    // can be thousands of rows.
+    let hit_ids: Vec<String> = hits
+        .iter()
+        .filter_map(|hit| hit.document_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let documents: std::collections::HashMap<String, _> = container
+        .document_repository()
+        .find_metadata_by_ids(&hit_ids)
+        .await?
+        .into_iter()
+        .map(|doc| (doc.id().as_str().to_owned(), doc))
+        .collect();
     let mut results = Vec::new();
-    for result in response.results {
-        let Some(doc) = documents
-            .iter()
-            .find(|doc| Some(doc.id().as_str()) == result.document_id.as_deref())
+    for result in hits {
+        let Some(doc) = result
+            .document_id
+            .as_deref()
+            .and_then(|id| documents.get(id))
         else {
             continue;
         };
@@ -133,9 +175,59 @@ pub(super) async fn execute(
         total_found: results.len(),
         results,
         documents: vec![],
-        search_time_ms: response.query_time_ms as f64,
+        search_time_ms: query_time_ms as f64,
         query: input.query,
     };
+    Ok(FunctionResult::success(serde_json::to_value(output)?))
+}
+
+/// The files attached to this conversation, oldest first.
+///
+/// Named by id so the model can hand one to `get_document` and read it whole.
+/// Confined by `allowed` like every other vault read: a chat pinned to
+/// particular documents does not get to enumerate its way out of the pin, and a
+/// document whose text never extracted is not offered as something to read.
+async fn list_attachments(
+    container: &Container,
+    conversation_id: &str,
+    allowed: &std::collections::HashSet<String>,
+) -> Result<FunctionResult> {
+    let owned = container
+        .document_scope()
+        .documents_owned_by_conversation(conversation_id)
+        .await?;
+
+    let mut attachments = Vec::new();
+    for document_id in owned {
+        if !allowed.contains(&document_id) {
+            continue;
+        }
+        let Some(document) = container
+            .document_repository()
+            .find_by_id(&document_id)
+            .await?
+        else {
+            continue;
+        };
+        attachments.push(AttachmentItem {
+            document_id,
+            filename: document.file_name().into(),
+            extension: document.file_extension().unwrap_or_default().into(),
+            size_bytes: document.size_bytes(),
+            word_count: document.word_count(),
+            indexed_at: *document.indexed_at(),
+        });
+    }
+
+    let output = ListAttachmentsOutput {
+        total: attachments.len(),
+        attachments,
+    };
+    tracing::debug!(
+        conversation_id,
+        total = output.total,
+        "Listed this conversation's attachments for the model"
+    );
     Ok(FunctionResult::success(serde_json::to_value(output)?))
 }
 
@@ -214,6 +306,7 @@ mod tests {
             [
                 "fetch_url_content",
                 "get_document",
+                "list_attachments",
                 "list_documents",
                 "semantic_search",
                 "web_search",
@@ -224,7 +317,12 @@ mod tests {
              then update `reads_the_vault` and this list together"
         );
 
-        for name in ["semantic_search", "get_document", "list_documents"] {
+        for name in [
+            "semantic_search",
+            "get_document",
+            "list_documents",
+            "list_attachments",
+        ] {
             assert!(
                 reads_the_vault(name),
                 "{name} must run through the scope check"

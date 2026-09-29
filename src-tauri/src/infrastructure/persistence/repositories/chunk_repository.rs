@@ -19,6 +19,7 @@ use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 
 /// Filter for querying chunks by document ID.
 #[derive(Debug, Clone)]
@@ -83,6 +84,15 @@ impl ChunkRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_document(&self, document_id: &str) -> Result<Vec<ChunkEntity>> {
+        // SQLite reads a negative LIMIT as no limit.
+        self.find_first_by_document_inner(document_id, -1).await
+    }
+
+    async fn find_first_by_document_inner(
+        &self,
+        document_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ChunkEntity>> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -102,9 +112,11 @@ impl ChunkRepository {
             FROM text_chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
+            LIMIT ?
             "#,
         )
         .bind(document_id)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to find chunks by document: {}", e)))?;
@@ -478,6 +490,15 @@ impl ChunkRepositoryPort for ChunkRepository {
         ChunkRepository::find_by_document(self, document_id).await
     }
 
+    async fn find_first_by_document(
+        &self,
+        document_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ChunkEntity>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.find_first_by_document_inner(document_id, limit).await
+    }
+
     async fn find_by_ids(&self, chunk_ids: &[String]) -> Result<Vec<ChunkEntity>> {
         if chunk_ids.is_empty() {
             return Ok(Vec::new());
@@ -544,6 +565,49 @@ impl ChunkRepositoryPort for ChunkRepository {
         }
 
         Ok(all)
+    }
+
+    async fn find_content_by_ids(&self, chunk_ids: &[String]) -> Result<HashMap<String, String>> {
+        const BATCH: usize = 400;
+        let mut content = HashMap::with_capacity(chunk_ids.len());
+        for ids in chunk_ids.chunks(BATCH) {
+            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT id, content FROM text_chunks WHERE id IN (",
+            );
+            let mut separated = query.separated(", ");
+            for id in ids {
+                separated.push_bind(id);
+            }
+            query.push(")");
+            let rows = query.build().fetch_all(&self.pool).await.map_err(|error| {
+                AppError::Database(format!("Failed to fetch candidate chunk content: {error}"))
+            })?;
+            for row in rows {
+                let id: String = row
+                    .try_get("id")
+                    .map_err(|error| AppError::Database(format!("row.id: {error}")))?;
+                let body: String = row
+                    .try_get("content")
+                    .map_err(|error| AppError::Database(format!("row.content: {error}")))?;
+                content.insert(id, body);
+            }
+        }
+        Ok(content)
+    }
+
+    async fn find_conversation_attached_chunk_ids(&self) -> Result<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT tc.id FROM text_chunks tc \
+             JOIN documents d ON d.id = tc.document_id \
+             WHERE d.owner_conversation_id IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to list conversation attachment chunks: {e}"
+            ))
+        })
     }
 
     async fn delete_by_document(&self, document_id: &str) -> Result<()> {
@@ -632,6 +696,22 @@ mod tests {
         assert_eq!(found_entity.id().as_str(), entity.id().as_str());
         assert_eq!(found_entity.content(), "Test chunk content");
         assert_eq!(found_entity.index(), 0);
+    }
+
+    #[tokio::test]
+    async fn find_first_by_document_reads_only_the_opening_chunks() {
+        let (repo, doc_id) = create_test_repo().await;
+        for index in (0..5).rev() {
+            let chunk = ChunkEntity::new(doc_id.clone(), format!("Chunk {index}"), index);
+            repo.save(&chunk).await.unwrap();
+        }
+
+        let chunks = ChunkRepositoryPort::find_first_by_document(&repo, doc_id.as_str(), 2)
+            .await
+            .unwrap();
+
+        let contents: Vec<_> = chunks.iter().map(|c| c.content().to_owned()).collect();
+        assert_eq!(contents, vec!["Chunk 0", "Chunk 1"]);
     }
 
     #[tokio::test]

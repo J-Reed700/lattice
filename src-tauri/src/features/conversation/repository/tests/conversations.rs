@@ -119,6 +119,159 @@ async fn test_delete_conversation() {
     assert!(found.is_none());
 }
 
+/// Deleting a conversation must take every kind of conversation-scoped data
+/// with it: transcript, citations and their permanent page snapshots,
+/// bookmarks, summary, memory ledger and vectors, and journal links. The
+/// schema promises this with cascading foreign keys; this test holds it to
+/// that promise on the real migration, table by table.
+#[tokio::test]
+async fn test_delete_conversation_cascades_to_every_related_table() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let conversation_id = seed_thread(&pool).await;
+
+    seed_documents(&pool, &["doc-1"]).await;
+    sqlx::query("INSERT INTO conversation_documents (conversation_id, document_id) VALUES (?, ?)")
+        .bind(&conversation_id)
+        .bind("doc-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    repo.store_conversation_web_source_snapshot(
+        conversation_id.clone(),
+        "https://example.com/archived".into(),
+        Some("Archived page".into()),
+        "The full article text, archived beside the citation.".into(),
+        false,
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_message_bookmarks (id, conversation_id, message_id) \
+         VALUES ('bm-1', ?, 'm1')",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_summaries (id, conversation_id, summary_text, up_to_message_id, \
+         original_message_count, original_tokens, summary_tokens, compression_ratio) \
+         VALUES ('sum-1', ?, 'summary', 'm1', 1, 10, 5, 0.5)",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_memory_vectors (id, conversation_id, message_id, role, content, \
+         embedding, dimension, embedding_model) \
+         VALUES ('vec-1', ?, 'm1', 'user', 'first question', X'0000', 1, 'test-model')",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO conversation_memory_state (conversation_id) VALUES (?)")
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_memory_items (id, conversation_id, kind, label, \
+         created_at_sequence, changed_at_sequence) \
+         VALUES ('mi-1', ?, 'established_fact', 'a sourced fact', 1, 1)",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_memory_evidence (item_id, ordinal, message_id, sequence, role, \
+         start_byte, end_byte, content_digest, purpose) \
+         VALUES ('mi-1', 0, 'm1', 1, 'user', 0, 5, 'sha256:test', 'assertion')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conversation_memory_events (id, conversation_id, operation_id, \
+         memory_revision, operation) VALUES ('me-1', ?, 'op-1', 1, 'compact')",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO journals (id, name) VALUES ('journal-1', 'Journal')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO journal_conversation_entries (journal_space_id, conversation_id) \
+         VALUES ('journal-1', ?)",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    repo.delete(&conversation_id).await.unwrap();
+
+    for table in [
+        "conversation_messages",
+        "conversation_documents",
+        "conversation_web_sources",
+        "conversation_message_bookmarks",
+        "conversation_summaries",
+        "conversation_memory_vectors",
+        "conversation_memory_state",
+        "conversation_memory_items",
+        "conversation_memory_events",
+        "journal_conversation_entries",
+    ] {
+        let remaining: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE conversation_id = ?"
+        ))
+        .bind(&conversation_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "{table} kept rows after the conversation died"
+        );
+    }
+    // Evidence is keyed by item and message, not by conversation; the cascade
+    // reaches it through both parents.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversation_memory_evidence WHERE item_id = 'mi-1'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0,
+        "conversation_memory_evidence kept rows after the conversation died"
+    );
+    // Shared tables are not conversation data: the document and the journal
+    // themselves must survive.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = 'doc-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = 'journal-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn test_delete_conversation_preserves_space_memberships() {
     let pool = create_test_pool().await;

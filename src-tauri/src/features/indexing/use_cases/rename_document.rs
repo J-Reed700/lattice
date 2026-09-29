@@ -154,6 +154,16 @@ impl RenameDocumentUseCase {
         // its embeddings away, and dropped the document out of search. A
         // rename touches one column; it must not travel through a path that
         // rewrites children.
+        //
+        // The chunks' stored context prefix (`embedding_input::context_prefix`)
+        // names the file, and their dense vectors and FTS rows were built from
+        // it, so both keep the old name until the document is next reindexed.
+        // The re-embed backfill cannot pick this up: it keys on
+        // `contextualized_content`, vectors in `text_embeddings` are restored
+        // without a hash check, and it only runs at startup when the index is
+        // short of chunks. Refreshing the prefix here would mean rewriting every
+        // chunk row, dropping its vectors from the live index and re-embedding —
+        // a reindex without the extraction, which this use case has no ports for.
         self.document_repo.rename(&document_id, &new_name).await?;
 
         // 6. Build success response

@@ -23,6 +23,14 @@ export interface SourceWithMetadata {
   category: string;
   content: string;
   excerpt?: string;
+  /** Immutable text captured when this web page was cited. */
+  webSnapshot?: {
+    url: string;
+    title: string | null;
+    text: string;
+    fetchedAt: string | null;
+    truncated: boolean;
+  };
   highlights?: string[];
   section?: string;
   chunkIndex?: number;
@@ -52,42 +60,51 @@ export interface SourceChunkExcerpt {
 }
 
 /**
- * Zod validation schema for SourceWithMetadata
- * Validates JSON-deserialized metadata to prevent state corruption and XSS
+ * Zod validation schema for SourceWithMetadata: checks the shape of
+ * JSON-deserialized metadata so a malformed entry cannot corrupt state.
  */
 export const SourceWithMetadataSchema = z.object({
-  documentId: z.string().min(1).max(255),
-  chunkId: z.string().min(1).max(255),
-  fileName: z.string().min(1).max(512),
-  filePath: z.string().min(1).max(2048),
-  mimeType: z.string().min(1).max(255),
-  category: z.string().min(1).max(100),
-  content: z.string().max(10000), // Limit preview content
-  excerpt: z.string().max(2000).optional(),
-  highlights: z.array(z.string().max(64)).max(12).optional(),
-  section: z.string().max(1000).optional(),
-  chunkIndex: z.number().min(0).max(1_000_000).optional(),
+  documentId: z.string().min(1),
+  chunkId: z.string().min(1),
+  fileName: z.string().min(1),
+  filePath: z.string().min(1),
+  mimeType: z.string().min(1),
+  category: z.string().min(1),
+  // No length caps: this is our own backend's output and React escapes text
+  // at any length. A cap here never protected anything — it silently dropped
+  // any source that exceeded it, leaving its `[n]` chip dead in the answer.
+  content: z.string(),
+  excerpt: z.string().optional(),
+  webSnapshot: z.object({
+    url: z.string(),
+    title: z.string().nullable(),
+    text: z.string(),
+    fetchedAt: z.string().nullable(),
+    truncated: z.boolean(),
+  }).optional(),
+  highlights: z.array(z.string()).optional(),
+  section: z.string().optional(),
+  chunkIndex: z.number().min(0).optional(),
   pageNumber: z.number().int().min(1).optional(),
   chunkExcerpts: z.array(z.object({
-    chunkId: z.string().min(1).max(255),
-    excerpt: z.string().min(1).max(4000),
-    section: z.string().max(1000).optional(),
-    chunkIndex: z.number().min(0).max(1_000_000).optional(),
-  pageNumber: z.number().int().min(1).optional(),
+    chunkId: z.string().min(1),
+    excerpt: z.string().min(1),
+    section: z.string().optional(),
+    chunkIndex: z.number().min(0).optional(),
+    pageNumber: z.number().int().min(1).optional(),
     score: z.number().finite().min(0),
-    highlights: z.array(z.string().max(64)).max(12).optional(),
-  })).max(24).optional(),
+    highlights: z.array(z.string()).optional(),
+  })).optional(),
   score: z.number().finite().min(0),
   fileSizeBytes: z.number().min(0),
   modifiedAt: z.string(), // ISO 8601
-  citationId: z.number().int().min(1).max(1000).optional(),
+  citationId: z.number().int().min(1).optional(),
 }).strict(); // Reject unknown properties
 
 /**
- * Validate array of sources with max limit to prevent DoS
+ * Validate an array of sources.
  */
-export const SourcesArraySchema = z.array(SourceWithMetadataSchema)
-  .max(100); // Limit max sources to prevent DoS
+export const SourcesArraySchema = z.array(SourceWithMetadataSchema);
 
 /**
  * One claim and how it was checked.
@@ -95,19 +112,33 @@ export const SourcesArraySchema = z.array(SourceWithMetadataSchema)
  * `method` says which pass produced the verdict: `lexical` is stemmed token
  * overlap against the cited passage, `judge` is an LLM entailment decision.
  * Treat them as different strengths of evidence, not the same verdict.
+ *
+ * `unverified` means the claim did not earn a finding — the judge ran out of
+ * time, failed, lacked enough confidence, or the cited page had no archived
+ * text (`unverifiedReason`). It is not "unsupported": the claim was not found
+ * wanting, it was not checked strongly enough.
  */
 export const ClaimVerdictSchema = z.object({
   sentence: z.string().max(2000),
   citationIds: z.array(z.number().int().min(1).max(1000)).max(24),
-  verdict: z.enum(['supported', 'contradicted', 'unsupported']),
+  verdict: z.enum(['supported', 'contradicted', 'unsupported', 'unverified']),
   evidenceQuote: z.string().max(1000).nullable().optional(),
+  /** The judge's short factual comparison, especially useful for negatives. */
+  reason: z.string().max(600).nullable().optional(),
   method: z.enum(['lexical', 'judge']),
+  /** The judge's probability for `verdict`, when its provider reports one. */
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  unverifiedReason: z.enum(['budget', 'judge_failed', 'no_text', 'low_confidence']).nullable().optional(),
 }).strict();
 
 export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;
 
 export const MessageVerificationSummarySchema = z.object({
   enabled: z.boolean(),
+  /** The answer is persisted; its check is still running in the background. */
+  pending: z.boolean().optional(),
+  /** The app closed, or the wait ran out, before the background check reported. */
+  interrupted: z.boolean().optional(),
   claimsEvaluated: z.number().min(0).optional(),
   supportedClaims: z.number().min(0).optional(),
   supportedClaimNotes: z.array(z.string().max(2000)).max(40).optional(),
@@ -122,6 +153,8 @@ export const MessageVerificationSummarySchema = z.object({
     supported: z.number().min(0),
     contradicted: z.number().min(0),
     unsupported: z.number().min(0),
+    /** Claims nothing checked. Not counted in `unsupported`. */
+    unverified: z.number().min(0),
   }).strict().optional(),
   claimVerdicts: z.array(ClaimVerdictSchema).max(60).optional(),
   /** Whether any claim in this turn was judged by a model rather than by overlap. */
@@ -380,7 +413,9 @@ export const RetrievalTraceSchema = z.object({
   files: z.number().int().min(0).max(1000),
   webPages: z.number().int().min(0).max(1000).optional(),
   scope: z.enum(['vault', 'linked']),
-  unavailableReason: z.string().max(400).optional(),
+  // Clipped rather than rejected: a search failure is exactly when the trace
+  // matters, and a long error must not fail the strict object and drop it.
+  unavailableReason: z.string().transform((reason) => reason.slice(0, 400)).optional(),
   kbSufficient: z.boolean().optional(),
   kbCorrectiveRetries: z.number().int().min(0).max(8).optional(),
   kbPlannerSkipped: z.boolean().optional(),

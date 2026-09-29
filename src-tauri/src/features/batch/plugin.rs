@@ -27,6 +27,7 @@ pub async fn batch_import_files(
     let job_id = batch_file_import::start_batch_file_import(
         request.file_paths,
         request.space_id,
+        request.owner_conversation_id,
         request.indexing,
         container,
     )

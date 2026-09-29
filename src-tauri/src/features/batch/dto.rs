@@ -36,6 +36,11 @@ pub struct StartBatchFileImportRequestDto {
     pub indexing: Option<FileIndexingOptionsDto>,
     #[serde(default)]
     pub space_id: Option<String>,
+    /// The conversation these files were attached to, if they came in through
+    /// a chat composer rather than the library. Every document this job newly
+    /// creates is stamped with it and stays scoped to that chat.
+    #[serde(default)]
+    pub owner_conversation_id: Option<String>,
 }
 
 /// Response after starting a batch file import job.

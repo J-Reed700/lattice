@@ -39,10 +39,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-/// Wall-clock cap for one rewrite. These run inline before retrieval on every
-/// turn, and a query rewrite that takes half a minute is useless anyway, so the
-/// ten-minute default budget would only mean a wedged turn.
-const REWRITE_TIME_BUDGET: Duration = Duration::from_secs(30);
+/// Wall-clock cap for one query-planning completion, including queueing and
+/// prompt processing. Local models can spend more than 30 seconds on those
+/// phases alone, especially when classification and rewriting share a model.
+/// Allow three minutes before falling back, while retaining a finite bound
+/// below the provider's ten-minute default for these pre-retrieval calls.
+const REWRITE_TIME_BUDGET: Duration = Duration::from_secs(3 * 60);
 
 /// Prompt template for question expansion via HyDE.
 ///
@@ -129,15 +131,27 @@ Answer:"#;
 /// Prompt template for web search query generation.
 ///
 /// Produces one query string suitable for a web search bar.
+///
+/// The length rule and the rule against copying out lists are what keep it a
+/// query. Unbounded, the model retells the question — and a question a reader
+/// spent a paragraph on becomes a paragraph-long "query" that matches nothing.
+/// The worked example teaches the same thing by showing it, which a small
+/// utility model follows more reliably than it follows a rule.
 const WEB_SEARCH_QUERY_TEMPLATE: &str = r#"You are rewriting user input into a web search query.
 
 Task:
 - Return exactly ONE search query line.
+- Use 3 to 8 words. A search engine handed a sentence matches nothing.
 - Keep key entities, exact names, and important dates.
+- Do not copy out a list of items the input names. Search for what is being
+  asked about them.
 - Remove filler like "go into detail" or "please explain".
 - Prefer specific terms over generic wording.
 - Do not answer the question.
 - Output only the query text.
+
+Example input: I have read The Hobbit, The Lord of the Rings and The Silmarillion, what else should I read?
+Example search query: fantasy novels similar to Tolkien
 
 User input:
 {query}
@@ -147,16 +161,28 @@ Search query:"#;
 /// Prompt template for contextual web search query generation.
 ///
 /// Uses recent context to resolve short follow-ups and generic commands.
+///
+/// Same rules as [`WEB_SEARCH_QUERY_TEMPLATE`], and they matter more here: the
+/// context runs to thousands of characters, and a model asked to rewrite a
+/// follow-up against it will happily copy whatever the reader enumerated back
+/// out as the query. A reader who lists what they already have is asking about
+/// what they do not have, so the list is the one part not to search for.
 const WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE: &str = r#"You are rewriting user input into a web search query.
 
 Task:
 - Return exactly ONE search query line for a search engine.
+- Use 3 to 8 words. A search engine handed a sentence matches nothing.
 - If the latest user input is short or generic (for example "search web"),
   infer the topic from recent conversation context.
 - Keep key entities, exact names, and important dates.
+- Do not copy out a list of items the input or the context names. Search for
+  what is being asked about them.
 - Remove filler and conversational wording.
 - Do not answer the question.
 - Output only the query text.
+
+Example input: I have read The Hobbit, The Lord of the Rings and The Silmarillion, what else should I read?
+Example search query: fantasy novels similar to Tolkien
 
 Recent conversation context:
 {context}
@@ -165,6 +191,69 @@ Latest user input:
 {query}
 
 Search query:"#;
+
+/// Prompt template for deep-research follow-up searches.
+///
+/// The follow-ups used to be mined from the first search's snippets: the words
+/// several results shared, two at a time, bolted onto the query's own words.
+/// What several snippets share is the pages' furniture as often as their
+/// subject, so they went out as "steps greens garden step learn" and "steps
+/// greens garden beginner right". Choosing another angle on a subject takes
+/// understanding it, so the utility model writes them from the same reading of
+/// the turn the main query came from.
+const RESEARCH_FOLLOWUPS_TEMPLATE: &str = r#"You are planning web searches for a research question.
+
+The main search is already written. Write {count} MORE searches that each look
+at a different part of the same subject — the other things the reader would
+need to know to act on it.
+
+Rules:
+- One search per line. No numbering, bullets, quotes or commentary.
+- Each search is 3 to 8 words, written the way a person types into a search bar.
+- Every search names the subject, so it makes sense on its own.
+- Each covers a different aspect: for example timing, cost, problems,
+  comparisons, how-to, or requirements. Do not reword the main search.
+- Never use words about the conversation or the request itself, such as
+  "attached", "chat", "file", "previous", "research", "next steps" or "list".
+- Do not answer the question.
+
+Example main search: fantasy novels similar to Tolkien
+Example searches:
+epic fantasy series with invented languages
+best standalone fantasy novels for adults
+classic mythology retellings like The Silmarillion
+
+Recent conversation context:
+{context}
+
+Latest user input:
+{query}
+
+Main search: {root}
+Searches:"#;
+
+/// The follow-up searches in a model's reply to [`RESEARCH_FOLLOWUPS_TEMPLATE`]:
+/// one per line, cleaned the way the main query is, anything that is not a
+/// search-bar query dropped, and none repeating `root` or each other.
+fn parse_research_followups(raw: &str, root: &str, count: usize) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::from([root.trim().to_lowercase()]);
+    raw.lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches(|ch: char| {
+                    ch.is_ascii_digit() || matches!(ch, '-' | '*' | '•' | '.' | ')' | ' ')
+                })
+                .to_string()
+        })
+        .map(|line| normalize_web_search_query(&line))
+        .filter(|line| {
+            let words = line.split_whitespace().count();
+            (2..=MAX_WEB_SEARCH_QUERY_WORDS).contains(&words)
+        })
+        .filter(|line| seen.insert(line.to_lowercase()))
+        .take(count)
+        .collect()
+}
 
 /// Service for generating HyDE interpretations.
 ///
@@ -308,9 +397,22 @@ fn looks_like_direct_answer(query: &str, hyde_text: &str) -> bool {
         && shared_ratio >= 0.55
 }
 
-fn normalize_web_search_query(raw: &str) -> String {
-    const MAX_WORDS: usize = 24;
+/// The most words a rewrite can have and still be a search query.
+///
+/// The prompt asks for three to eight; this is the net under it, not the
+/// target. Past it the model has retold the question rather than rewritten it,
+/// and an engine given the retelling matches nothing specific: it falls back
+/// on whatever page shares one common word, which is how a search for what to
+/// grow indoors came back with the dictionary definition of "indoor".
+///
+/// A rewrite over the line is discarded, not cut down to it. The first twelve
+/// words of a retelling are no more a search query than the whole of it, and
+/// cutting one to fit is how the failure stayed invisible: the query went out
+/// as its first twenty-four words, ending mid-phrase on a dangling adjective,
+/// looking deliberate.
+const MAX_WEB_SEARCH_QUERY_WORDS: usize = 12;
 
+fn normalize_web_search_query(raw: &str) -> String {
     let mut line = raw
         .lines()
         .find(|candidate| !candidate.trim().is_empty())
@@ -332,11 +434,7 @@ fn normalize_web_search_query(raw: &str) -> String {
         line = line[1..line.len() - 1].trim().to_string();
     }
 
-    let compact = line
-        .split_whitespace()
-        .take(MAX_WORDS)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
 
     compact.trim_matches(&['.', ';'][..]).trim().to_string()
 }
@@ -467,12 +565,64 @@ impl HyDEGenerator {
             return Ok(query.trim().to_string());
         }
 
+        let word_count = normalized.split_whitespace().count();
+        if word_count > MAX_WEB_SEARCH_QUERY_WORDS {
+            // The caller falls back to its lexical query builder, which is
+            // built from the reader's own words and bounded by construction.
+            warn!(
+                word_count,
+                query_preview = %safe_truncate(&normalized, 180),
+                "Discarding a web-search rewrite that came back as a retelling, not a query"
+            );
+            return Err(AppError::InvalidState(format!(
+                "Query rewrite returned {word_count} words; a search query may have at most \
+                 {MAX_WEB_SEARCH_QUERY_WORDS}"
+            )));
+        }
+
         info!(
             query_len = normalized.len(),
             query_preview = %safe_truncate(&normalized, 180),
             "Generated web-search query via HyDE"
         );
         Ok(normalized)
+    }
+
+    /// Up to `count` further searches on the subject of `root`, each from a
+    /// different angle, for deep research to run after it.
+    ///
+    /// Fewer than `count` — or none — when the model's lines are not usable
+    /// queries. Deep research then searches less; it never pads with noise.
+    pub async fn generate_research_followups(
+        &self,
+        root: &str,
+        query: &str,
+        conversation_context: Option<&str>,
+        count: usize,
+    ) -> Result<Vec<String>> {
+        if count == 0 || root.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let context = conversation_context
+            .filter(|ctx| !ctx.trim().is_empty())
+            .unwrap_or("(none)");
+        let prompt = RESEARCH_FOLLOWUPS_TEMPLATE
+            .replace("{count}", &count.to_string())
+            .replace("{context}", context)
+            .replace("{query}", query)
+            .replace("{root}", root.trim());
+        let generated = self.rewrite(&prompt).await.map_err(|e| {
+            error!(error = %e, root = %root, "Research follow-up generation failed");
+            AppError::Other(format!("Research follow-up generation failed: {e}"))
+        })?;
+        let followups = parse_research_followups(&generated, root, count);
+        info!(
+            requested = count,
+            written = followups.len(),
+            followups = ?followups,
+            "Generated deep-research follow-up searches"
+        );
+        Ok(followups)
     }
 
     /// Generate HyDE interpretation for a query.
@@ -728,6 +878,31 @@ mod tests {
     use crate::domain::qa::hyde::SearchStrategy;
     use async_trait::async_trait;
     use futures::stream::{self, Stream};
+
+    /// A small model numbers its lines, quotes some, repeats the main search
+    /// and wanders into prose; only the usable, distinct queries survive.
+    #[test]
+    fn research_followups_keep_only_distinct_search_bar_queries() {
+        let raw = "1. when to plant leafy greens in spring\n\
+                   - \"common pests on lettuce and kale\"\n\
+                   \n\
+                   Next steps growing greens for home garden\n\
+                   greens\n\
+                   Here are some searches you could run to learn more about growing greens at home this year\n\
+                   • succession sowing salad greens\n\
+                   when to plant leafy greens in spring\n\
+                   harvesting greens cut and come again";
+        let followups =
+            parse_research_followups(raw, "next steps growing greens for home garden", 3);
+        assert_eq!(
+            followups,
+            vec![
+                "when to plant leafy greens in spring",
+                "common pests on lettuce and kale",
+                "succession sowing salad greens",
+            ]
+        );
+    }
 
     /// Shared mock LLM for testing HyDE generation.
     struct MockLLM {
@@ -1057,6 +1232,69 @@ mod tests {
             query,
             "SAVE America Act House passed Senate Trump endorsement"
         );
+    }
+
+    /// The turn in the log: asked for crops beyond the ones they already grow,
+    /// the model answered with the reader's list copied back out. The old cap
+    /// cut that to its first twenty-four words and searched for it, ending on
+    /// a dangling "continuous" — and a search engine given a paragraph matches
+    /// on one common word, so the sources came back including the dictionary
+    /// definition of "indoor".
+    #[tokio::test]
+    async fn test_generate_web_search_query_rejects_a_retelling() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "indoor vegetable garden list supplement existing crops spinach chard kale sage \
+             dill basil tomatoes thyme oregano golden beets beets bell peppers limited space \
+             continuous harvest",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let error = generator
+            .generate_web_search_query(
+                "I'm keeping my herbs and greens. I need things beyond this",
+                Some("User is planning an indoor garden of spinach, chard, kale and basil"),
+            )
+            .await
+            .expect_err("a retelling is not a search query");
+
+        assert!(
+            error.to_string().contains("25 words"),
+            "the failure should say how long the rewrite was: {error}"
+        );
+    }
+
+    /// Twelve words is the net, not the target. A rewrite that reaches it is
+    /// still something an engine can work with, so it goes out unaltered —
+    /// nothing is trimmed to fit any more.
+    #[tokio::test]
+    async fn test_generate_web_search_query_keeps_a_query_at_the_limit() {
+        let at_the_limit = "SAVE America Act House vote Senate schedule Trump endorsement \
+                            2026 amendments filibuster";
+        let mock_llm = Arc::new(MockLLM::new(at_the_limit));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let query = generator
+            .generate_web_search_query("What is happening with the SAVE America Act?", None)
+            .await
+            .unwrap();
+
+        assert_eq!(query.split_whitespace().count(), 12);
+        assert_eq!(query, at_the_limit);
+    }
+
+    /// The bound belongs in the prompt too, not only in the guard. The guard
+    /// can only throw a rewrite away, and a turn that loses its rewrite falls
+    /// back to a query assembled out of keywords.
+    #[tokio::test]
+    async fn test_web_search_prompts_bound_the_query_and_forbid_lists() {
+        for template in [
+            WEB_SEARCH_QUERY_TEMPLATE,
+            WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE,
+        ] {
+            assert!(template.contains("Use 3 to 8 words"));
+            assert!(template.contains("Do not copy out a list"));
+            assert!(template.contains("Example search query:"));
+        }
     }
 
     #[tokio::test]

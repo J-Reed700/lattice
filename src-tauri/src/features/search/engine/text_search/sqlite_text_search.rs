@@ -1,9 +1,10 @@
 //! SQLite FTS5 text search behind [`TextSearchPort`].
 //!
-//! The scoped sibling of [`BM25Search`]: same indexes, same query construction
+//! The scoped sibling of [`BM25Search`]: same indexes, same term handling
 //! (both go through [`fts_query`]), but this one applies workspace and
 //! document scope inside the SQL and reports the port's DTO. Chat retrieval
-//! needs the scoping; direct search needs the richer document metadata.
+//! needs the scoping; direct search needs the richer document metadata. Only
+//! direct search honours hand-written FTS5 syntax; chat queries never do.
 //!
 //! [`BM25Search`]: crate::features::search::engine::bm25::BM25Search
 
@@ -14,7 +15,6 @@ use crate::shared::result::Result;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
-use tracing::warn;
 
 #[cfg(test)]
 mod scope_tests {
@@ -147,49 +147,25 @@ impl TextSearchPort for SqliteTextSearch {
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<SearchResultPortDto>> {
-        let Some(normalized) = fts_query::normalize(query) else {
+        // Never the raw passthrough `normalize` allows. Every query here is a
+        // chat message, a planner rewrite or a model's tool call, so a quote in
+        // `Explain "attention" in the paper` is prose, not a phrase operator:
+        // passed through, it became an AND over every word and found nothing.
+        let Some(normalized) = fts_query::strict_tokenize(query) else {
             return Ok(Vec::new());
         };
 
         if allowed_document_ids.is_some_and(HashSet::is_empty) || top_k == 0 {
             return Ok(Vec::new());
         }
-        let rows_result = Self::execute_fts_query_scoped(
+        let rows = Self::execute_fts_query_scoped(
             &self.pool,
             &normalized,
             top_k,
             space_id,
             allowed_document_ids,
         )
-        .await;
-
-        let rows = match rows_result {
-            Ok(rows) => rows,
-            Err(error) if Self::is_fts_syntax_error(&error) => {
-                let fallback = fts_query::strict_tokenize(query);
-                let Some(fallback) = fallback.filter(|fallback| *fallback != normalized) else {
-                    return Err(error.into());
-                };
-
-                warn!(
-                    original_query = %query,
-                    normalized_query = %normalized.match_expression,
-                    fallback_query = %fallback.match_expression,
-                    error = %error,
-                    "SQLite text search FTS query failed with syntax error, retrying with strict tokenized fallback"
-                );
-
-                Self::execute_fts_query_scoped(
-                    &self.pool,
-                    &fallback,
-                    top_k,
-                    space_id,
-                    allowed_document_ids,
-                )
-                .await?
-            }
-            Err(error) => return Err(error.into()),
-        };
+        .await?;
 
         let mut results = Self::rows_to_results(rows);
         if let Some(scope) = allowed_document_ids {
@@ -319,10 +295,6 @@ impl SqliteTextSearch {
             )
             .collect()
     }
-
-    fn is_fts_syntax_error(error: &sqlx::Error) -> bool {
-        fts_query::is_syntax_error_message(&error.to_string())
-    }
 }
 
 #[cfg(test)]
@@ -395,6 +367,18 @@ mod tests {
             let hits = search.search_scoped(query, 5, None, None).await;
             assert!(hits.is_ok(), "query {query:?} errored: {hits:?}");
         }
+    }
+
+    /// A quote in a chat question is prose. Taken as FTS syntax, the question
+    /// became an AND over every word and the keyword branch found nothing.
+    #[tokio::test]
+    async fn a_quoted_word_in_a_question_does_not_turn_the_query_into_an_and() {
+        assert_eq!(
+            top("Explain \"4012\" in the incident report")
+                .await
+                .as_deref(),
+            Some("doc-a")
+        );
     }
 
     #[tokio::test]

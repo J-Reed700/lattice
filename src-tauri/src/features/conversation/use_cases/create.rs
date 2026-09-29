@@ -209,6 +209,14 @@ mod tests {
         async fn update_message_status(&self, _message_id: &str, _status: String) -> Result<()> {
             unimplemented!()
         }
+
+        async fn set_message_metadata_fields(
+            &self,
+            _message_id: &str,
+            _fields: Vec<(String, serde_json::Value)>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]

@@ -272,3 +272,81 @@ async fn an_unknown_anchor_records_no_turn() {
     assert_eq!(lineage.0.as_deref(), Some(conversation_id.as_str()));
     assert_eq!(lineage.1, None);
 }
+
+#[tokio::test]
+async fn a_continuation_opens_with_the_summary_in_the_same_space() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    seed_documents(&pool, &["doc-1"]).await;
+    let conversation_id = seed_thread(&pool).await;
+    sqlx::query(
+        "INSERT INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at) \
+         VALUES (?, 'doc-1', 'chunk-1', 0.9, '2026-09-01T10:00:00Z')",
+    )
+    .bind(&conversation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = ConversationRepository::new(pool.clone());
+    repo.create_continuation(
+        &conversation_id,
+        "conv-next",
+        "Thread · continued",
+        "## Where things stand\nHalfway.",
+        r#"{"continuedFrom":{"conversationId":"x","title":"Thread"}}"#,
+    )
+    .await
+    .unwrap();
+
+    let (role, content, status, metadata) = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT role, content, status, metadata FROM conversation_messages WHERE conversation_id = ?",
+    )
+    .bind("conv-next")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(role, "assistant");
+    assert!(content.starts_with("## Where things stand"));
+    assert_eq!(status, "completed");
+    assert!(metadata.unwrap().contains("continuedFrom"));
+
+    let (space_id, forked_from) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT space_id, forked_from_conversation_id FROM conversations WHERE id = ?",
+    )
+    .bind("conv-next")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(space_id, "space_general");
+    assert_eq!(forked_from, None, "a continuation is not a branch");
+    assert_eq!(conversation_counts(&pool, "conv-next").await.0, 1);
+
+    let doc_ids = sqlx::query_scalar::<_, String>(
+        "SELECT document_id FROM conversation_documents WHERE conversation_id = ?",
+    )
+    .bind("conv-next")
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(doc_ids, vec!["doc-1"]);
+}
+
+#[tokio::test]
+async fn a_continuation_of_a_missing_conversation_creates_nothing() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    let result = repo
+        .create_continuation("nope", "conv-next", "t", "s", "{}")
+        .await;
+
+    assert!(result.is_err());
+    let count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations WHERE id = 'conv-next'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}

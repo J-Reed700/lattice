@@ -113,6 +113,7 @@ const PREFLIGHT_CACHE_TTL: Duration = Duration::from_secs(600);
 /// the GPU backend and exits). The bound only matters for a binary that
 /// hangs, which is then treated as inconclusive rather than broken.
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(20);
+const PROBE_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
 
 /// Startup output kept for error reports: llama.cpp's backend and
 /// model-loader preamble plus whatever it printed when it failed.
@@ -124,6 +125,19 @@ const OUTPUT_LINE_MAX_BYTES: usize = 2 * 1024;
 /// so they get the end of the output, not all of it.
 const ERROR_TAIL_LINES: usize = 12;
 const ERROR_LINE_MAX_BYTES: usize = 400;
+
+fn append_probe_line(target: &mut Vec<u8>, bytes: &[u8], total: &mut usize) -> bool {
+    let Some(next_total) = total.checked_add(bytes.len().saturating_add(1)) else {
+        return false;
+    };
+    if next_total > PROBE_OUTPUT_MAX_BYTES {
+        return false;
+    }
+    target.extend_from_slice(bytes);
+    target.push(b'\n');
+    *total = next_total;
+    true
+}
 
 /// Why a bundled build cannot run, at the granularity the user can act on.
 /// A missing Vulkan runtime and a truncated download both used to be reported
@@ -269,6 +283,7 @@ const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
 fn auto_context_size(
     model_path: &std::path::Path,
     capabilities: &SystemCapabilities,
+    resident_bytes: u64,
 ) -> Option<u32> {
     use crate::features::llm::engine::gguf_metadata;
 
@@ -276,26 +291,53 @@ fn auto_context_size(
     let info = gguf_metadata::read_model_info(model_path)?;
     let weights_bytes = std::fs::metadata(model_path).ok()?.len();
 
-    context_size_for(vram_gb, weights_bytes, &info)
+    context_size_for(vram_gb, weights_bytes, resident_bytes, &info)
+}
+
+/// GPU memory a running server already holds: its weights plus the KV cache
+/// for the window it was launched with. A GGUF whose header cannot be read
+/// still counts its weights.
+fn resident_bytes_of(model_path: &std::path::Path, context_size: u32) -> u64 {
+    let weights = std::fs::metadata(model_path).map_or(0, |m| m.len());
+    let kv = crate::features::llm::engine::gguf_metadata::read_model_info(model_path)
+        .and_then(|info| info.kv_cache_bytes_per_token())
+        .map_or(0, |per_token| {
+            per_token.saturating_mul(u64::from(context_size))
+        });
+    weights.saturating_add(kv)
 }
 
 /// The arithmetic behind [`auto_context_size`], separated from reading the disk
 /// so the decision can be checked against known hardware and known models.
+///
+/// `resident_bytes` is what other running servers already hold (weights and
+/// KV). Each one used to be sized against the whole budget, so a chat model and
+/// a different utility GGUF on a 16 GB Mac together claimed more than Metal's
+/// working set and the machine swapped.
 fn context_size_for(
     vram_gb: f64,
     weights_bytes: u64,
+    resident_bytes: u64,
     info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
 ) -> Option<u32> {
     let bytes_per_token = info.kv_cache_bytes_per_token()?;
-
-    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
-    let spare_bytes = usable_bytes.checked_sub(weights_bytes)?;
-    let affordable = u32::try_from(spare_bytes / bytes_per_token).unwrap_or(u32::MAX);
 
     let ceiling = info
         .trained_context_length
         .unwrap_or(AUTO_MAX_CONTEXT_SIZE)
         .min(AUTO_MAX_CONTEXT_SIZE);
+
+    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    // Weights past the usable share (a 9B on an 8 GB Mac) leave no room at
+    // all. That is the floor's case, not "unknown": `None` would hand the
+    // caller the larger flat default, which is guaranteed not to fit.
+    let Some(spare_bytes) = usable_bytes
+        .checked_sub(resident_bytes)
+        .and_then(|free| free.checked_sub(weights_bytes))
+    else {
+        return Some(AUTO_MIN_CONTEXT_SIZE.min(ceiling));
+    };
+    let affordable = u32::try_from(spare_bytes / bytes_per_token).unwrap_or(u32::MAX);
     // Whole thousands read better in a log line than 31_417 does.
     let chosen = affordable.min(ceiling) / 1024 * 1024;
 
@@ -328,7 +370,13 @@ impl SidecarConfig {
         }
     }
 
-    pub fn from_capabilities(model_path: PathBuf, capabilities: &SystemCapabilities) -> Self {
+    /// `resident_bytes` is the GPU memory other running servers already hold
+    /// (see [`SidecarRegistry::resident_gpu_bytes`]); 0 when none are up.
+    pub fn from_capabilities(
+        model_path: PathBuf,
+        capabilities: &SystemCapabilities,
+        resident_bytes: u64,
+    ) -> Self {
         let has_accelerator = capabilities
             .gpu
             .as_ref()
@@ -341,7 +389,7 @@ impl SidecarConfig {
             // Size from the model and the hardware when both can be read; the
             // flat default is the fallback, not the plan. A 5 GB model on a
             // 28 GB card ran an 8K window purely because nothing had looked.
-            auto_context_size(&model_path, capabilities).unwrap_or_else(|| {
+            auto_context_size(&model_path, capabilities, resident_bytes).unwrap_or_else(|| {
                 tracing::debug!(
                     "Could not size the context window from the model and GPU; \
                      using the default {DEFAULT_GPU_CONTEXT_SIZE}"
@@ -383,12 +431,14 @@ impl SidecarConfig {
         mut self,
         requested: u32,
         capabilities: &SystemCapabilities,
+        resident_bytes: u64,
     ) -> Self {
         if requested == 0 || requested == self.context_size {
             return self;
         }
 
-        if let Some(affordable) = auto_context_size(&self.model_path, capabilities) {
+        if let Some(affordable) = auto_context_size(&self.model_path, capabilities, resident_bytes)
+        {
             if requested > affordable {
                 tracing::warn!(
                     requested,
@@ -587,7 +637,7 @@ impl Drop for SidecarHandle {
 /// therefore left a full-weight server holding its RAM, its VRAM and its port
 /// with no owner and nothing in the log. Arming a guard at spawn makes
 /// cancellation safety a property of the type instead of of every error path.
-struct SpawnedChild {
+pub(super) struct SpawnedChild {
     child: Arc<SyncMutex<Option<CommandChild>>>,
     registration: Option<Registration>,
     endpoint: String,
@@ -603,6 +653,7 @@ impl SpawnedChild {
         args: Vec<String>,
         endpoint: &str,
         api_token: &str,
+        invalidate_preflight: bool,
     ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
         // The key goes in the environment, not `--api-key`: argv is world-
         // readable through `ps` to every process on the machine, which is the
@@ -619,14 +670,23 @@ impl SpawnedChild {
         // It executed, so whatever a stale preflight says about this build is
         // out of date — including an `Unusable` verdict reached from a bare
         // signal, which is what a jetsam kill looks like.
-        preflight_cache().forget(binary);
+        if invalidate_preflight {
+            preflight_cache().forget(binary);
+        }
 
         let child = Arc::new(SyncMutex::new(Some(child)));
         let registration = match app.try_state::<SidecarRegistry>() {
-            Some(registry) => Some(Registration {
-                app: app.clone(),
-                id: registry.register(&child, endpoint),
-            }),
+            Some(registry) => match registry.register(&child, endpoint) {
+                Some(id) => Some(Registration {
+                    app: app.clone(),
+                    id,
+                }),
+                None => {
+                    return Err(AttemptError::fatal(
+                        "Sidecar registry is shutting down".to_string(),
+                    ));
+                }
+            },
             None => {
                 tracing::debug!(
                     "SidecarRegistry not managed by AppHandle; falling back to Drop-only cleanup"
@@ -646,9 +706,88 @@ impl SpawnedChild {
         ))
     }
 
+    fn spawn_probe(
+        app: &AppHandle,
+        binary: SidecarBinary,
+        args: Vec<String>,
+        endpoint: &str,
+    ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
+        Self::spawn(app, binary, args, endpoint, "", false)
+    }
+
+    pub(super) async fn run_bounded_probe(
+        app: &AppHandle,
+        binary: SidecarBinary,
+        arg: &str,
+        endpoint: &str,
+        probe_timeout: Duration,
+    ) -> Option<(Vec<u8>, Vec<u8>)> {
+        let cancellation = crate::shared::background::cancellation_token();
+        if cancellation.is_cancelled() {
+            return None;
+        }
+        let (mut rx, child) = match Self::spawn_probe(app, binary, vec![arg.to_string()], endpoint)
+        {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                tracing::debug!(%error.message, "sidecar probe could not start");
+                return None;
+            }
+        };
+
+        let collect = async {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut total = 0usize;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(bytes) => {
+                        if !append_probe_line(&mut stdout, &bytes, &mut total) {
+                            tracing::debug!(
+                                max_bytes = PROBE_OUTPUT_MAX_BYTES,
+                                "sidecar probe output exceeded limit"
+                            );
+                            return None;
+                        }
+                    }
+                    CommandEvent::Stderr(bytes) => {
+                        if !append_probe_line(&mut stderr, &bytes, &mut total) {
+                            tracing::debug!(
+                                max_bytes = PROBE_OUTPUT_MAX_BYTES,
+                                "sidecar probe output exceeded limit"
+                            );
+                            return None;
+                        }
+                    }
+                    CommandEvent::Terminated(_) => child.mark_exited(),
+                    _ => {}
+                }
+            }
+            Some((stdout, stderr))
+        };
+
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => None,
+            result = timeout(probe_timeout, collect) => match result {
+                Ok(output) => output,
+                Err(_) => {
+                    tracing::debug!(arg, "sidecar probe timed out");
+                    None
+                }
+            }
+        }
+        // `child` remains owned through timeout/cancellation. Its Drop kills
+        // unfinished children and unregisters them; completed events clear it.
+    }
+
     /// The child slot, for the drain task to clear when the process exits.
     fn child(&self) -> Arc<SyncMutex<Option<CommandChild>>> {
         Arc::clone(&self.child)
+    }
+
+    fn mark_exited(&self) {
+        self.child.lock().take();
     }
 
     /// Disarm and hand ownership to the long-lived handle.
@@ -747,7 +886,7 @@ impl Drop for SpawnedChild {
 /// is synchronous (it just calls into `shared_child::SharedChild`),
 /// so the entire kill path can stay sync.
 pub struct SidecarRegistry {
-    entries: SyncMutex<Vec<RegistryEntry>>,
+    entries: SyncMutex<RegistryState>,
 
     /// Live servers keyed by the configuration that started them, so the
     /// chat, router and utility roles pointing at one GGUF share a process
@@ -766,6 +905,11 @@ pub struct SidecarRegistry {
     /// segfault.
     #[cfg(windows)]
     job: SyncMutex<Option<JobObjectGuard>>,
+}
+
+struct RegistryState {
+    entries: Vec<RegistryEntry>,
+    closed: bool,
 }
 
 struct RegistryEntry {
@@ -801,7 +945,10 @@ impl SidecarRegistry {
         };
 
         Self {
-            entries: SyncMutex::new(Vec::new()),
+            entries: SyncMutex::new(RegistryState {
+                entries: Vec::new(),
+                closed: false,
+            }),
             shared: SharedProcesses::new(),
             #[cfg(windows)]
             job: SyncMutex::new(job),
@@ -817,56 +964,75 @@ impl SidecarRegistry {
     /// process handle closes. The PID is read from the
     /// `CommandChild` while the registry holds it locked, so we know
     /// it hasn't been killed/swapped underneath us.
-    fn register(&self, child: &Arc<SyncMutex<Option<CommandChild>>>, endpoint: &str) -> u64 {
-        // Pull PID out for the Job Object assignment (Windows-only).
-        // We do this before pushing to entries because the lock on
-        // `child` is internal to the Arc — we just need to peek.
-        #[cfg(windows)]
-        {
-            let pid_opt = child.lock().as_ref().map(|c| c.pid());
-            if let Some(pid) = pid_opt {
-                if let Some(job) = self.job.lock().as_ref() {
-                    if let Err(err) = job.assign_pid(pid) {
-                        tracing::warn!(
-                            pid,
-                            endpoint = endpoint,
-                            "Failed to assign sidecar to Job Object: {err}"
-                        );
-                    } else {
-                        tracing::debug!(
-                            pid,
-                            endpoint = endpoint,
-                            "Assigned sidecar to Windows Job Object"
-                        );
-                    }
-                }
-            }
-        }
-
+    fn register(
+        &self,
+        child: &Arc<SyncMutex<Option<CommandChild>>>,
+        endpoint: &str,
+    ) -> Option<u64> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-        let mut entries = self.entries.lock();
-        // An empty child slot is a process the drain task saw exit; nothing
-        // else frees a slot now that entries hold strong references.
-        entries.retain(|e| e.child.lock().is_some());
-        entries.push(RegistryEntry {
-            id,
-            child: Arc::clone(child),
-            endpoint: endpoint.to_string(),
+        let admitted = self.with_open_entries(|entries| {
+            // Admission and insertion share the state lock with `kill_all`.
+            #[cfg(windows)]
+            {
+                let pid_opt = child.lock().as_ref().map(|c| c.pid());
+                if let Some(pid) = pid_opt {
+                    if let Some(job) = self.job.lock().as_ref() {
+                        if let Err(err) = job.assign_pid(pid) {
+                            tracing::warn!(
+                                pid,
+                                endpoint,
+                                "Failed to assign sidecar to Job Object: {err}"
+                            );
+                        } else {
+                            tracing::debug!(
+                                pid,
+                                endpoint,
+                                "Assigned sidecar to Windows Job Object"
+                            );
+                        }
+                    }
+                }
+            }
+
+            entries.retain(|entry| entry.child.lock().is_some());
+            entries.push(RegistryEntry {
+                id,
+                child: Arc::clone(child),
+                endpoint: endpoint.to_string(),
+            });
+            tracing::debug!(
+                registry_size = entries.len(),
+                endpoint = endpoint,
+                "Registered sidecar in process registry"
+            );
+            id
         });
-        tracing::debug!(
-            registry_size = entries.len(),
-            endpoint = endpoint,
-            "Registered sidecar in process registry"
-        );
-        id
+        let Some(id) = admitted else {
+            if let Some(child) = child.lock().take() {
+                let _ = child.kill();
+            }
+            return None;
+        };
+        Some(id)
+    }
+
+    fn with_open_entries<T>(
+        &self,
+        register: impl FnOnce(&mut Vec<RegistryEntry>) -> T,
+    ) -> Option<T> {
+        let mut state = self.entries.lock();
+        if state.closed {
+            return None;
+        }
+        Some(register(&mut state.entries))
     }
 
     /// Release the slot `id` owns. Called by whoever owns the child — the
     /// handle, or the spawn guard on a cancelled startup.
     fn unregister(&self, id: u64) {
-        self.entries.lock().retain(|e| e.id != id);
+        self.entries.lock().entries.retain(|e| e.id != id);
     }
 
     /// Synchronously kill every registered sidecar. Idempotent — call
@@ -882,8 +1048,9 @@ impl SidecarRegistry {
     pub fn kill_all(&self) -> usize {
         // Drain into a local Vec, then release entries lock immediately.
         let drained: Vec<RegistryEntry> = {
-            let mut entries = self.entries.lock();
-            entries.drain(..).collect()
+            let mut state = self.entries.lock();
+            state.closed = true;
+            state.entries.drain(..).collect()
         };
 
         let mut killed = 0;
@@ -914,10 +1081,27 @@ impl SidecarRegistry {
         killed
     }
 
+    /// GPU memory held by running, GPU-offloaded servers other than those on
+    /// `model_path`. A role on the same GGUF reuses that server rather than
+    /// adding one, so counting it would shrink the window this model is sized
+    /// to and give it a different configuration key — a second process.
+    pub fn resident_gpu_bytes(&self, model_path: &std::path::Path) -> u64 {
+        self.shared
+            .running()
+            .into_iter()
+            .filter(|(config, handle)| config.model_path != model_path && handle.n_gpu_layers() > 0)
+            .map(|(config, handle)| resident_bytes_of(&config.model_path, handle.context_size()))
+            .fold(0, u64::saturating_add)
+    }
+
     /// Number of currently-tracked live entries. For diagnostics.
     pub fn live_count(&self) -> usize {
         let entries = self.entries.lock();
-        entries.iter().filter(|e| e.child.lock().is_some()).count()
+        entries
+            .entries
+            .iter()
+            .filter(|e| e.child.lock().is_some())
+            .count()
     }
 }
 
@@ -1085,6 +1269,10 @@ impl Drop for JobObjectGuard {
 /// AppImage, a translocated macOS app) leaves its orphans alone; missing
 /// one is better than killing someone else's server.
 ///
+/// A matching process is left alone while its parent is a running Lattice
+/// from the same directory (`has_live_lattice_parent`): launching the app a
+/// second time used to SIGKILL the first window's model mid-turn.
+///
 /// Best-effort: `sysinfo` failures collapse to "no orphans found" and
 /// the scan continues. We never panic from here.
 pub fn reap_orphan_sidecars() {
@@ -1127,6 +1315,21 @@ pub fn reap_orphan_sidecars() {
                 process_name = name,
                 exe = ?exe,
                 "Skipping `llama-server` process — not a sidecar of this Lattice install"
+            );
+            continue;
+        }
+
+        // A second launch of Lattice runs this scan too; a sidecar whose
+        // parent is a running Lattice belongs to that window, mid-turn.
+        let parent_exe = process
+            .parent()
+            .and_then(|ppid| system.process(ppid))
+            .and_then(|parent| parent.exe());
+        if has_live_lattice_parent(parent_exe, &lattice_dir) {
+            tracing::info!(
+                pid = pid.as_u32(),
+                process_name = name,
+                "Leaving llama-server alone — its Lattice is still running"
             );
             continue;
         }
@@ -1175,6 +1378,17 @@ fn is_installed_sidecar(exe: &std::path::Path, lattice_dir: &std::path::Path) ->
     is_sidecar_file && exe.parent() == Some(lattice_dir)
 }
 
+/// Whether a sidecar's parent is a live Lattice from this install: the parent
+/// process still exists and its executable sits in `lattice_dir`. An orphan's
+/// parent is gone (Windows), or it has been re-parented to init/launchd, or its
+/// PID has been reused by something else — none of which live there.
+fn has_live_lattice_parent(
+    parent_exe: Option<&std::path::Path>,
+    lattice_dir: &std::path::Path,
+) -> bool {
+    parent_exe.is_some_and(|exe| canonical_or_raw(exe).parent() == Some(lattice_dir))
+}
+
 /// Canonical form for path comparison (symlinks resolved; `\\?\` form on
 /// Windows), or the path as given when it can't be resolved.
 fn canonical_or_raw(path: &std::path::Path) -> PathBuf {
@@ -1186,14 +1400,23 @@ fn canonical_or_raw(path: &std::path::Path) -> PathBuf {
 /// blocks the caller; the result is cached for the first model load.
 pub fn spawn_binary_preflight(app: &AppHandle) {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    let cancellation = crate::shared::background::cancellation_token();
+    let _ = crate::shared::background::spawn(async move {
         for &binary in SidecarBinary::bundled() {
-            preflight(&app, binary, preflight_cache()).await;
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return,
+                _ = preflight(&app, binary, preflight_cache()) => {}
+            }
         }
         // Warm the device probe on the same startup pass. Callers that reach
         // for it without an `AppHandle` can only read the cache, and the log
         // line it emits is the record of what this machine can offload to.
-        crate::features::llm::engine::system::detect_backend_devices(&app).await;
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {},
+            _ = crate::features::llm::engine::system::detect_backend_devices(&app) => {}
+        }
     });
 }
 
@@ -1455,7 +1678,7 @@ impl SidecarManager {
         //    binary cannot run at all. The guard returned owns the child:
         //    every path out of this function from here on either kills it
         //    or converts it into a handle.
-        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint, &api_token)?;
+        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint, &api_token, true)?;
 
         // 6. Spawn the long-lived event drain task.
         //    The drain owns the receiver for the rest of the sidecar's
@@ -1978,24 +2201,6 @@ fn spawn_failure(binary: SidecarBinary, err: &tauri_plugin_shell::Error) -> Atte
     }
 }
 
-/// The preflight form of [`spawn_failure`], keeping the classification the
-/// message was built from rather than dropping it.
-fn spawn_failure_outcome(
-    binary: SidecarBinary,
-    err: &tauri_plugin_shell::Error,
-) -> PreflightOutcome {
-    let failure = spawn_failure(binary, err);
-    let reason = match failure.kind {
-        AttemptFailure::BinaryUnusable(reason) => reason,
-        _ => UnusableReason::BrokenInstall,
-    };
-    PreflightOutcome::Unusable {
-        message: failure.message,
-        reason,
-        conclusive: true,
-    }
-}
-
 /// Where tauri-plugin-shell looks for a sidecar: next to the app
 /// executable, with `.exe` on Windows.
 ///
@@ -2297,12 +2502,14 @@ async fn run_preflight(app: &AppHandle, binary: SidecarBinary) -> PreflightOutco
 
     let started = Instant::now();
     let path = resolved_sidecar_path(binary);
-    let outcome = match app.shell().sidecar(binary.label()) {
-        Err(err) => spawn_failure_outcome(binary, &err),
-        Ok(command) => match command.arg("--version").spawn() {
-            Err(err) => spawn_failure_outcome(binary, &err),
-            Ok((rx, child)) => collect_preflight(binary, rx, child).await,
-        },
+    let outcome = match SpawnedChild::spawn_probe(
+        app,
+        binary,
+        vec!["--version".to_string()],
+        &format!("probe://{}/version", binary.label()),
+    ) {
+        Err(err) => preflight_attempt_failure(err),
+        Ok((rx, child)) => collect_preflight(binary, rx, child).await,
     };
     let elapsed_ms = started.elapsed().as_millis() as u64;
     match &outcome {
@@ -2343,6 +2550,19 @@ async fn run_preflight(app: &AppHandle, binary: SidecarBinary) -> PreflightOutco
     outcome
 }
 
+fn preflight_attempt_failure(error: AttemptError) -> PreflightOutcome {
+    match error.kind {
+        AttemptFailure::BinaryUnusable(reason) => PreflightOutcome::Unusable {
+            message: error.message,
+            reason,
+            conclusive: true,
+        },
+        _ => PreflightOutcome::Inconclusive {
+            detail: error.message,
+        },
+    }
+}
+
 /// Without this, a sidecar with a missing DLL (the Vulkan build without
 /// `vulkan-1.dll`) makes Windows show a modal "System Error" box and holds
 /// the child until someone dismisses it, so startup hangs instead of
@@ -2375,14 +2595,22 @@ fn suppress_loader_error_dialogs() {
 async fn collect_preflight(
     binary: SidecarBinary,
     mut rx: Receiver<CommandEvent>,
-    child: CommandChild,
+    child: SpawnedChild,
 ) -> PreflightOutcome {
     let mut tail = OutputTail::default();
+    let mut output_bytes = 0usize;
+    let mut output_exceeded = false;
     let exit = timeout(PREFLIGHT_TIMEOUT, async {
         let mut exit = (None, None);
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stderr(bytes) | CommandEvent::Stdout(bytes) => {
+                    let remaining = PROBE_OUTPUT_MAX_BYTES.saturating_sub(output_bytes);
+                    if bytes.len() > remaining {
+                        output_exceeded = true;
+                        break;
+                    }
+                    output_bytes = output_bytes.saturating_add(bytes.len());
                     let line = String::from_utf8_lossy(&bytes);
                     let line = line.trim_end();
                     if !line.is_empty() {
@@ -2390,7 +2618,10 @@ async fn collect_preflight(
                     }
                 }
                 CommandEvent::Error(err) => tail.push(&format!("(event error) {err}")),
-                CommandEvent::Terminated(payload) => exit = (payload.code, payload.signal),
+                CommandEvent::Terminated(payload) => {
+                    exit = (payload.code, payload.signal);
+                    child.mark_exited();
+                }
                 _ => {}
             }
         }
@@ -2398,8 +2629,12 @@ async fn collect_preflight(
     })
     .await;
 
+    if output_exceeded {
+        return PreflightOutcome::Inconclusive {
+            detail: format!("`--version` output exceeded {PROBE_OUTPUT_MAX_BYTES} bytes"),
+        };
+    }
     let Ok((code, signal)) = exit else {
-        let _ = child.kill();
         return PreflightOutcome::Inconclusive {
             detail: format!(
                 "`--version` did not exit within {} s",
@@ -2499,6 +2734,10 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
         config.n_gpu_layers.to_string(),
         "--ctx-size".to_string(),
         config.context_size.to_string(),
+        // The GGUF's own Jinja chat template is what knows the model's native
+        // tool-call format; without it llama-server cannot render `tools` or
+        // parse `tool_calls` back out, and the tool loop gets plain text.
+        "--jinja".to_string(),
     ]
 }
 
@@ -2650,7 +2889,10 @@ fn spawn_event_drain(
                     // Clear the child slot so kill_all at shutdown
                     // doesn't try to kill a dead PID. The Arc itself
                     // stays alive — owned by SidecarHandle — but the
-                    // CommandChild inside is gone.
+                    // CommandChild inside is gone. An empty slot is also
+                    // what `is_running` reads, so the role caches treat the
+                    // cached port as a miss and the next request starts a
+                    // new server instead of failing against this dead one.
                     let _ = child_arc.lock().take();
                     // Channel will close after this; loop exits.
                 }
@@ -2873,14 +3115,15 @@ mod tests {
     fn the_same_model_on_one_machine_is_one_key() {
         use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Apple), 16.0);
-        let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
-        let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
+        let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(
             chat, utility,
             "the roles must agree on the key or they will not share"
         );
 
-        let other_model = SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps);
+        let other_model =
+            SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps, 0);
         assert_ne!(chat, other_model, "a different model needs its own server");
 
         // A degraded fallback is a different server, not the same one with a
@@ -2892,7 +3135,7 @@ mod tests {
     fn from_capabilities_apple_silicon_uses_full_offload() {
         use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Apple), 16.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(cfg.n_gpu_layers, 99);
         assert_eq!(cfg.context_size, DEFAULT_GPU_CONTEXT_SIZE);
     }
@@ -2901,7 +3144,7 @@ mod tests {
     fn from_capabilities_nvidia_uses_full_offload() {
         use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Nvidia), 32.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(cfg.n_gpu_layers, 99);
         assert_eq!(cfg.context_size, DEFAULT_GPU_CONTEXT_SIZE);
     }
@@ -2909,7 +3152,7 @@ mod tests {
     #[test]
     fn from_capabilities_no_gpu_uses_cpu() {
         let caps = make_caps(None, 16.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(cfg.n_gpu_layers, 0);
         assert_eq!(cfg.context_size, DEFAULT_CPU_CONTEXT_SIZE);
     }
@@ -2918,7 +3161,7 @@ mod tests {
     fn from_capabilities_unknown_gpu_treated_as_no_acceleration() {
         use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Unknown), 16.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         // Unknown vendor → is_accelerated() returns false → CPU path
         assert_eq!(cfg.n_gpu_layers, 0);
     }
@@ -2929,7 +3172,7 @@ mod tests {
         // GPU present + low RAM: still no GPU offload concern, but
         // context shrinks to keep KV cache manageable.
         let caps = make_caps(Some(GPUVendor::Apple), 4.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(cfg.n_gpu_layers, 99);
         assert_eq!(cfg.context_size, LOW_RAM_CONTEXT_SIZE);
     }
@@ -2937,7 +3180,7 @@ mod tests {
     #[test]
     fn from_capabilities_low_ram_no_gpu_squeezes_both() {
         let caps = make_caps(None, 4.0);
-        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps, 0);
         assert_eq!(cfg.n_gpu_layers, 0);
         assert_eq!(cfg.context_size, LOW_RAM_CONTEXT_SIZE);
     }
@@ -3543,6 +3786,24 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     }
 
     #[test]
+    fn reaper_spares_sidecars_whose_lattice_is_still_running() {
+        let dir = std::path::Path::new("/Applications/Lattice.app/Contents/MacOS");
+        let lattice = dir.join("lattice-desktop");
+        assert!(has_live_lattice_parent(Some(&lattice), dir));
+        // Crashed Lattice: re-parented to launchd/init, or the parent is gone.
+        assert!(!has_live_lattice_parent(
+            Some(std::path::Path::new("/sbin/launchd")),
+            dir
+        ));
+        assert!(!has_live_lattice_parent(None, dir));
+        // A reused PID now running something unrelated.
+        assert!(!has_live_lattice_parent(
+            Some(std::path::Path::new("/usr/bin/zsh")),
+            dir
+        ));
+    }
+
+    #[test]
     fn bundled_binaries_follow_the_platform() {
         let bundled = SidecarBinary::bundled();
         assert_eq!(bundled.first(), Some(&SidecarBinary::Primary));
@@ -3607,6 +3868,55 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         registry.kill_all();
         registry.kill_all();
         assert_eq!(registry.live_count(), 0);
+    }
+
+    #[test]
+    fn registry_shutdown_closes_the_same_gate_used_for_registration() {
+        let registry = SidecarRegistry::new();
+        let mut registrations = 0usize;
+        assert_eq!(registry.with_open_entries(|_| registrations += 1), Some(()));
+        assert_eq!(registrations, 1);
+
+        registry.kill_all();
+        assert_eq!(
+            registry.with_open_entries(|_| registrations += 1),
+            None,
+            "registration closure must not run after shutdown closes admission"
+        );
+        assert_eq!(registrations, 1);
+    }
+
+    #[test]
+    fn bounded_probe_output_preserves_line_delimiters_and_caps_both_streams() {
+        let mut stdout = Vec::new();
+        let mut total = 0;
+        assert!(append_probe_line(
+            &mut stdout,
+            b"Available devices:",
+            &mut total
+        ));
+        assert!(append_probe_line(
+            &mut stdout,
+            b"  CUDA0: GPU (10 MiB, 9 MiB free)",
+            &mut total
+        ));
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            "Available devices:\n  CUDA0: GPU (10 MiB, 9 MiB free)\n"
+        );
+
+        let mut other_stream = Vec::new();
+        let remaining = PROBE_OUTPUT_MAX_BYTES - total;
+        assert!(!append_probe_line(
+            &mut other_stream,
+            &vec![b'x'; remaining],
+            &mut total
+        ));
+        assert!(other_stream.is_empty());
+        assert_eq!(
+            total,
+            "Available devices:\n  CUDA0: GPU (10 MiB, 9 MiB free)\n".len()
+        );
     }
 
     /// Nothing listens on this port, so `/health` never answers and the
@@ -3878,6 +4188,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         assert!(args.iter().any(|a| a == "127.0.0.1"));
         assert!(args.iter().any(|a| a == "-ngl"));
         assert!(args.iter().any(|a| a == "99"));
+        assert!(args.iter().any(|a| a == "--jinja"));
     }
 
     /// An unauthenticated loopback port is reachable from every other process
@@ -3929,7 +4240,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
 
     #[test]
     fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
-        let chosen = context_size_for(28.1, ORNITH_BYTES, &ornith()).unwrap();
+        let chosen = context_size_for(28.1, ORNITH_BYTES, 0, &ornith()).unwrap();
 
         assert_eq!(chosen, AUTO_MAX_CONTEXT_SIZE);
         assert!(chosen > DEFAULT_GPU_CONTEXT_SIZE, "the old flat default");
@@ -3939,7 +4250,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     /// model for 262144 would want 34 GB of KV cache.
     #[test]
     fn the_trained_length_is_never_treated_as_achievable() {
-        let roomy = context_size_for(80.0, ORNITH_BYTES, &ornith()).unwrap();
+        let roomy = context_size_for(80.0, ORNITH_BYTES, 0, &ornith()).unwrap();
 
         assert_eq!(roomy, AUTO_MAX_CONTEXT_SIZE);
     }
@@ -3947,7 +4258,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     /// A mid-sized card must come back with a window its memory can hold.
     #[test]
     fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
-        let chosen = context_size_for(12.0, ORNITH_BYTES, &ornith()).unwrap();
+        let chosen = context_size_for(12.0, ORNITH_BYTES, 0, &ornith()).unwrap();
 
         let budget = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
         let cache = u64::from(chosen) * 131_072;
@@ -3963,7 +4274,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     /// guaranteed not to fit.
     #[test]
     fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
-        let chosen = context_size_for(8.0, ORNITH_BYTES, &ornith()).unwrap();
+        let chosen = context_size_for(8.0, ORNITH_BYTES, 0, &ornith()).unwrap();
 
         assert_eq!(chosen, AUTO_MIN_CONTEXT_SIZE);
         assert!(chosen < DEFAULT_GPU_CONTEXT_SIZE);
@@ -3977,14 +4288,47 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
             ..ornith()
         };
 
-        assert_eq!(context_size_for(28.1, ORNITH_BYTES, &info), Some(4096));
+        assert_eq!(context_size_for(28.1, ORNITH_BYTES, 0, &info), Some(4096));
     }
 
-    /// No room left once the weights are in: better to decline and let the flat
-    /// default apply than to return a window that cannot allocate.
+    /// The 9B (5.6 GB) on an 8 GB Mac: the weights alone exceed the usable
+    /// share. That used to decline and fall to the 8192 flat default, the one
+    /// size guaranteed not to fit; it must get the floor.
     #[test]
-    fn a_gpu_too_small_for_the_weights_declines_to_choose() {
-        assert_eq!(context_size_for(4.0, ORNITH_BYTES, &ornith()), None);
+    fn weights_past_the_usable_share_get_the_floor_not_the_flat_default() {
+        assert_eq!(
+            context_size_for(5.3, ORNITH_BYTES, 0, &ornith()),
+            Some(AUTO_MIN_CONTEXT_SIZE)
+        );
+    }
+
+    /// Chat plus a different utility GGUF on a 16 GB Mac (about 10.7 GB of
+    /// working set). The utility is sized against what the chat server leaves,
+    /// not against the whole card.
+    #[test]
+    fn a_second_sidecar_is_sized_against_what_the_first_leaves() {
+        const UTILITY_BYTES: u64 = 1_000_000_000;
+        let vram = 10.7;
+        let budget = (vram * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+
+        let alone = context_size_for(vram, UTILITY_BYTES, 0, &ornith()).unwrap();
+        assert_eq!(alone, AUTO_MAX_CONTEXT_SIZE, "the whole card to itself");
+
+        let small_chat = 3_000_000_000;
+        let beside = context_size_for(vram, UTILITY_BYTES, small_chat, &ornith()).unwrap();
+        let cache = u64::from(beside) * 131_072;
+        assert!(beside < alone);
+        assert!(
+            small_chat + UTILITY_BYTES + cache <= budget,
+            "both servers fit the working set"
+        );
+
+        let chat_9b_at_8k = ORNITH_BYTES + 8192 * 131_072;
+        assert_eq!(
+            context_size_for(vram, UTILITY_BYTES, chat_9b_at_8k, &ornith()),
+            Some(AUTO_MIN_CONTEXT_SIZE),
+            "no room left beside the 9B: the floor"
+        );
     }
 
     /// A header without KV dimensions cannot be sized, and guessing would be
@@ -3996,7 +4340,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
             ..Default::default()
         };
 
-        assert_eq!(context_size_for(28.1, ORNITH_BYTES, &info), None);
+        assert_eq!(context_size_for(28.1, ORNITH_BYTES, 0, &info), None);
     }
 
     /// A missing file is the common case in tests and on a broken install; the
@@ -4006,7 +4350,8 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Apple), 36.0);
 
-        let config = SidecarConfig::from_capabilities(PathBuf::from("/nonexistent/m.gguf"), &caps);
+        let config =
+            SidecarConfig::from_capabilities(PathBuf::from("/nonexistent/m.gguf"), &caps, 0);
 
         assert_eq!(config.context_size, DEFAULT_GPU_CONTEXT_SIZE);
     }

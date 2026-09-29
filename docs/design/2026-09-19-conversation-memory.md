@@ -154,6 +154,7 @@ enum MemoryKind {
     UserFact,                        // optional/retrievable
     Preference,                      // optional unless explicitly framed as a requirement
     OpenQuestion,                    // optional; summary also tracks unresolved work
+    EstablishedFact,                 // optional/retrievable; sourced world fact (added 2026-09-21)
     UnresolvedChange,                // host-created; mandatory until clarified/resolved
 }
 
@@ -176,6 +177,8 @@ Do not expose model-generated confidence as a correctness guarantee. A numeric c
 An active `UnresolvedChange`, or any active item with `review = Ambiguous`, is also mandatory. It records exact evidence and related item IDs without claiming a settled interpretation. The host creates this form when valid source text cannot support a confident semantic transition. Cap related IDs at 8 and validate ownership/acyclic supersession separately from conflict links; a conflict relation is not a supersession. An unresolved record is resolved only by a later validated user clarification or a supported re-review that retains all applicable evidence.
 
 Store labels for search, but render evidence quotations as the authoritative content. Labels and inferred relationships must be visually and structurally distinct from quotations.
+
+`EstablishedFact` (added 2026-09-21) is the one carve-out to the user-authority rule. It records a fact about the world the conversation established from an explicit source — a cited URL, a bracketed citation, a named document — so later turns can rely on it without fetching the source again. Its assertion evidence may quote an assistant passage, because that passage carries the provenance with it; the source must appear in the quoted span or an accompanying antecedent, and the label keeps the source name or URL. Unsourced assistant claims, opinions, and general knowledge never qualify. A later sourced passage may correct an established fact, so transition evidence targeting this kind may also come from the assistant; every other kind remains user-words-only for both assertions and transitions. Schema: migration `20260921000000_established_fact_kind.sql` widens the `kind` CHECK by rebuilding the table in place.
 
 Evidence may include an assistant antecedent for short user replies such as "yes, option B," but a user-asserted memory requires a user-source assertion. An assistant antecedent explains context; it is not independent evidence of user permission. Prefer preserving both passages with role labels to inventing a self-contained paraphrase.
 
@@ -425,7 +428,7 @@ Introduce a shared `ContextAssembler` in the application layer. It owns selectio
 Use the smaller of configured and provider-advertised context capacity, `C`. Reserve generation tokens `O` and safety margin `S`:
 
 ```text
-O = configured generation limit, default min(4096, floor(C / 4))
+O = configured generation limit, default min(32768, floor(C / 4))
 S = max(256, ceil(0.05 * C))
 InputBudget = C - O - S
 Fixed = tokens(system policy + tool schemas + current input + message framing)
@@ -1072,10 +1075,17 @@ same-batch transition, resending original passages during repair, and requiring
 an ambiguous verifier verdict for explicitly unconfirmed alternatives.
 The deterministic suite covers quote fidelity against live message bytes,
 commit atomicity, revision preconditions, transition rules, budget arithmetic,
-and failure behavior. The full three-repeat §17 corpus baseline, multi-cycle
-drift measurement, and ablations remain unrun. Nothing in the product may
-describe this memory as reliable, complete, lossless, or perfect until those
-measurements pass.
+and failure behavior. The full three-repeat §17 corpus baseline, the
+one-versus-ten-cycle drift check, and the summary-only, no-memory, oracle,
+reviewer, and recall ablations ran against a remote Qwen3.8-27B on
+2026-09-26 (§24.6) and were rerun the same day on the corrected harness
+`conversation-memory-eval/2026-09-26.1` (§24.7). In both runs every safety and
+quotation gate held and drift showed no drop, but the rerun still failed three
+§17.4 gates: four provider retry exhaustions and one missing expected conflict,
+both caused by a burst of 503 responses from the server, and honest abstention
+6/9, where correct "No" answers did not match the abstention markers. The
+baseline has not passed. Nothing in the product may describe this memory as
+reliable, complete, lossless, or perfect until those measurements pass.
 
 ### 24.1 Deviations from this design
 
@@ -1222,3 +1232,111 @@ failed compaction, no-op, partial commit, successful reassembly with the origina
 restriction, short raw conversations, first-time overflow, invalidation, and
 byte-limited source reads. These tests do not establish real-model extraction
 quality or replace an end-to-end test through the desktop command and providers.
+
+### 24.5 First run on the bundled sidecar (2026-09-25)
+
+The §17 release baseline was started against the bundled `llama-server` with
+the app's own Qwen3.5-9B download, two slots, on a laptop. Twenty of the
+bounded-memory cells ran before the run was stopped to fix what it found.
+
+1. **The extractor schema disabled itself on llama.cpp.** `patch_schema` put
+   `maxLength: 2048` on evidence quotes. llama.cpp compiles the schema into a
+   grammar and its parser rejects any repetition bound above 2000; the server
+   logs the rejection and samples with no grammar at all, so
+   `additionalProperties: false` and every enum were silently gone on every
+   sidecar call. The 9B then answered with invented fields (`state`, `type`,
+   `text`) and every compaction failed. The bound is removed (the byte cap is
+   enforced by the parser after the round trip); `GRAMMAR_REPETITION_LIMIT`
+   and a schema-walking test keep future bounds under it. A remote llama.cpp
+   server of the same vintage was almost certainly unconstrained too.
+2. **Utility calls sampled at the chat temperature.** No sampling override was
+   set, so the same batch produced six items on one repeat and nothing on the
+   next. Utility requests now use `SamplingOverride::deterministic()`.
+3. **The compaction deadline was sized for a remote server.** One extraction
+   over a twelve-turn conversation took two to two and a half minutes on the
+   sidecar, so a cycle with one repair round overran five minutes and committed
+   nothing; three of ten cycles in one conversation were lost this way. The
+   deadline is now chosen by the utility provider: fifteen minutes for
+   `local-sidecar`, five otherwise (`compaction_deadline_for`).
+
+What the 9B got wrong on its own, in the cells that did complete: it cited
+assistant text as user evidence and repeated that through every repair attempt,
+it cited ineligible message ids, it returned empty patches for turns that
+plainly held the facts, and its reviewer marked correct user quotes unsupported.
+The last case is lost for the life of the conversation because §6.3 treats a
+confidently unsupported addition's source as covered; that is deliberate, to
+keep the watermark moving, and it means a small reviewer's false negatives are
+permanent. Across the twenty cells the safety gates all held; required-quote
+recall was 10 of 21, and two cells fell short of the mandatory-item floor. The
+9B run is a harness and pipeline check and the floor for the local tier, not a
+release baseline. Result summaries are kept per model under
+`evals/conversation-memory/results/`.
+
+### 24.6 First complete release baseline (2026-09-26)
+
+`release_baseline_covers_every_family_baseline_and_ablation` ran to the end
+against a remote Qwen3.8-27B llama-server (2 of 4 slots, concurrency 2,
+compaction deadline and request timeout 900 s, 16,384 context tokens), with
+the §24.5 fixes in place: 20 families, three repeats, ten cycles on the
+correction/early-restriction subset and three elsewhere, 3 h 20 min.
+
+The §17.4 gates did not all pass. Across the 60 bounded-memory runs every
+zero gate held: no cross-conversation spans, unquoted active items, authority
+violations, duplicates, silent disappearances, unexpected conflicts, budget
+violations, oversized commits, mandatory-item shortfalls, missing expected
+conflicts, tool-round exhaustions, forbidden tool attempts, or forbidden answer
+text. Required-quote recall was 81/81, supersessions 9/9, answers carrying the
+required quote 99/102. Two gates failed: two compaction cycles outside
+`utility_failure` failed recoverably (a partial_revocation patch that cited
+assistant text as authority, and a conflicting_facts source the reviewer called
+ambiguous), and honest abstention was 6/9, all three misses in `missing_fact`.
+All three misses were correct refusals ("No owner has been named yet", "There
+isn't one yet", "None — no named rollout owner has been given or assigned
+yet") that the fixture's abstention-marker list did not match; the model did
+not invent an answer. Both failures were harness strictness, and harness
+`conversation-memory-eval/2026-09-26.1` fixes them: the compaction-failure
+check is now reported rather than gated, in line with §17.3 and §17.4 (which
+gate on lost evidence, already covered by the zero gates above), a failed
+utility call and the job error it caused are no longer counted as two
+failures, and the abstention markers were widened with general refusal
+phrasings. The version bump means this baseline must be rerun before it counts.
+
+On the correction/early-restriction subset, quote-carrying answers were 20/21
+bounded against 8/21 summary-only, 3/21 no-memory, and 21/21 for the
+full-context oracle, and one cycle against ten cycles was 20/21 against 20/21.
+Stubbing the semantic reviewer to "supported" (it still runs, so its review
+calls are stubbed calls) or removing recall changed no quality number on the
+families tested; the reviewer ablation only saw more recoverable failures,
+mostly llama.cpp 500 errors from the server. The printed report is
+`evals/conversation-memory/results/qwen3.8-27b-remote/2026-09-26-release-baseline.md`.
+
+### 24.7 Release baseline rerun on the corrected harness (2026-09-26)
+
+The same test reran against the same remote Qwen3.8-27B (concurrency 2,
+compaction deadline and request timeout 900 s, 16,384 context tokens) on
+harness `conversation-memory-eval/2026-09-26.1`, from 07:01 to 09:43 UTC
+(2 h 41 min). It FAILED three gates: provider retry exhaustions 4, expected
+unresolved conflicts missing 1, and honest abstention 6/9.
+
+Across the first 60 bounded-memory runs every other zero gate held (cross-
+conversation spans, unquoted active items, authority violations, duplicates,
+silent disappearances, unexpected conflicts, budget violations, oversized
+commits, mandatory-item shortfalls, tool-round exhaustions, forbidden tool
+attempts, and forbidden answer text all 0). Required-quote recall was 81/81,
+supersessions 9/9, answers carrying the required quote 100/102, and honest
+abstention 6/9, with 7 recoverable failures (reported, not gated). The
+exhaustions and the missing conflict came from one window of about five
+minutes in which the server returned 503 Service Unavailable to every attempt.
+It hit compaction cycles 1 and 2 of one missing_fact repeat and one
+conflicting_facts repeat, and the latter never recorded its conflict. There were
+no deadline misses and no continuation failures. The abstention misses moved
+from `missing_fact` (now 6/6) to `assistant_stated_constraint` (0/3). In each
+repeat the model answered "No" and correctly attributed the rule to the
+assistant, so the misses come from marker matching, not from invented answers.
+
+On the correction/early-restriction subset, quote-carrying answers were 21/21
+bounded against 10/21 summary-only, 3/21 no-memory, and 20/21 for the
+full-context oracle. One cycle against ten cycles was 20/21 against 21/21.
+Stubbing the reviewer (26/27 in both arms) or removing recall (18/18 and
+abstention 6/6 in both arms) again changed no quality number. The printed report is
+`evals/conversation-memory/results/qwen3.8-27b-remote/2026-09-26-release-baseline-rerun.md`.

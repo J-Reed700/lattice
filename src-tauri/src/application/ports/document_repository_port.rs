@@ -47,6 +47,19 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
         self.find_all().await
     }
 
+    /// Metadata for just these documents, in no particular order; unknown ids
+    /// are left out. For callers holding a handful of search hits, which
+    /// should not read the whole library to label them.
+    async fn find_metadata_by_ids(&self, ids: &[String]) -> Result<Vec<Document>> {
+        let wanted: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        Ok(self
+            .list_metadata()
+            .await?
+            .into_iter()
+            .filter(|doc| wanted.contains(doc.id().as_str()))
+            .collect())
+    }
+
     /// Find the file path for a document by its ID.
     ///
     /// # Arguments

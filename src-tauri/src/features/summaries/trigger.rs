@@ -1,109 +1,184 @@
-//! Post-index trigger.
-//!
-//! Indexing must not wait for a language model, so the hook a completed import
-//! calls is a fire-and-forget notification: one synchronous function that, when
-//! the tier is switched off (the default), does nothing but read an atomic.
-//!
-//! The registry is process-global because the call sites — `index_file` and the
-//! indexing actor — construct no container and hold no summary dependencies;
-//! giving them one would mean threading an optional service through every
-//! import path to reach code that is disabled by default.
-
+//! Durable coalesced summary admission: one worker, one active generation,
+//! and no task/body allocated per indexing notification.
+use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
+use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
+use tokio::sync::{Mutex, Notify};
+use tokio_util::sync::CancellationToken;
 
-use sqlx::SqlitePool;
+struct Hook {
+    use_case: Arc<GenerateDocumentSummariesUseCase>,
+    pool: SqlitePool,
+    wake: Notify,
+    cancel: CancellationToken,
+    operation: Mutex<()>,
+    generation_cancel: RwLock<CancellationToken>,
+}
 
-use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
-
-type Registry = RwLock<Option<Arc<GenerateDocumentSummariesUseCase>>>;
-
-fn registry() -> &'static Registry {
-    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+fn registry() -> &'static RwLock<Option<Arc<Hook>>> {
+    static REGISTRY: OnceLock<RwLock<Option<Arc<Hook>>>> = OnceLock::new();
     REGISTRY.get_or_init(|| RwLock::new(None))
 }
 
-/// Install the post-index summary generator. Replaces any previous one, so a
-/// settings change can re-register without restarting.
-pub fn register_post_index_hook(use_case: Arc<GenerateDocumentSummariesUseCase>) {
+pub fn register_post_index_hook(use_case: Arc<GenerateDocumentSummariesUseCase>, pool: SqlitePool) {
+    clear_post_index_hook();
+    let cancel = crate::shared::background::cancellation_token().child_token();
+    let hook = Arc::new(Hook {
+        use_case,
+        pool,
+        wake: Notify::new(),
+        cancel: cancel.clone(),
+        operation: Mutex::new(()),
+        generation_cancel: RwLock::new(cancel.child_token()),
+    });
     if let Ok(mut slot) = registry().write() {
-        *slot = Some(use_case);
+        *slot = Some(hook.clone());
     }
+    crate::shared::background::spawn(run(hook));
 }
 
-/// Remove the hook. Subsequent notifications are no-ops.
 pub fn clear_post_index_hook() {
     if let Ok(mut slot) = registry().write() {
-        *slot = None;
+        if let Some(hook) = slot.take() {
+            hook.cancel.cancel();
+        }
     }
 }
 
-fn hook() -> Option<Arc<GenerateDocumentSummariesUseCase>> {
+fn hook() -> Option<Arc<Hook>> {
     registry().read().ok()?.clone()
 }
 
-/// Tell the summary tier a document finished indexing.
-///
-/// Returns immediately. Nothing about the caller's result depends on what
-/// happens next, including whether it happens at all.
-pub fn notify_document_indexed(document_id: &str) {
-    let Some(use_case) = hook().filter(|use_case| use_case.is_enabled()) else {
+pub async fn notify_document_indexed(document_id: &str) {
+    let Some(hook) = hook().filter(|h| h.use_case.is_enabled() && !h.cancel.is_cancelled()) else {
         return;
     };
-    // No runtime means a synchronous test harness, not a missed summary worth
-    // panicking over.
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    let document_id = document_id.to_owned();
-    handle.spawn(async move {
-        if let Err(error) = use_case.execute(&document_id).await {
-            tracing::warn!(%error, document_id, "Document summary generation failed");
+    // Queue admission is on the indexing notification path, but summary
+    // generation must never make the primary document index fail. Retry a
+    // transient SQLite error briefly before giving up and logging the loss.
+    for attempt in 0..4 {
+        match super::repository::enqueue_work(&hook.pool, document_id).await {
+            Ok(()) => {
+                hook.wake.notify_one();
+                return;
+            }
+            Err(error) if attempt < 3 => {
+                let delay = std::time::Duration::from_millis(100 * (1 << attempt));
+                tracing::warn!(%error, document_id, attempt = attempt + 1, ?delay, "Summary queue admission failed; retrying");
+                tokio::select! {
+                    biased;
+                    _ = hook.cancel.cancelled() => return,
+                    _ = tokio::time::sleep(delay) => {},
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, document_id, "Could not persist summary request after retries");
+            }
         }
-    });
+    }
 }
 
-/// Is the tier switched on? Call sites use this to avoid paying for the lookup
-/// a notification would need.
 pub fn is_active() -> bool {
-    hook().is_some_and(|use_case| use_case.is_enabled())
+    hook().is_some_and(|h| h.use_case.is_enabled() && !h.cancel.is_cancelled())
 }
 
-/// Notify for a document identified by its file path.
-///
-/// The id lookup only happens when the tier is on, so an import with summaries
-/// disabled — the default — costs one atomic read and no query.
 pub async fn notify_document_at_path(pool: &SqlitePool, path: &Path) {
     if !is_active() {
         return;
     }
-    match sqlx::query_scalar::<_, String>("SELECT id FROM documents WHERE file_path = ?")
-        .bind(path.to_string_lossy().as_ref())
-        .fetch_optional(pool)
-        .await
-    {
-        Ok(Some(document_id)) => notify_document_indexed(&document_id),
-        Ok(None) => tracing::debug!(path = %path.display(), "No document row to summarize"),
-        Err(error) => tracing::warn!(%error, "Could not resolve a document id to summarize"),
+    match super::repository::document_id_at_path(pool, path).await {
+        Ok(Some(id)) => notify_document_indexed(&id).await,
+        Ok(None) => {}
+        Err(error) => tracing::warn!(%error, "Could not resolve summary document"),
     }
 }
 
-/// Tell the summary tier a document is about to be deleted.
-///
-/// Fire-and-forget like [`notify_document_indexed`], and a no-op while the
-/// tier is off. Call it *before* the document row goes: the cascade takes the
-/// summary rows with it, and their ids are what names the vectors to drop.
-pub fn notify_document_deleted(document_id: &str) {
-    let Some(use_case) = hook().filter(|use_case| use_case.is_enabled()) else {
+/// Complete cleanup while summary ids still exist. The shared operation lock
+/// prevents an in-flight generation from publishing vectors after deletion.
+pub async fn notify_document_deleted(document_id: &str) {
+    let Some(hook) = hook() else {
         return;
     };
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    let document_id = document_id.to_owned();
-    handle.spawn(async move {
-        if let Err(error) = use_case.forget(&document_id).await {
-            tracing::warn!(%error, document_id, "Could not drop a document's summaries");
+    // A delete must not wait through every section's model timeout. Interrupt
+    // model work first; the unacknowledged job stays durable for later retry.
+    if let Ok(cancel) = hook.generation_cancel.read() {
+        cancel.cancel();
+    }
+    let _operation = hook.operation.lock().await;
+    if let Err(error) = super::repository::remove_work(&hook.pool, document_id).await {
+        tracing::warn!(%error, "Could not clear summary request");
+    }
+    if let Err(error) = hook.use_case.forget(document_id).await {
+        tracing::warn!(%error, document_id, "Could not remove document summaries");
+    }
+}
+
+async fn run(hook: Arc<Hook>) {
+    loop {
+        if hook.cancel.is_cancelled() {
+            break;
         }
-    });
+        let cleanup_result = {
+            let _operation = tokio::select! {
+                biased;
+                _ = hook.cancel.cancelled() => break,
+                guard = hook.operation.lock() => guard,
+            };
+            hook.use_case.drain_vector_cleanups().await
+        };
+        if let Err(error) = cleanup_result {
+            tracing::warn!(%error, "Summary vector cleanup failed; tombstones retained for retry");
+            tokio::select! {
+                biased;
+                _ = hook.cancel.cancelled() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {},
+            }
+            continue;
+        }
+        match super::repository::next_work(&hook.pool).await {
+            Ok(Some((id, revision))) => {
+                let _operation = tokio::select! {
+                    biased;
+                    _ = hook.cancel.cancelled() => break,
+                    guard = hook.operation.lock() => guard,
+                };
+                let generation_cancel = hook
+                    .generation_cancel
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone();
+                let result = hook
+                    .use_case
+                    .execute_cancellable(&id, &generation_cancel)
+                    .await;
+                *hook
+                    .generation_cancel
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner()) = hook.cancel.child_token();
+                match result {
+                    Ok(_) => {
+                        if let Err(error) =
+                            super::repository::acknowledge_work(&hook.pool, &id, &revision).await
+                        {
+                            tracing::warn!(%error, "Could not acknowledge summary work");
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, document_id = id, "Summary failed; retained for retry");
+                        let _ = super::repository::defer_work(&hook.pool, &id, &revision).await;
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "Could not read summary queue"),
+        }
+        tokio::select! {
+            biased;
+            _ = hook.cancel.cancelled() => break,
+            _ = hook.wake.notified() => {},
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {},
+        }
+    }
 }

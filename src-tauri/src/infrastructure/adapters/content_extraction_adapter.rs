@@ -28,6 +28,14 @@ use tracing::{info, instrument};
 const NEEDS_MODEL: &str =
     "Needs a transcription model — download Whisper Tiny in Settings → AI → Models.";
 
+/// Largest recording the import will transcribe.
+///
+/// Audio gets its own cap rather than the 50 MB document cap, which is under an
+/// hour of ordinary MP3. 200 MB is about three and a half hours at 128 kbps, or
+/// twenty minutes of uncompressed WAV, and the import still reads the file
+/// whole more than once.
+const MAX_AUDIO_FILE_BYTES: u64 = 200 * 1024 * 1024;
+
 /// Adapter wrapping ContentExtractor as ContentExtractionPort.
 pub struct ContentExtractionAdapter {
     extractor: ContentExtractor,
@@ -52,6 +60,18 @@ impl ContentExtractionAdapter {
     }
 
     async fn extract_audio(&self, path: &Path) -> Result<ExtractedContentData> {
+        // repository-barrier-allow: size check on the file being imported, before it is read whole.
+        let size = tokio::fs::metadata(path).await?.len();
+        if size > MAX_AUDIO_FILE_BYTES {
+            return Err(AppError::ContentExtraction {
+                path: path.display().to_string(),
+                reason: format!(
+                    "This recording is {} MB; the largest that can be transcribed is {} MB.",
+                    size / (1024 * 1024),
+                    MAX_AUDIO_FILE_BYTES / (1024 * 1024)
+                ),
+            });
+        }
         let Some(port) = self.transcription.as_ref() else {
             return Err(AppError::ContentExtraction {
                 path: path.display().to_string(),
@@ -191,6 +211,30 @@ mod tests {
         // batch fast. The honest "no model" answer is given at extraction time,
         // per file, which is what leaves the file unindexed and retried.
         assert!(adapter.is_supported(&path));
+    }
+
+    #[tokio::test]
+    async fn a_recording_over_the_audio_cap_is_refused_before_it_is_read() {
+        let adapter = ContentExtractionAdapter::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long-lecture.wav");
+        // Sparse: the size is what matters, not the bytes.
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_AUDIO_FILE_BYTES + 1)
+            .unwrap();
+
+        let error = adapter.extract_content(&path).await.unwrap_err();
+
+        match error {
+            AppError::ContentExtraction { reason, .. } => {
+                assert!(
+                    reason.contains("largest that can be transcribed"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected ContentExtraction, got {other:?}"),
+        }
     }
 
     #[tokio::test]

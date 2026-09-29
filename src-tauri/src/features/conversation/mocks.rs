@@ -339,4 +339,12 @@ impl ConversationServiceTrait for MockConversationService {
     async fn update_message_status(&self, _message_id: &str, _status: String) -> Result<()> {
         Ok(())
     }
+
+    async fn set_message_metadata_fields(
+        &self,
+        _message_id: &str,
+        _fields: Vec<(String, serde_json::Value)>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }

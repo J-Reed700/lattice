@@ -8,6 +8,7 @@ struct ConversationLinkedDocumentRow {
     file_type: Option<String>,
     category: String,
     indexed_at: String,
+    attached_to_conversation: bool,
     last_referenced_at: String,
     reference_count: i64,
 }
@@ -39,12 +40,13 @@ impl ConversationRepository {
             d.file_type AS file_type,
             d.category AS category,
             d.indexed_at AS indexed_at,
+            d.owner_conversation_id IS NOT NULL AS attached_to_conversation,
             MAX(cd.added_at) AS last_referenced_at,
             COUNT(*) AS reference_count
         FROM conversation_documents cd
         INNER JOIN documents d ON d.id = cd.document_id
         WHERE cd.conversation_id = ?
-        GROUP BY d.id, d.file_name, d.file_path, d.file_type, d.category, d.indexed_at
+        GROUP BY d.id, d.file_name, d.file_path, d.file_type, d.category, d.indexed_at, attached_to_conversation
         ORDER BY last_referenced_at DESC
         "#,
         )
@@ -67,6 +69,7 @@ impl ConversationRepository {
                 file_type: row.file_type.unwrap_or_default(),
                 category: row.category,
                 indexed_at: row.indexed_at,
+                attached_to_conversation: row.attached_to_conversation,
                 last_referenced_at: row.last_referenced_at,
                 reference_count: row.reference_count,
             })
@@ -257,8 +260,136 @@ impl ConversationRepository {
                 excerpt: row.excerpt,
                 relevance_score: row.relevance_score,
                 added_at: row.added_at,
-            })
+            
+})
             .collect())
+    }
+
+    /// The archived text of a page this conversation read, when one exists.
+    ///
+    /// Distinct from `excerpt` (a short pointer for prompts): this is the full
+    /// snapshot the conversation can quote and discuss months later, after the
+    /// global page cache has expired and whether or not the site still exists.
+    pub async fn conversation_web_source_snapshot(
+        &self,
+        conversation_id: String,
+        url: String,
+    ) -> Result<Option<ConversationWebSourceSnapshotDto>, AppError> {
+        #[derive(sqlx::FromRow)]
+        struct SnapshotRow {
+            title: Option<String>,
+            content: Option<String>,
+            content_fetched_at: Option<String>,
+            content_truncated: bool,
+        }
+
+        let row = sqlx::query_as::<_, SnapshotRow>(
+            r#"
+        SELECT title, content, content_fetched_at, content_truncated
+        FROM conversation_web_sources
+        WHERE conversation_id = ? AND normalized_url = ?
+        "#,
+        )
+        .bind(conversation_id.trim())
+        .bind(normalize_web_source_url(url.trim()))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to read conversation web source snapshot: {}",
+                e
+            ))
+        })?;
+
+        Ok(row.and_then(|row| {
+            let content = row.content?;
+            if content.trim().is_empty() {
+                return None;
+            }
+            Some(ConversationWebSourceSnapshotDto {
+                title: row.title,
+                content,
+                fetched_at: row.content_fetched_at,
+                truncated: row.content_truncated,
+            })
+        }))
+    }
+
+    /// Archive a page's text beside its citation. The row is created if the
+    /// page was never cited, and an existing snapshot is never overwritten:
+    /// the conversation's record is of the text it first read, and a page that
+    /// changed since is new information, not a silent rewrite of the old.
+    pub async fn store_conversation_web_source_snapshot(
+        &self,
+        conversation_id: String,
+        url: String,
+        title: Option<String>,
+        content: String,
+        truncated: bool,
+    ) -> Result<RenameConversationResponseDto, AppError> {
+        let conversation_id = conversation_id.trim().to_string();
+        if conversation_id.is_empty() {
+            return Err(AppError::InvalidInput(
+                "conversationId is required".to_string(),
+            ));
+        }
+        let url = url.trim().to_string();
+        if url.is_empty() || content.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "url and content are required".to_string(),
+            ));
+        }
+
+        let normalized_url = normalize_web_source_url(&url);
+        let now = Utc::now().to_rfc3339();
+        let source_id = format!("cws_{}", uuid::Uuid::new_v4().simple());
+
+        sqlx::query(
+            r#"
+        INSERT INTO conversation_web_sources (
+            id,
+            conversation_id,
+            url,
+            normalized_url,
+            title,
+            content,
+            content_fetched_at,
+            content_truncated,
+            added_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id, normalized_url) DO UPDATE SET
+            title = COALESCE(conversation_web_sources.title, excluded.title),
+            content = COALESCE(conversation_web_sources.content, excluded.content),
+            content_fetched_at = COALESCE(
+                conversation_web_sources.content_fetched_at,
+                excluded.content_fetched_at),
+            content_truncated = CASE
+                WHEN conversation_web_sources.content IS NULL THEN excluded.content_truncated
+                ELSE conversation_web_sources.content_truncated
+            END
+        "#,
+        )
+        .bind(&source_id)
+        .bind(&conversation_id)
+        .bind(&url)
+        .bind(&normalized_url)
+        .bind(title.as_ref().map(|value| value.trim().to_string()))
+        .bind(content.trim().to_string())
+        .bind(&now)
+        .bind(truncated)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to store conversation web source snapshot: {}",
+                e
+            ))
+        })?;
+
+        Ok(RenameConversationResponseDto {
+            status: "success".to_string(),
+        })
     }
 
     pub async fn remove_conversation_web_source(

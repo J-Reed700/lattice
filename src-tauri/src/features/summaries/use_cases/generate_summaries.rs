@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
 use crate::application::ports::{EmbeddingPort, LLMPort};
@@ -25,9 +26,11 @@ use crate::shared::error::{AppError, Result};
 /// One utility-model call. Generous because this is background work, bounded
 /// because a wedged model must not pin a task forever.
 const CALL_TIMEOUT: Duration = Duration::from_secs(45);
+const VECTOR_CLEANUP_BATCH: u32 = 256;
 
 pub struct GenerateDocumentSummariesUseCase {
     enabled: bool,
+    identity: String,
     source: Arc<dyn SummarySourcePort>,
     repository: Arc<dyn SummaryRepositoryPort>,
     index: Arc<dyn VectorSearchPort>,
@@ -39,6 +42,7 @@ impl GenerateDocumentSummariesUseCase {
     /// product default) and every call becomes a no-op.
     pub fn new(
         enabled: bool,
+        identity: impl Into<String>,
         source: Arc<dyn SummarySourcePort>,
         repository: Arc<dyn SummaryRepositoryPort>,
         index: Arc<dyn VectorSearchPort>,
@@ -46,6 +50,7 @@ impl GenerateDocumentSummariesUseCase {
     ) -> Self {
         Self {
             enabled,
+            identity: identity.into(),
             source,
             repository,
             index,
@@ -58,26 +63,57 @@ impl GenerateDocumentSummariesUseCase {
     }
 
     /// Summarize one freshly indexed document. Returns how many summaries were
-    /// written; `0` means "nothing to do", never "something broke".
+    /// written; `0` means ineligible source. Runtime/model failures are errors
+    /// so the durable queue retains the request for retry.
     pub async fn execute(&self, document_id: &str) -> Result<usize> {
+        self.execute_cancellable(document_id, &CancellationToken::new())
+            .await
+    }
+
+    /// Cancel model work promptly, but join an admitted index publication so
+    /// shutdown/deletion cannot race a detached mutation.
+    pub async fn execute_cancellable(
+        &self,
+        document_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<usize> {
         if !self.enabled {
             return Ok(0);
         }
+        ensure_active(cancel)?;
         let Some(source) = self.source.load(document_id).await? else {
             return Ok(0);
         };
         if source.body.trim().is_empty() {
             return Ok(0);
         }
-        let Some(llm) = self.runtime.utility_llm().await else {
-            tracing::debug!(document_id, "No utility model; skipping document summary");
-            return Ok(0);
+        let llm = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(AppError::Other("Summary generation cancelled".into())),
+            value = self.runtime.utility_llm() => value,
         };
-        let Some(embedder) = self.runtime.embedder().await else {
-            tracing::debug!(document_id, "No embedder; skipping document summary");
-            return Ok(0);
+        let Some(llm) = llm else {
+            return Err(AppError::InvalidState(
+                "Summary utility model is not ready; retry later".into(),
+            ));
+        };
+        let embedder = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(AppError::Other("Summary generation cancelled".into())),
+            value = self.runtime.embedder() => value,
+        };
+        let Some(embedder) = embedder else {
+            return Err(AppError::InvalidState(
+                "Summary embedder is not ready; retry later".into(),
+            ));
         };
         let identity = embedder.model_identity();
+        if identity != self.identity {
+            return Err(AppError::InvalidState(format!(
+                "Summary embedder identity changed from {} to {identity}; retry after re-registration",
+                self.identity
+            )));
+        }
         let count = |text: &str| llm.count_tokens(text);
 
         let headings: Vec<String> = source
@@ -96,6 +132,7 @@ impl GenerateDocumentSummariesUseCase {
             llm.as_ref(),
             &prompt::document_system_prompt(),
             &document_prompt,
+            cancel,
         )
         .await
         {
@@ -113,6 +150,7 @@ impl GenerateDocumentSummariesUseCase {
         if source.sections.len() >= prompt::MIN_SECTIONS {
             let system = prompt::section_system_prompt();
             for section in source.sections.iter().take(prompt::MAX_SECTION_SUMMARIES) {
+                ensure_active(cancel)?;
                 let section_prompt = prompt::render_section_prompt(&SectionPromptInput {
                     title: &source.title,
                     section: &section.heading,
@@ -123,7 +161,7 @@ impl GenerateDocumentSummariesUseCase {
                         count,
                     ),
                 });
-                if let Some(draft) = ask(llm.as_ref(), &system, &section_prompt).await {
+                if let Some(draft) = ask(llm.as_ref(), &system, &section_prompt, cancel).await {
                     summaries.push(DocumentSummary::new(
                         document_id,
                         Some(section.heading.clone()),
@@ -135,16 +173,20 @@ impl GenerateDocumentSummariesUseCase {
             }
         }
 
+        ensure_active(cancel)?;
         if summaries.is_empty() {
-            tracing::warn!(document_id, "Summary generation produced nothing usable");
-            return Ok(0);
+            return Err(AppError::Other(
+                "Summary generation produced no usable output; retry later".into(),
+            ));
         }
-        let replaced = self
-            .repository
-            .replace_for_document(document_id, &identity, &summaries)
-            .await?;
-        self.publish(document_id, &summaries, &replaced, embedder.as_ref())
-            .await?;
+        self.publish(
+            document_id,
+            &summaries,
+            &identity,
+            embedder.as_ref(),
+            cancel,
+        )
+        .await?;
         tracing::info!(
             document_id,
             summaries = summaries.len(),
@@ -161,18 +203,34 @@ impl GenerateDocumentSummariesUseCase {
     /// readable. Skipping it is survivable — a vector whose row is gone is
     /// filtered out at read time — but it leaves dead weight in the index.
     pub async fn forget(&self, document_id: &str) -> Result<()> {
-        let removed = self.repository.delete_for_document(document_id).await?;
-        if removed.is_empty() {
-            return Ok(());
+        self.repository
+            .delete_for_document(document_id, &self.identity)
+            .await?;
+        self.drain_vector_cleanups().await?;
+        Ok(())
+    }
+
+    /// Retry durable vector removals independently of summary generation. The
+    /// tombstone is acknowledged only after the derived index accepts removal.
+    pub async fn drain_vector_cleanups(&self) -> Result<usize> {
+        let vector_ids = self
+            .repository
+            .pending_vector_cleanup(&self.identity, VECTOR_CLEANUP_BATCH)
+            .await?;
+        if vector_ids.is_empty() {
+            return Ok(0);
         }
-        let keys: Vec<String> = removed
-            .iter()
-            .map(|id| crate::features::summaries::entity::vector_id(id))
-            .collect();
         let index = Arc::clone(&self.index);
-        tokio::task::spawn_blocking(move || index.remove_embeddings(&keys))
+        let ids = vector_ids.clone();
+        tokio::task::spawn_blocking(move || index.remove_embeddings(&ids))
             .await
-            .map_err(|error| AppError::Other(format!("Summary index task failed: {error}")))?
+            .map_err(|error| {
+                AppError::Other(format!("Summary index cleanup task failed: {error}"))
+            })??;
+        self.repository
+            .acknowledge_vector_cleanup(&self.identity, &vector_ids)
+            .await?;
+        Ok(vector_ids.len())
     }
 
     /// Embed the new summaries and swap them for the old ones in the summary
@@ -183,14 +241,19 @@ impl GenerateDocumentSummariesUseCase {
         &self,
         document_id: &str,
         summaries: &[DocumentSummary],
-        replaced: &[String],
+        identity: &str,
         embedder: &dyn EmbeddingPort,
+        cancel: &CancellationToken,
     ) -> Result<()> {
         let texts: Vec<String> = summaries
             .iter()
             .map(|summary| summary.summary_text.clone())
             .collect();
-        let vectors = embedder.embed_batch(&texts).await?;
+        let vectors = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(AppError::Other("Summary generation cancelled".into())),
+            result = embedder.embed_batch(&texts) => result?,
+        };
         if vectors.len() != summaries.len() {
             return Err(AppError::InvalidState(format!(
                 "summary embedding returned {} vectors for {} summaries",
@@ -209,45 +272,62 @@ impl GenerateDocumentSummariesUseCase {
                 document_id: summary.document_id.clone(),
             })
             .collect();
-        let stale: Vec<String> = replaced
-            .iter()
-            .map(|id| crate::features::summaries::entity::vector_id(id))
-            .collect();
+        ensure_active(cancel)?;
+        // Keep the old rows/ids available until embeddings are ready. Once
+        // replacement begins, join publication even when shutdown is requested.
+        self.repository
+            .replace_for_document(document_id, identity, summaries)
+            .await?;
+        self.drain_vector_cleanups().await?;
         let index = Arc::clone(&self.index);
         // HNSW insertion and its disk snapshot are blocking work.
-        tokio::task::spawn_blocking(move || {
-            index.remove_embeddings(&stale)?;
-            index.publish_embeddings(entries)
-        })
-        .await
-        .map_err(|error| AppError::Other(format!("Summary index task failed: {error}")))?
-        .map_err(|error| {
-            AppError::Other(format!(
-                "Summaries saved for {document_id}, but summary indexing failed: {error}"
-            ))
-        })
+        tokio::task::spawn_blocking(move || index.publish_embeddings(entries))
+            .await
+            .map_err(|error| AppError::Other(format!("Summary index task failed: {error}")))?
+            .map_err(|error| {
+                AppError::Other(format!(
+                    "Summaries saved for {document_id}, but summary indexing failed: {error}"
+                ))
+            })
     }
 }
 
 /// One model call, parsed. `None` on timeout, transport failure, or output
 /// that carries no summary — all three mean "no summary", and the caller
 /// treats them identically.
-async fn ask(llm: &dyn LLMPort, system: &str, user_prompt: &str) -> Option<SummaryDraft> {
+fn ensure_active(cancel: &CancellationToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        Err(AppError::Other("Summary generation cancelled".into()))
+    } else {
+        Ok(())
+    }
+}
+
+async fn ask(
+    llm: &dyn LLMPort,
+    system: &str,
+    user_prompt: &str,
+    cancel: &CancellationToken,
+) -> Option<SummaryDraft> {
     // `LLMPort::generate` takes a prompt plus context; the system prompt goes
     // in as context, matching `corpus_shape::labeling`.
     let context = [system.to_string()];
-    let response =
-        match tokio::time::timeout(CALL_TIMEOUT, llm.generate(user_prompt, &context, None)).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "Summary generation call failed");
-                return None;
-            }
-            Err(_) => {
-                tracing::warn!("Summary generation call timed out");
-                return None;
-            }
-        };
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return None,
+        result = tokio::time::timeout(CALL_TIMEOUT, llm.generate(user_prompt, &context, None)) => result,
+    };
+    let response = match result {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "Summary generation call failed");
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!("Summary generation call timed out");
+            return None;
+        }
+    };
     let draft = prompt::parse_summary_response(&response);
     if draft.is_none() {
         tracing::warn!(

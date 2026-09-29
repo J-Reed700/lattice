@@ -26,6 +26,8 @@ interface ModelRolesContextValue {
   localModels: DownloadedModel[];
   ollamaModels: DownloadedModel[];
   isLoading: boolean;
+  /** Why the last refresh failed; null once one succeeds. */
+  error: string | null;
   /** Refresh the model list from the backend. */
   refresh: () => Promise<void>;
   /** Assign `modelId` to the given role, or clear the role if modelId is null. */
@@ -57,19 +59,26 @@ export function ModelRolesProvider({ children }: ProviderProps) {
 
   const [models, setModels] = useState<DownloadedModel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // Caught here, not by callers: the mount effect fires and forgets, so an
+  // uncaught failure would be an unhandled rejection and an empty list that
+  // claims no models are downloaded.
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const all = await fetchDownloadedModels();
       setModels(all);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setIsLoading(false);
     }
   }, [fetchDownloadedModels]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
   const assignRole = useCallback(
@@ -119,10 +128,11 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       localModels,
       ollamaModels,
       isLoading,
+      error,
       refresh,
       assignRole,
     };
-  }, [models, isLoading, refresh, assignRole]);
+  }, [models, isLoading, error, refresh, assignRole]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

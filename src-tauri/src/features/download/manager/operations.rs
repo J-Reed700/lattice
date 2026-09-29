@@ -4,12 +4,13 @@
 //! live here; the heavy lifting is delegated to the queue and task modules.
 
 use super::state::{DownloadManagerService, StopReason};
+use super::task::{send_control_event, send_terminal_event};
 use super::types::{DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest};
 use crate::domain::download::{DownloadError, DownloadSession, DownloadState};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 #[async_trait]
@@ -83,6 +84,11 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn enqueue_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
+        if self.shutdown.is_cancelled() {
+            return Err(DownloadError::NetworkError(
+                "Application is shutting down".into(),
+            ));
+        }
         if request.destination.as_os_str().is_empty() {
             return Err(DownloadError::InvalidDestination(
                 "Destination path cannot be empty".to_string(),
@@ -176,59 +182,31 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn pause_download(&self, id: &str) -> Result<(), DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
+        self.stop_transfer(id, StopReason::Pause).await;
         let mut session = self
             .repository
             .get(id)
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
-
-        // UI state can lag a fast completion event. Treat a pause that loses
-        // that race as already settled instead of surfacing an impossible
-        // Completed -> Paused transition to the user.
         if session.state().is_terminal() {
-            debug!(download_id = %id, state = ?session.state(), "Ignoring pause for terminal download");
             return Ok(());
         }
-
         session.pause()?;
         self.repository.update(&session).await?;
-
-        // Remove the entry here rather than relying solely on the task's own
-        // cleanup. `process_queue` gates on `active.len() >= max_concurrent`,
-        // so leaving a paused session occupying a slot stalls the queue: with
-        // a limit of 2, pausing two files meant no queued or new download ever
-        // started again. Removing here also closes the window between the
-        // pause returning and the task getting scheduled.
-        let stop_tx = {
-            let mut active = self.active_downloads.write().await;
-            active
-                .remove(id)
-                .and_then(|mut download| download.cancel_tx.take())
-        };
-
-        if let Some(stop_tx) = stop_tx {
-            if let Err(e) = stop_tx.send(StopReason::Pause).await {
-                warn!(download_id = %id, error = %e, "Failed to send pause signal to download task");
-            }
-        }
-
-        // The task may still be mid-flight; make sure its token is gone too.
-        {
-            let mut tokens = self.auth_tokens.write().await;
-            tokens.remove(id);
-        }
-
-        if let Err(e) = self
-            .event_tx
-            .send(DownloadEvent::Paused { id: id.to_string() })
-        {
-            warn!(download_id = %id, error = %e, "Failed to send Paused event");
-        }
-
+        self.auth_tokens.write().await.remove(id);
+        drop(_queue_guard);
+        send_control_event(
+            &self.event_tx,
+            &self.shutdown,
+            DownloadEvent::Paused { id: id.to_string() },
+        )
+        .await;
         Ok(())
     }
 
     async fn resume_download(&self, id: &str) -> Result<(), DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
         let mut session = self
             .repository
             .get(id)
@@ -238,7 +216,6 @@ impl DownloadManager for DownloadManagerService {
         session.resume()?;
         self.repository.update(&session).await?;
 
-        let _queue_guard = self.queue_gate.lock().await;
         {
             let mut queue = self.download_queue.write().await;
             queue.push_back(id.to_string());
@@ -246,49 +223,42 @@ impl DownloadManager for DownloadManagerService {
 
         self.process_queue().await?;
 
-        if let Err(e) = self
-            .event_tx
-            .send(DownloadEvent::Resumed { id: id.to_string() })
-        {
-            warn!(download_id = %id, error = %e, "Failed to send Resumed event");
-        }
+        drop(_queue_guard);
+        send_control_event(
+            &self.event_tx,
+            &self.shutdown,
+            DownloadEvent::Resumed { id: id.to_string() },
+        )
+        .await;
 
         Ok(())
     }
 
     async fn cancel_download(&self, id: &str) -> Result<(), DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
+        self.stop_transfer(id, StopReason::Cancel).await;
         let mut session = self
             .repository
             .get(id)
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
-
-        // Cancellation is idempotent from the caller's perspective. This also
-        // handles completion winning the race after the cancel button renders.
         if session.state().is_terminal() {
-            debug!(download_id = %id, state = ?session.state(), "Ignoring cancel for terminal download");
             return Ok(());
         }
-
         session.cancel()?;
         self.repository.update(&session).await?;
-
-        let mut active = self.active_downloads.write().await;
-        if let Some(download) = active.remove(id) {
-            if let Some(cancel_tx) = download.cancel_tx {
-                if let Err(e) = cancel_tx.send(StopReason::Cancel).await {
-                    warn!(download_id = %id, error = %e, "Failed to send cancel signal to download task");
-                }
-            }
-        }
-
-        if let Err(e) = self
-            .event_tx
-            .send(DownloadEvent::Cancelled { id: id.to_string() })
-        {
-            warn!(download_id = %id, error = %e, "Failed to send Cancelled event");
-        }
-
+        self.auth_tokens.write().await.remove(id);
+        self.download_queue
+            .write()
+            .await
+            .retain(|queued| queued != id);
+        drop(_queue_guard);
+        send_terminal_event(
+            &self.event_tx,
+            &self.shutdown,
+            DownloadEvent::Cancelled { id: id.to_string() },
+        )
+        .await;
         Ok(())
     }
 
@@ -308,22 +278,23 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn retry_download(&self, id: &str) -> Result<(), DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
         let mut session = self
             .repository
             .get(id)
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
 
+        // Validate before touching the file: retrying a running session must
+        // not delete the file underneath its active transfer.
+        session.manual_retry()?;
         let destination = session.destination();
         if destination.exists() {
             self.file_cleanup.delete_file_best_effort(destination).await;
         }
 
-        // Manual retry resets retry counter to allow user override of automatic retry limits
-        session.manual_retry()?;
         self.repository.update(&session).await?;
 
-        let _queue_guard = self.queue_gate.lock().await;
         // Queue for download (reuse existing queue logic)
         {
             let mut queue = self.download_queue.write().await;
@@ -332,12 +303,13 @@ impl DownloadManager for DownloadManagerService {
 
         self.process_queue().await?;
 
-        if let Err(e) = self
-            .event_tx
-            .send(DownloadEvent::Resumed { id: id.to_string() })
-        {
-            warn!(download_id = %id, error = %e, "Failed to send Resumed event for retry");
-        }
+        drop(_queue_guard);
+        send_control_event(
+            &self.event_tx,
+            &self.shutdown,
+            DownloadEvent::Resumed { id: id.to_string() },
+        )
+        .await;
 
         Ok(())
     }
@@ -411,13 +383,27 @@ impl DownloadManager for DownloadManagerService {
     /// event forwarding in their own async context.
     ///
     /// # Returns
-    /// Arc<RwLock<Option<UnboundedReceiver<DownloadEvent>>>> - Shared receiver for download events
-    fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>> {
+    /// Arc<RwLock<Option<Receiver<DownloadEvent>>>> - Shared receiver for download events
+    fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>> {
         Arc::clone(&self.event_rx)
     }
 }
 
 impl DownloadManagerService {
+    /// Stop and join before another transfer may use this session or its slot.
+    /// The task flushes its last progress before the caller changes state.
+    async fn stop_transfer(&self, id: &str, reason: StopReason) {
+        let download = self.active_downloads.write().await.remove(id);
+        if let Some(mut download) = download {
+            if let Some(tx) = download.cancel_tx.take() {
+                let _ = tx.send(reason).await;
+            }
+            if let Some(task) = download.task_handle.take() {
+                let _ = task.await;
+            }
+        }
+    }
+
     /// A destination holds one file, so an earlier session for it that this
     /// manager is neither running nor holding in its queue is history: a
     /// finished or failed attempt, or one a previous launch left behind. Left

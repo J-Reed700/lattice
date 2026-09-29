@@ -5,7 +5,7 @@
  * All event listeners MUST use types from this file to ensure consistency.
  *
  * Architecture: Operation Bedrock
- * - 7 namespaced domains (Downloads, Indexing, Models, Progress, LLM, FileWatch, Search)
+ * - Namespaced domains (Downloads, Models, Vault)
  * - Type-safe event names via TauriEventNames constant
  * - Runtime validation via Zod schemas
  * - Use `listen<TauriEvents.Namespace.EventType>()` from '@tauri-apps/api/event' for listening
@@ -80,61 +80,6 @@ export namespace EventSchemas {
     export type Failed = z.infer<typeof Failed>;
   }
 
-  export namespace Indexing {
-    // Indexing events use a discriminated union with 'type' field
-    // Matches Rust IndexingEvent enum in src/crates/lattice/infrastructure/indexing/modules/events.rs
-
-    export const Started = z.object({
-      type: z.literal('Started'),
-      total_files: z.number(),
-    });
-
-    export const FileStarted = z.object({
-      type: z.literal('FileStarted'),
-      path: z.string(),
-      current: z.number(),
-      total: z.number(),
-    });
-
-    export const FileCompleted = z.object({
-      type: z.literal('FileCompleted'),
-      path: z.string(),
-      chunks: z.number(),
-      duration_ms: z.number(),
-      current: z.number(),
-      total: z.number(),
-    });
-
-    export const FileError = z.object({
-      type: z.literal('FileError'),
-      path: z.string(),
-      error: z.string(),
-      current: z.number(),
-      total: z.number(),
-    });
-
-    export const Completed = z.object({
-      type: z.literal('Completed'),
-      total_files: z.number(),
-      total_chunks: z.number(),
-      duration_ms: z.number(),
-    });
-
-    export const Cancelled = z.object({
-      type: z.literal('Cancelled'),
-    });
-
-    // Union of all indexing event variants
-    export const Event = z.discriminatedUnion('type', [
-      Started,
-      FileStarted,
-      FileCompleted,
-      FileError,
-      Completed,
-      Cancelled,
-    ]);
-  }
-
   export namespace Models {
     /// Phases: `started → ready | skipped | failed`.
     export const WarmupStatus = z.object({
@@ -155,110 +100,6 @@ export namespace EventSchemas {
     /// External `.md` edit imported into SQLite by the watcher.
     export const NoteImported = z.object({
       noteId: z.string(),
-    });
-  }
-
-  export namespace Progress {
-    export const Generic = z.object({
-      current: z.number(),
-      total: z.number(),
-      message: z.string().optional(),
-      data: z.unknown().optional(),
-    });
-
-    // Generic progress event for operations (upload, indexing, search, export, OCR)
-    export const ProgressEvent = z.object({
-      operationId: z.string().optional(),
-      current: z.number(),
-      total: z.number(),
-      filename: z.string().optional(),
-      message: z.string().optional(),
-      percentage: z.number().optional(),
-      eta_ms: z.number().optional(),
-    });
-
-    // Generic completion event for operations
-    export const CompleteEvent = z.object({
-      operationId: z.string().optional(),
-      path: z.string().optional(),
-      message: z.string().optional(),
-    });
-
-    // Generic error event for operations
-    export const ErrorEvent = z.object({
-      operationId: z.string().optional(),
-      message: z.string(),
-      path: z.string().optional(),
-    });
-  }
-
-  export namespace LLM {
-    export const StreamChunk = z.discriminatedUnion('type', [
-      z.object({
-        type: z.literal('token'),
-        content: z.string(),
-      }),
-      z.object({
-        type: z.literal('sources'),
-        sources: z.array(z.object({
-          file_path: z.string(),
-          score: z.number(),
-          snippet: z.string(),
-        })),
-      }),
-      z.object({
-        type: z.literal('done'),
-      }),
-      z.object({
-        type: z.literal('error'),
-        message: z.string(),
-      }),
-    ]);
-
-    export const QueryStarted = z.object({
-      query: z.string(),
-      model: z.string(),
-      timestamp: z.number(),
-    });
-
-    export const QueryCompleted = z.object({
-      query: z.string(),
-      response: z.string(),
-      model: z.string(),
-      tokens_used: z.number(),
-      duration_ms: z.number(),
-    });
-  }
-
-  export namespace FileWatch {
-    export const Event = z.object({
-      action: z.enum(['added', 'modified', 'removed']),
-      path: z.string(),
-      timestamp: z.number(),
-    });
-
-    export const Started = z.object({
-      path: z.string(),
-      recursive: z.boolean(),
-    });
-
-    export const Error = z.object({
-      path: z.string(),
-      error: z.string(),
-    });
-  }
-
-  export namespace Search {
-    export const Started = z.object({
-      query: z.string(),
-      mode: z.enum(['semantic', 'keyword', 'hybrid']),
-      timestamp: z.number(),
-    });
-
-    export const Complete = z.object({
-      query: z.string(),
-      result_count: z.number(),
-      time_ms: z.number(),
     });
   }
 }
@@ -353,192 +194,6 @@ export namespace TauriEvents {
       error: string;
     }
   }
-
-
-  export namespace Indexing {
-    /**
-     * Indexing started event
-     * Emitted when indexing begins
-     */
-    export interface Started {
-      type: 'Started';
-      total_files: number;
-    }
-
-    /**
-     * File started event
-     * Emitted when a file begins indexing
-     */
-    export interface FileStarted {
-      type: 'FileStarted';
-      path: string;
-      current: number;
-      total: number;
-    }
-
-    /**
-     * File completed event
-     * Emitted when a file finishes indexing
-     */
-    export interface FileCompleted {
-      type: 'FileCompleted';
-      path: string;
-      chunks: number;
-      duration_ms: number;
-      current: number;
-      total: number;
-    }
-
-    /**
-     * File error event
-     * Emitted when a file fails to index
-     */
-    export interface FileError {
-      type: 'FileError';
-      path: string;
-      error: string;
-      current: number;
-      total: number;
-    }
-
-    /**
-     * Indexing completed event
-     * Emitted when all indexing finishes successfully
-     */
-    export interface Completed {
-      type: 'Completed';
-      total_files: number;
-      total_chunks: number;
-      duration_ms: number;
-    }
-
-    /**
-     * Indexing cancelled event
-     * Emitted when indexing is cancelled by user
-     */
-    export interface Cancelled {
-      type: 'Cancelled';
-    }
-
-    /**
-     * Union type of all indexing events (discriminated by 'type' field)
-     */
-    export type Event =
-      | Started
-      | FileStarted
-      | FileCompleted
-      | FileError
-      | Completed
-      | Cancelled;
-  }
-
-
-  export namespace Progress {
-    /**
-     * Generic progress event
-     * Used for long-running operations (e.g., batch jobs)
-     */
-    export interface Generic<TData = unknown> {
-      current: number;
-      total: number;
-      message?: string;
-      data?: TData;
-    }
-  }
-
-
-  export namespace LLM {
-    /**
-     * LLM stream chunk event
-     * Emitted during streaming LLM responses
-     */
-    export interface StreamChunk {
-      type: 'token' | 'sources' | 'done' | 'error';
-      content?: string;
-      sources?: Array<{
-        file_path: string;
-        score: number;
-        snippet: string;
-      }>;
-      message?: string;
-    }
-
-    /**
-     * LLM query started event
-     * Emitted when LLM query begins
-     */
-    export interface QueryStarted {
-      query: string;
-      model: string;
-      timestamp: number;
-    }
-
-    /**
-     * LLM query completed event
-     * Emitted when LLM query finishes
-     */
-    export interface QueryCompleted {
-      query: string;
-      response: string;
-      model: string;
-      tokens_used: number;
-      duration_ms: number;
-    }
-  }
-
-
-  export namespace FileWatch {
-    /**
-     * File watch event
-     * Emitted when watched file system changes occur
-     */
-    export interface Event {
-      action: 'added' | 'modified' | 'removed';
-      path: string;
-      timestamp: number;
-    }
-
-    /**
-     * File watch started event
-     * Emitted when file watching begins for a directory
-     */
-    export interface Started {
-      path: string;
-      recursive: boolean;
-    }
-
-    /**
-     * File watch error event
-     * Emitted when file watching encounters an error
-     */
-    export interface Error {
-      path: string;
-      error: string;
-    }
-  }
-
-
-  export namespace Search {
-    /**
-     * Search started event
-     * Emitted when a search query begins
-     */
-    export interface Started {
-      query: string;
-      mode: 'semantic' | 'keyword' | 'hybrid';
-      timestamp: number;
-    }
-
-    /**
-     * Search completed event
-     * Emitted when search finishes
-     */
-    export interface Complete {
-      query: string;
-      result_count: number;
-      time_ms: number;
-    }
-  }
 }
 
 
@@ -581,6 +236,18 @@ export const TauriEventNames = {
     WriteError: 'vault:write-error' as const,
     NoteImported: 'vault:note-imported' as const,
   },
+} as const;
+
+
+/**
+ * `status` values on `llm-stream` events that carry something other than text.
+ * `Verification` arrives after the turn has returned: the answer's grounding
+ * check runs in the background and reports on the turn's own request id.
+ */
+export const ChatStreamStatus = {
+  Step: 'step' as const,
+  Retrieval: 'retrieval' as const,
+  Verification: 'verification' as const,
 } as const;
 
 

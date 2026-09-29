@@ -27,6 +27,11 @@ pub struct ConversationLinkedDocumentDto {
     pub indexed_at: String,
     pub last_referenced_at: String,
     pub reference_count: i64,
+    /// True when this file was attached to this chat rather than filed in the
+    /// library. It is then the chat's alone — not listed in the library, not
+    /// searchable from anywhere else, and deleted with the conversation — until
+    /// "Add to library" releases it.
+    pub attached_to_conversation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -39,6 +44,18 @@ pub struct ConversationWebSourceDto {
     pub excerpt: Option<String>,
     pub relevance_score: Option<f32>,
     pub added_at: String,
+
+}
+
+/// The archived text of a cited page — the permanent per-conversation record,
+/// as opposed to the short `excerpt` prompt pointer. Internal to the chat
+/// pipeline; never handed to the frontend wholesale.
+#[derive(Debug, Clone)]
+pub struct ConversationWebSourceSnapshotDto {
+    pub title: Option<String>,
+    pub content: String,
+    pub fetched_at: Option<String>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -77,4 +94,7 @@ pub struct SynthesizeJournalEntriesResponseDto {
     pub chunk_count: usize,
     pub conversation_ids: Vec<String>,
     pub citations: Vec<SynthesisCitationDto>,
+    /// Source passages from the conversations and journal notes, numbered to
+    /// match the `[n]` citations in `synthesis`.
+    pub sources: Vec<crate::features::qa::dto::SourceDto>,
 }

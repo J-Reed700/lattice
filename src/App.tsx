@@ -12,7 +12,6 @@ import { useDownloadedModelsListener } from './hooks/useDownloadedModels';
 import { useDownloadsListener } from './hooks/useDownloads';
 import { useModelWarmupListener } from './hooks/useModelWarmupListener';
 import { useNativeShutdown } from './hooks/useNativeShutdown';
-import { useProgressCleanup } from './hooks/useProgressCleanup';
 import { useVaultFocusRescan } from './hooks/useVaultFocusRescan';
 import { useVaultImportListener } from './hooks/useVaultImportListener';
 import { useVaultWriteErrorListener } from './hooks/useVaultWriteErrorListener';
@@ -26,7 +25,6 @@ function App() {
   const shutdown = useNativeShutdown();
 
   useApplyTheme();
-  useProgressCleanup();
 
   // Single-mount IPC listeners. Each must be mounted exactly once or every
   // event is applied twice. See each hook's docs.

@@ -9,7 +9,7 @@ export const claimMarksKey = new PluginKey('claimMarks');
 export interface ClaimMark {
   /** The sentence as the verifier saw it: raw markdown, `[n]` markers and all. */
   sentence: string;
-  verdict: 'supported' | 'contradicted' | 'unsupported';
+  verdict: 'supported' | 'contradicted' | 'unsupported' | 'unverified';
 }
 
 export interface ClaimMarksOptions {
@@ -22,6 +22,8 @@ const VERDICT_CLASS: Record<ClaimMark['verdict'], string> = {
   supported: 'claim claim-supported',
   contradicted: 'claim claim-contradicted',
   unsupported: 'claim claim-unsupported',
+  // Nothing checked it: hoverable like any claim, but no verdict colour.
+  unverified: 'claim claim-unverified',
 };
 
 const CITATION_MARKER = /\[\d{1,5}\]/g;

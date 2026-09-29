@@ -72,6 +72,10 @@ struct MockIndexStorage;
 
 #[async_trait]
 impl IndexStorageTrait for MockIndexStorage {
+    async fn chunk_ids_in_order(&self, _document_id: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     async fn store_document(
         &self,
         _path: &std::path::Path,
@@ -782,6 +786,11 @@ mod late_chunking {
 
     #[async_trait]
     impl IndexStorageTrait for RecordingStorage {
+        async fn chunk_ids_in_order(&self, _document_id: &str) -> Result<Vec<String>> {
+            let stored = self.stored.lock().expect("lock").len();
+            Ok((0..stored).map(|i| format!("chunk-{i}")).collect())
+        }
+
         async fn store_document_with_context(
             &self,
             _path: &std::path::Path,
@@ -919,6 +928,106 @@ mod late_chunking {
         let stored = storage.stored.lock().expect("lock").clone();
         let vectors = storage.vectors.lock().expect("lock").clone();
         (embedding_service.embedded(), stored, vectors)
+    }
+
+    /// Records what reaches the live vector index.
+    #[derive(Default)]
+    struct RecordingVectorSearch {
+        published: Mutex<Vec<crate::application::ports::vector_search_port::VectorIndexEntry>>,
+    }
+
+    impl crate::application::ports::VectorSearchPort for RecordingVectorSearch {
+        fn search(
+            &self,
+            _query_embedding: &[f32],
+            _top_k: usize,
+            _threshold: f32,
+        ) -> Result<Vec<crate::application::contracts::search::SearchResultRecord>> {
+            Ok(Vec::new())
+        }
+
+        fn search_scoped(
+            &self,
+            _query_embedding: &[f32],
+            _top_k: usize,
+            _threshold: f32,
+            _allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        ) -> Result<Vec<crate::application::contracts::search::SearchResultRecord>> {
+            Ok(Vec::new())
+        }
+
+        fn add_embedding(&self, _id: String, _embedding: Vec<f32>) -> Result<()> {
+            Ok(())
+        }
+
+        fn publish_embeddings(
+            &self,
+            entries: Vec<crate::application::ports::vector_search_port::VectorIndexEntry>,
+        ) -> Result<()> {
+            self.published.lock().expect("lock").extend(entries);
+            Ok(())
+        }
+
+        fn remove_embedding(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn count(&self) -> usize {
+            0
+        }
+
+        fn dimension(&self) -> usize {
+            12
+        }
+    }
+
+    #[tokio::test]
+    async fn an_imported_article_is_published_to_the_live_vector_index() {
+        let extractor = Arc::new(MockArticleExtractorService::new());
+        extractor.set_response(
+            "https://example.com/article",
+            CleanArticle {
+                title: "Article".to_string(),
+                author: None,
+                content: String::new(),
+                text_content: TEXT.to_string(),
+                word_count: 12,
+                reading_time_minutes: 1,
+                published_date: None,
+                excerpt: None,
+            },
+        );
+        let storage = Arc::new(RecordingStorage::default());
+        let vectors = Arc::new(RecordingVectorSearch::default());
+        use tokenizers::models::wordpiece::WordPiece;
+        let service = WebIngestionService::new(
+            extractor,
+            Arc::new(MockWebArchiveService),
+            Arc::new(RecordingEmbeddingService::new(false, 12)),
+            storage.clone(),
+            Arc::new(Tokenizer::new(WordPiece::default())),
+        )
+        .with_vector_search(Some(vectors.clone()));
+
+        let result = service
+            .ingest_url("https://example.com/article")
+            .await
+            .expect("ingest");
+
+        let stored = storage.stored.lock().expect("lock").clone();
+        let published = vectors.published.lock().expect("lock");
+        assert!(stored.len() > 1, "the text should split");
+        assert_eq!(published.len(), stored.len());
+        for (i, (entry, chunk)) in published.iter().zip(stored.iter()).enumerate() {
+            assert_eq!(entry.chunk_id, format!("chunk-{i}"));
+            assert_eq!(entry.id, format!("emb_chunk-{i}"));
+            assert_eq!(entry.document_id, result.document_id);
+            assert_eq!(entry.content, chunk.original_content);
+        }
     }
 
     fn citations(chunks: &[ContextualizedChunk]) -> Vec<(String, usize, usize)> {

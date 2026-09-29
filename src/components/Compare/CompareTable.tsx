@@ -39,6 +39,11 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
                     {row.error}
                   </span>
                 ) : null}
+                {row.degraded ? (
+                  <span className="mt-1 block text-xs font-normal text-text-muted">
+                    {row.degraded}
+                  </span>
+                ) : null}
               </td>
               {table.columns.map((column, index) => {
                 const cell = row.cells?.[index];

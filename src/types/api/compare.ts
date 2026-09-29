@@ -18,6 +18,12 @@ export interface CompareRowDto {
   cells: CompareCellDto[];
   /** Set when this document could not be processed. Cells are all null. */
   error: string | null;
+  /**
+   * Set when the cells were filled from the document's opening passages
+   * because semantic search failed for it, so they may miss the parts the
+   * columns ask about.
+   */
+  degraded: string | null;
 }
 
 export interface CompareTableDto {

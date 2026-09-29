@@ -393,6 +393,64 @@ impl ConversationRepository {
         Self::assemble_page(rows, after_sequence, through_sequence, limits)
     }
 
+    /// The newest messages in `(after_sequence, through_sequence]`, read from
+    /// the top down so a limit drops the oldest candidates, not the newest.
+    /// Returned oldest first; `has_more` means older rows were left unread.
+    pub async fn page_recent_memory_source_messages(
+        &self,
+        conversation_id: &str,
+        after_sequence: i64,
+        through_sequence: i64,
+        limits: SourceReadLimits,
+    ) -> Result<SourcePage> {
+        if through_sequence <= after_sequence {
+            return Ok(SourcePage {
+                messages: Vec::new(),
+                has_more: false,
+                next_after_sequence: after_sequence,
+            });
+        }
+        let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
+        let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
+            "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
+             WHERE conversation_id = ? AND sequence > ? AND sequence <= ? \
+             ORDER BY sequence DESC LIMIT ?"
+        ))
+        .bind(conversation_id)
+        .bind(after_sequence)
+        .bind(through_sequence)
+        .bind(fetch)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to page recent source messages: {}", e)))?;
+
+        // The same limits as an ascending page, applied from the newest row.
+        // Only an observed extra row sets `has_more`, so an exhausted range
+        // reports no unread source.
+        let mut messages = Vec::new();
+        let mut bytes = 0usize;
+        let mut truncated = false;
+        for row in rows {
+            if messages.len() >= limits.max_messages {
+                truncated = true;
+                break;
+            }
+            let size = row.content.len();
+            if !messages.is_empty() && bytes.saturating_add(size) > limits.max_bytes {
+                truncated = true;
+                break;
+            }
+            bytes = bytes.saturating_add(size);
+            messages.push(row.into_domain()?);
+        }
+        messages.reverse();
+        Ok(SourcePage {
+            messages,
+            has_more: truncated,
+            next_after_sequence: after_sequence,
+        })
+    }
+
     /// Apply message and byte limits to a fetched run of rows.
     ///
     /// A message limit alone does not bound anything: one pasted log file can be

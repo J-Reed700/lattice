@@ -10,6 +10,7 @@ import {
   GraduationCap,
   Loader2,
   MessageSquare,
+  MessageSquareShare,
   MoreHorizontal,
   NotebookPen,
   Pencil,
@@ -72,7 +73,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   } = useConversationsStore();
   const { journals } = useJournalsQuery();
   const forkLineage = useForkLineage(conversations);
-  const { synthesizeConversationToJournal, synthesizingConversationId } = synthesis;
+  const { synthesizeConversationToJournal, synthesizingConversationId, continueConversationInNewChat, continuingConversationId } = synthesis;
   const {
     copyConversationAsMarkdown,
     saveConversationToJournal,
@@ -424,6 +425,12 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                         <span className="truncate">Branched from {forkParent.title}</span>
                       </button>
                     )}
+                    {continuingConversationId === conversation.id && (
+                      <p className="mt-0.5 flex items-center gap-1 text-xs text-text-muted" role="status">
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+                        Summarizing into a new chat…
+                      </p>
+                    )}
                     {preview && (
                       <p className="truncate text-xs text-text-tertiary">{preview}</p>
                     )}
@@ -498,6 +505,19 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                               >
                                 {synthesizingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Combine className="h-4 w-4" />}
                                 Synthesize to journal
+                              </button>
+                              <button
+                                type="button"
+                                className={MENU_ITEM_CLASS}
+                                disabled={continuingConversationId !== null}
+                                title="Summarize this chat and start a new one in the same space from the summary"
+                                onClick={() => {
+                                  setOpenActionsId(null);
+                                  void continueConversationInNewChat(conversation.id, conversation.title);
+                                }}
+                              >
+                                {continuingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareShare className="h-4 w-4" />}
+                                Continue in new chat
                               </button>
 
                               <div className="my-1 h-px bg-border-subtle" />

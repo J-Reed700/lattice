@@ -56,22 +56,20 @@ pub(super) fn select_web_search_query_with_tuning<'a>(
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
 ) -> String {
-    let raw_query = validated_message.trim();
+    let cleaned = search_text_without_url_tracking(validated_message);
+    let raw_query = cleaned.trim();
     if should_use_raw_web_query(raw_query) {
         return safe_truncate(raw_query, tuning.external_search_query_max_chars as usize);
     }
 
     let terms = build_external_search_terms(
-        raw_query,
+        validated_message,
         interpretation,
         followup_anchor_terms,
         tuning.external_search_max_web_terms as usize,
     );
     if terms.is_empty() {
-        return safe_truncate(
-            validated_message.trim(),
-            tuning.external_search_query_max_chars as usize,
-        );
+        return safe_truncate(raw_query, tuning.external_search_query_max_chars as usize);
     }
 
     render_web_search_query(&terms, tuning.external_search_query_max_chars as usize)
@@ -87,13 +85,26 @@ fn build_external_search_terms(
         return Vec::new();
     }
 
+    let linked_subjects: Vec<String> = validated_message
+        .split_whitespace()
+        .filter(|word| word.contains("https://") || word.contains("http://"))
+        .map(search_text_without_url_tracking)
+        .filter(|subject| subject.split_whitespace().count() >= 2)
+        .collect();
+    let cleaned = search_text_without_url_tracking(validated_message);
+    let validated_message = cleaned.as_str();
     let hyde_text = interpretation.hyde_text.as_deref();
     let mut scores: HashMap<String, f32> = HashMap::new();
+    // A supplied descriptive URL is an explicit subject. Keep its product or
+    // article phrase together, including short model names and units.
+    for subject in linked_subjects {
+        scores.insert(subject, 12.0);
+    }
 
     if let Some(anchor_terms) = followup_anchor_terms {
         for term in anchor_terms.iter() {
             if let Some(normalized) = normalize_keyword_token(term) {
-                *scores.entry(normalized).or_insert(0.0) += 7.0;
+                *scores.entry(normalized).or_insert(0.0) += 2.0;
             }
         }
     }
@@ -108,11 +119,13 @@ fn build_external_search_terms(
         }
     }
 
-    let raw_weight = if hyde_text.is_some() { 1.25 } else { 4.0 };
+    // The current question owns the subject. Earlier anchors only resolve
+    // missing context; they must not outrank a newly named product or topic.
+    let raw_weight = if hyde_text.is_some() { 6.0 } else { 8.0 };
     let query_terms =
         select_informative_terms(tokenize_keyword_terms(validated_message), max_terms * 2);
-    for term in query_terms {
-        *scores.entry(term).or_insert(0.0) += raw_weight;
+    for (rank, term) in query_terms.into_iter().enumerate() {
+        *scores.entry(term).or_insert(0.0) += raw_weight - rank as f32 * 0.05;
     }
 
     for acronym in extract_acronym_terms(validated_message) {
@@ -134,6 +147,40 @@ fn build_external_search_terms(
         .map(|(term, _)| term)
         .take(max_terms)
         .collect()
+}
+
+/// Keep descriptive URL paths but never feed query parameters, fragments or
+/// advertising identifiers into lexical term ranking. Their length/entropy
+/// otherwise makes them beat the actual subject when the rewrite times out.
+pub(in crate::features::conversation::chat) fn search_text_without_url_tracking(
+    text: &str,
+) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            let start = word.find("https://").or_else(|| word.find("http://"));
+            let Some(start) = start else {
+                return word.to_string();
+            };
+            let candidate = word[start..].trim_end_matches([')', ']', '>', ',', '.']);
+            match url::Url::parse(candidate) {
+                Ok(url) => {
+                    let path = url
+                        .path()
+                        .rsplit('/')
+                        .find(|part| !part.is_empty())
+                        .unwrap_or("");
+                    let path = urlencoding::decode(path).unwrap_or_else(|_| path.into());
+                    // Keep natural-language slugs, not opaque identifiers.
+                    path.split(['-', '_', '.', '/'])
+                        .filter(|part| part.len() <= 32 && part.chars().any(char::is_alphabetic))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }
+                Err(_) => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Above this many content terms a message has stopped being query-shaped.

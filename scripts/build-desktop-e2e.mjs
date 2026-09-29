@@ -20,6 +20,9 @@ if (platform === 'win32') config.productName = `Lattice Compatibility café ${ca
 const configPath = path.join(output, 'config.json');
 await writeFile(configPath, JSON.stringify(config, null, 2));
 const env = { ...process.env };
+// Never replace the ordinary development executable with a test-identity
+// binary. A caller may explicitly select a dedicated target directory.
+env.CARGO_TARGET_DIR = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target/desktop-e2e');
 const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
 env[pathKey] = `${path.join(root, 'node_modules', '.bin')}${path.delimiter}${env[pathKey] || ''}`;
 // Limit local debug build disk use; CI can select the normal release profile.
@@ -34,11 +37,40 @@ function run(command, args) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} exited ${result.status}`);
 }
+function capture(command, args) {
+  const result = spawnSync(command, args, { cwd: root, env, encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} exited ${result.status}: ${result.stderr}`);
+  return result.stdout;
+}
+async function assertMissing(file) {
+  try {
+    await access(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error(`Developer-only binary was bundled: ${file}`);
+}
+
+// Tauri discovers every Cargo binary and puts each eligible target in the
+// installer. Keep the binding generator behind an opt-in feature so it cannot
+// be copied into a production or compatibility bundle.
+const cargoMetadata = JSON.parse(capture('cargo', [
+  'metadata', '--no-deps', '--format-version', '1', '--manifest-path',
+  path.join(root, 'src-tauri', 'Cargo.toml'),
+]));
+const desktopPackage = cargoMetadata.packages.find(pkg => pkg.name === 'lattice-desktop');
+const bindingsTarget = desktopPackage?.targets.find(target => target.name === 'export_bindings');
+if (!bindingsTarget?.['required-features']?.includes('bindings-export')
+    || desktopPackage.features.default?.includes('bindings-export')) {
+  throw new Error('export_bindings must require the non-default bindings-export feature');
+}
 const bundle = { darwin: 'app', linux: 'deb', win32: 'nsis' }[platform];
 run(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), 'build',
   ...(!release ? ['--debug'] : []), '--ci', '--features', 'desktop-e2e', '--config', configPath,
   '--bundles', bundle]);
-const target = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target');
+const target = env.CARGO_TARGET_DIR;
 const bundles = path.join(target, release ? 'release' : 'debug', 'bundle');
 // Keep each installed candidate separate, including spaces and Unicode in its path.
 let installed = path.join(output, `Installed apps café ${candidateToken}`);
@@ -72,8 +104,11 @@ if (platform === 'darwin') {
 const fixture = path.join(installed, 'sample notes café.md');
 const sidecar = path.join(path.dirname(binary), platform === 'darwin' ? 'llama-server'
   : platform === 'win32' ? 'llama-server-cpu.exe' : 'llama-server-cpu');
+const bindingsBinary = path.join(path.dirname(binary), platform === 'win32'
+  ? 'export_bindings.exe' : 'export_bindings');
 await access(binary);
 await access(sidecar);
+await assertMissing(bindingsBinary);
 await writeFile(fixture, '# Compatibility fixture\n\nThe Cedar observatory opens at 08:40 on Tuesday. CEDAR-7319.\n');
 await writeFile(path.join(output, 'manifest.json'), JSON.stringify({
   identifier: config.identifier, binary, sidecar, fixture, platform, arch: process.arch,

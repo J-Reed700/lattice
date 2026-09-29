@@ -19,7 +19,8 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
-    ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence, TokenAccounting,
+    BudgetAllocation, ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence,
+    TokenAccounting,
 };
 use crate::domain::conversation_memory::{MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
@@ -32,6 +33,9 @@ use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequ
 /// how many actually fit. Reading the whole archive to then discard most of it
 /// is the unbounded-load problem this design removes.
 const RECENT_CANDIDATE_MESSAGES: usize = 64;
+
+/// Byte ceiling on the recent candidates read for one turn.
+const RECENT_CANDIDATE_BYTES: usize = 512 * 1024;
 
 /// Byte ceiling on recalled passages for one turn.
 const RECALL_BYTE_BUDGET: usize = 8 * 1024;
@@ -59,7 +63,10 @@ where
     Compact: FnOnce() -> CompactFuture,
     CompactFuture: std::future::Future<Output = Result<()>>,
 {
-    let initial = build().await?;
+    let initial = match build().await {
+        Err(AppError::ConcurrentModification { .. }) => build().await?,
+        other => other?,
+    };
     if !initial
         .as_ref()
         .is_some_and(|turn| turn.plan.compaction_required || !turn.plan.accounting.fits())
@@ -91,6 +98,38 @@ fn incomplete_history(cause: Option<&AppError>) -> AppError {
     ))
 }
 
+/// The history cost retrieval must budget around when bounded memory builds
+/// the prompt.
+///
+/// Retrieval is sized before the plan exists (the plan's current input *is*
+/// the retrieved material), and the string context it used to be sized against
+/// is filled to the whole window in a long chat — which left retrieval nothing.
+/// The plan never spends more on the system policy and history than the
+/// assembler's non-retrieval pools, so that is the ceiling here. The assembler's
+/// safety margin is added on top: retrieval must leave it free or the finished
+/// plan's fixed part overruns its input budget.
+///
+/// `context_history_tokens` is the string context's own total (system entry
+/// included). When the allocation itself cannot be made, the plan will fail
+/// with the actionable error; the string total is returned unchanged.
+pub fn history_tokens_for_rag_budget(
+    llm: &dyn LLMPort,
+    system_policy: &str,
+    question_tokens: usize,
+    context_history_tokens: usize,
+) -> usize {
+    let system_tokens = llm.count_tokens(system_policy);
+    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
+        .with_accounting(TokenAccounting::Estimated);
+    match BudgetAllocation::plan(&capacity, system_tokens + question_tokens) {
+        Ok(allocation) => {
+            let history_pools = allocation.available - allocation.rag_and_tools;
+            context_history_tokens.min(system_tokens + history_pools) + allocation.safety_margin
+        }
+        Err(_) => context_history_tokens,
+    }
+}
+
 /// Assemble a bounded typed plan for this turn, or `None` to leave the existing
 /// path in charge.
 ///
@@ -114,6 +153,34 @@ pub async fn build_memory_plan(
     document_evidence: Vec<RankedEvidence>,
     enabled: bool,
 ) -> Result<Option<MemoryTurnContext>> {
+    build_memory_plan_for_query(
+        memory,
+        recall,
+        llm,
+        conversation_id,
+        system_policy,
+        current_input,
+        tool_schema_tokens,
+        document_evidence,
+        enabled,
+        current_input,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn build_memory_plan_for_query(
+    memory: &dyn ConversationMemoryPort,
+    recall: &dyn ConversationMemoryReadPort,
+    llm: &Arc<dyn LLMPort>,
+    conversation_id: &str,
+    system_policy: &str,
+    current_input: &str,
+    tool_schema_tokens: usize,
+    document_evidence: Vec<RankedEvidence>,
+    enabled: bool,
+    query: &str,
+) -> Result<Option<MemoryTurnContext>> {
     if !enabled {
         return Ok(None);
     }
@@ -131,7 +198,17 @@ pub async fn build_memory_plan(
         < snapshot
             .latest_sequence
             .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64);
-    let (recent, unread_source) = load_recent(memory, conversation_id, &snapshot).await?;
+    let (mut recent, unread_source) =
+        load_recent(memory, conversation_id, &snapshot, watermark).await?;
+    // The pending current message is supplied separately, possibly enriched
+    // with documents. Compare against the raw query before removing it.
+    if recent.last().is_some_and(|m| {
+        m.status == "pending"
+            && m.role == crate::domain::conversation_memory::SourceRole::User
+            && m.content == query
+    }) {
+        recent.pop();
+    }
 
     // Recall runs against the *original* transcript, and is told what the prompt
     // already carries so it does not pay twice for the same span.
@@ -155,7 +232,7 @@ pub async fn build_memory_plan(
         recall,
         &scope,
         &RecallRequest {
-            user_input: current_input,
+            user_input: query,
             recent_turns: &recent_text,
             active_memory: &active_text,
             max_bytes: RECALL_BYTE_BUDGET,
@@ -176,19 +253,34 @@ pub async fn build_memory_plan(
     let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
         .with_accounting(TokenAccounting::Estimated);
 
-    let mut plan = assembler.assemble(&ContextRequest {
-        conversation_id,
-        system_policy,
-        current_input,
-        tool_schema_tokens,
-        snapshot: Some(&snapshot),
-        recent: &recent,
-        processed_through_sequence: watermark,
-        recalled: recalled.passages(),
-        retrieval: recalled.diagnostics.clone(),
-        document_evidence,
-        capacity,
-    })?;
+    let prepared = memory.prepare_memory(conversation_id, query).await?;
+    if prepared
+        .as_ref()
+        .and_then(|p| p.revisions)
+        .is_some_and(|pair| pair != (snapshot.state.memory_revision, snapshot.transcript_revision))
+    {
+        return Err(AppError::ConcurrentModification {
+            resource: "conversation memory".into(),
+            details: "Memory changed during prompt preparation; retry".into(),
+        });
+    }
+    let mut plan = assembler.assemble_with_memory(
+        &ContextRequest {
+            conversation_id,
+            system_policy,
+            current_input,
+            tool_schema_tokens,
+            snapshot: Some(&snapshot),
+            recent: &recent,
+            processed_through_sequence: watermark,
+            recalled: recalled.passages(),
+            retrieval: recalled.diagnostics.clone(),
+            recall_status: Some(recalled.availability().note()),
+            document_evidence,
+            capacity,
+        },
+        prepared.as_ref(),
+    )?;
 
     // The assembler reports what it dropped; it cannot report what it never saw.
     // Source below the candidate window is unprocessed and has nothing standing
@@ -202,38 +294,59 @@ pub async fn build_memory_plan(
     }))
 }
 
-/// The newest messages, oldest first, as assembler candidates.
+/// The newest messages, oldest first, as assembler candidates, and whether
+/// source above the processed `watermark` went unread.
 ///
 /// Paged from the end rather than loading the aggregate: the whole point is that
-/// prompt construction stops reading the entire conversation.
+/// prompt construction stops reading the entire conversation. Read newest first
+/// so the byte cap drops the oldest candidates; those the ledger already covers
+/// are not missing, so only an unread message above the watermark counts.
+/// Otherwise a conversation whose last 64 messages outgrow the cap would need
+/// compaction on every turn, and compaction could never satisfy it.
 async fn load_recent(
     memory: &dyn ConversationMemoryPort,
     conversation_id: &str,
     snapshot: &MemorySnapshot,
+    watermark: i64,
 ) -> Result<(Vec<SourceMessage>, bool)> {
     let from = snapshot
         .latest_sequence
         .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64)
         .max(0);
     let page = memory
-        .page_source_messages(
+        .page_recent_source_messages(
             conversation_id,
             from,
             snapshot.latest_sequence,
-            SourceReadLimits::new(RECENT_CANDIDATE_MESSAGES, 512 * 1024),
+            SourceReadLimits::new(RECENT_CANDIDATE_MESSAGES, RECENT_CANDIDATE_BYTES),
         )
         .await?;
+    let unread_source = match page.messages.first() {
+        Some(oldest_read) if page.has_more && oldest_read.sequence > watermark.max(from) + 1 => {
+            // Sequences can have gaps (deleted messages), so ask whether any
+            // message actually sits between the watermark and what was read.
+            let probe = memory
+                .page_recent_source_messages(
+                    conversation_id,
+                    watermark.max(from),
+                    oldest_read.sequence - 1,
+                    SourceReadLimits::new(1, 0),
+                )
+                .await?;
+            !probe.messages.is_empty()
+        }
+        Some(_) => false,
+        None => page.has_more,
+    };
     // A failed assistant output is not an answer that was returned, so it is not
     // replayed as one. A pending or failed *user* message is kept: the user still
     // said it, and a generation failure must not erase their instruction.
-    // The byte limit can cut this page short even with fewer than 64 messages.
-    // Do not mistake a successfully loaded prefix for the entire candidate tail.
     Ok((
         page.messages
             .into_iter()
             .filter(SourceMessage::is_eligible_source)
             .collect(),
-        page.has_more,
+        unread_source,
     ))
 }
 

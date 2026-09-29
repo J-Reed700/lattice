@@ -1,3 +1,4 @@
+mod document_evidence;
 mod document_progress;
 mod scoped_document_tools;
 
@@ -8,7 +9,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text_utils::{build_excerpt, safe_truncate};
 use futures::StreamExt;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -157,11 +158,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // promoted into system instructions by string parsing, and raw user bytes
     // are never trimmed on the way in.
     memory_plan: Option<&crate::application::services::context_assembler::ContextPlan>,
+    // Room reserved for the answer, the same figure the prompt was budgeted
+    // against. Sent with the request so the provider holds exactly that back.
+    response_token_budget: usize,
+    // Model rounds this turn may spend; see [`max_tool_rounds`].
+    max_tool_rounds: usize,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
 
-    const MAX_TOOL_ITERATIONS: usize = 5;
+    let max_tool_rounds = max_tool_rounds.max(1);
     const CANCEL_POLL_INTERVAL_MS: u64 = 200;
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
@@ -212,9 +218,19 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         tools: tools_ref.unwrap_or(&[]).to_vec(),
         // Reserving output room and then not enforcing it is only bookkeeping:
         // the model could generate past what the budget set aside and overrun
-        // the window the prompt was measured against.
-        max_output_tokens: memory_plan
-            .map(|plan| u32::try_from(plan.max_output_tokens).unwrap_or(u32::MAX)),
+        // the window the prompt was measured against. Without a memory plan the
+        // turn used to ask for the provider's whole limit instead — on
+        // llama.cpp, which reserves prompt *plus* answer in one slot, that is
+        // what turned a large prompt into a failed batch rather than a short
+        // answer.
+        max_output_tokens: Some(
+            u32::try_from(match memory_plan {
+                Some(plan) => plan.max_output_tokens.min(response_token_budget),
+                None => response_token_budget,
+            })
+            .unwrap_or(u32::MAX),
+        )
+        .filter(|budget| *budget > 0),
         ..Default::default()
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
@@ -230,12 +246,39 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // point it at another thread.
     let history_port = crate::features::conversation::repository::ConversationRepository::new(
         container.db_pool().clone(),
-    );
+    )
+    .with_memory_embedding(container.get_or_load_embedding().await.ok());
     // One memo for the whole turn: a repeated read of a range already exhausted
     // answers with a reference instead of paying for the same text twice.
     let mut history_memo = super::history_tools::HistoryToolMemo::default();
-    for iteration in 0..MAX_TOOL_ITERATIONS {
+    let mut document_evidence = document_evidence::DocumentEvidence::default();
+    // The schemas ride along with every round and take room like any message.
+    let tool_schema_chars = tools_ref.map_or(0, |tools| tool_schema_text(tools).chars().count());
+    // Stop is honoured at this interval while a tool runs, as it is while the
+    // model generates.
+    let cancelled = || async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)).await;
+            if is_cancel_requested(request_id) {
+                return;
+            }
+        }
+    };
+    for iteration in 0..max_tool_rounds {
         timings.iterations = (iteration + 1) as u32;
+        // The last round is for answering. A model still calling tools here
+        // would otherwise end the turn with an error and lose every page and
+        // passage it had gathered, so it is offered no tools and told to
+        // answer from what it has.
+        let final_round = iteration + 1 == max_tool_rounds;
+        let round_tools = if final_round { None } else { tools_ref };
+        if final_round && tools_ref.is_some_and(|tools| !tools.is_empty()) {
+            info!(
+                iteration,
+                "Last tool round: asking for the answer without tools"
+            );
+            withdraw_tools_for_answer(&mut native_request, &mut tool_context);
+        }
         if is_cancel_requested(request_id) {
             emit_cancelled_stream(window, conv_id, request_id);
             return Err(cancellation_error());
@@ -253,9 +296,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
             recorder.begin_guarded(TurnStepKind::Generate, thinking_label(iteration), None);
         let remaining = remaining_budget()?;
         native_request.time_budget = Some(remaining);
-        let native_progress = llm.supports_typed_completions()
-            && (llm.provider_name() == "llamacpp"
-                || tools_ref.is_some_and(|tools| !tools.is_empty()));
+        // Every provider that can take a typed request gets one, tools or not:
+        // the legacy stream ignores finish reasons and error frames (so a
+        // cut-off answer is saved as complete), drops the output cap and
+        // reasoning effort, and flattens the history into one system message.
+        let native_progress = llm.supports_typed_completions();
         let stream_result = if native_progress {
             let response = {
                 let first_text_received = std::sync::atomic::AtomicBool::new(false);
@@ -298,14 +343,14 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     }
                 }
             }?;
-            if matches!(
-                response.finish_reason.as_str(),
-                "incomplete" | "max_tokens" | "length" | "failed"
-            ) {
-                return Err(AppError::InvalidState(format!(
-                    "Model stopped before completion: {}",
-                    response.finish_reason
-                )));
+            let mut response = response;
+            if answer_was_cut_short(
+                &response.finish_reason,
+                &response.text,
+                !response.tool_calls.is_empty(),
+            )? {
+                emitter.content(CUT_SHORT_NOTE)?;
+                response.text.push_str(CUT_SHORT_NOTE);
             }
             if response.text.trim().is_empty() && response.tool_calls.is_empty() {
                 return Err(AppError::InvalidState(
@@ -326,7 +371,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             .map(|value| CompletionInput::Native { value }),
                     );
                 }
-            } else if llm.provider_name() == "llamacpp" {
+            } else if matches!(llm.provider_name(), "llamacpp" | "local-sidecar") {
+                // Both are llama-server: the assistant message, tool calls and
+                // any reasoning included, replays as the server returned it.
                 native_request.input.push(CompletionInput::Native {
                     value: response.provider_output,
                 });
@@ -363,7 +410,12 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
             // budget or ignore the Stop button.
             let creation = timeout(
                 remaining_budget()?,
-                llm.generate_streaming_with_tools(&current_prompt, &tool_context, None, tools_ref),
+                llm.generate_streaming_with_tools(
+                    &current_prompt,
+                    &tool_context,
+                    None,
+                    round_tools,
+                ),
             );
             tokio::pin!(creation);
             loop {
@@ -429,15 +481,24 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
                 match timeout(remaining_budget()?, stream_future).await {
                     Ok(Ok((response_text, tool_calls))) => {
+                        let tool_calls = if final_round && !tool_calls.is_empty() {
+                            // Offered no tools, a model can still write a call.
+                            // It is not run: this round's text is the answer.
+                            warn!(
+                                ignored_calls = tool_calls.len(),
+                                "Model called tools in the last round; keeping its text as the answer"
+                            );
+                            Vec::new()
+                        } else {
+                            tool_calls
+                        };
                         timings.llm_stream_ms = timings
                             .llm_stream_ms
                             .saturating_add(elapsed_ms(llm_iteration_start));
                         generate_step
                             .done(Some(round_result_line(&response_text, tool_calls.len())));
                         if tool_calls.is_empty() {
-                            if response_text.trim().is_empty()
-                                && iteration + 1 < MAX_TOOL_ITERATIONS
-                            {
+                            if response_text.trim().is_empty() && !final_round {
                                 warn!(
                                     conversation_id = conv_id,
                                     iteration = iteration,
@@ -508,7 +569,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     &native_request.input,
                                     &tool_context,
                                     &current_prompt,
-                                ),
+                                ) + tool_schema_chars,
                                 tool_calls.len().saturating_sub(call_index),
                                 tool_output_settings.max_chars as usize,
                             );
@@ -519,6 +580,35 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             if is_cancel_requested(request_id) {
                                 emit_cancelled_stream(window, conv_id, request_id);
                                 return Err(cancellation_error());
+                            }
+                            // A call the model wrote but that cannot be run is
+                            // answered with why, and the model tries again.
+                            if let Some(problem) =
+                                crate::features::llm::llama_cpp::invalid_tool_call_problem(
+                                    &tc.arguments,
+                                )
+                            {
+                                warn!(
+                                    requested_function = tc.name.as_str(),
+                                    %problem,
+                                    "Model wrote a tool call that cannot be run"
+                                );
+                                timings.tool_failure_count =
+                                    timings.tool_failure_count.saturating_add(1);
+                                recorder.note(
+                                    TurnStepKind::Retry,
+                                    "The model's tool call was malformed",
+                                    None,
+                                    Some(tc.name.clone()),
+                                );
+                                if let Some(id) = &tc.id {
+                                    native_request.input.push(CompletionInput::ToolResult {
+                                        id: id.clone(),
+                                        output: problem.clone(),
+                                    });
+                                }
+                                tool_context.push(format!("System: [{problem}]"));
+                                continue;
                             }
                             let resolved_tool = canonical_tool_name(tc.name.as_str());
                             if !is_tool_allowed(resolved_tool, tools_ref) {
@@ -617,27 +707,72 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 resolved_tool,
                                 tc.arguments.clone(),
                             );
-                            let executed = if super::history_tools::is_history_tool(resolved_tool) {
-                                let scope = super::history_tools::HistoryToolScope::new(
-                                    conv_id,
-                                    super::history_tools::HistoryToolBudget {
-                                        // A char allowance used as a byte ceiling
-                                        // is conservative in the safe direction.
-                                        max_response_bytes: result_allowance,
-                                        deadline: Some(deadline),
-                                    },
-                                );
-                                super::history_tools::execute(
-                                    &history_port,
-                                    &scope,
-                                    &mut history_memo,
-                                    call,
-                                )
-                                .await
-                            } else {
-                                scoped_document_tools::execute(container, conv_id, focus, call)
+                            let execution = async {
+                                if super::history_tools::is_history_tool(resolved_tool) {
+                                    let scope = super::history_tools::HistoryToolScope::new(
+                                        conv_id,
+                                        super::history_tools::HistoryToolBudget {
+                                            // A char allowance used as a byte ceiling
+                                            // is conservative in the safe direction.
+                                            max_response_bytes: result_allowance,
+                                            deadline: Some(deadline),
+                                        },
+                                    );
+                                    super::history_tools::execute(
+                                        &history_port,
+                                        &scope,
+                                        &mut history_memo,
+                                        call,
+                                    )
                                     .await
+                                } else if resolved_tool == "fetch_url_content" {
+                                    // A page this conversation already read is served
+                                    // from its permanent archive — the citation's
+                                    // snapshot, not another network request.
+                                    match fetch_memory::fetch_target(&tc.arguments) {
+                                    Some(url) => match super::source_snapshots::archived_page(
+                                        container, conv_id, url,
+                                    )
+                                    .await
+                                    {
+                                        Some(page) => Ok(
+                                            crate::features::function_calling::domain::FunctionResult::success(
+                                                serde_json::to_value(page).unwrap_or_default(),
+                                            ),
+                                        ),
+                                        None => {
+                                            scoped_document_tools::execute(container, conv_id, focus, call)
+                                                .await
+                                        }
+                                    },
+                                    None => {
+                                        scoped_document_tools::execute(container, conv_id, focus, call)
+                                            .await
+                                    }
+                                }
+                                } else {
+                                    scoped_document_tools::execute(container, conv_id, focus, call)
+                                        .await
+                                }
                             };
+                            // A fetch can sit in a site's queue, then its HTTP
+                            // timeout, then the browser fallback. Stop and the
+                            // turn's deadline must not wait for all three.
+                            let executed =
+                                match run_tool_bounded(execution, remaining_budget()?, cancelled())
+                                    .await
+                                {
+                                    ToolRun::Finished(result) => result,
+                                    ToolRun::Cancelled => {
+                                        tool_step.failed(Some("Stopped".into()));
+                                        emit_cancelled_stream(window, conv_id, request_id);
+                                        return Err(cancellation_error());
+                                    }
+                                    ToolRun::TimedOut => {
+                                        tool_step.failed(Some("Out of time".into()));
+                                        return Err(budget_exhausted());
+                                    }
+                                };
                             match executed {
                                 Ok(result) => {
                                     if result.success {
@@ -651,8 +786,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     } else {
                                         tool_step.failed(result.error_message.clone());
                                     }
-                                    timings.tool_success_count =
-                                        timings.tool_success_count.saturating_add(1);
+                                    if result.success {
+                                        timings.tool_success_count =
+                                            timings.tool_success_count.saturating_add(1);
+                                    } else {
+                                        timings.tool_failure_count =
+                                            timings.tool_failure_count.saturating_add(1);
+                                    }
                                     let tool_sources = collect_tool_sources(
                                         resolved_tool,
                                         &result,
@@ -710,6 +850,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                             ));
                                         }
                                     }
+                                    result_text = document_evidence.render(
+                                        resolved_tool,
+                                        &result,
+                                        result_text,
+                                        |excerpt| {
+                                            if native_progress {
+                                                native_request.input.iter().any(|item| matches!(item,
+                                                    CompletionInput::ToolResult { output, .. } if output == excerpt))
+                                            } else {
+                                                let entry = format!("System: [Tool '{}' result (excerpted): {}]", resolved_tool, excerpt);
+                                                tool_context.iter().any(|item| item == &entry)
+                                            }
+                                        },
+                                    );
                                     if let Some(id) = &tc.id {
                                         native_request.input.push(CompletionInput::ToolResult {
                                             id: id.clone(),
@@ -759,6 +913,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                                 Delivery::Clipped { shown_chars: room }
                                             };
                                             fetch_memory.record_page(url, text, delivery);
+                                            // A live read becomes the
+                                            // conversation's permanent archive;
+                                            // an archived one already is.
+                                            super::source_snapshots::archive_page_for_url(
+                                                container, conv_id, &url, &page,
+                                            )
+                                            .await;
                                         }
                                     }
                                     if !result.success {
@@ -864,7 +1025,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
     warn!(
         conversation_id = conv_id,
-        iterations = MAX_TOOL_ITERATIONS,
+        iterations = max_tool_rounds,
         llm_stream_ms = timings.llm_stream_ms,
         tool_execution_ms = timings.tool_execution_ms,
         tool_call_count = timings.tool_call_count,
@@ -881,9 +1042,71 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     ))
 }
 
+/// How a tool call raced against Stop and the turn's deadline ended.
+enum ToolRun<T> {
+    Finished(T),
+    Cancelled,
+    TimedOut,
+}
+
+/// Run one tool call, giving up when the turn is stopped or out of time.
+async fn run_tool_bounded<T>(
+    tool: impl std::future::Future<Output = T>,
+    remaining: Duration,
+    cancelled: impl std::future::Future<Output = ()>,
+) -> ToolRun<T> {
+    tokio::select! {
+        finished = timeout(remaining, tool) => match finished {
+            Ok(result) => ToolRun::Finished(result),
+            Err(_) => ToolRun::TimedOut,
+        },
+        () = cancelled => ToolRun::Cancelled,
+    }
+}
+
+/// Said to the model on the last round, when it is offered no more tools.
+const FINAL_ROUND_INSTRUCTION: &str = "You have used every tool round this turn allows, and no tools are available now. Answer the user's question now from what you have already gathered, and say plainly what you could not find.";
+
+/// Turn the next round into the answering round: no tools on offer, and an
+/// instruction to answer from what the turn already holds.
+fn withdraw_tools_for_answer(
+    request: &mut crate::application::ports::llm_port::CompletionRequest,
+    transcript: &mut Vec<String>,
+) {
+    request.tools.clear();
+    request.input.push(
+        crate::application::ports::llm_port::CompletionInput::Message {
+            role: "system".into(),
+            content: FINAL_ROUND_INSTRUCTION.into(),
+        },
+    );
+    transcript.push(format!("System: [{FINAL_ROUND_INSTRUCTION}]"));
+}
+
+/// Model rounds a turn may spend on tool calls, the last of which is kept for
+/// the answer. Deep research has a two-hour budget and branches across many
+/// sources; five rounds would end it long before that budget does.
+pub(super) fn max_tool_rounds(deep_research: bool) -> usize {
+    if deep_research {
+        12
+    } else {
+        5
+    }
+}
+
+/// The tool definitions as the provider receives them, for budgeting: the
+/// JSON `parameters` of each tool are sent and read like any other prompt text.
+pub(super) fn tool_schema_text(tools: &[crate::application::ports::ToolDefinition]) -> String {
+    crate::features::llm::llama_cpp::tool_specs(tools).to_string()
+}
+
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
+
+/// Preview length for a page the model fetched itself, matching the preview a
+/// vault passage gets.
+const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
 
 fn collect_tool_sources(
     tool_name: &str,
@@ -945,12 +1168,22 @@ fn collect_tool_sources(
                     category: "Web Article".to_string(),
                     file_size_bytes: output.word_count as i64,
                     modified_at,
-                    excerpt: Some(content),
+                    // The card's short preview, not the page: the UI refuses an
+                    // excerpt over 2000 characters, and a whole-page excerpt here
+                    // dropped the source — its `[n]` chip went dead and it was
+                    // missing from the list under the answer.
+                    excerpt: Some(build_excerpt(
+                        &output.content,
+                        highlight_terms,
+                        FETCHED_PAGE_EXCERPT_CHARS,
+                    )),
                     highlights,
                     section: None,
                     chunk_index: Some(1),
                     chunk_excerpts: None,
                     citation_id: None,
+
+                    web_snapshot: None,
                 }];
             }
             Vec::new()
@@ -1009,6 +1242,8 @@ fn collect_tool_sources(
                     chunk_index: Some(1),
                     chunk_excerpts: None,
                     citation_id: None,
+
+                    web_snapshot: None,
                 }];
             }
             Vec::new()
@@ -1067,6 +1302,27 @@ fn thinking_label(iteration: usize) -> &'static str {
     }
 }
 
+/// Appended to an answer the model stopped writing at its output limit. The
+/// grounding check knows it by this text: it is the app's line, not a claim.
+pub(in crate::features::conversation::chat) const CUT_SHORT_NOTE: &str =
+    "\n\n_(The answer was cut short: the model reached its output limit.)_";
+
+/// Whether a round's answer stopped at the output limit, or an error when
+/// the round has nothing worth keeping.
+///
+/// A cut-short answer is still an answer: failing the turn threw away
+/// everything the user had watched stream in. A cut-short tool round has
+/// nothing to keep — its calls are truncated — so it still fails.
+fn answer_was_cut_short(finish_reason: &str, text: &str, has_tool_calls: bool) -> Result<bool> {
+    let cut_short = matches!(finish_reason, "incomplete" | "max_tokens" | "length");
+    if finish_reason == "failed" || (cut_short && (text.trim().is_empty() || has_tool_calls)) {
+        return Err(AppError::InvalidState(format!(
+            "Model stopped before completion: {finish_reason}"
+        )));
+    }
+    Ok(cut_short)
+}
+
 /// What one generation round came to.
 ///
 /// A round that only asked for tools wrote no answer, and saying "0 words"
@@ -1089,7 +1345,7 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
 fn tool_step_kind(tool: &str) -> TurnStepKind {
     match tool {
         "semantic_search" => TurnStepKind::SearchDocuments,
-        "get_document" | "list_documents" => TurnStepKind::OpenDocument,
+        "get_document" | "list_documents" | "list_attachments" => TurnStepKind::OpenDocument,
         "web_search" => TurnStepKind::WebSearch,
         "fetch_url_content" => TurnStepKind::ReadPage,
         "wiki_search" | "wiki_summary" => TurnStepKind::Wiki,
@@ -1171,8 +1427,16 @@ fn tool_result_allowance(
 ) -> usize {
     let window_chars =
         ((context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize).saturating_mul(CHARS_PER_TOKEN);
-    let share = window_chars.saturating_sub(chars_in_flight) / calls_left.max(1);
-    share.clamp(MIN_TOOL_RESULT_CHARS.min(configured_max), configured_max)
+    let room = window_chars.saturating_sub(chars_in_flight);
+    let share = room / calls_left.max(1);
+    // The floor is only kept while the window can still take it. Past that, a
+    // result is given its share of what is left and no more: overrunning the
+    // window fails the next round outright, which is worse than a short result.
+    let floor = MIN_TOOL_RESULT_CHARS.min(configured_max);
+    if room < floor {
+        return share.min(configured_max);
+    }
+    share.clamp(floor, configured_max)
 }
 
 /// What the model is told when it asks for a page this turn already read.
@@ -1206,6 +1470,7 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
         "wiki_search" | "wiki_summary" => "Checking Wikipedia".to_string(),
         "semantic_search" => "Searching your documents".to_string(),
         "list_documents" => "Looking through your documents".to_string(),
+        "list_attachments" => "Checking what you attached".to_string(),
         "get_document" => "Opening a document".to_string(),
         "search_conversation_history" | "read_conversation_history" => {
             "Looking back through this conversation".to_string()
@@ -1236,6 +1501,19 @@ mod tests {
     use super::*;
     use crate::application::ports::llm_port::CompletionInput;
 
+    #[test]
+    fn an_answer_stopped_at_the_output_limit_is_kept_not_failed() {
+        for reason in ["length", "max_tokens", "incomplete"] {
+            assert!(answer_was_cut_short(reason, "half an answer", false).unwrap());
+            // Nothing written, or a tool call cut mid-arguments: nothing to keep.
+            assert!(answer_was_cut_short(reason, "  ", false).is_err());
+            assert!(answer_was_cut_short(reason, "", true).is_err());
+        }
+        assert!(answer_was_cut_short("failed", "", false).is_err());
+        assert!(!answer_was_cut_short("stop", "done", false).unwrap());
+        assert!(!answer_was_cut_short("tool_calls", "", true).unwrap());
+    }
+
     /// Four page fetches in one round on a 32k-token model. At the configured
     /// 50,000 characters each they are ~200,000 characters — several times the
     /// model's whole window — and the next generation simply failed.
@@ -1261,13 +1539,130 @@ mod tests {
         assert_eq!(tool_result_allowance(131_072, 20_000, 4, 50_000), 50_000);
     }
 
-    /// A result of nothing would make the round that asked for it worthless.
+    /// Past a full window, the floor would overrun it and fail the next round.
     #[test]
-    fn a_full_window_still_leaves_a_result_worth_reading() {
+    fn a_full_window_gives_a_result_only_what_is_left() {
+        assert_eq!(tool_result_allowance(8_192, 1_000_000, 3, 50_000), 0);
+        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        let nearly_full = window_chars - 900;
+        assert_eq!(tool_result_allowance(8_192, nearly_full, 1, 50_000), 900);
+    }
+
+    /// With room, a result still gets enough to be worth the round.
+    #[test]
+    fn a_window_with_room_keeps_the_floor() {
+        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
         assert_eq!(
-            tool_result_allowance(8_192, 1_000_000, 3, 50_000),
+            tool_result_allowance(8_192, window_chars - 4_000, 3, 50_000),
             MIN_TOOL_RESULT_CHARS
         );
+    }
+
+    /// On a 4k-token local window the schemas alone are a large share, and a
+    /// round that ignored them handed out room the window did not have.
+    #[test]
+    fn tool_schemas_are_charged_against_a_small_window() {
+        let tools = vec![crate::application::ports::ToolDefinition {
+            name: "web_search".into(),
+            description: "Search the web.".into(),
+            parameters: serde_json::json!({"type":"object","properties":{
+                "query":{"type":"string","description":"x".repeat(3_000)}}}),
+        }];
+        let schema_chars = tool_schema_text(&tools).chars().count();
+        assert!(
+            schema_chars > 3_000,
+            "parameters must be counted: {schema_chars}"
+        );
+
+        let window_chars = (4_096_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        let prompt = "p".repeat(window_chars - schema_chars - 500);
+        let in_flight = chars_in_flight(&[], &[], &prompt) + schema_chars;
+        let allowance = tool_result_allowance(4_096, in_flight, 1, 50_000);
+        assert_eq!(allowance, 500);
+        assert!(in_flight + allowance <= window_chars);
+    }
+
+    #[test]
+    fn the_last_round_offers_no_tools_and_asks_for_the_answer() {
+        use crate::application::ports::llm_port::CompletionRequest;
+        let mut request = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "q".into(),
+            }],
+            tools: vec![crate::application::ports::ToolDefinition {
+                name: "web_search".into(),
+                description: "Search".into(),
+                parameters: serde_json::json!({}),
+            }],
+            ..Default::default()
+        };
+        let mut transcript = Vec::new();
+        withdraw_tools_for_answer(&mut request, &mut transcript);
+        assert!(request.tools.is_empty());
+        assert!(matches!(request.input.last(),
+            Some(CompletionInput::Message { content, .. }) if content == FINAL_ROUND_INSTRUCTION));
+        assert!(transcript[0].contains(FINAL_ROUND_INSTRUCTION));
+    }
+
+    #[test]
+    fn deep_research_gets_more_tool_rounds() {
+        assert!(max_tool_rounds(true) > max_tool_rounds(false));
+        assert!(
+            max_tool_rounds(false) >= 2,
+            "one round to search, one to answer"
+        );
+    }
+
+    /// Stop is honoured while a tool is still running, not after it returns.
+    #[tokio::test]
+    async fn a_stopped_turn_does_not_wait_for_a_pending_tool() {
+        let started = Instant::now();
+        let outcome = run_tool_bounded(
+            std::future::pending::<()>(),
+            Duration::from_secs(600),
+            tokio::time::sleep(Duration::from_millis(20)),
+        )
+        .await;
+        assert!(matches!(outcome, ToolRun::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn a_tool_that_outlives_the_turn_is_cut_off_at_the_deadline() {
+        let outcome = run_tool_bounded(
+            std::future::pending::<()>(),
+            Duration::from_millis(20),
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert!(matches!(outcome, ToolRun::TimedOut));
+        let outcome = run_tool_bounded(
+            async { 7 },
+            Duration::from_secs(1),
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert!(matches!(outcome, ToolRun::Finished(7)));
+    }
+
+    /// A malformed call reaches the loop as a call whose reply is the error,
+    /// quoting what the model wrote, so the next round can correct it.
+    #[test]
+    fn a_malformed_call_is_answered_with_the_error() {
+        let response = crate::features::llm::llama_cpp::parse_completion(serde_json::json!({
+            "choices":[{"message":{"content":"Searching.","tool_calls":[{"id":"c1","type":"function",
+                "function":{"name":"web_search","arguments":"{query: rust"}}]},
+                "finish_reason":"tool_calls"}]}))
+        .unwrap();
+        assert_eq!(response.text, "Searching.");
+        let Some(CompletionInput::ToolCall { arguments, .. }) = response.tool_calls.first() else {
+            panic!("the malformed call must be kept");
+        };
+        let reply = crate::features::llm::llama_cpp::invalid_tool_call_problem(arguments)
+            .expect("marked invalid");
+        assert!(reply.contains("not valid JSON"), "{reply}");
+        assert!(reply.contains("{query: rust"), "{reply}");
     }
 
     #[test]

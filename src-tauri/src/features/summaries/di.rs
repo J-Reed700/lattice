@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use async_trait::async_trait;
 
@@ -41,7 +41,7 @@ pub fn summary_index_path(data_dir: &Path, identity: &str) -> PathBuf {
     data_dir.join(format!("summaries-{}.usearch", identity.replace(':', "-")))
 }
 
-type IndexCache = Mutex<HashMap<PathBuf, Arc<USearchVectorIndex>>>;
+type IndexCache = Mutex<HashMap<PathBuf, Weak<USearchVectorIndex>>>;
 
 fn index_cache() -> &'static IndexCache {
     static CACHE: OnceLock<IndexCache> = OnceLock::new();
@@ -53,11 +53,12 @@ fn shared_index(path: PathBuf, dimension: usize) -> Result<Arc<dyn VectorSearchP
     let mut cache = index_cache()
         .lock()
         .map_err(|_| AppError::InternalError("summary index cache poisoned".into()))?;
-    if let Some(index) = cache.get(&path) {
-        return Ok(Arc::clone(index) as Arc<dyn VectorSearchPort>);
+    cache.retain(|_, index| index.strong_count() > 0);
+    if let Some(index) = cache.get(&path).and_then(Weak::upgrade) {
+        return Ok(index as Arc<dyn VectorSearchPort>);
     }
     let index = Arc::new(USearchVectorIndex::open_or_create(dimension, path.clone())?);
-    cache.insert(path, Arc::clone(&index));
+    cache.insert(path, Arc::downgrade(&index));
     Ok(index as Arc<dyn VectorSearchPort>)
 }
 
@@ -112,13 +113,17 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
         summary_index_path(container.core.data_dir(), &identity),
         container.search.vector_search().dimension(),
     )?;
-    trigger::register_post_index_hook(Arc::new(GenerateDocumentSummariesUseCase::new(
-        true,
-        Arc::new(SqliteSummarySource::new(container.db_pool().clone())),
-        repository,
-        index,
-        Arc::new(StateRuntime { app: app.clone() }),
-    )));
+    trigger::register_post_index_hook(
+        Arc::new(GenerateDocumentSummariesUseCase::new(
+            true,
+            identity.clone(),
+            Arc::new(SqliteSummarySource::new(container.db_pool().clone())),
+            repository,
+            index,
+            Arc::new(StateRuntime { app: app.clone() }),
+        )),
+        container.db_pool().clone(),
+    );
     tracing::info!(%identity, "Summary tier enabled");
     Ok(())
 }

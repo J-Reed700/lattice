@@ -55,7 +55,7 @@ function Page({ id, boundary: Boundary, children }: PageProps) {
       animate="animate"
       exit="exit"
       transition={reduceMotion ? { duration: 0 } : PAGE_TRANSITION}
-      className="h-full"
+      className="h-full min-h-0"
     >
       {Boundary ? <Boundary>{content}</Boundary> : content}
     </motion.div>

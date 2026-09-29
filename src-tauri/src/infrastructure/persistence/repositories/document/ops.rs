@@ -231,6 +231,9 @@ pub async fn find_all_paginated(
             last_accessed_at,
             word_count, source_context
         FROM documents
+        -- See DocumentRepository::find_all_paginated: a chat's attachments are
+        -- not part of the library listing.
+        WHERE owner_conversation_id IS NULL
         ORDER BY indexed_at DESC
         LIMIT ?
         "#,

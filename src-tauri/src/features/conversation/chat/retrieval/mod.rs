@@ -19,7 +19,9 @@ use tracing::{debug, info, warn};
 use super::SearchFlags;
 mod conversation_helpers;
 mod corpus_plan;
+pub(super) use corpus_plan::fused_search;
 mod external_query;
+pub(super) use external_query::search_text_without_url_tracking;
 mod followup_context;
 mod kb_retrieval;
 mod keyword;
@@ -30,6 +32,9 @@ mod policy;
 mod rerank;
 mod source_citations;
 pub use self::source_citations::WEB_SOURCE_PREFIX;
+pub(super) use self::source_citations::{
+    drop_unbudgeted_sources, render_web_context, WebContextItem,
+};
 mod sufficiency;
 mod tool_format;
 use self::conversation_helpers::{
@@ -46,6 +51,7 @@ use self::external_query::{
 };
 #[cfg(test)]
 use self::followup_context::extract_turn_anchor_terms;
+pub(super) use self::followup_context::FollowupDocument;
 use self::followup_context::{
     build_followup_context as build_followup_context_impl,
     load_followup_turn_anchor_terms as load_followup_turn_anchor_terms_impl,
@@ -145,10 +151,18 @@ pub(super) struct RetrievalPipelineOutcome {
     pub(super) short_circuit_response: Option<String>,
     pub(super) interpretation: crate::domain::qa::hyde::HyDEInterpretation,
     pub(super) search_response: crate::features::search::dto::SearchResponseDto,
-    pub(super) followup_context: Option<(String, Vec<SourceDto>)>,
-    pub(super) web_context: Option<String>,
+    pub(super) followup_context: Option<(FollowupDocument, Vec<SourceDto>)>,
+    /// Wiki results first, then web, rendered once the sources are numbered.
+    pub(super) web_context: Vec<WebContextItem>,
     pub(super) web_search_error: Option<String>,
     pub(super) kb_unavailable_reason: Option<String>,
+    /// Whether the knowledge base was actually searched this turn.
+    ///
+    /// Distinct from "found nothing". A turn that never reached the vault and a
+    /// turn that read it and came back empty are two different facts, and a
+    /// prompt that reports the second when the first happened tells the reader
+    /// their documents were consulted when they were not.
+    pub(super) kb_attempted: bool,
     pub(super) sources: Vec<SourceDto>,
     pub(super) available_for_rag: usize,
     pub(super) sub_timings: RetrievalSubTimingMetrics,
@@ -246,21 +260,19 @@ impl RetrievalPlan {
 
         Self {
             route_action: route_action.clone(),
+            // Web adds to the vault; it never replaces it. The intent
+            // classifier sets `force_web_search` whenever a question looks
+            // current, and reading that as "skip the library" answered
+            // questions the user's own documents covered from the web alone.
+            // A closed-book turn never reaches this plan.
             should_search_kb: search_flags.force_kb_search
-                || (!search_flags.force_web_search
-                    && matches!(
-                        route_action,
-                        RouterAction::NewSearch | RouterAction::UseLastDocument
-                    )),
+                || matches!(
+                    route_action,
+                    RouterAction::NewSearch | RouterAction::UseLastDocument
+                ),
             should_search_web: search_flags.force_web_search,
             should_search_wiki: search_flags.force_wiki_search,
             short_circuit_response,
-        }
-    }
-
-    fn enable_kb_fallback(&mut self, enabled: bool) {
-        if enabled {
-            self.should_search_kb = true;
         }
     }
 }
@@ -301,8 +313,8 @@ pub(super) async fn run_retrieval_pipeline(
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     highlight_terms: &[String],
-    context: &[String],
-    max_tokens: usize,
+    available_for_rag: usize,
+    attachment_digest: Option<&str>,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
     focus: &super::focus::FocusScope,
@@ -320,14 +332,51 @@ pub(super) async fn run_retrieval_pipeline(
         search_flags,
         conversation_document_context,
         highlight_terms,
-        context,
-        max_tokens,
+        available_for_rag,
+        attachment_digest,
         tool_output_settings,
         search_settings,
         focus,
         recorder,
     )
     .await
+}
+
+/// What a turn has left for retrieved material, once the answer, the prompt's
+/// own overhead, the question and the history are accounted for.
+///
+/// `carried_tokens` is material already committed to the prompt outside
+/// retrieval — today, the files attached to the message. Subtracting it here
+/// is what keeps web pages and knowledge-base passages from being budgeted
+/// against room an attachment has already taken.
+pub(super) fn available_rag_budget(
+    max_tokens: usize,
+    question_tokens: usize,
+    context_history_tokens: usize,
+    carried_tokens: usize,
+) -> usize {
+    const PROMPT_OVERHEAD_TOKENS: usize = 200;
+
+    let response_budget = response_token_budget(max_tokens);
+    max_tokens
+        .saturating_sub(response_budget)
+        .saturating_sub(PROMPT_OVERHEAD_TOKENS)
+        .saturating_sub(question_tokens)
+        .saturating_sub(context_history_tokens)
+        .saturating_sub(carried_tokens)
+}
+
+/// The room set aside for the answer itself.
+///
+/// The prompt is budgeted against the window *minus* this, so the request has
+/// to reserve the same amount when it asks the provider to generate. A
+/// provider that holds prompt and reservation in one context — llama.cpp does —
+/// fails the whole turn when the two together overrun it, which is how a turn
+/// with a big attachment died on a server with room to spare for the prompt.
+pub(super) fn response_token_budget(max_tokens: usize) -> usize {
+    const RESPONSE_TOKEN_BUDGET_RATIO: f64 = 0.25;
+
+    (max_tokens as f64 * RESPONSE_TOKEN_BUDGET_RATIO) as usize
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -430,8 +479,9 @@ fn keep_references_in_scope(
 async fn build_hyde_context_window_for_conversation(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    question: &str,
 ) -> Option<String> {
-    build_hyde_context_window_for_conversation_impl(conv_service, conversation_id).await
+    build_hyde_context_window_for_conversation_impl(conv_service, conversation_id, question).await
 }
 
 fn derive_kb_search_limit(
@@ -561,7 +611,7 @@ async fn build_followup_context(
     token_budget: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     excerpt_chars: usize,
-) -> Option<(String, Vec<SourceDto>)> {
+) -> Option<(FollowupDocument, Vec<SourceDto>)> {
     build_followup_context_impl(
         container,
         conv_service,
@@ -630,7 +680,7 @@ pub(super) fn build_web_source_citations(
 }
 
 /// Infer human-readable category from file path/extension.
-fn infer_category(path: &str) -> String {
+pub(super) fn infer_category(path: &str) -> String {
     infer_category_impl(path)
 }
 

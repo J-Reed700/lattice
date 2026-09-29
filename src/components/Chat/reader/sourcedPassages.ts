@@ -24,6 +24,17 @@ export interface SourcedPassage {
 
 /** At most this many consecutive page sentences count as one passage. */
 const MAX_WINDOW = 3;
+/**
+ * What a window may grow to when no tight one matches: about one section of a
+ * page, which is what an answer condenses into a single bullet.
+ */
+const MAX_SECTION_WINDOW = 10;
+/**
+ * What each sentence of a window costs it when windows are compared: a window
+ * grows only for a sentence that brings more of the answer than this, so one
+ * shared filler word cannot stretch a highlight into the next section.
+ */
+const SENTENCE_COST = 0.03;
 /** Share of the answer sentence's weighted content words the span must carry. */
 const MIN_SCORE = 0.5;
 /** And that many distinct content words, so a short sentence cannot coast in. */
@@ -55,6 +66,22 @@ const STOPWORDS = new Set([
  */
 const TOKEN_PATTERN = /[\p{L}\p{N}]+(?:[.,][\p{N}]+)*/gu;
 
+/**
+ * Small numbers as a page spells them. An answer writes "6–8 hours" where the
+ * page says "six to eight hours", and numbers are what a match leans on most.
+ * No "one": it is a pronoun far more often than it is a count.
+ */
+const NUMBER_WORDS = new Map<string, string>([
+  ['two', '2'], ['three', '3'], ['four', '4'], ['five', '5'], ['six', '6'], ['seven', '7'],
+  ['eight', '8'], ['nine', '9'], ['ten', '10'], ['eleven', '11'], ['twelve', '12'],
+]);
+
+/** A word as both sides of a match spell it. */
+function canonical(raw: string): string {
+  const token = raw.toLowerCase();
+  return NUMBER_WORDS.get(token) ?? token;
+}
+
 /** `[3]`, `[1][3]` and `[1, 3]` — every form the answers actually carry. */
 const CITATION_MARKER = /\[\d{1,4}(?:\s*,\s*\d{1,4})*\]/g;
 
@@ -67,6 +94,8 @@ interface PageSentence {
   start: number;
   end: number;
   tokens: Set<string>;
+  /** True when this "sentence" is the heading a section opens with. */
+  heading: boolean;
 }
 
 /** A sentence span, as offsets into the text it came from. */
@@ -104,6 +133,63 @@ export function sentenceSpans(text: string): SentenceSpan[] {
   return spans;
 }
 
+/**
+ * A heading is no longer than this. Past it, a line with no full stop is a
+ * paragraph that ran out of punctuation rather than a title.
+ */
+const MAX_HEADING_LENGTH = 80;
+
+/** A line ending like this is prose, however short it is. */
+const SENTENCE_TAIL = /[.!?…,;:]$/;
+
+/**
+ * Whether a line is titled: every word carrying meaning starts with a capital.
+ *
+ * Without this, any short line that forgot its full stop would end a section —
+ * "Seed to harvest: 24 to 30 days" is the last line of one, not the first line
+ * of the next. Function words are left alone because a title lowercases them
+ * on purpose ("Broccoli For Strong Spring Crops" either way).
+ */
+function isTitled(line: string): boolean {
+  return line.split(/\s+/).every((word) => {
+    const bare = word.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
+    const first = bare[0];
+    if (first === undefined || !/\p{L}/u.test(first)) return true;
+    return STOPWORDS.has(bare.toLowerCase()) || first === first.toUpperCase();
+  });
+}
+
+/**
+ * Where each section of the page begins.
+ *
+ * Extracted text keeps almost nothing of a page's structure, but it keeps
+ * this: a short titled line standing alone between blank lines and ending in
+ * no punctuation — "Broccoli For Strong Spring Crops", "Bok Choy". It is the
+ * page saying it has changed subject, and both halves of this module take it
+ * at its word: a window never reaches past a heading, and two spans either
+ * side of one stay two spans.
+ */
+function sectionStarts(pageText: string): number[] {
+  const starts: number[] = [];
+  const lines = pageText.split('\n');
+  let offset = 0;
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    const alone =
+      (index === 0 || !lines[index - 1]!.trim()) &&
+      (index === lines.length - 1 || !lines[index + 1]!.trim());
+    const titled =
+      trimmed.length <= MAX_HEADING_LENGTH && !SENTENCE_TAIL.test(trimmed) && isTitled(trimmed);
+    if (trimmed && alone && titled) {
+      starts.push(offset + (line.length - line.trimStart().length));
+    }
+    offset += line.length + 1;
+  });
+
+  return starts;
+}
+
 /** The text with `[n]` markers taken out, so they cannot count as content. */
 export function stripCitationMarkers(text: string): string {
   return text.replace(CITATION_MARKER, ' ');
@@ -127,12 +213,12 @@ function weighTokens(sentence: string): WeightedToken[] {
 
   for (const match of stripped.matchAll(TOKEN_PATTERN)) {
     const raw = match[0];
-    const token = raw.toLowerCase();
+    const token = canonical(raw);
     position += 1;
     if (isStopword(token)) continue;
 
     let weight = 1;
-    if (/\p{N}/u.test(raw)) {
+    if (/\p{N}/u.test(token)) {
       weight = 2.5;
     } else if (position > 1 && raw[0] !== raw[0]!.toLowerCase()) {
       // Sentence-initial capitals say nothing; a capital mid-sentence is a name.
@@ -147,17 +233,19 @@ function weighTokens(sentence: string): WeightedToken[] {
 function pageTokens(text: string): Set<string> {
   const tokens = new Set<string>();
   for (const match of text.matchAll(TOKEN_PATTERN)) {
-    const token = match[0].toLowerCase();
+    const token = canonical(match[0]);
     if (!isStopword(token)) tokens.add(token);
   }
   return tokens;
 }
 
 function splitPage(pageText: string): PageSentence[] {
+  const headings = new Set(sectionStarts(pageText));
   return sentenceSpans(pageText).map(({ start, end }) => ({
     start,
     end,
     tokens: pageTokens(pageText.slice(start, end)),
+    heading: headings.has(start),
   }));
 }
 
@@ -175,13 +263,18 @@ export function mergePassages(
 ): SourcedPassage[] {
   const sorted = [...passages].sort((a, b) => a.start - b.start || a.end - b.end);
   const merged: SourcedPassage[] = [];
+  const sections = pageText === undefined ? [] : sectionStarts(pageText);
   const touches = (end: number, start: number) =>
     start < end ||
     (pageText !== undefined && start >= end && !pageText.slice(end, start).trim());
+  // Two spans with a heading between them are in two sections of the page,
+  // however little text separates them — the blank line before a heading is
+  // the same blank line as any other.
+  const parted = (end: number, start: number) => sections.some((at) => at >= end && at <= start);
 
   for (const passage of sorted) {
     const last = merged[merged.length - 1];
-    if (last && touches(last.end, passage.start)) {
+    if (last && touches(last.end, passage.start) && !parted(last.end, passage.start)) {
       last.end = Math.max(last.end, passage.end);
       if (passage.score > last.score) {
         last.score = passage.score;
@@ -195,12 +288,93 @@ export function mergePassages(
   return merged;
 }
 
+interface Window {
+  start: number;
+  size: number;
+  score: number;
+  /** `score` less what the window's length costs it; what windows compete on. */
+  worth: number;
+}
+
+/**
+ * The run of at most `maxSize` consecutive page sentences that carries the most
+ * of an answer sentence for its length, if any run carries enough.
+ */
+function bestWindow(
+  page: readonly PageSentence[],
+  hits: ReadonlyMap<number, ReadonlySet<string>>,
+  weightOf: ReadonlyMap<string, number>,
+  total: number,
+  maxSize: number
+): Window | null {
+  let best: Window | null = null;
+  const considered = new Set<string>();
+
+  for (const hitIndex of Array.from(hits.keys()).sort((a, b) => a - b)) {
+    for (let size = 1; size <= maxSize; size += 1) {
+      for (let start = Math.max(0, hitIndex - size + 1); start <= hitIndex; start += 1) {
+        if (start + size > page.length) continue;
+        const key = `${start}:${size}`;
+        if (considered.has(key)) continue;
+        considered.add(key);
+
+        // A heading opens a section, so a window that reached past one would
+        // be pointing at two of them, and the answer sentence was written off
+        // at most one. A window may still begin at a heading: a title and what
+        // it introduces are one place on the page.
+        const matched = new Set<string>();
+        let reachedPastHeading = false;
+        for (let i = start; i < start + size; i += 1) {
+          if (i > start && page[i]!.heading) {
+            reachedPastHeading = true;
+            break;
+          }
+          for (const token of hits.get(i) ?? []) matched.add(token);
+        }
+        if (reachedPastHeading || matched.size < MIN_SHARED_TOKENS) continue;
+
+        let weight = 0;
+        for (const token of matched) weight += weightOf.get(token) ?? 0;
+        const score = weight / total;
+        if (score < MIN_SCORE) continue;
+
+        const worth = score - SENTENCE_COST * size;
+        if (!best || worth > best.worth) best = { start, size, score, worth };
+      }
+    }
+  }
+
+  return best;
+}
+
+/** Where an answer sentence changes subject: `;`, a spaced dash, a colon. */
+const CLAUSE_BREAK = /\s*;\s*|\s+[—–-]\s+|:\s+/;
+
+/**
+ * The best tight window any one clause of `sentence` has, each clause held to
+ * the whole bar on its own. Never the section window: a clause is a few words,
+ * and a few words scattered over a section are not a passage.
+ */
+function bestClauseWindow(
+  sentence: string,
+  locate: (_text: string, _maxSize: number) => Window | null
+): Window | null {
+  const clauses = stripCitationMarkers(sentence).split(CLAUSE_BREAK);
+  if (clauses.length < 2) return null;
+  let best: Window | null = null;
+  for (const clause of clauses) {
+    const window = locate(clause, MAX_WINDOW);
+    if (window && (!best || window.worth > best.worth)) best = window;
+  }
+  return best;
+}
+
 /**
  * The spans of `pageText` that the given answer sentences match.
  *
  * Each sentence claims at most one span — its best window of one to three
- * consecutive page sentences — and only if that window carries enough of the
- * sentence's content to be worth pointing at.
+ * consecutive page sentences, or failing that of about a section — and only if
+ * that window carries enough of the sentence's content to be worth pointing at.
  */
 export function findSourcedPassages(
   pageText: string,
@@ -224,11 +398,12 @@ export function findSourcedPassages(
 
   const found: SourcedPassage[] = [];
 
-  sentences.forEach((sentence, sentenceIndex) => {
-    const tokens = weighTokens(sentence);
-    if (tokens.length < MIN_SHARED_TOKENS) return;
+  // The best window for `text` of at most `maxSize` page sentences.
+  const locate = (text: string, maxSize: number): Window | null => {
+    const tokens = weighTokens(text);
+    if (tokens.length < MIN_SHARED_TOKENS) return null;
     const total = tokens.reduce((sum, token) => sum + token.weight, 0);
-    if (total <= 0) return;
+    if (total <= 0) return null;
 
     const weightOf = new Map(tokens.map((token) => [token.text, token.weight]));
     const hits = new Map<number, Set<string>>();
@@ -239,37 +414,20 @@ export function findSourcedPassages(
         else hits.set(pageIndex, new Set([token.text]));
       }
     }
-    if (hits.size === 0) return;
+    if (hits.size === 0) return null;
+    return bestWindow(page, hits, weightOf, total, maxSize);
+  };
 
-    let best: { start: number; size: number; score: number } | null = null;
-    const considered = new Set<string>();
-
-    for (const hitIndex of Array.from(hits.keys()).sort((a, b) => a - b)) {
-      for (let size = 1; size <= MAX_WINDOW; size += 1) {
-        for (let start = Math.max(0, hitIndex - size + 1); start <= hitIndex; start += 1) {
-          if (start + size > page.length) continue;
-          const key = `${start}:${size}`;
-          if (considered.has(key)) continue;
-          considered.add(key);
-
-          const matched = new Set<string>();
-          for (let i = start; i < start + size; i += 1) {
-            for (const token of hits.get(i) ?? []) matched.add(token);
-          }
-          if (matched.size < MIN_SHARED_TOKENS) continue;
-
-          let weight = 0;
-          for (const token of matched) weight += weightOf.get(token) ?? 0;
-          const score = weight / total;
-          if (score < MIN_SCORE) continue;
-
-          if (!best || score > best.score || (score === best.score && size < best.size)) {
-            best = { start, size, score };
-          }
-        }
-      }
-    }
-
+  sentences.forEach((sentence, sentenceIndex) => {
+    // A tight window first. An answer that boils a whole section down to one
+    // line shares too little with any three sentences of it, so only then is
+    // the section-sized window tried — against the same bar, never a lower one.
+    // Last, the sentence a clause at a time: one that credits two sources takes
+    // a clause from each, and neither page holds half of the whole.
+    const best =
+      locate(sentence, MAX_WINDOW) ??
+      locate(sentence, MAX_SECTION_WINDOW) ??
+      bestClauseWindow(sentence, locate);
     if (!best) return;
     found.push({
       start: page[best.start]!.start,

@@ -80,9 +80,9 @@ export function ChatTab() {
   const provider = llmSettings?.provider ?? "auto";
   const showOllamaSettings = provider === "ollama" || provider === "auto";
 
-  // Staged rollout switch. Default false, so a missing field reads as off
-  // rather than promising memory the backend is not running.
-  const boundedMemoryEnabled = llmSettings?.boundedConversationMemory ?? false;
+  // New and legacy settings both default to enabled; an explicit saved false
+  // remains an opt-out.
+  const boundedMemoryEnabled = llmSettings?.boundedConversationMemory ?? true;
 
   const handleBoundedMemoryToggle = async (enabled: boolean) => {
     if (!llmSettings) return;
@@ -471,7 +471,7 @@ export function ChatTab() {
       <SettingsSection title="Memory">
         <SettingsRow
           label="Remember requirements in a conversation"
-          hint="Records constraints, decisions and goals with the quotation they came from, and adds the required ones to each prompt. Source-backed and bounded — not total recall, and off unless you turn it on."
+          hint="Records constraints, decisions and goals with the quotation they came from, and adds the required ones to each prompt. Enabled by default. Consolidates completed turns and recalls saved facts with their sources."
         >
           <Switch
             className={SWITCH_CLASS}

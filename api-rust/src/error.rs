@@ -4,6 +4,8 @@ pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("unauthorized")]
+    Unauthorized,
     #[error("validation error: {0}")]
     Validation(String),
     #[error("not found: {0}")]

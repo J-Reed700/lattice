@@ -152,6 +152,65 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     .is_err());
 }
 
+/// A chat's attachment belongs to no space, so it has no membership row. The
+/// keyword branch used to add a membership check on top of the allow-list and
+/// so never found an attachment in a named space; only vector search could.
+#[tokio::test]
+async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
+    use crate::application::ports::MockEmbeddingPort;
+    use crate::features::search::engine::{
+        text_search::SqliteTextSearch, vector_search::USearchVectorIndex,
+    };
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+        CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+        CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
+        INSERT INTO documents VALUES ('member','Member','/member',NULL),('attached','Attached','/attached',NULL);
+        INSERT INTO text_chunks VALUES ('m1','member','unrelated notes',0,NULL,NULL),
+            ('a1','attached','the quarterly budget forecast',0,NULL,NULL);
+        INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
+        INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
+        INSERT INTO document_space_memberships VALUES ('member','space_movies');")
+        .execute(&pool).await.unwrap();
+    let repository = ConversationRepository::new(pool.clone());
+    // Degraded embedder: the vector branch fails, so only keyword can answer.
+    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
+    let semantic = SemanticSearchUseCase::new(embedder.clone(), index.clone());
+    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let scope = super::super::SpaceDocumentScope {
+        space_id: "space_movies".into(),
+        document_ids: ["member".to_owned(), "attached".to_owned()].into(),
+    };
+    let plan = CorpusSearchPlan {
+        queries: vec!["quarterly budget".into()],
+        opening_document_ids: vec![],
+        start_at_beginning: false,
+    };
+    let found = retrieve(
+        &repository,
+        &semantic,
+        &hybrid,
+        "quarterly budget",
+        &plan,
+        &scope,
+        8,
+    )
+    .await
+    .unwrap();
+    assert!(
+        found.results.iter().any(|p| p.id == "a1"),
+        "{:?}",
+        found.results.iter().map(|p| &p.id).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn plan_cannot_invent_documents_or_escape_scope() {
     let catalog = vec![CorpusDocument {
