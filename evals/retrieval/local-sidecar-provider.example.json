@@ -1,0 +1,16 @@
+{
+  "model": "local-sidecar/Qwen3.5-9B-Q4_K_M.gguf",
+  "provider": {
+    "local-sidecar": {
+      "options": {
+        "baseURL": "http://127.0.0.1:8089/v1",
+        "temperature": 0.2,
+        "topP": 0.9,
+        "topK": 40
+      },
+      "models": {
+        "Qwen3.5-9B-Q4_K_M.gguf": {}
+      }
+    }
+  }
+}

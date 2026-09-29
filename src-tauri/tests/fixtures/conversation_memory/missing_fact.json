@@ -102,10 +102,21 @@
       "not yet",
       "haven't",
       "hasn't been",
-    "not established",
-    "not provided",
-    "no general-phase start date",
-    "no one"
+      "not established",
+      "not provided",
+      "no general-phase start date",
+      "no one",
+      "isn't one",
+      "is not one",
+      "no owner",
+      "no named",
+      "has not been named",
+      "hasn't been named",
+      "been named yet",
+      "not been assigned",
+      "no one has been",
+      "still open",
+      "open item"
     ]
   },
   "cycles": [
