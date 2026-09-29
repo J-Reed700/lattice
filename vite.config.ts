@@ -29,6 +29,7 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    manifest: true,
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
@@ -51,7 +52,9 @@ export default defineConfig({
           if (packageName === '@tanstack/react-query') return 'query-vendor';
           if (packageName === 'react-router') return 'router-vendor';
           if (packageName === 'framer-motion') return 'animation-vendor';
-          if (packageName === 'pdfjs-dist' || packageName === 'react-pdf') return 'pdf-viewer';
+          // PDF.js is loaded only from the PDF viewer's lazy module. Keeping
+          // it unassigned avoids creating a shared manual chunk that can pull
+          // the viewer into unrelated initial-route dependencies.
           if (packageName === '@tiptap/pm' || packageName.startsWith('prosemirror-')) return 'tiptap-pm';
           if (packageName.startsWith('@tiptap/extension-') || packageName === 'tiptap-markdown') {
             return 'tiptap-extensions';
@@ -61,7 +64,6 @@ export default defineConfig({
           if (packageName === 'lowlight' || packageName === 'highlight.js') return 'syntax-languages';
           if (packageName === 'mammoth') return 'docx-renderer';
           if (packageName === 'dompurify') return 'sanitizer';
-          if (packageName === 'react-day-picker') return 'calendar';
           if (['lucide-react', 'date-fns', 'cmdk'].includes(packageName)) return 'ui-components';
           if (packageName.startsWith('@radix-ui/')) return 'radix-ui';
           if (packageName.startsWith('@tauri-apps/')) return 'tauri';

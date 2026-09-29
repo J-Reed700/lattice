@@ -298,6 +298,21 @@ jobs:
       - run: python3 scripts/check-sql-contracts.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Desktop advisories
+        working-directory: src-tauri
+        run: cargo audit --deny yanked
+      - name: API advisories
+        working-directory: api-rust
+        run: cargo audit
+
   frontend:
     name: frontend (type-check, lint, test)
     runs-on: ubuntu-latest
@@ -313,6 +328,9 @@ jobs:
 
       - run: npm ci
 
+      - name: npm vulnerability audit
+        run: npm audit --audit-level=high
+
       - name: Type-check
         run: npm run type-check
 
@@ -327,6 +345,9 @@ jobs:
 
       - name: Renderer production build
         run: npx vite build
+
+      - name: Initial renderer JavaScript budget
+        run: node scripts/check-initial-js-budget.mjs dist
 
       - name: Install browsers for smoke tests
         run: npx playwright install --with-deps chromium webkit
