@@ -29,7 +29,12 @@ async fn main() -> anyhow::Result<()> {
 
     let sync_repo = Arc::new(PgSyncRepository::new(pool.clone()));
     let sync_service = Arc::new(SyncServiceImpl::new(sync_repo));
-    let state = AppState::new(pool, sync_service);
+    let state = AppState::new(
+        pool,
+        sync_service,
+        config.auth.clone(),
+        config.cors_allowed_origins.clone(),
+    );
     let app = router(state);
 
     let socket: SocketAddr = format!("{}:{}", config.host, config.port)
