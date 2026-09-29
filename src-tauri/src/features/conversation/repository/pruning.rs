@@ -105,12 +105,15 @@ impl ConversationRepository {
             rowid: i64,
         }
 
+        // `sequence` is the conversation's own order; timestamps can tie or
+        // run backwards across a clock change. They only break ties between
+        // rows that predate sequencing (sequence 0).
         let row = sqlx::query_as::<_, LastUserRow>(
             r#"
             SELECT id, content, tokens, metadata, created_at, rowid
             FROM conversation_messages
             WHERE conversation_id = ? AND role = 'user'
-            ORDER BY created_at DESC, rowid DESC
+            ORDER BY sequence DESC, created_at DESC, rowid DESC
             LIMIT 1
             "#,
         )

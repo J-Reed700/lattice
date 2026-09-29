@@ -140,7 +140,7 @@ impl RuntimeVectorIndex {
             AppError::InvalidState("Embedding index was already initialized".into())
         })?;
         if self.persistence.set(Arc::clone(&persistence)).is_ok() {
-            tokio::spawn(persistence.run());
+            crate::shared::background::spawn(persistence.run());
         }
         Ok(())
     }

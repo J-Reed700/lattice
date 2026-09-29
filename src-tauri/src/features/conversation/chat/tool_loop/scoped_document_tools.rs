@@ -113,12 +113,27 @@ pub(super) async fn execute(
             (response.results, response.query_time_ms)
         }
     };
-    let documents = container.document_repository().list_metadata().await?;
+    // Only the hit documents: this runs several times a turn, and the library
+    // can be thousands of rows.
+    let hit_ids: Vec<String> = hits
+        .iter()
+        .filter_map(|hit| hit.document_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let documents: std::collections::HashMap<String, _> = container
+        .document_repository()
+        .find_metadata_by_ids(&hit_ids)
+        .await?
+        .into_iter()
+        .map(|doc| (doc.id().as_str().to_owned(), doc))
+        .collect();
     let mut results = Vec::new();
     for result in hits {
-        let Some(doc) = documents
-            .iter()
-            .find(|doc| Some(doc.id().as_str()) == result.document_id.as_deref())
+        let Some(doc) = result
+            .document_id
+            .as_deref()
+            .and_then(|id| documents.get(id))
         else {
             continue;
         };

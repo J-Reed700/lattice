@@ -352,6 +352,15 @@ export function claimVerdictLine(verdict: ClaimVerdict): string {
       : 'matched on shared wording, not read for meaning';
   if (verdict.verdict === 'supported') return `Backed by the source — ${how}.`;
   if (verdict.verdict === 'contradicted') return `The source says otherwise — ${how}.`;
+  if (verdict.verdict === 'unverified') {
+    if (verdict.unverifiedReason === 'low_confidence') {
+      return `Not checked — the checker was not confident enough to call it. ${how}.`;
+    }
+    if (verdict.unverifiedReason === 'budget') return 'Not checked — the verification budget ran out.';
+    if (verdict.unverifiedReason === 'judge_failed') return 'Not checked — the verification model failed to answer.';
+    if (verdict.unverifiedReason === 'no_text') return 'Not checked — the cited source had no saved text.';
+    return `Not checked — ${how}.`;
+  }
   return verdict.citationIds.length > 0
     ? `Not found in the cited passage — ${how}.`
     : 'No source was cited for this sentence.';
@@ -374,8 +383,12 @@ export function claimToMarkdown(
     '',
   ];
   if (citations.length > 0) lines.push(`— ${citations.join('; ')}`, '');
+  if (verdict.reason?.trim()) {
+    lines.push(`Why: ${oneLine(verdict.reason)}`, '');
+  }
   if (verdict.evidenceQuote?.trim()) {
-    lines.push(`Evidence: “${oneLine(verdict.evidenceQuote)}”`, '');
+    const label = verdict.verdict === 'contradicted' ? 'What the source says' : 'Evidence';
+    lines.push(`${label}: “${oneLine(verdict.evidenceQuote)}”`, '');
   }
   lines.push(`_${claimVerdictLine(verdict)}_`, '');
   return `${lines.join('\n').trimEnd()}\n`;

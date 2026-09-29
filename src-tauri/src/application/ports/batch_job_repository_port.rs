@@ -97,6 +97,13 @@ pub trait BatchJobRepositoryPort: Send + Sync {
     /// Get batch job with items
     async fn get_batch_job(&self, job_id: &str) -> Result<BatchJobStatus, AppError>;
 
+    /// Read only the job status for cancellation polling inside item loops.
+    /// The default keeps lightweight test/legacy adapters source-compatible;
+    /// production repositories should override this to avoid loading items.
+    async fn get_batch_job_status(&self, job_id: &str) -> Result<String, AppError> {
+        Ok(self.get_batch_job(job_id).await?.status)
+    }
+
     /// Get pending items for a job
     async fn get_pending_items(&self, job_id: &str) -> Result<Vec<BatchJobItem>, AppError>;
 

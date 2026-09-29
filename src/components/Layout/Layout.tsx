@@ -131,7 +131,7 @@ export function Layout() {
   const go = (view: View) => navigate(`/${view}`);
 
   return (
-    <div className="flex h-screen bg-chrome">
+    <div className="flex h-screen min-h-0 bg-chrome">
       {/* The rail is window chrome: dim, quiet, and draggable where it is empty. */}
       <aside
         data-tauri-drag-region
@@ -176,7 +176,7 @@ export function Layout() {
       </aside>
 
       {/* The page: one lit sheet set into the chrome. */}
-      <div className="relative my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-bg shadow-sheet">
+      <div className="relative my-2 mr-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-bg shadow-sheet">
         <AnimatePresence mode="wait" initial={false}>
           <Outlet key={location.pathname} />
         </AnimatePresence>

@@ -148,6 +148,438 @@ pub struct OllamaClient {
 }
 
 impl OllamaClient {
+    fn typed_chat_request(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+    ) -> Result<crate::features::llm::engine::types::OllamaChatRequest> {
+        use crate::application::ports::llm_port::CompletionInput;
+        use crate::features::llm::engine::types::{
+            OllamaChatMessage, OllamaChatRequest, OllamaChatResponse, OllamaTool, OllamaToolCall,
+            OllamaToolCallFunction,
+        };
+
+        let mut messages = Vec::with_capacity(request.input.len());
+        let mut call_names = std::collections::HashMap::new();
+        for input in &request.input {
+            let message = match input {
+                CompletionInput::Message { role, content } => OllamaChatMessage {
+                    role: role.clone(),
+                    content: content.clone(),
+                    images: None,
+                    tool_calls: None,
+                    tool_name: None,
+                },
+                CompletionInput::Native { value } => {
+                    // The tool loop wraps prior Ollama provider output in a
+                    // generic assistant message. Recover the native response
+                    // so tool calls and the original assistant content replay.
+                    let payload = value.get("content").unwrap_or(value);
+                    let response = serde_json::from_value::<OllamaChatResponse>(payload.clone())
+                        .map_err(|_| AppError::InvalidInput(
+                            "Ollama cannot replay provider-native history from another provider".into(),
+                        ))?;
+                    if let Some(calls) = &response.message.tool_calls {
+                        for (index, call) in calls.iter().enumerate() {
+                            call_names
+                                .insert(format!("ollama-call-{index}"), call.function.name.clone());
+                        }
+                    }
+                    response.message
+                }
+                CompletionInput::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    call_names.insert(id.clone(), name.clone());
+                    OllamaChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        images: None,
+                        tool_calls: Some(vec![OllamaToolCall {
+                            call_type: "function".into(),
+                            function: OllamaToolCallFunction {
+                                name: name.clone(),
+                                arguments: arguments.clone(),
+                                index: None,
+                            },
+                        }]),
+                        tool_name: None,
+                    }
+                }
+                CompletionInput::ToolResult { id, output } => {
+                    let tool_name = call_names.get(id).cloned().ok_or_else(|| {
+                        AppError::InvalidInput(
+                            "Ollama tool result has no matching preceding tool call".into(),
+                        )
+                    })?;
+                    OllamaChatMessage {
+                        role: "tool".into(),
+                        content: output.clone(),
+                        images: None,
+                        tool_calls: None,
+                        tool_name: Some(tool_name),
+                    }
+                }
+            };
+            messages.push(message);
+        }
+        let tools = (!request.tools.is_empty()).then(|| {
+            request
+                .tools
+                .iter()
+                .map(|tool| OllamaTool::new(&tool.name, &tool.description, tool.parameters.clone()))
+                .collect()
+        });
+        let mut options = std::collections::HashMap::new();
+        let sampling = request.sampling.unwrap_or_default();
+        options.insert(
+            "temperature".to_string(),
+            serde_json::json!(sampling.temperature.unwrap_or(self.config.temperature)),
+        );
+        options.insert(
+            "top_p".to_string(),
+            serde_json::json!(sampling.top_p.unwrap_or(self.config.top_p)),
+        );
+        options.insert(
+            "top_k".to_string(),
+            serde_json::json!(sampling.top_k.unwrap_or(self.config.top_k)),
+        );
+        options.insert(
+            "repeat_penalty".to_string(),
+            serde_json::json!(self.config.repeat_penalty),
+        );
+        options.insert(
+            "num_predict".to_string(),
+            serde_json::json!(request.effective_max_output_tokens(
+                u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
+            )),
+        );
+
+        let think = match request.reasoning_effort.as_deref() {
+            None => None,
+            Some("none") => Some(serde_json::Value::Bool(false)),
+            Some(effort @ ("low" | "medium" | "high")) => {
+                Some(serde_json::Value::String(effort.to_string()))
+            }
+            Some(_) => {
+                return Err(AppError::InvalidInput(
+                    "Ollama supports reasoning off or model-defined low, medium, and high levels"
+                        .into(),
+                ));
+            }
+        };
+
+        Ok(OllamaChatRequest {
+            model: self.model_name.clone(),
+            messages,
+            stream: false,
+            options: Some(options),
+            keep_alive: None,
+            tools,
+            format: request.json_schema.clone(),
+            think,
+        })
+    }
+
+    async fn complete_typed(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        use crate::features::llm::engine::circuit_breaker::CircuitBreakerError;
+        use crate::features::llm::engine::types::OllamaChatResponse;
+
+        let body = self.typed_chat_request(request)?;
+        let budget = request.effective_time_budget();
+        let call = async {
+            let _permit = self
+                .acquire_request_permit("typed_chat")
+                .await
+                .map_err(|error| OllamaClientError::Api(error.to_string()))?;
+            let response = self
+                .client
+                .post(format!("{}/api/chat", self.base_url))
+                .json(&body)
+                .timeout(budget)
+                .send()
+                .await
+                .map_err(OllamaClientError::from)?;
+            if !response.status().is_success() {
+                return Err(OllamaClientError::Api(format!(
+                    "Ollama chat returned HTTP {}",
+                    response.status()
+                )));
+            }
+            response
+                .json::<OllamaChatResponse>()
+                .await
+                .map_err(OllamaClientError::from)
+        };
+        let response = match timeout(budget, self.circuit_breaker.call(call)).await {
+            Err(_) => {
+                return Err(AppError::ServiceNotAvailable(
+                    "Ollama typed completion exceeded its time budget".into(),
+                ))
+            }
+            Ok(Ok(response)) => response,
+            Ok(Err(CircuitBreakerError::Open)) => {
+                return Err(AppError::ServiceNotAvailable(
+                    "Ollama API unavailable (circuit breaker open)".into(),
+                ));
+            }
+            Ok(Err(CircuitBreakerError::CallFailed(error))) => {
+                if matches!(&error, OllamaClientError::Timeout(_)) {
+                    return Err(AppError::ServiceNotAvailable(
+                        "Ollama typed completion exceeded its time budget".into(),
+                    ));
+                }
+                return Err(AppError::Network(error.to_string()));
+            }
+        };
+
+        let tool_calls = response
+            .message
+            .tool_calls
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(index, call)| CompletionInput::ToolCall {
+                id: format!("ollama-call-{index}"),
+                name: call.function.name.clone(),
+                arguments: call.function.arguments.clone(),
+            })
+            .collect();
+        Ok(CompletionResponse {
+            text: response.message.content.clone(),
+            tool_calls,
+            input_tokens: u64::from(response.prompt_eval_count.unwrap_or(0)),
+            output_tokens: u64::from(response.eval_count.unwrap_or(0)),
+            finish_reason: response
+                .done_reason
+                .clone()
+                .unwrap_or_else(|| if response.done { "stop" } else { "" }.into()),
+            provider_output: serde_json::to_value(response).unwrap_or_default(),
+            first_token_logprobs: None,
+        })
+    }
+
+    async fn complete_typed_with_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        use crate::features::llm::engine::circuit_breaker::CircuitBreakerError;
+        use crate::features::llm::engine::types::{
+            OllamaChatMessage, OllamaChatResponse, OllamaChatStreamResponse, OllamaToolCall,
+        };
+        use futures::StreamExt;
+
+        fn trim_ascii(bytes: &[u8]) -> &[u8] {
+            let start = bytes
+                .iter()
+                .position(|byte| !byte.is_ascii_whitespace())
+                .unwrap_or(bytes.len());
+            let end = bytes
+                .iter()
+                .rposition(|byte| !byte.is_ascii_whitespace())
+                .map_or(start, |index| index + 1);
+            &bytes[start..end]
+        }
+
+        let mut body = self.typed_chat_request(request)?;
+        body.stream = true;
+        let budget = request.effective_time_budget();
+        let result = timeout(budget, async {
+            let _permit = self.acquire_request_permit("typed_chat_stream").await?;
+            let response = self
+                .circuit_breaker
+                .call(async {
+                    let response = self
+                        .client
+                        .post(format!("{}/api/chat", self.base_url))
+                        .json(&body)
+                        .timeout(budget)
+                        .send()
+                        .await
+                        .map_err(OllamaClientError::from)?;
+                    if !response.status().is_success() {
+                        return Err(OllamaClientError::Api(format!(
+                            "Ollama chat returned HTTP {}",
+                            response.status()
+                        )));
+                    }
+                    Ok::<_, OllamaClientError>(response)
+                })
+                .await
+                .map_err(|error| match error {
+                    CircuitBreakerError::Open => AppError::ServiceNotAvailable(
+                        "Ollama API unavailable (circuit breaker open)".into(),
+                    ),
+                    CircuitBreakerError::CallFailed(error) => AppError::from(error),
+                })?;
+
+            let mut chunks = response.bytes_stream();
+            let mut buffer = Vec::new();
+            let mut content = String::new();
+            let mut model = String::new();
+            let mut created_at = String::new();
+            let mut tool_calls: Vec<Option<OllamaToolCall>> = Vec::new();
+            let mut done_reason = None;
+            let mut prompt_eval_count = None;
+            let mut eval_count = None;
+            let mut done = false;
+
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk.map_err(OllamaClientError::from)?;
+                buffer.extend_from_slice(&chunk);
+                while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                    let mut line: Vec<u8> = buffer.drain(..=newline).collect();
+                    line.pop();
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
+                    }
+                    let line = trim_ascii(&line);
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let line = if let Some(data) = line.strip_prefix(b"data:") {
+                        trim_ascii(data)
+                    } else {
+                        line
+                    };
+                    let parsed = match serde_json::from_slice::<OllamaChatStreamResponse>(line) {
+                        Ok(parsed) => parsed,
+                        Err(error) if error.is_eof() => {
+                            let mut incomplete = line.to_vec();
+                            incomplete.extend_from_slice(&buffer);
+                            buffer = incomplete;
+                            break;
+                        }
+                        Err(_) => {
+                            return Err(AppError::InvalidState(
+                                "Ollama returned an invalid typed stream chunk".into(),
+                            ));
+                        }
+                    };
+                    model = parsed.model;
+                    created_at = parsed.created_at;
+                    if !parsed.message.content.is_empty() {
+                        content.push_str(&parsed.message.content);
+                        on_text(parsed.message.content)?;
+                    }
+                    if let Some(calls) = parsed.message.tool_calls {
+                        for (position, call) in calls.into_iter().enumerate() {
+                            let index = call.function.index.unwrap_or(position);
+                            if tool_calls.len() <= index {
+                                tool_calls.resize_with(index + 1, || None);
+                            }
+                            tool_calls[index] = Some(call);
+                        }
+                    }
+                    if parsed.done {
+                        done = true;
+                        done_reason = parsed.done_reason;
+                        prompt_eval_count = parsed.prompt_eval_count;
+                        eval_count = parsed.eval_count;
+                    }
+                }
+                if done {
+                    break;
+                }
+            }
+
+            let remaining = trim_ascii(&buffer);
+            if !done && !remaining.is_empty() {
+                let line = remaining
+                    .strip_prefix(b"data:")
+                    .map(trim_ascii)
+                    .unwrap_or(remaining);
+                let parsed =
+                    serde_json::from_slice::<OllamaChatStreamResponse>(line).map_err(|_| {
+                        AppError::InvalidState(
+                            "Ollama returned an invalid final stream chunk".into(),
+                        )
+                    })?;
+                model = parsed.model;
+                created_at = parsed.created_at;
+                if !parsed.message.content.is_empty() {
+                    content.push_str(&parsed.message.content);
+                    on_text(parsed.message.content)?;
+                }
+                if let Some(calls) = parsed.message.tool_calls {
+                    for (position, call) in calls.into_iter().enumerate() {
+                        let index = call.function.index.unwrap_or(position);
+                        if tool_calls.len() <= index {
+                            tool_calls.resize_with(index + 1, || None);
+                        }
+                        tool_calls[index] = Some(call);
+                    }
+                }
+                done = parsed.done;
+                done_reason = parsed.done_reason;
+                prompt_eval_count = parsed.prompt_eval_count;
+                eval_count = parsed.eval_count;
+            }
+            if !done {
+                return Err(AppError::ServiceNotAvailable(
+                    "Ollama typed stream ended before completion".into(),
+                ));
+            }
+
+            let tool_calls: Vec<_> = tool_calls.into_iter().flatten().collect();
+            let completion_tool_calls = tool_calls
+                .iter()
+                .enumerate()
+                .map(|(index, call)| CompletionInput::ToolCall {
+                    id: format!("ollama-call-{index}"),
+                    name: call.function.name.clone(),
+                    arguments: call.function.arguments.clone(),
+                })
+                .collect();
+            let provider_output = serde_json::to_value(OllamaChatResponse {
+                model,
+                created_at,
+                message: OllamaChatMessage {
+                    role: "assistant".into(),
+                    content: content.clone(),
+                    images: None,
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        // Preserve Ollama's native tool-call payload for the
+                        // next round. Completion-level entries carry synthetic ids.
+                        Some(tool_calls)
+                    },
+                    tool_name: None,
+                },
+                done: true,
+                done_reason: done_reason.clone(),
+                total_duration: None,
+                load_duration: None,
+                prompt_eval_count,
+                eval_count,
+            })
+            .unwrap_or_default();
+            Ok(CompletionResponse {
+                text: content,
+                tool_calls: completion_tool_calls,
+                input_tokens: u64::from(prompt_eval_count.unwrap_or(0)),
+                output_tokens: u64::from(eval_count.unwrap_or(0)),
+                finish_reason: done_reason.unwrap_or_else(|| "stop".into()),
+                provider_output,
+                first_token_logprobs: None,
+            })
+        })
+        .await
+        .map_err(|_| {
+            AppError::ServiceNotAvailable("Ollama typed completion exceeded its time budget".into())
+        })?;
+        result
+    }
+
     async fn acquire_request_permit(&self, operation: &str) -> Result<OwnedSemaphorePermit> {
         let permit = OLLAMA_REQUEST_SEMAPHORE
             .clone()
@@ -835,6 +1267,8 @@ impl OllamaClient {
             options: None,
             keep_alive: None,
             tools: None,
+            format: None,
+            think: None,
         };
 
         let mut options = std::collections::HashMap::new();
@@ -979,6 +1413,8 @@ impl OllamaClient {
             options: None,
             keep_alive: None,
             tools: None,
+            format: None,
+            think: None,
         };
 
         let mut options = std::collections::HashMap::new();
@@ -1218,6 +1654,27 @@ use crate::application::ports::LLMPort;
 
 #[async_trait]
 impl LLMPort for OllamaClient {
+    fn supports_typed_completions(&self) -> bool {
+        true
+    }
+
+    async fn complete(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+    ) -> crate::shared::result::Result<crate::application::ports::llm_port::CompletionResponse>
+    {
+        self.complete_typed(request).await
+    }
+
+    async fn complete_with_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> crate::shared::result::Result<()> + Send + Sync),
+    ) -> crate::shared::result::Result<crate::application::ports::llm_port::CompletionResponse>
+    {
+        self.complete_typed_with_progress(request, on_text).await
+    }
+
     async fn generate(
         &self,
         prompt: &str,
@@ -1449,6 +1906,8 @@ impl LLMPort for OllamaClient {
             options: Some(options),
             keep_alive: None,
             tools: ollama_tools,
+            format: None,
+            think: None,
         };
 
         // Make the HTTP request with circuit breaker
@@ -1636,6 +2095,328 @@ impl LLMPort for OllamaClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
+        use crate::application::ports::llm_port::{
+            CompletionInput, CompletionRequest, LLMPort, SamplingOverride,
+        };
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": false
+        });
+        let expected = serde_json::json!({
+            "model":"utility",
+            "messages":[
+                {"role":"system","content":"Return JSON."},
+                {"role":"user","content":"Check this batch."}
+            ],
+            "stream":false,
+            "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"num_predict":2048},
+            "format":schema,
+            "think":false
+        });
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(serde_json::json!({
+                        "model": "utility",
+                        "created_at": "2026-09-28T00:00:00Z",
+                        "message": {"role": "assistant", "content": "{\"ok\":true}"},
+                        "done": true,
+                        "done_reason": "stop",
+                        "prompt_eval_count": 30,
+                        "eval_count": 4
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::with_model_and_timeouts(
+            server.uri(),
+            "utility",
+            Duration::from_millis(50),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let request = CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: "Return JSON.".into(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: "Check this batch.".into(),
+                },
+            ],
+            json_schema: Some(schema),
+            reasoning_effort: Some("none".into()),
+            sampling: Some(SamplingOverride::deterministic()),
+            max_output_tokens: Some(2048),
+            time_budget: Some(Duration::from_secs(2)),
+            ..Default::default()
+        };
+        assert!(LLMPort::supports_typed_completions(&client));
+        let response = LLMPort::complete(&client, &request).await.unwrap();
+        assert_eq!(response.text, "{\"ok\":true}");
+        assert_eq!(response.input_tokens, 30);
+        assert_eq!(response.output_tokens, 4);
+        assert_eq!(response.finish_reason, "stop");
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests[0].method.as_str(), "POST");
+        assert_eq!(requests[0].url.path(), "/api/chat");
+        let mut sent: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        let repeat_penalty = sent["options"]["repeat_penalty"]
+            .as_f64()
+            .expect("repeat penalty is numeric");
+        assert!((repeat_penalty - 1.1).abs() < 1e-6);
+        sent["options"]
+            .as_object_mut()
+            .unwrap()
+            .remove("repeat_penalty");
+        assert_eq!(sent, expected);
+    }
+
+    #[tokio::test]
+    async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
+        use crate::application::ports::llm_port::{
+            CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
+        };
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        let tool = ToolDefinition {
+            name: "search_saved_knowledge".into(),
+            description: "Search saved notes".into(),
+            parameters: serde_json::json!({"type":"object","properties":{}}),
+        };
+        let first = serde_json::json!({
+            "model":"utility",
+            "created_at":"2026-09-28T00:00:00Z",
+            "message":{"role":"assistant","content":"","tool_calls":[{
+                "function":{"name":"search_saved_knowledge","arguments":{"query":"trip"}}
+            }]},
+            "done":true,
+            "done_reason":"stop"
+        });
+        let second = serde_json::json!({
+            "model":"utility",
+            "created_at":"2026-09-28T00:00:01Z",
+            "message":{"role":"assistant","content":"Friday."},
+            "done":true,
+            "done_reason":"stop"
+        });
+        let response_index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let response_index_for_mock = response_index.clone();
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(move |_request: &wiremock::Request| {
+                let response = if response_index_for_mock
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    == 0
+                {
+                    first.clone()
+                } else {
+                    second.clone()
+                };
+                ResponseTemplate::new(200).set_body_json(response)
+            })
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::with_model_and_timeouts(
+            server.uri(),
+            "utility",
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let request = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "When is the trip?".into(),
+            }],
+            tools: vec![tool],
+            max_output_tokens: Some(1024),
+            ..Default::default()
+        };
+        let first_response = LLMPort::complete(&client, &request).await.unwrap();
+        let call = first_response.tool_calls.first().unwrap();
+        let (id, name) = match call {
+            CompletionInput::ToolCall { id, name, .. } => (id.clone(), name.clone()),
+            other => panic!("unexpected typed tool call: {other:?}"),
+        };
+        assert_eq!(name, "search_saved_knowledge");
+
+        let mut next_request = request;
+        next_request.input.push(CompletionInput::Native {
+            value: serde_json::json!({
+                "role":"assistant",
+                "content":first_response.provider_output
+            }),
+        });
+        next_request.input.push(CompletionInput::ToolResult {
+            id,
+            output: "The trip is on Friday.".into(),
+        });
+        let second_response = LLMPort::complete(&client, &next_request).await.unwrap();
+        assert_eq!(second_response.text, "Friday.");
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        let first_request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(
+            first_request["tools"][0]["function"]["name"],
+            "search_saved_knowledge"
+        );
+        let second_request: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+        let messages = second_request["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["name"],
+            "search_saved_knowledge"
+        );
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_name"], "search_saved_knowledge");
+        assert_eq!(messages[2]["content"], "The trip is on Friday.");
+    }
+
+    #[tokio::test]
+    async fn typed_completion_cancels_http_work_when_request_budget_expires() {
+        use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(200))
+                    .set_body_json(serde_json::json!({
+                        "model":"utility",
+                        "created_at":"2026-09-28T00:00:00Z",
+                        "message":{"role":"assistant","content":"late"},
+                        "done":true
+                    })),
+            )
+            .mount(&server)
+            .await;
+        let client = OllamaClient::with_model_and_timeouts(
+            server.uri(),
+            "utility",
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let request = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "Please answer quickly.".into(),
+            }],
+            time_budget: Some(Duration::from_millis(20)),
+            ..Default::default()
+        };
+
+        let error = LLMPort::complete(&client, &request).await.unwrap_err();
+        assert!(error.to_string().contains("time budget"));
+    }
+
+    #[tokio::test]
+    async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
+        use crate::application::ports::llm_port::{
+            CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
+        };
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        let chunks = [
+            serde_json::json!({
+                "model":"utility","created_at":"2026-09-28T00:00:00Z",
+                "message":{"role":"assistant","content":"Hi "},"done":false
+            }),
+            serde_json::json!({
+                "model":"utility","created_at":"2026-09-28T00:00:00Z",
+                "message":{"role":"assistant","content":"世界","tool_calls":[{
+                    "function":{"name":"search_saved_knowledge","arguments":{"query":"trip"},"index":0}
+                }]},"done":true,"done_reason":"stop","prompt_eval_count":20,"eval_count":5
+            }),
+        ];
+        let body = chunks
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!("{body}\n")))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::with_model_and_timeouts(
+            server.uri(),
+            "utility",
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let request = CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "When is the trip?".into(),
+            }],
+            tools: vec![ToolDefinition {
+                name: "search_saved_knowledge".into(),
+                description: "Search saved notes".into(),
+                parameters: serde_json::json!({"type":"object","properties":{}}),
+            }],
+            ..Default::default()
+        };
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_by_callback = received.clone();
+        let on_text = move |text: String| {
+            received_by_callback.lock().unwrap().push(text);
+            Ok(())
+        };
+        let response = LLMPort::complete_with_progress(&client, &request, &on_text)
+            .await
+            .unwrap();
+
+        assert_eq!(response.text, "Hi 世界");
+        assert_eq!(*received.lock().unwrap(), vec!["Hi ", "世界"]);
+        assert_eq!(response.tool_calls.len(), 1);
+        assert!(matches!(
+            response.tool_calls.first(),
+            Some(CompletionInput::ToolCall { name, .. }) if name == "search_saved_knowledge"
+        ));
+        assert_eq!(response.output_tokens, 5);
+        assert_eq!(response.finish_reason, "stop");
+        let sent: serde_json::Value =
+            serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
+        assert_eq!(sent["stream"], true);
+        assert_eq!(
+            sent["tools"][0]["function"]["name"],
+            "search_saved_knowledge"
+        );
+    }
 
     #[test]
     fn test_client_creation() {

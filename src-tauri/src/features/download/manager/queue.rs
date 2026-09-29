@@ -7,6 +7,9 @@ use tracing::{debug, error};
 impl DownloadManagerService {
     pub(super) async fn process_queue(&self) -> Result<(), DownloadError> {
         loop {
+            if self.shutdown.is_cancelled() {
+                break;
+            }
             // Count all active downloads (not just Downloading state)
             let active_count = {
                 let active = self.active_downloads.read().await;
@@ -60,10 +63,7 @@ impl DownloadManagerService {
                         continue;
                     }
                 }
-                None => {
-                    debug!("Download queue is empty");
-                    break;
-                }
+                None => break,
             }
         }
 

@@ -13,6 +13,9 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 mod retry;
+/// The bundled sidecar speaks the same stream and needs the same distinction
+/// between prompt processing and generation for its first-token allowance.
+pub(crate) use retry::ProgressWatch;
 pub(crate) mod streaming;
 #[cfg(test)]
 mod tests;
@@ -224,21 +227,47 @@ impl LlamaCppLlm {
 /// same `/v1/chat/completions` route: one translation means a tool round
 /// replays identically whichever of the two the model is reached through.
 pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
-    let messages = input
-        .iter()
-        .map(|item| match item {
-            CompletionInput::Native { value } => value.clone(),
+    let mut messages: Vec<Value> = Vec::with_capacity(input.len());
+    let mut previous_was_call = false;
+    for item in input {
+        let is_call = matches!(item, CompletionInput::ToolCall { .. });
+        match item {
+            CompletionInput::Native { value } => messages.push(value.clone()),
             // Chat templates know system, user, assistant and tool; a
             // developer instruction is a system one to every one of them.
             CompletionInput::Message { role, content } if role == "developer" => {
-                json!({"role":"system","content":content})
+                messages.push(json!({"role":"system","content":content}))
             }
-            CompletionInput::Message { role, content } => json!({"role":role,"content":content}),
-            CompletionInput::ToolCall { id, name, arguments } => json!({"role":"assistant","content":null,
-                "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),
-            CompletionInput::ToolResult { id, output } => json!({"role":"tool","tool_call_id":id,"content":output}),
-        })
-        .collect();
+            CompletionInput::Message { role, content } => {
+                messages.push(json!({"role":role,"content":content}))
+            }
+            CompletionInput::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                let call = json!({"id":id,"type":"function",
+                    "function":{"name":name,"arguments":arguments.to_string()}});
+                // Calls made in one round are one assistant message. Replayed
+                // as one message each, they break the role alternation that
+                // strict chat templates enforce.
+                match messages
+                    .last_mut()
+                    .filter(|_| previous_was_call)
+                    .and_then(|last| last.get_mut("tool_calls"))
+                    .and_then(Value::as_array_mut)
+                {
+                    Some(calls) => calls.push(call),
+                    None => messages
+                        .push(json!({"role":"assistant","content":null,"tool_calls":[call]})),
+                }
+            }
+            CompletionInput::ToolResult { id, output } => {
+                messages.push(json!({"role":"tool","tool_call_id":id,"content":output}))
+            }
+        }
+        previous_was_call = is_call;
+    }
     coalesce_system_messages(messages)
 }
 
@@ -453,7 +482,7 @@ fn network_error(error: reqwest::Error) -> AppError {
     }
 }
 
-async fn check_status(mut response: reqwest::Response) -> Result<reqwest::Response> {
+pub(crate) async fn check_status(mut response: reqwest::Response) -> Result<reqwest::Response> {
     if response.status().is_success() {
         return Ok(response);
     }
@@ -491,6 +520,36 @@ async fn check_status(mut response: reqwest::Response) -> Result<reqwest::Respon
     }
 }
 
+/// More calls than any round needs; past this a model is looping, not working.
+const MAX_TOOL_CALLS_PER_ROUND: usize = 128;
+
+/// Stands in for the name of a call that gave none, so the replayed history
+/// still has a name the chat template can render.
+const UNNAMED_TOOL: &str = "unnamed_tool";
+
+/// The arguments of a tool call the model wrote but that cannot be run.
+///
+/// Kept as a JSON object so the replayed history stays parseable, carrying the
+/// model's raw text so the error it is shown quotes what it actually wrote.
+pub(crate) fn invalid_tool_arguments(raw: &str, problem: &str) -> Value {
+    json!({"invalid": true, "raw": raw, "error": problem})
+}
+
+/// Why a call cannot be run, when its arguments are the marker
+/// [`invalid_tool_arguments`] wrote.
+pub(crate) fn invalid_tool_call_problem(arguments: &Value) -> Option<String> {
+    let object = arguments.as_object()?;
+    if object.len() != 3 || object.get("invalid") != Some(&Value::Bool(true)) {
+        return None;
+    }
+    let raw = object.get("raw")?.as_str()?;
+    let problem = object.get("error")?.as_str()?;
+    Some(format!(
+        "Tool call not run: {problem}. You wrote: {}. Call the tool again with a complete JSON object of arguments, or answer from what you have.",
+        crate::shared::text_utils::safe_truncate(raw, 400)
+    ))
+}
+
 pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     let choice = value
         .get("choices")
@@ -501,44 +560,106 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
         .get("message")
         .filter(|m| m.is_object())
         .ok_or_else(|| AppError::Network("llama.cpp returned no completion message".into()))?;
-    let mut calls = Vec::new();
-    let mut ids = std::collections::HashSet::new();
-    for call in message
+    let finish_reason = choice
+        .get("finish_reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let raw_calls: Vec<&Value> = message
         .get("tool_calls")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-    {
-        let id = call.get("id").and_then(Value::as_str);
+        .take(MAX_TOOL_CALLS_PER_ROUND)
+        .collect();
+    let mut calls = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    let mut repaired = false;
+    for (index, call) in raw_calls.iter().enumerate() {
+        // A small model gets a call wrong often enough that failing the whole
+        // completion over it throws away a turn the model can recover: it is
+        // handed back as a call the tool loop answers with the error, and the
+        // model tries again next round.
         let function = call.get("function");
-        let name = function.and_then(|f| f.get("name")).and_then(Value::as_str);
-        let arguments = function
+        let name = function
+            .and_then(|f| f.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        let raw_arguments = function
             .and_then(|f| f.get("arguments"))
-            .and_then(Value::as_str);
-        let (Some(id), Some(name), Some(arguments)) = (id, name, arguments) else {
-            return Err(AppError::Network(
-                "llama.cpp returned an invalid tool call".into(),
-            ));
-        };
-        let arguments: Value = serde_json::from_str(arguments).map_err(|_| {
-            AppError::InvalidState("llama.cpp returned invalid tool arguments".into())
-        })?;
-        if id.trim().is_empty()
-            || name.trim().is_empty()
-            || !ids.insert(id)
-            || !arguments.is_object()
-            || calls.len() >= 128
-            || call.get("type").and_then(Value::as_str) != Some("function")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let id = match call
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty() && !ids.contains(*id))
         {
-            return Err(AppError::InvalidState(
-                "llama.cpp returned an invalid tool batch".into(),
-            ));
+            Some(id) => id.to_owned(),
+            None => {
+                repaired = true;
+                format!("call_invalid_{index}")
+            }
+        };
+        ids.insert(id.clone());
+        // A call that parses whole was finished even when the round then hit
+        // its output limit; only the one whose arguments broke off was cut.
+        let cut_off = finish_reason == "length" && index + 1 == raw_calls.len();
+        let problem = match (name, serde_json::from_str::<Value>(raw_arguments)) {
+            (None, _) => Some("the call named no tool".to_owned()),
+            (Some(name), Ok(arguments)) if arguments.is_object() => {
+                calls.push(CompletionInput::ToolCall {
+                    id: id.clone(),
+                    name: name.into(),
+                    arguments,
+                });
+                None
+            }
+            (Some(_), Ok(_)) => Some("arguments must be a JSON object".to_owned()),
+            (Some(_), Err(error)) if cut_off => Some(format!(
+                "arguments were cut off by the output limit before the JSON closed ({error})"
+            )),
+            (Some(_), Err(error)) => Some(format!("arguments were not valid JSON: {error}")),
+        };
+        if let Some(problem) = problem {
+            repaired = true;
+            calls.push(CompletionInput::ToolCall {
+                id,
+                name: name.unwrap_or(UNNAMED_TOOL).into(),
+                arguments: invalid_tool_arguments(raw_arguments, &problem),
+            });
         }
-        calls.push(CompletionInput::ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        });
+    }
+    // The assistant message is replayed as the server returned it, so it has
+    // to agree with the calls the tool results will answer: the same ids, and
+    // arguments the chat template can parse again.
+    let mut provider_output = message.clone();
+    let dropped = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|all| all.len() > raw_calls.len());
+    if repaired || dropped {
+        if let Some(object) = provider_output.as_object_mut() {
+            object.insert(
+                "tool_calls".into(),
+                Value::Array(
+                    calls
+                        .iter()
+                        .filter_map(|call| match call {
+                            CompletionInput::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            } => Some(json!({
+                                "id": id, "type": "function",
+                                "function": {"name": name, "arguments": arguments.to_string()}
+                            })),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+            );
+        }
     }
     Ok(CompletionResponse {
         text: message
@@ -547,11 +668,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .unwrap_or_default()
             .into(),
         tool_calls: calls,
-        finish_reason: choice
-            .get("finish_reason")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .into(),
+        finish_reason: finish_reason.into(),
         input_tokens: value
             .pointer("/usage/prompt_tokens")
             .and_then(Value::as_u64)
@@ -560,7 +677,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .pointer("/usage/completion_tokens")
             .and_then(Value::as_u64)
             .unwrap_or_default(),
-        provider_output: message.clone(),
+        provider_output,
         first_token_logprobs: choice
             .get("logprobs")
             .and_then(crate::application::ports::llm_port::first_token_logprobs),

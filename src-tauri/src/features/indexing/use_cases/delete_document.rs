@@ -156,7 +156,7 @@ impl DeleteDocumentUseCase {
 
         // Drop summary vectors before the rows go so the summary index never
         // keeps a dead entry (rows themselves cascade on delete).
-        crate::features::summaries::trigger::notify_document_deleted(&document_id);
+        crate::features::summaries::trigger::notify_document_deleted(&document_id).await;
 
         // 2. Chunks and the document row in one transaction.
         let mut uow = self.uow_factory.create().await?;

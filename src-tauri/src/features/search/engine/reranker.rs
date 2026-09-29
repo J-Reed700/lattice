@@ -67,6 +67,25 @@ pub struct RerankResult {
     pub score: f32,
 }
 
+/// Acquire capacity before creating a blocking task, and keep the permit in
+/// the closure because Tokio cannot stop inference after it has started.
+pub(super) async fn run_admitted<F, T>(admission: Arc<tokio::sync::Semaphore>, work: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = admission
+        .acquire_owned()
+        .await
+        .map_err(|_| AppError::InvalidState("Reranker admission closed".into()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|error| AppError::Other(format!("Reranking task failed: {error}")))?
+}
+
 /// Shared reranking contract used by every retrieval entry point.
 #[async_trait::async_trait]
 pub trait Reranker: Send + Sync + std::fmt::Debug {
@@ -307,6 +326,7 @@ pub struct RerankerService {
     /// the only point of serialization, and reranking is fast enough
     /// (~40ms) that throughput isn't a concern.
     inner: Arc<Mutex<Inner>>,
+    inference_admission: Arc<tokio::sync::Semaphore>,
     tokenizer: Arc<Tokenizer>,
     max_length: usize,
 }
@@ -468,6 +488,7 @@ impl RerankerService {
 
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
+            inference_admission: Arc::new(tokio::sync::Semaphore::new(1)),
             tokenizer: Arc::new(tokenizer),
             max_length,
         })
@@ -485,18 +506,19 @@ impl RerankerService {
             return Ok(vec![]);
         }
 
+        // Admit before consuming a blocking-pool thread. Started blocking
+        // inference cannot be aborted, so the permit travels into the closure.
         let inner = Arc::clone(&self.inner);
         let tokenizer = Arc::clone(&self.tokenizer);
         let query = query.to_string();
         let max_length = self.max_length;
 
-        tokio::task::spawn_blocking(move || {
+        run_admitted(Arc::clone(&self.inference_admission), move || {
             with_autorelease_pool(|| {
                 rerank_sync(&inner, &tokenizer, &query, documents, top_k, max_length)
             })
         })
         .await
-        .map_err(|e| AppError::Other(format!("Reranking task failed: {e}")))?
     }
 
     pub fn with_max_length(mut self, max_length: usize) -> Result<Self> {
@@ -832,6 +854,62 @@ fn sigmoid(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_waiter_does_not_start_blocking_inference_and_running_job_keeps_slot() {
+        let admission = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first = {
+            let admission = Arc::clone(&admission);
+            tokio::spawn(async move {
+                run_admitted(admission, move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+            })
+        };
+        started_rx.recv().unwrap();
+
+        let cancelled_started = Arc::new(AtomicBool::new(false));
+        let waiting = {
+            let admission = Arc::clone(&admission);
+            let started = Arc::clone(&cancelled_started);
+            tokio::spawn(async move {
+                run_admitted(admission, move || {
+                    started.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+            })
+        };
+        waiting.abort();
+        let _ = waiting.await;
+
+        let second_started = Arc::new(AtomicBool::new(false));
+        let second = {
+            let admission = Arc::clone(&admission);
+            let started = Arc::clone(&second_started);
+            tokio::spawn(async move {
+                run_admitted(admission, move || {
+                    started.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(!cancelled_started.load(Ordering::SeqCst));
+        assert!(!second_started.load(Ordering::SeqCst));
+        release_tx.send(()).unwrap();
+        first.abort();
+        let _ = first.await;
+        second.await.unwrap().unwrap();
+        assert!(second_started.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn test_rerank_result_ordering() {

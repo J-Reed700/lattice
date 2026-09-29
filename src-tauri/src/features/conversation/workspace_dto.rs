@@ -44,6 +44,7 @@ pub struct ConversationWebSourceDto {
     pub excerpt: Option<String>,
     pub relevance_score: Option<f32>,
     pub added_at: String,
+
 }
 
 /// The archived text of a cited page — the permanent per-conversation record,
@@ -93,4 +94,7 @@ pub struct SynthesizeJournalEntriesResponseDto {
     pub chunk_count: usize,
     pub conversation_ids: Vec<String>,
     pub citations: Vec<SynthesisCitationDto>,
+    /// Source passages from the conversations and journal notes, numbered to
+    /// match the `[n]` citations in `synthesis`.
+    pub sources: Vec<crate::features::qa::dto::SourceDto>,
 }

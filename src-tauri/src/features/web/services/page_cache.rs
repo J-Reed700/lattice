@@ -284,22 +284,8 @@ async fn remove_quietly(path: &Path) {
     }
 }
 
-/// Compare URLs the way a server would: the scheme and host are
-/// case-insensitive and a trailing slash on the path is not a different page,
-/// so `HTTPS://Example.com/a/` must not read as new after `https://example.com/a`.
-///
-/// Deliberately a copy of the conversation feature's `fetch_memory::normalize`
-/// rather than a shared import: a turn's memory and a disk cache are different
-/// features with the same idea of sameness, and the web feature does not reach
-/// into the chat feature.
 fn normalize(url: &str) -> String {
-    let trimmed = url.trim();
-    let Ok(mut parsed) = url::Url::parse(trimmed) else {
-        return trimmed.to_ascii_lowercase();
-    };
-    parsed.set_fragment(None);
-    let normalized = parsed.as_str().trim_end_matches('/').to_string();
-    normalized.to_ascii_lowercase()
+    crate::shared::url_identity::identity(url)
 }
 
 #[cfg(test)]
@@ -374,8 +360,8 @@ mod tests {
         );
     }
 
-    /// The model rarely echoes a URL back byte for byte — it drops a trailing
-    /// slash or a fragment. Those are the same page and must not buy a fetch.
+    /// Fragments and host case do not change the resource; path case and a
+    /// trailing slash can, so cache identity preserves both.
     #[tokio::test]
     async fn a_url_that_differs_only_cosmetically_is_the_same_entry() {
         let dir = TempDir::new().unwrap();
@@ -384,20 +370,25 @@ mod tests {
 
         cache
             .remember_page(
-                "https://Example.test/a/b/",
-                &page("https://Example.test/a/b/", &clock),
+                "https://Example.test/a/b",
+                &page("https://Example.test/a/b", &clock),
             )
             .await;
 
         for variant in [
             "https://example.test/a/b",
-            "https://example.test/a/b/",
             "https://EXAMPLE.test/a/b#section",
             "  https://example.test/a/b  ",
         ] {
             assert!(
                 cache.get(variant).await.is_some(),
                 "{variant} should have hit the stored page"
+            );
+        }
+        for distinct in ["https://example.test/a/b/", "https://example.test/A/b"] {
+            assert!(
+                cache.get(distinct).await.is_none(),
+                "{distinct} is a distinct resource"
             );
         }
         assert_eq!(cache.get("https://example.test/a/c").await, None);

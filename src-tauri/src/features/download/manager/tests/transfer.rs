@@ -304,6 +304,9 @@ async fn test_download_pause_and_resume() -> Result<(), Box<dyn std::error::Erro
 async fn test_download_cancellation_cleanup() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let mock_engine = Arc::new(MockDownloadEngine::new());
+    // Keep the transfer active until cancellation; an already-completed
+    // transfer correctly stays completed when cancel races its finalization.
+    mock_engine.set_stall(true);
 
     mock_engine.set_file_size("https://example.com/file_to_cancel.bin", Some(10000));
 

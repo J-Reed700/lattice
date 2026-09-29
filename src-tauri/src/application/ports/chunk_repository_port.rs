@@ -32,6 +32,7 @@ use crate::application::ports::RepositoryPort;
 use crate::domain::entities::chunk::Chunk;
 use crate::shared::error::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 /// Port for chunk-specific repository operations.
 ///
@@ -93,6 +94,15 @@ pub trait ChunkRepositoryPort: RepositoryPort<Chunk> + Send + Sync {
     /// ```
     async fn find_by_document(&self, document_id: &str) -> Result<Vec<Chunk>>;
 
+    /// The first `limit` chunks of a document, in chunk order. For callers
+    /// that want a document's opening passages without reading all of it.
+    async fn find_first_by_document(&self, document_id: &str, limit: usize) -> Result<Vec<Chunk>> {
+        let mut chunks = self.find_by_document(document_id).await?;
+        chunks.sort_by_key(|chunk| chunk.index());
+        chunks.truncate(limit);
+        Ok(chunks)
+    }
+
     /// Find chunks by a set of IDs (batch lookup).
     ///
     /// # Arguments
@@ -107,6 +117,22 @@ pub trait ChunkRepositoryPort: RepositoryPort<Chunk> + Send + Sync {
     ///
     /// - `AppError::Database` if query fails
     async fn find_by_ids(&self, chunk_ids: &[String]) -> Result<Vec<Chunk>>;
+
+    /// Return only content for the requested candidate IDs. Search callers use
+    /// this after vector ranking so the index never retains the corpus text.
+    async fn find_content_by_ids(&self, chunk_ids: &[String]) -> Result<HashMap<String, String>> {
+        let rows = self.find_by_ids(chunk_ids).await?;
+        Ok(rows
+            .into_iter()
+            .map(|chunk| (chunk.id().to_string(), chunk.content().to_string()))
+            .collect())
+    }
+
+    /// IDs belonging to documents attached to a conversation. These chunks
+    /// are excluded from vault-wide hybrid search.
+    async fn find_conversation_attached_chunk_ids(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     /// Delete all chunks for a given document.
     ///

@@ -229,6 +229,18 @@ impl IndexStorageTrait for IndexStorage {
         self.batch_store_documents(documents).await
     }
 
+    async fn chunk_ids_in_order(
+        &self,
+        document_id: &str,
+    ) -> crate::shared::error::Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     async fn store_document_with_context_for_model(
         &self,
         path: &Path,

@@ -1,10 +1,13 @@
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
+import { MemoryRouter } from 'react-router';
 import { Markdown } from 'tiptap-markdown';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { sentencesByOccurrence } from '../../Chat/reader/answerSentences';
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
+import { TiptapEditor } from '../TiptapEditor';
 
 import type { DecorationSet } from '@tiptap/pm/view';
 
@@ -85,5 +88,27 @@ describe('CitationMarks', () => {
         expect(chip.block).toContain(lettersOnly(words));
       }
     }
+  });
+
+  it('opens the mapped citation with the occurrence of the clicked inline mark', async () => {
+    const onCitationClick = vi.fn();
+    const { container } = render(
+      <MemoryRouter>
+        <TiptapEditor
+          value="First claim [4]. Second claim [4]."
+          onChange={vi.fn()}
+          citationNumbers={[4]}
+          onCitationClick={onCitationClick}
+        />
+      </MemoryRouter>,
+    );
+    const chips = await waitFor(() => {
+      const found = container.querySelectorAll('[data-cite="4"]');
+      expect(found).toHaveLength(2);
+      return found;
+    });
+
+    fireEvent.click(chips[1]!);
+    expect(onCitationClick).toHaveBeenCalledWith(4, 1);
   });
 });

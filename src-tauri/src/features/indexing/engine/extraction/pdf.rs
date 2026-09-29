@@ -14,7 +14,54 @@ use crate::application::ports::{OcrError, OcrPort};
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
+
+// A timed-out blocking parser still owns its memory and CPU until it returns.
+// Keep its permit inside the blocking closure, so retries cannot bypass this
+// bound. Cancellation is cooperative between pages; lopdf cannot be preempted
+// while loading a document or decoding an individual page.
+static PDF_WORKERS: once_cell::sync::Lazy<Arc<Semaphore>> =
+    once_cell::sync::Lazy::new(|| Arc::new(Semaphore::new(2)));
+const PDF_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const MAX_PDF_STREAM_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PDF_LAYOUT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PDF_PAGES: usize = 2000;
+
+async fn run_pdf_worker<T: Send + 'static>(
+    workers: Arc<Semaphore>,
+    timeout: Duration,
+    extract: impl FnOnce(CancellationToken) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let cancel = CancellationToken::new();
+    // Also signals cancellation when the caller drops this future (e.g. Stop).
+    let _cancel_on_drop = cancel.clone().drop_guard();
+    tokio::time::timeout(timeout, async move {
+        let permit = workers
+            .acquire_owned()
+            .await
+            .map_err(|_| IndexingError::Other("PDF extraction workers are unavailable".into()))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            ensure_pdf_active(&cancel)?;
+            extract(cancel)
+        })
+        .await
+        .map_err(|e| IndexingError::Other(format!("Task join error: {e}")))?
+    })
+    .await
+    .map_err(|_| IndexingError::Other("PDF extraction timed out".into()))?
+}
+
+fn ensure_pdf_active(cancel: &CancellationToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        Err(IndexingError::Other("PDF extraction cancelled".into()))
+    } else {
+        Ok(())
+    }
+}
 
 /// Type alias for page range (page_number, start_char, end_char).
 pub type PageRange = (usize, usize, usize);
@@ -62,13 +109,10 @@ pub async fn extract_pdf(
 
     let path_clone = path.to_path_buf();
 
-    let mut pages = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        tokio::task::spawn_blocking(move || extract_pdf_pages(&path_clone)),
-    )
-    .await
-    .map_err(|_| IndexingError::Other("PDF extraction timed out".to_string()))?
-    .map_err(|e| IndexingError::Other(format!("Task join error: {}", e)))??;
+    let mut pages = run_pdf_worker(Arc::clone(&PDF_WORKERS), PDF_TIMEOUT, move |cancel| {
+        extract_pdf_pages(&path_clone, &cancel)
+    })
+    .await?;
 
     if let Some(ocr) = ocr {
         recognize_scanned_pages(path, &mut pages, ocr.as_ref()).await;
@@ -115,20 +159,32 @@ pub async fn extract_pdf(
 }
 
 /// Read every page, structure it, and mark the scans.
-fn extract_pdf_pages(path: &Path) -> Result<Vec<PageText>> {
+fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<PageText>> {
     use lopdf::Document;
 
-    let doc = Document::load(path).map_err(|e| IndexingError::ContentExtraction {
+    let doc = Document::load_with_options(
+        path,
+        lopdf::LoadOptions::with_max_decompressed_size(MAX_PDF_STREAM_BYTES),
+    )
+    .map_err(|e| IndexingError::ContentExtraction {
         path: path.display().to_string(),
         reason: format!("Failed to load PDF: {}", e),
     })?;
 
+    ensure_pdf_active(cancel)?;
     let page_ids = doc.get_pages();
+    if page_ids.len() > MAX_PDF_PAGES {
+        return Err(IndexingError::Other(format!(
+            "PDF exceeds {MAX_PDF_PAGES} pages"
+        )));
+    }
+    let mut retained_layout_bytes = 0usize;
     let layouts = collect_pdf_pages(path, page_ids.keys().copied(), |page| {
+        ensure_pdf_active(cancel)?;
         let Some(page_id) = page_ids.get(&page).copied() else {
             return Err(IndexingError::Other(format!("Page {page} has no object")));
         };
-        pdf_layout::read_page(&doc, page, page_id, |reason| {
+        let layout = pdf_layout::read_page(&doc, page, page_id, |reason| {
             warn!(
                 path = %path.display(),
                 page,
@@ -136,9 +192,17 @@ fn extract_pdf_pages(path: &Path) -> Result<Vec<PageText>> {
                 "Layout-aware PDF extraction fell back to plain text for this page"
             );
         })
-        .map_err(IndexingError::Other)
+        .map_err(IndexingError::Other)?;
+        retained_layout_bytes = retained_layout_bytes.saturating_add(layout.retained_bytes());
+        if retained_layout_bytes > MAX_PDF_LAYOUT_BYTES {
+            return Err(IndexingError::Other(
+                "PDF extracted layout exceeds 64 MiB".into(),
+            ));
+        }
+        Ok(layout)
     })?;
 
+    ensure_pdf_active(cancel)?;
     Ok(pdf_layout::render(&layouts)
         .into_iter()
         .zip(layouts.iter())

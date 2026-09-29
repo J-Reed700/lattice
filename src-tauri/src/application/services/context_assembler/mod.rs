@@ -68,6 +68,10 @@ pub struct ContextRequest<'a> {
     /// Passages recalled from the original transcript, best first.
     pub recalled: Vec<SelectedPassage>,
     pub retrieval: RecallDiagnostics,
+    /// Human-readable outcome of the automatic history search. Kept as a
+    /// separate user-role note so a miss or unavailable index is not mistaken
+    /// for evidence, and included in the same bounded recall allocation.
+    pub recall_status: Option<&'a str>,
     /// Document and web evidence, any order; ranked for eviction.
     pub document_evidence: Vec<RankedEvidence>,
     pub capacity: ModelCapacity,
@@ -164,8 +168,17 @@ impl ContextAssembler {
             Some(snapshot) if snapshot.is_usable() => self.render_items(snapshot, request.recent),
             _ => (Vec::new(), Vec::new(), 0),
         };
+        let mut used_memory_ids: Vec<String> = mandatory_items
+            .iter()
+            .map(|item| item.id.as_str().to_owned())
+            .collect();
         if let Some(prepared) = prepared {
             mandatory_blocks = prepared.mandatory.clone();
+            used_memory_ids = prepared
+                .mandatory
+                .iter()
+                .filter_map(|text| prepared_memory_id(text))
+                .collect();
         }
         accounting.active_mandatory_count = mandatory_blocks.len();
         accounting.active_conflict_count = if prepared.is_some() { 0 } else { unresolvable }
@@ -273,11 +286,17 @@ impl ContextAssembler {
 
         // --- 7. recalled passages -----------------------------------------
         let mut recalled = Vec::new();
-        let mut recall_tokens = 0usize;
         let recall_pool = allocation.recall.min(remaining);
+        let status_cost = request
+            .recall_status
+            .and_then(|status| render::render_recalled(&[], Some(status)))
+            .map(|message| self.count_input(&message))
+            .unwrap_or(0);
+        let passage_pool = recall_pool.saturating_sub(status_cost);
+        let mut recall_tokens = 0usize;
         for passage in &request.recalled {
             let cost = self.count(&passage.text) + MESSAGE_FRAMING_TOKENS;
-            if recall_tokens + cost > recall_pool {
+            if recall_tokens + cost > passage_pool {
                 break;
             }
             recall_tokens += cost;
@@ -289,10 +308,10 @@ impl ContextAssembler {
             .iter()
             .map(|passage| passage.message_id.clone())
             .collect();
-        let mut recalled_message = render::render_recalled(&recalled);
+        let mut recalled_message = render::render_recalled(&recalled, request.recall_status);
         if let Some(message) = &recalled_message {
             let cost = self.count_input(message);
-            if cost <= remaining {
+            if cost <= remaining && cost <= recall_pool {
                 accounting.recall = cost;
                 remaining -= cost;
             } else {
@@ -314,6 +333,7 @@ impl ContextAssembler {
                 rank: 1.0 / (index + 1) as f32,
             })
             .collect();
+        let mut optional_memory_ids = Vec::new();
         let mut evidence: Vec<&RankedEvidence> =
             request.document_evidence.iter().chain(&optional).collect();
         evidence.sort_by(|a, b| {
@@ -334,6 +354,7 @@ impl ContextAssembler {
             evidence_tokens += cost;
             if item.label == "Saved memory with original evidence" {
                 accounting.optional_selected_count += 1;
+                optional_memory_ids.extend(prepared_memory_id(&item.content));
             }
             evidence_blocks.push(block);
         }
@@ -386,6 +407,14 @@ impl ContextAssembler {
             recent_start,
             &recent_sequences,
         );
+        // Overflow eviction drops the evidence message whole, and the optional
+        // memory went with it.
+        if messages.iter().any(|message| {
+            matches!(message, CompletionInput::Message { role, content }
+                if role == "user" && content.starts_with("[supporting material"))
+        }) {
+            used_memory_ids.extend(optional_memory_ids);
+        }
         let dropped_unprocessed = dropped_unprocessed
             || evicted_sequences
                 .iter()
@@ -405,6 +434,7 @@ impl ContextAssembler {
             retrieval,
             compaction_required: dropped_unprocessed,
             max_output_tokens: allocation.output_reserved,
+            used_memory_ids,
         })
     }
 
@@ -509,6 +539,19 @@ impl ContextAssembler {
         }
         evicted_sequences
     }
+}
+
+/// The id of one prepared memory item.
+///
+/// Prepared items arrive as the JSON object the prompt carries, `memory_id`
+/// included; reading the id from that object is reading the item, not parsing
+/// rendered prose.
+fn prepared_memory_id(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()?
+        .get("memory_id")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Per-message provider framing, in tokens.

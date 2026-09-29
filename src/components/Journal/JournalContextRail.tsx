@@ -5,14 +5,16 @@ import { PanelRightClose } from 'lucide-react';
 import { IconButton } from '@/components/ui/IconButton';
 import { cn } from '@/lib/utils';
 
-export type ContextTab = 'conversation' | 'highlights';
+export type ContextTab = 'conversation' | 'highlights' | 'sources';
 
 interface JournalContextRailProps {
   /** Id of the entry picked in the index; a new pick brings its conversation forward. */
   selectedEntryId: string | null;
   highlightCount: number;
+  sourceCount: number;
   conversation: ReactNode;
   highlights: ReactNode;
+  sources: ReactNode;
   /** The synthesize control, pinned to the foot of the rail. */
   footer: ReactNode;
   onClose: () => void;
@@ -26,8 +28,10 @@ interface JournalContextRailProps {
 export function JournalContextRail({
   selectedEntryId,
   highlightCount,
+  sourceCount,
   conversation,
   highlights,
+  sources,
   footer,
   onClose,
 }: JournalContextRailProps) {
@@ -44,6 +48,7 @@ export function JournalContextRail({
   const tabs: Array<{ id: ContextTab; label: string; count?: number }> = [
     { id: 'conversation', label: 'Conversation' },
     { id: 'highlights', label: 'Highlights', count: highlightCount },
+    { id: 'sources', label: 'Sources', count: sourceCount },
   ];
 
   return (
@@ -86,6 +91,9 @@ export function JournalContextRail({
       </div>
       <div role="tabpanel" className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2', tab !== 'highlights' && 'hidden')}>
         {highlights}
+      </div>
+      <div role="tabpanel" aria-label="Sources and citations" className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2', tab !== 'sources' && 'hidden')}>
+        {sources}
       </div>
 
       <div className="shrink-0 border-t border-border-subtle px-3 py-2.5">{footer}</div>

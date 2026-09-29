@@ -8,8 +8,43 @@ use crate::infrastructure::audit::logger::AuditSink;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
+use std::collections::BTreeMap;
 use std::path::Path;
 use tracing::{debug, error, info};
+
+const MAX_AUDIT_EVENTS: i64 = 10_000;
+const RETENTION_DAYS: i64 = 30;
+const SAFE_NUMERIC_METADATA: &[&str] = &[
+    "context_messages",
+    "message_tokens",
+    "response_tokens",
+    "file_size_bytes",
+    "size",
+    "results",
+    "duration_ms",
+    "doc_count",
+    "chunk_count",
+    "files_indexed",
+    "tag_count",
+    "tags_count",
+    "tagged_count",
+    "count",
+    "error_code",
+    "cancelled_count",
+    "chunks",
+    "content_length",
+    "file_count",
+    "file_size",
+    "files_exported",
+    "files_imported",
+    "result_count",
+    "rows_exported",
+    "total_items",
+    "url_count",
+    "word_count",
+];
+const SAFE_BOOLEAN_METADATA: &[&str] = &["available", "file_deleted"];
+const SAFE_ENUM_METADATA: &[&str] = &["operation", "source", "format", "backup_type"];
 
 /// SQLite-based audit sink.
 ///
@@ -45,7 +80,7 @@ impl SqliteAuditSink {
         let db_path = db_path.as_ref();
         let db_url = format!("sqlite:{}", db_path.display());
 
-        info!("Initializing SQLite audit sink at: {}", db_path.display());
+        info!("Initializing local SQLite audit sink");
 
         let pool = SqlitePool::connect(&db_url).await?;
 
@@ -94,6 +129,16 @@ impl SqliteAuditSink {
         .execute(pool)
         .await?;
 
+        sqlx::query("CREATE TABLE IF NOT EXISTS audit_retention_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), event_count INTEGER NOT NULL)")
+            .execute(pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS audit_schema_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(pool).await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO audit_retention_state(singleton, event_count) VALUES (1, 0)",
+        )
+        .execute(pool)
+        .await?;
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
             .execute(pool)
             .await?;
@@ -112,8 +157,67 @@ impl SqliteAuditSink {
         .execute(pool)
         .await?;
 
-        info!("Audit events schema initialized successfully");
+        // Bound historical databases before enabling triggers. Audit rows are
+        // metadata only; old unredacted fields are cleared on bootstrap.
+        let cutoff = retention_cutoff();
+        sqlx::query("DELETE FROM audit_events WHERE timestamp < ?")
+            .bind(cutoff)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM audit_events WHERE rowid NOT IN (SELECT rowid FROM audit_events ORDER BY timestamp DESC, rowid DESC LIMIT ?)")
+            .bind(MAX_AUDIT_EVENTS)
+            .execute(pool)
+            .await?;
+        let redaction_applied: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM audit_schema_metadata WHERE name = 'privacy_redaction_v1'",
+        )
+        .fetch_optional(pool)
+        .await?;
+        if redaction_applied.is_none() {
+            sqlx::query("UPDATE audit_events SET user_id = NULL, resource_id = NULL, action = CASE WHEN action LIKE '%\"custom\"%' THEN '{\"custom\":\"custom\"}' ELSE action END, result = CASE WHEN result LIKE '%failure%' THEN '{\"failure\":{\"reason\":\"[redacted]\"}}' WHEN result LIKE '%denied%' THEN '{\"denied\":{\"reason\":\"[redacted]\"}}' ELSE '\"success\"' END")
+                .execute(pool)
+                .await?;
+            let rows = sqlx::query("SELECT id, metadata FROM audit_events")
+                .fetch_all(pool)
+                .await?;
+            for row in rows {
+                let id: String = row.try_get("id")?;
+                let serialized: String = row.try_get("metadata")?;
+                let metadata = serde_json::from_str::<BTreeMap<String, String>>(&serialized)
+                    .unwrap_or_default();
+                let metadata = serde_json::to_string(&sanitize_metadata(&metadata))?;
+                sqlx::query("UPDATE audit_events SET metadata = ? WHERE id = ?")
+                    .bind(metadata)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            sqlx::query("INSERT INTO audit_schema_metadata(name, value) VALUES ('privacy_redaction_v1', '1')")
+                .execute(pool)
+                .await?;
+        }
+        sqlx::query("UPDATE audit_retention_state SET event_count = (SELECT COUNT(*) FROM audit_events) WHERE singleton = 1")
+            .execute(pool).await?;
+        sqlx::query("CREATE TRIGGER IF NOT EXISTS audit_events_count_insert AFTER INSERT ON audit_events BEGIN UPDATE audit_retention_state SET event_count = event_count + 1 WHERE singleton = 1; DELETE FROM audit_events WHERE rowid = (SELECT rowid FROM audit_events ORDER BY timestamp ASC, rowid ASC LIMIT 1) AND (SELECT event_count FROM audit_retention_state WHERE singleton = 1) > 10000; END")
+            .execute(pool).await?;
+        sqlx::query("CREATE TRIGGER IF NOT EXISTS audit_events_count_delete AFTER DELETE ON audit_events BEGIN UPDATE audit_retention_state SET event_count = MAX(0, event_count - 1) WHERE singleton = 1; END")
+            .execute(pool).await?;
+
+        info!("Audit events schema initialized with bounded retention");
         Ok(())
+    }
+
+    /// Remove records older than the configured retention period.
+    pub async fn prune_expired(&self) -> Result<u64> {
+        Self::prune_expired_from_pool(&self.pool).await
+    }
+
+    pub async fn prune_expired_from_pool(pool: &SqlitePool) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM audit_events WHERE timestamp < ?")
+            .bind(retention_cutoff())
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// Get a reference to the connection pool.
@@ -125,6 +229,7 @@ impl SqliteAuditSink {
 #[async_trait]
 impl AuditSink for SqliteAuditSink {
     async fn log(&self, event: &AuditEvent) -> Result<()> {
+        let event = sanitized_event(event);
         let id = event.id.to_string();
         let timestamp = event.timestamp.to_rfc3339();
         let action = serde_json::to_string(&event.action)?;
@@ -139,16 +244,16 @@ impl AuditSink for SqliteAuditSink {
         )
         .bind(id)
         .bind(timestamp)
-        .bind(&event.user_id)
+        .bind(None::<String>)
         .bind(action)
-        .bind(&event.resource_id)
+        .bind(None::<String>)
         .bind(result)
         .bind(metadata)
         .execute(&self.pool)
         .await
-        .map_err(|e| {
-            error!("Failed to insert audit event: {}", e);
-            AppError::Database(format!("Failed to insert audit event: {}", e))
+        .map_err(|_| {
+            error!("Failed to insert audit event into the local audit store");
+            AppError::Database("Failed to insert audit event into the local audit store".into())
         })?;
 
         debug!("Audit event {} written to SQLite", event.id);
@@ -226,10 +331,72 @@ impl AuditSink for SqliteAuditSink {
     }
 }
 
+fn retention_cutoff() -> String {
+    (chrono::Utc::now() - chrono::Duration::days(RETENTION_DAYS)).to_rfc3339()
+}
+
+fn sanitized_event(event: &AuditEvent) -> AuditEvent {
+    use crate::infrastructure::audit::event::{AuditAction, AuditResult};
+    let action = match &event.action {
+        AuditAction::Custom(_) => AuditAction::Custom("custom".to_string()),
+        action => action.clone(),
+    };
+    let result = match &event.result {
+        AuditResult::Success => AuditResult::Success,
+        AuditResult::Failure { .. } => AuditResult::Failure {
+            reason: "[redacted]".into(),
+        },
+        AuditResult::Denied { .. } => AuditResult::Denied {
+            reason: "[redacted]".into(),
+        },
+    };
+    let metadata = sanitize_metadata(&event.metadata);
+    AuditEvent {
+        id: event.id,
+        timestamp: event.timestamp,
+        user_id: None,
+        action,
+        resource_id: None,
+        result,
+        metadata,
+    }
+}
+
+fn sanitize_metadata(metadata: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    metadata
+        .iter()
+        .filter_map(|(key, value)| {
+            let keep_number =
+                SAFE_NUMERIC_METADATA.contains(&key.as_str()) && value.parse::<i64>().is_ok();
+            let keep_boolean = SAFE_BOOLEAN_METADATA.contains(&key.as_str())
+                && matches!(value.as_str(), "true" | "false");
+            let keep_enum = SAFE_ENUM_METADATA.contains(&key.as_str())
+                && !value.is_empty()
+                && value.len() <= 40
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+            (keep_number || keep_boolean || keep_enum).then(|| (key.clone(), value.clone()))
+        })
+        .collect()
+}
+
+/// Register the bounded SQLite sink on an audit logger. Startup and tests use
+/// the same initialization path so missing sink wiring is observable.
+pub async fn configure_sqlite_audit_sink(
+    logger: &crate::infrastructure::audit::logger::AuditLogger,
+    pool: SqlitePool,
+) -> Result<()> {
+    let sink = SqliteAuditSink::from_pool(pool).await?;
+    logger.add_sink(Box::new(sink)).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audit::event::{AuditAction, AuditResult};
+    use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
 
     async fn create_test_sink() -> Result<(SqliteAuditSink, tempfile::TempDir)> {
@@ -260,6 +427,76 @@ mod tests {
 
         let result = sink.log(&event).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn startup_sink_registration_persists_only_redacted_allowlisted_metadata() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let logger = crate::infrastructure::audit::logger::AuditLogger::new();
+        configure_sqlite_audit_sink(&logger, pool.clone())
+            .await
+            .unwrap();
+
+        let event = AuditEvent::new(
+            AuditAction::Custom("private path /Users/alice/secret".into()),
+            AuditResult::failure("token=secret provider response"),
+        )
+        .with_user_id("alice")
+        .with_resource_id("/Users/alice/private.txt")
+        .with_metadata("file_size_bytes", "1234")
+        .with_metadata("query", "private query text");
+        logger.log(event).await.unwrap();
+
+        let stored = logger.query(10, 0).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].user_id, None);
+        assert_eq!(stored[0].resource_id, None);
+        assert_eq!(stored[0].action, AuditAction::Custom("custom".into()));
+        assert_eq!(stored[0].result, AuditResult::failure("[redacted]"));
+        assert_eq!(
+            stored[0]
+                .metadata
+                .get("file_size_bytes")
+                .map(String::as_str),
+            Some("1234")
+        );
+        assert!(!stored[0].metadata.contains_key("query"));
+    }
+
+    #[tokio::test]
+    async fn audit_sink_enforces_row_cap_and_age_retention() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let sink = SqliteAuditSink::from_pool(pool.clone()).await.unwrap();
+        let old = (chrono::Utc::now() - chrono::Duration::days(31)).to_rfc3339();
+        sqlx::query("INSERT INTO audit_events(id, timestamp, action, result, metadata) VALUES ('old-event', ?, 'file_indexed', '\"success\"', '{}')")
+            .bind(old)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sink.prune_expired().await.unwrap(), 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM audit_events WHERE id = 'old-event'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
+
+        sqlx::query("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 10005) INSERT INTO audit_events(id, timestamp, action, result, metadata) SELECT printf('%036d', x), '2026-09-28T00:00:00Z', 'file_indexed', '\"success\"', '{}' FROM n")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sink.count().await.unwrap(), MAX_AUDIT_EVENTS as usize);
     }
 
     #[tokio::test]
@@ -310,8 +547,8 @@ mod tests {
         let (sink, _dir) = create_test_sink().await.unwrap();
 
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("key1".to_string(), "value1".to_string());
-        metadata.insert("key2".to_string(), "value2".to_string());
+        metadata.insert("file_size_bytes".to_string(), "1024".to_string());
+        metadata.insert("query".to_string(), "private query".to_string());
 
         let event = AuditEvent::new(AuditAction::SearchPerformed, AuditResult::success())
             .with_metadata_map(metadata);
@@ -320,8 +557,33 @@ mod tests {
 
         let events = sink.query(1, 0).await.unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].metadata.len(), 2);
-        assert_eq!(events[0].metadata.get("key1").unwrap(), "value1");
+        assert_eq!(events[0].metadata.len(), 1);
+        assert_eq!(events[0].metadata.get("file_size_bytes").unwrap(), "1024");
+        assert!(!events[0].metadata.contains_key("query"));
+    }
+
+    #[tokio::test]
+    async fn startup_scrubs_legacy_custom_action_payloads() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE audit_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT, action TEXT NOT NULL, resource_id TEXT, result TEXT NOT NULL, metadata TEXT NOT NULL)")
+            .execute(&pool).await.unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO audit_events(id, timestamp, user_id, action, resource_id, result, metadata) VALUES (?, ?, 'alice', ?, '/private/path', '{\"failure\":{\"reason\":\"secret\"}}', '{\"query\":\"secret\"}')")
+            .bind(id)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(r#"{"custom":"private action"}"#)
+            .execute(&pool).await.unwrap();
+        let sink = SqliteAuditSink::from_pool(pool).await.unwrap();
+        let event = sink.query(1, 0).await.unwrap().pop().unwrap();
+        assert_eq!(event.action, AuditAction::Custom("custom".into()));
+        assert_eq!(event.user_id, None);
+        assert_eq!(event.resource_id, None);
+        assert_eq!(event.result, AuditResult::failure("[redacted]"));
+        assert!(event.metadata.is_empty());
     }
 
     #[tokio::test]

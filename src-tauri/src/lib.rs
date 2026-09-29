@@ -153,7 +153,6 @@
 //!     // Use Cases
 //!     SemanticSearchUseCase, HybridSearchUseCase,
 //!     IndexFileUseCase, IndexDirectoryUseCase,
-//!     AskQuestionUseCase,
 //!
 //!     // DTOs
 //!     SearchRequestDto, SearchResponseDto, SearchResultDto,
@@ -323,7 +322,6 @@ pub use domain::{
 ///     // Use Cases
 ///     SemanticSearchUseCase, HybridSearchUseCase,
 ///     IndexFileUseCase, IndexDirectoryUseCase,
-///     AskQuestionUseCase,
 ///
 ///     // DTOs
 ///     SearchRequestDto, SearchResponseDto,

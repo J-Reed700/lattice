@@ -20,6 +20,7 @@ mod memory;
 mod memory_port;
 mod memory_recall;
 mod memory_semantic;
+mod memory_vectors;
 mod messages;
 mod port;
 mod pruning;

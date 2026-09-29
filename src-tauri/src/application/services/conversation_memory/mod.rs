@@ -48,7 +48,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
 use crate::application::ports::LLMPort;
 use crate::domain::conversation_memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
 use crate::shared::error::AppError;
@@ -244,6 +244,12 @@ async fn complete_json(
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
+    let typed_completions = llm.supports_typed_completions();
+    let max_output_tokens = if system == prompts::VERIFIER_SYSTEM {
+        4_096
+    } else {
+        8_192
+    };
     let phase = if system == prompts::EXTRACTOR_SYSTEM {
         "extractor_model_call"
     } else if system == prompts::VERIFIER_SYSTEM {
@@ -256,11 +262,14 @@ async fn complete_json(
     let started = std::time::Instant::now();
     tracing::info!(
         phase,
+        provider = llm.provider_name(),
+        typed_completions,
         timeout_ms = remaining.as_millis() as u64,
+        max_output_tokens,
         "Memory utility model call started"
     );
     let call = async move {
-        if llm.supports_typed_completions() {
+        if typed_completions {
             let request = CompletionRequest {
                 input: vec![
                     CompletionInput::Message {
@@ -278,22 +287,31 @@ async fn complete_json(
                 // otherwise may spend the entire compaction deadline on a
                 // hidden chain of thought before returning any JSON.
                 reasoning_effort: Some("none".into()),
+                // Greedy decoding. Without an override the sidecar samples at
+                // the user's chat temperature, and a small extractor then
+                // returns six items from a batch on one run and nothing from
+                // the same batch on the next. Memory must not depend on the
+                // dice; the same passages should yield the same patch.
+                sampling: Some(SamplingOverride::deterministic()),
                 // The deterministic parser applies the tighter byte and
                 // operation bounds after generation. This provider-side cap
                 // prevents a malformed or uncooperative response from using
                 // the model's much larger configured chat-output allowance.
-                max_output_tokens: Some(if system == prompts::VERIFIER_SYSTEM {
-                    4_096
-                } else {
-                    8_192
-                }),
+                max_output_tokens: Some(max_output_tokens),
                 time_budget: Some(remaining),
                 ..Default::default()
             };
-            llm.complete(&request).await.map(|response| response.text)
+            llm.complete(&request).await.map(|response| {
+                (
+                    response.text,
+                    Some(response.finish_reason),
+                    Some(response.output_tokens),
+                )
+            })
         } else {
             llm.generate(&prompt, &[format!("System: {system}")], None)
                 .await
+                .map(|text| (text, None, None))
         }
     };
 
@@ -306,10 +324,14 @@ async fn complete_json(
         None => tokio::time::timeout(remaining, call).await,
     };
     match outcome {
-        Ok(Ok(text)) => {
+        Ok(Ok((text, finish_reason, output_tokens))) => {
             tracing::info!(
                 phase,
                 outcome = "completed",
+                provider = llm.provider_name(),
+                typed_completions,
+                finish_reason = finish_reason.as_deref().unwrap_or("unreported"),
+                output_tokens = output_tokens.unwrap_or(0),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "Memory utility model call finished"
             );

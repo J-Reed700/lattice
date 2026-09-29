@@ -522,6 +522,7 @@ impl IndexingModule {
             db_pool.clone(),
             &model_dir,
             Arc::clone(&model_provider),
+            Arc::clone(&vector_search),
         )?;
         let indexing = crate::features::indexing::di::build(
             db_pool.clone(),

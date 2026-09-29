@@ -166,17 +166,8 @@ pub(in crate::features::conversation::chat) fn fetch_target(
         .filter(|url| !url.is_empty())
 }
 
-/// Compare URLs the way a server would: the scheme and host are
-/// case-insensitive and a trailing slash on the path is not a different page,
-/// so `HTTPS://Example.com/a/` must not read as new after `https://example.com/a`.
 fn normalize(url: &str) -> String {
-    let trimmed = url.trim();
-    let Ok(mut parsed) = url::Url::parse(trimmed) else {
-        return trimmed.to_ascii_lowercase();
-    };
-    parsed.set_fragment(None);
-    let normalized = parsed.as_str().trim_end_matches('/').to_string();
-    normalized.to_ascii_lowercase()
+    crate::shared::url_identity::identity(url)
 }
 
 /// Keep the reason short — it is repeated in the prompt every round.
@@ -208,21 +199,25 @@ mod tests {
         assert_eq!(memory.previous_failure("https://example.com/other"), None);
     }
 
-    /// The model rarely echoes a URL back byte for byte — it drops a trailing
-    /// slash or a fragment. Those are the same page and must not buy a retry.
+    /// Fragments and host/scheme case are cosmetic; path case and slash are not.
     #[test]
     fn a_url_that_differs_only_cosmetically_is_the_same_url() {
         let mut memory = FetchMemory::default();
-        memory.record_failure("https://Example.com/a/b/", "HTTP 403 Forbidden");
+        memory.record_failure("https://Example.com/a/b", "HTTP 403 Forbidden");
         for variant in [
             "https://example.com/a/b",
-            "https://example.com/a/b/",
             "https://EXAMPLE.com/a/b#section",
             "  https://example.com/a/b  ",
         ] {
             assert!(
                 memory.previous_failure(variant).is_some(),
                 "{variant} should match the recorded failure"
+            );
+        }
+        for distinct in ["https://example.com/a/b/", "https://example.com/A/b"] {
+            assert!(
+                memory.previous_failure(distinct).is_none(),
+                "{distinct} is a distinct resource"
             );
         }
     }
@@ -298,8 +293,9 @@ mod tests {
             "one two three four",
             Delivery::Whole,
         );
+        assert_eq!(memory.recall("https://example.com/recap"), None);
         assert_eq!(
-            memory.recall("https://example.com/recap"),
+            memory.recall("https://example.com/recap/"),
             Some(Recall::AlreadyWhole { word_count: 4 })
         );
     }

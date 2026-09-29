@@ -16,6 +16,8 @@ interface GroupedSourceChunk {
   pageNumber?: number;
   score: number;
   highlights?: string[];
+  /** Exact metadata snapshot that produced this excerpt. Chunk IDs can repeat. */
+  source: SourceWithMetadata;
 }
 
 interface GroupedSourceEntry {
@@ -31,7 +33,7 @@ interface SourceCitationsProps {
   provenanceBySource?: Map<string, string>;
   /** Locations a viewer has already resolved, keyed by chunk id. */
   resolvedLocations?: Map<string, string>;
-  onViewSource: (_source: SourceWithMetadata) => void;
+  onViewSource: (_source: SourceWithMetadata, _occurrence?: number | null, _chunkId?: string) => void;
 }
 
 const isWebSource = (source: SourceWithMetadata): boolean => {
@@ -70,6 +72,7 @@ export function SourceCitations({
             pageNumber: chunk.pageNumber,
             score: chunk.score,
             highlights: chunk.highlights ?? source.highlights,
+            source,
           }))
         : [{
             chunkId: source.chunkId || `${sourceKey}:chunk-${sourceIdx}`,
@@ -79,13 +82,14 @@ export function SourceCitations({
             pageNumber: source.pageNumber,
             score: source.score,
             highlights: source.highlights,
+            source,
           }];
 
       const mappedChunks = chunkCandidates
         .map((chunk) => {
           const normalizedExcerpt = normalizeExcerpt(chunk.excerpt);
           if (!normalizedExcerpt) return null;
-          const chunkKey = `${sourceKey}:${chunk.chunkId}:${normalizedExcerpt.slice(0, 64)}`;
+          const chunkKey = `${sourceKey}:${chunk.chunkId}:${normalizedExcerpt}`;
           return {
             key: chunkKey,
             chunkId: chunk.chunkId,
@@ -95,6 +99,7 @@ export function SourceCitations({
             pageNumber: chunk.pageNumber,
             score: chunk.score,
             highlights: chunk.highlights,
+            source: chunk.source,
           } as GroupedSourceChunk;
         })
         .filter((chunk): chunk is GroupedSourceChunk => chunk !== null);
@@ -265,8 +270,14 @@ export function SourceCitations({
                           )}
                           <button type="button"
                             className="mb-1 text-xs text-[hsl(var(--accent))] hover:underline"
-                            onClick={() => onViewSource(sources.find(candidate => candidate.chunkId === chunk.chunkId) ?? source)}>
-                            View passage [{sources.find(candidate => candidate.chunkId === chunk.chunkId)?.citationId ?? source.citationId ?? idx + 1}]
+                            onClick={() => {
+                              const excerptChunkId = chunk.chunkId === chunk.source.chunkId
+                                ? undefined
+                                : chunk.chunkId;
+                              if (excerptChunkId) onViewSource(chunk.source, null, excerptChunkId);
+                              else onViewSource(chunk.source);
+                            }}>
+                            View passage [{chunk.source.citationId ?? source.citationId ?? idx + 1}]
                           </button>
                           <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 break-words">
                             {chunk.excerpt}

@@ -61,8 +61,8 @@ pub mod memory_context;
 mod persistence;
 pub(crate) use persistence::index_memory_note;
 mod prompting;
-mod source_snapshots; // Public so the retrieval evaluation harness can reuse the pipeline's own
-                      // sufficiency judgement instead of reimplementing it.
+pub(crate) mod source_snapshots; // Public so the retrieval evaluation harness can reuse the pipeline's own
+                                 // sufficiency judgement instead of reimplementing it.
 pub mod retrieval;
 mod tool_loop;
 pub mod turn_record;
@@ -1086,14 +1086,11 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         container.db_pool().clone(),
     )
     .with_memory_embedding(container.get_or_load_embedding().await.ok());
-    let tool_schema_tokens: usize = tools_ref
-        .map(|tools| {
-            tools
-                .iter()
-                .map(|tool| llm.count_tokens(&tool.name) + llm.count_tokens(&tool.description))
-                .sum()
-        })
-        .unwrap_or(0);
+    // Counted as sent: the JSON `parameters` of every tool are prompt text the
+    // model reads, and on a 4k-token local window they are a large share of it.
+    let tool_schema_tokens: usize = tools_ref.map_or(0, |tools| {
+        llm.count_tokens(&tool_loop::tool_schema_text(tools))
+    });
     let memory_turn = memory_context::prepare_memory_turn(
         || async {
             let turn = memory_context::build_memory_plan_for_query(
@@ -1133,21 +1130,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     )
     .await;
 
-    let memory_usage = memory_turn.as_ref().ok().and_then(|turn| turn.as_ref()).map(|turn| {
-        let mut ids = std::collections::BTreeSet::new();
-        for input in &turn.plan.messages {
-            if let crate::application::ports::llm_port::CompletionInput::Message { content, .. } = input {
-                if content.starts_with("[recorded requirements") || content.starts_with("[supporting material retrieved") {
-                    for line in content.lines() {
-                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                            if let Some(id) = value.get("memory_id").and_then(|id|id.as_str()) { ids.insert(id.to_string()); }
-                        }
-                    }
-                }
-            }
-        }
-        serde_json::json!({"items":ids,"revision":turn.plan.memory_revision,"recallPassages":turn.plan.retrieval.passages_selected})
-    });
+    let memory_usage = memory_turn
+        .as_ref()
+        .ok()
+        .and_then(|turn| turn.as_ref())
+        .map(|turn| {
+            serde_json::json!({
+                "items": turn.plan.used_memory_ids,
+                "revision": turn.plan.memory_revision,
+                "recallPassages": turn.plan.retrieval.passages_selected,
+            })
+        });
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
@@ -1183,6 +1176,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     &recorder,
                     memory_turn.as_ref().map(|turn| &turn.plan),
                     response_token_budget(max_tokens),
+                    tool_loop::max_tool_rounds(search_flags.deep_research_mode),
                 )
                 .await
                 {
@@ -1273,7 +1267,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             });
 
             let finalize_start = Instant::now();
-            let mut chat_response = finalize_successful_turn(
+            // Finalization marks the question failed itself when the commit
+            // does not land, and reports success once it has: a failure after
+            // the answer is saved is not a failed turn.
+            let (mut chat_response, answer_id) = finalize_successful_turn(
                 container,
                 &conv_service,
                 &conv_id,
@@ -1292,16 +1289,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             .await?;
             flow_metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
 
-            // The answer the turn just persisted is the newest assistant message.
-            let answer_id = chat_response
-                .messages
-                .iter()
-                .rev()
-                .find(|message| message.role == "assistant")
-                .map(|message| message.id.clone());
-            if let (Some((response, sources, turn)), Some(message_id)) =
-                (background_verification, answer_id)
-            {
+            if let Some((response, sources, turn)) = background_verification {
+                let message_id = answer_id;
                 let window = window.clone();
                 BackgroundVerification {
                     container: container.clone(),
@@ -1972,6 +1961,7 @@ mod tests {
             page_number: None,
             chunk_excerpts: None,
             citation_id: None,
+            web_snapshot: None,
         }
     }
 

@@ -16,6 +16,77 @@ const BOLD: &str = "F2";
 /// Ten megabytes: every fixture is a few hundred bytes.
 const NO_SIZE_LIMIT: u64 = 10 * 1024 * 1024;
 
+#[tokio::test]
+async fn timed_out_pdf_keeps_its_worker_slot_until_parser_returns() {
+    let workers = Arc::new(Semaphore::new(1));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let task_workers = workers.clone();
+    let task = tokio::spawn(run_pdf_worker(
+        task_workers,
+        Duration::from_millis(100),
+        move |cancel| {
+            let _ = started_tx.send(cancel.clone());
+            // Model a non-preemptible lopdf call. The test always releases it;
+            // the timeout prevents a failed assertion from hanging the suite.
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            ensure_pdf_active(&cancel)
+        },
+    ));
+    let cancel = started_rx.await.unwrap();
+    let error = task.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("timed out"));
+    assert!(cancel.is_cancelled());
+    assert_eq!(workers.available_permits(), 0);
+
+    // A retry times out in the queue rather than creating another parser.
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let retry_ran = ran.clone();
+    assert!(
+        run_pdf_worker(workers.clone(), Duration::from_millis(20), move |_| {
+            retry_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .is_err()
+    );
+    assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+
+    release_tx.send(()).unwrap();
+    let permit = tokio::time::timeout(Duration::from_secs(2), workers.acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(permit);
+    assert_eq!(workers.available_permits(), 1);
+}
+
+#[tokio::test]
+async fn dropping_pdf_request_cancels_work_between_pages() {
+    let workers = Arc::new(Semaphore::new(1));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let task = tokio::spawn(run_pdf_worker(
+        workers.clone(),
+        Duration::from_secs(10),
+        move |cancel| {
+            let _ = started_tx.send(cancel.clone());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            ensure_pdf_active(&cancel)
+        },
+    ));
+    let cancel = started_rx.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(cancel.is_cancelled());
+    assert_eq!(workers.available_permits(), 0);
+    release_tx.send(()).unwrap();
+    let _permit = tokio::time::timeout(Duration::from_secs(2), workers.acquire())
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 struct TestPage {
     operations: Vec<Operation>,
     image: bool,
@@ -464,4 +535,28 @@ async fn real_pdf_keeps_its_structure_and_page_ranges() {
         extracted.needs_ocr,
         headings.join("\n"),
     );
+}
+
+#[tokio::test]
+async fn compressed_pdf_page_cannot_exceed_decoded_stream_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        directory.path(),
+        "compressed.pdf",
+        vec![TestPage {
+            operations: line(
+                72.0,
+                700.0,
+                10.0,
+                REGULAR,
+                &"A".repeat(MAX_PDF_STREAM_BYTES + 1),
+            ),
+            image: false,
+        }],
+    );
+    let mut document = Document::load(&path).unwrap();
+    document.compress();
+    document.save(&path).unwrap();
+    assert!(std::fs::metadata(&path).unwrap().len() < 100_000);
+    assert!(extract_pdf(&path, 50 * 1024 * 1024, None).await.is_err());
 }

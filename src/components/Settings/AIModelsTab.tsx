@@ -23,7 +23,7 @@ import { OllamaMetaRow } from './modelRoles/OllamaMetaRow';
 import { EmptyState } from '../EmptyState/EmptyState';
 
 function AIModelsTabContent() {
-  const { localModels, isLoading } = useModelRoles();
+  const { localModels, isLoading, error, refresh } = useModelRoles();
   const { data: settings } = useSettingsQuery();
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -71,7 +71,15 @@ function AIModelsTabContent() {
         )}
       </div>
 
-      {!isLoading && localModels.length === 0 && (
+      {!isLoading && error ? (
+        <EmptyState
+          title="Couldn't load your models."
+          description={error}
+          action={{ label: 'Try again', onClick: () => void refresh() }}
+        />
+      ) : null}
+
+      {!isLoading && !error && localModels.length === 0 && (
         <EmptyState
           title="No models downloaded."
           action={{

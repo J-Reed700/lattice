@@ -13,6 +13,64 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+const CONTROL_EVENT_DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Control events are snapshots of state already committed to the repository.
+/// They must never hold the queue gate indefinitely when the UI bridge stalls.
+pub(super) async fn send_control_event(
+    event_tx: &mpsc::Sender<DownloadEvent>,
+    shutdown: &tokio_util::sync::CancellationToken,
+    event: DownloadEvent,
+) {
+    let result = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return,
+        result = tokio::time::timeout(CONTROL_EVENT_DELIVERY_TIMEOUT, event_tx.send(event)) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => {
+                    warn!("Timed out sending download state notification; repository state remains authoritative");
+                    return;
+                }
+            }
+        }
+    };
+
+    if let Err(error) = result {
+        warn!(%error, "Download event bridge is closed; repository state remains authoritative");
+    }
+}
+
+/// Terminal notifications drive model-download saga updates, so give them a
+/// bounded chance to reach the bridge without retaining waiting tasks. The
+/// session row is authoritative if delivery times out.
+pub(super) async fn send_terminal_event(
+    event_tx: &mpsc::Sender<DownloadEvent>,
+    shutdown: &tokio_util::sync::CancellationToken,
+    event: DownloadEvent,
+) {
+    let result = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => {
+            warn!("Application shutdown interrupted terminal download notification; refresh from repository state to recover");
+            return;
+        }
+        result = tokio::time::timeout(CONTROL_EVENT_DELIVERY_TIMEOUT, event_tx.send(event)) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => {
+                    warn!("Timed out sending terminal download notification; refresh from repository state to recover");
+                    return;
+                }
+            }
+        }
+    };
+
+    if let Err(error) = result {
+        warn!(%error, "Download event bridge is closed; terminal repository state remains authoritative");
+    }
+}
+
 impl DownloadManagerService {
     pub(super) async fn start_download_task(&self, id: &str) -> Result<(), DownloadError> {
         let session = self
@@ -28,18 +86,6 @@ impl DownloadManagerService {
         let mut session = session;
         session.start()?;
         self.repository.update(&session).await?;
-
-        // Emit Started event IMMEDIATELY after DB update, before spawning task
-        // This ensures UI gets state transition synchronously with no async gap
-        if let Err(e) = self.event_tx.send(DownloadEvent::Started {
-            id: session.id().to_string(),
-        }) {
-            warn!(
-                session_id = %session.id(),
-                error = %e,
-                "Failed to send Started event (no receivers)"
-            );
-        }
 
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<StopReason>(1);
 
@@ -60,48 +106,16 @@ impl DownloadManagerService {
             tokens.get(&session_id).cloned()
         };
 
-        let progress_callback: ProgressCallback = Arc::new({
-            let session_id_for_progress = session_id.clone();
-            let event_tx = event_tx.clone();
-            let repository_for_progress = repository.clone();
-            move |bytes, speed| {
-                let session_id_clone = session_id_for_progress.clone();
-                let repository_clone = repository_for_progress.clone();
-
-                // Column-scoped write: cannot clobber `state`, so a tick that
-                // lands after a terminal transition can no longer revive a
-                // completed or cancelled session as `downloading`. These tasks
-                // are still detached and unordered with respect to each other,
-                // which is fine now — the worst case is that byte counts
-                // briefly go backwards, not that the state machine breaks.
-                tokio::spawn(async move {
-                    if let Err(e) = repository_clone
-                        .update_progress(&session_id_clone, bytes, speed)
-                        .await
-                    {
-                        error!(
-                            session_id = %session_id_clone,
-                            error = %e,
-                            "Failed to update download progress in database"
-                        );
-                    }
-                });
-
-                if let Err(e) = event_tx.send(DownloadEvent::Progress {
-                    id: session_id_for_progress.clone(),
-                    bytes_downloaded: bytes,
-                    bytes_per_second: speed,
-                }) {
-                    warn!(
-                        session_id = %session_id_for_progress,
-                        error = %e,
-                        "Failed to send progress event (no receivers)"
-                    );
-                }
-            }
+        // Latest progress occupies one slot regardless of callback rate or
+        // database latency. Persistence happens in the transfer task itself.
+        let (progress_tx, mut progress_rx) = tokio::sync::watch::channel(None::<(u64, f64)>);
+        let progress_callback: ProgressCallback = Arc::new(move |bytes, speed| {
+            progress_tx.send_replace(Some((bytes, speed)));
         });
-
-        let task_handle = tokio::spawn(async move {
+        let shutdown = self.shutdown.clone();
+        // Register before the worker can finish/remove itself.
+        let mut active = self.active_downloads.write().await;
+        let task_handle = crate::shared::background::spawn(async move {
             info!(session_id = %session_id_for_task, "Download started");
 
             let resume_from =
@@ -152,50 +166,67 @@ impl DownloadManagerService {
             // session kept its slot in `active_downloads` forever. With a
             // concurrency limit of 2, pausing two files wedged the queue for
             // the rest of the process and leaked the auth token with it.
-            let download_result = tokio::select! {
-                result = engine.download(DownloadOptions {
-                    url: url.clone(),
-                    destination: destination.clone(),
-                    resume_from,
-                    progress_callback: Some(progress_callback),
-                    auth_token,
-                }) => Some(result),
-                reason = cancel_rx.recv() => {
-                    let reason = reason.unwrap_or(StopReason::Cancel);
-                    info!(session_id = %session_id_for_task, ?reason, "Download stopped");
-
-                    match reason {
-                        StopReason::Pause => {
-                            // Deliberately no state transition and no file
-                            // removal. `pause_download` already wrote `Paused`;
-                            // touching the session here is what used to turn a
-                            // pause into a cancel. The partial file stays so
-                            // resume can continue from its offset.
-                        }
-                        StopReason::Cancel => {
-                            if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
-                                if let Err(e) = session.cancel() {
-                                    error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as cancelled");
+            let transfer = engine.download(DownloadOptions {
+                url: url.clone(),
+                destination: destination.clone(),
+                resume_from,
+                progress_callback: Some(progress_callback),
+                auth_token,
+            });
+            tokio::pin!(transfer);
+            let mut progress_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+            progress_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let download_result = loop {
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => {
+                        break None;
+                    }
+                    result = &mut transfer => break Some(result),
+                    _ = progress_tick.tick() => {
+                        if progress_rx.has_changed().unwrap_or(false) {
+                            let latest = *progress_rx.borrow_and_update();
+                            if let Some((bytes, speed)) = latest {
+                                if let Err(error) = repository.update_progress(&session_id_for_task, bytes, speed).await {
+                                    error!(%error, "Could not persist download progress");
                                 }
-
-                                if let Err(e) = repository.update(&session).await {
-                                    error!(session_id = %session_id_for_task, error = %e, "Failed to update cancelled session in database");
-                                }
-
-                                if let Err(e) = event_tx.send(DownloadEvent::Cancelled {
-                                    id: session_id_for_task.clone(),
-                                }) {
-                                    warn!(session_id = %session_id_for_task, error = %e, "Failed to send Cancelled event");
-                                }
+                                let _ = event_tx.try_send(DownloadEvent::Progress {
+                                    id: session_id_for_task.clone(), bytes_downloaded: bytes, bytes_per_second: speed,
+                                });
                             }
                         }
                     }
+                    reason = cancel_rx.recv() => {
+                        let reason = reason.unwrap_or(StopReason::Cancel);
+                        info!(session_id = %session_id_for_task, ?reason, "Download stopped");
 
-                    None
+                        // Caller joins this task, then persists pause/cancel with
+                    // the final progress. It cannot race a resumed transfer.
+                    break None;
+                    }
                 }
             };
+            // No progress work can run after the terminal transition. Flush
+            // the last callback even if the transfer finishes between ticks.
+            let latest = *progress_rx.borrow_and_update();
+            if let Some((bytes, speed)) = latest {
+                if let Err(error) = repository
+                    .update_progress(&session_id_for_task, bytes, speed)
+                    .await
+                {
+                    error!(%error, "Could not flush final download progress");
+                }
+            }
 
             let Some(download_result) = download_result else {
+                if shutdown.is_cancelled() {
+                    if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
+                        if session.state().is_active() {
+                            let _ = session.pause();
+                            let _ = repository.update(&session).await;
+                        }
+                    }
+                }
                 // Stopped rather than finished: fall through to the shared
                 // cleanup so the concurrency slot and auth token are released.
                 let mut active = active_downloads.write().await;
@@ -207,6 +238,7 @@ impl DownloadManagerService {
                 return;
             };
 
+            let mut terminal_event = None;
             match download_result {
                 Ok(result) => {
                     info!(
@@ -245,13 +277,17 @@ impl DownloadManagerService {
                                 error!(session_id = %session_id_for_task, error = %e, "Failed to update session in database");
                             }
 
-                            if let Err(e) = event_tx.send(DownloadEvent::Failed {
-                                id: session_id_for_task.clone(),
-                                error: format!("File validation failed: {}", validation_error),
-                            }) {
-                                warn!(session_id = %session_id_for_task, error = %e, "Failed to send Failed event");
-                            }
-
+                            active_downloads.write().await.remove(&session_id_for_task);
+                            auth_tokens.write().await.remove(&session_id_for_task);
+                            send_terminal_event(
+                                &event_tx,
+                                &shutdown,
+                                DownloadEvent::Failed {
+                                    id: session_id_for_task.clone(),
+                                    error: format!("File validation failed: {}", validation_error),
+                                },
+                            )
+                            .await;
                             return;
                         }
 
@@ -278,13 +314,17 @@ impl DownloadManagerService {
                                     error!(session_id = %session_id_for_task, error = %update_err, "Failed to update session in database");
                                 }
 
-                                if let Err(event_err) = event_tx.send(DownloadEvent::Failed {
-                                    id: session_id_for_task.clone(),
-                                    error: format!("Checksum mismatch: {}", e),
-                                }) {
-                                    warn!(session_id = %session_id_for_task, error = %event_err, "Failed to send Failed event");
-                                }
-
+                                active_downloads.write().await.remove(&session_id_for_task);
+                                auth_tokens.write().await.remove(&session_id_for_task);
+                                send_terminal_event(
+                                    &event_tx,
+                                    &shutdown,
+                                    DownloadEvent::Failed {
+                                        id: session_id_for_task.clone(),
+                                        error: format!("Checksum mismatch: {}", e),
+                                    },
+                                )
+                                .await;
                                 return;
                             }
                         }
@@ -298,11 +338,9 @@ impl DownloadManagerService {
                             error!(session_id = %session_id_for_task, error = %e, "Failed to update session in database");
                         }
 
-                        if let Err(e) = event_tx.send(DownloadEvent::Completed {
+                        terminal_event = Some(DownloadEvent::Completed {
                             id: session_id_for_task.clone(),
-                        }) {
-                            warn!(session_id = %session_id_for_task, error = %e, "Failed to send Completed event");
-                        }
+                        });
 
                         info!(session_id = %session_id_for_task, "Download marked as completed");
                     }
@@ -323,12 +361,10 @@ impl DownloadManagerService {
                             error!(session_id = %session_id_for_task, error = %update_err, "Failed to update session in database");
                         }
 
-                        if let Err(event_err) = event_tx.send(DownloadEvent::Failed {
+                        terminal_event = Some(DownloadEvent::Failed {
                             id: session_id_for_task.clone(),
                             error: format!("{}", e),
-                        }) {
-                            warn!(session_id = %session_id_for_task, error = %event_err, "Failed to send Failed event");
-                        }
+                        });
                     }
                 }
             }
@@ -338,17 +374,45 @@ impl DownloadManagerService {
 
             let mut tokens = auth_tokens.write().await;
             tokens.remove(&session_id_for_task);
+            drop(tokens);
+
+            // Publish only after the active slot and auth token are released.
+            // The bridge can now safely promote queued work on this terminal
+            // event without racing the worker's cleanup.
+            if let Some(event) = terminal_event {
+                send_terminal_event(&event_tx, &shutdown, event).await;
+            }
         });
 
-        let mut active = self.active_downloads.write().await;
+        if task_handle.is_none() {
+            // Admission can close after the session was marked Downloading.
+            // The queue caller marks the durable row failed; release its
+            // per-session credential here because no worker will own cleanup.
+            self.auth_tokens.write().await.remove(&session_id);
+            return Err(DownloadError::NetworkError(
+                "Application is shutting down".into(),
+            ));
+        }
         active.insert(
             session_id.clone(),
             ActiveDownload {
                 session,
-                task_handle: Some(task_handle),
+                task_handle,
                 cancel_tx: Some(cancel_tx),
             },
         );
+
+        // Register the live worker before attempting UI notification. A full
+        // event channel must never leave a Downloading row with no owner.
+        if let Err(error) = self.event_tx.try_send(DownloadEvent::Started {
+            id: session_id.clone(),
+        }) {
+            warn!(
+                download_id = %session_id,
+                %error,
+                "Could not queue Started notification; repository state remains authoritative"
+            );
+        }
 
         Ok(())
     }

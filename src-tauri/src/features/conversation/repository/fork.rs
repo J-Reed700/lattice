@@ -174,6 +174,124 @@ impl ConversationRepository {
             total_tokens += row.tokens;
         }
 
+        Self::copy_sources(&mut tx, conversation_id, new_id).await?;
+
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET message_count = ?, total_tokens = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(copied as i64)
+        .bind(total_tokens)
+        .bind(&now)
+        .bind(new_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to set branch counts: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit fork: {}", e)))?;
+
+        Ok((new_id.to_string(), copied))
+    }
+
+    /// Start a new conversation in the same space as `conversation_id` whose
+    /// only message is `summary`, an assistant turn standing in for the old
+    /// thread. Linked documents and web sources come along so the new chat can
+    /// still open what the summary drew on.
+    ///
+    /// Unlike [`Self::fork`] no lineage is recorded: this is not a branch of
+    /// the old thread but a fresh one that remembers it, and the message's
+    /// `metadata` names where it came from.
+    pub async fn create_continuation(
+        &self,
+        conversation_id: &str,
+        new_id: &str,
+        new_title: &str,
+        summary: &str,
+        metadata: &str,
+    ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin continuation: {}", e)))?;
+
+        let now = Utc::now().to_rfc3339();
+        let inserted = sqlx::query(
+            r#"
+            INSERT INTO conversations
+                (id, title, model_name, system_prompt, space_id,
+                 created_at, updated_at, message_count, total_tokens)
+            SELECT ?, ?, model_name, system_prompt, space_id, ?, ?, 0, 0
+            FROM conversations
+            WHERE id = ?
+            "#,
+        )
+        .bind(new_id)
+        .bind(new_title)
+        .bind(&now)
+        .bind(&now)
+        .bind(conversation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to create continuation: {}", e)))?;
+        if inserted.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Conversation {} not found",
+                conversation_id
+            )));
+        }
+
+        // No model produced this turn in this thread, so there is no tokenizer
+        // count to record; four characters a token is close enough for totals.
+        let tokens = (summary.chars().count() / 4) as i64;
+        let sequence = Self::allocate_sequence(&mut tx, new_id).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_messages
+                (id, conversation_id, role, content, tokens, created_at, metadata, status,
+                 sequence, content_digest)
+            VALUES (?, ?, 'assistant', ?, ?, ?, ?, 'completed', ?, ?)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(new_id)
+        .bind(summary)
+        .bind(tokens)
+        .bind(&now)
+        .bind(metadata)
+        .bind(sequence)
+        .bind(compute_digest(summary))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to write the summary: {}", e)))?;
+
+        Self::copy_sources(&mut tx, conversation_id, new_id).await?;
+
+        sqlx::query("UPDATE conversations SET message_count = 1, total_tokens = ? WHERE id = ?")
+            .bind(tokens)
+            .bind(new_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to set continuation counts: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit continuation: {}", e)))?;
+        Ok(())
+    }
+
+    /// Copy a conversation's linked documents and web sources to another, so
+    /// a thread that carries on from it can still open what it drew on.
+    pub(super) async fn copy_sources(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        conversation_id: &str,
+        new_id: &str,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO conversation_documents
@@ -185,7 +303,7 @@ impl ConversationRepository {
         )
         .bind(new_id)
         .bind(conversation_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to copy linked documents: {}", e)))?;
 
@@ -211,7 +329,7 @@ impl ConversationRepository {
             "#,
         )
         .bind(conversation_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read web sources to copy: {}", e)))?;
 
@@ -236,30 +354,11 @@ impl ConversationRepository {
             .bind(&source.content)
             .bind(&source.content_fetched_at)
             .bind(source.content_truncated)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to copy web source: {}", e)))?;
         }
 
-        sqlx::query(
-            r#"
-            UPDATE conversations
-            SET message_count = ?, total_tokens = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(copied as i64)
-        .bind(total_tokens)
-        .bind(&now)
-        .bind(new_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to set branch counts: {}", e)))?;
-
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to commit fork: {}", e)))?;
-
-        Ok((new_id.to_string(), copied))
+        Ok(())
     }
 }

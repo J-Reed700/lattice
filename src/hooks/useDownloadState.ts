@@ -16,6 +16,12 @@ export const useDownloadState = () => {
     queryKey: DOWNLOADS_QUERY_KEY,
     queryFn: fetchDownloadMap,
     staleTime: 15_000,
+    // Events are low-latency hints; reconcile running rows from persisted
+    // state if the bounded native event queue drops a terminal notification.
+    refetchInterval: (query) => Array.from(query.state.data?.values() ?? [])
+      .some((download) => download.state === 'Pending' || download.state === 'Downloading')
+      ? 5_000 : false,
+    refetchIntervalInBackground: false,
   });
   const downloadsMap = useMemo(
     () => downloadsQuery.data ?? new Map<string, DownloadStatus>(),

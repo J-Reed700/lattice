@@ -87,6 +87,7 @@ fn request<'a>(
             .unwrap_or(0),
         recalled: Vec::new(),
         retrieval: RecallDiagnostics::default(),
+        recall_status: None,
         document_evidence: Vec::new(),
         capacity: ModelCapacity::new("test-model", capacity),
     }
@@ -606,6 +607,26 @@ fn recall_diagnostics_distinguish_a_miss_from_an_unavailable_index() {
 }
 
 #[test]
+fn automatic_recall_outcome_reaches_the_model_as_bounded_user_context() {
+    let recent = vec![message(1, SourceRole::User, "Question.")];
+    let mut request = request(None, &recent, 32_768);
+    request.recall_status = Some(
+        "This conversation's older messages could not be searched for this turn, so nothing here rules out something having been said earlier.",
+    );
+
+    let plan = assembler().assemble(&request).expect("plan");
+    let rendered = text_of(&plan);
+    assert!(rendered.iter().any(|(role, content)| {
+        role == "user" && content.contains("older messages could not be searched")
+    }));
+    assert!(!rendered.iter().any(|(role, content)| {
+        role == "system" && content.contains("older messages could not be searched")
+    }));
+    assert!(plan.accounting.recall > 0);
+    assert!(plan.accounting.fits());
+}
+
+#[test]
 fn accounting_reports_every_pool_and_the_method_used_to_measure_it() {
     let source = message(1, SourceRole::User, "Do not deploy.");
     let recent = vec![
@@ -722,4 +743,60 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
         matches!(plan.messages.last(), Some(CompletionInput::Message { content, .. })
         if content == "What is the current budget?")
     );
+}
+
+#[test]
+fn the_plan_names_the_conversations_own_memory_items_it_carries() {
+    let source = message(1, SourceRole::User, "Do not deploy until I approve.");
+    let recent = vec![source.clone()];
+    let memory = snapshot(
+        vec![item(
+            "own-1",
+            MemoryKind::Constraint,
+            1,
+            &source,
+            "Approval required",
+        )],
+        None,
+        1,
+    );
+    let plan = assembler()
+        .assemble(&request(Some(&memory), &recent, 32_768))
+        .expect("plan");
+
+    // Rendered as prose with no id in the text, yet still recorded as used.
+    assert_eq!(plan.used_memory_ids, vec!["own-1".to_string()]);
+}
+
+#[test]
+fn prepared_memory_is_recorded_as_used_only_while_its_text_is_in_the_prompt() {
+    let recent = vec![message(1, SourceRole::User, "hello")];
+    let memory = snapshot(Vec::new(), None, 1);
+    let prepared = crate::application::ports::conversation_memory::PreparedMemory {
+        revisions: None,
+        mandatory: vec![r#"{"memory_id":"shared-1","kind":"constraint"}"#.into()],
+        optional: vec![r#"{"memory_id":"optional-1","kind":"fact"}"#.into()],
+    };
+    let plan = assembler()
+        .assemble_with_memory(&request(Some(&memory), &recent, 32_768), Some(&prepared))
+        .expect("plan");
+    assert_eq!(
+        plan.used_memory_ids,
+        vec!["shared-1".to_string(), "optional-1".to_string()]
+    );
+
+    // Optional material too large for its pool is not in the prompt, so it
+    // is not memory the answer was given.
+    let big = format!(
+        r#"{{"memory_id":"optional-2","evidence":"{}"}}"#,
+        "word ".repeat(4_000)
+    );
+    let prepared = crate::application::ports::conversation_memory::PreparedMemory {
+        optional: vec![big],
+        ..prepared
+    };
+    let plan = assembler()
+        .assemble_with_memory(&request(Some(&memory), &recent, 8_192), Some(&prepared))
+        .expect("plan");
+    assert_eq!(plan.used_memory_ids, vec!["shared-1".to_string()]);
 }

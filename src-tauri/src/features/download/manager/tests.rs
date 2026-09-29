@@ -9,6 +9,7 @@ use tokio::time::Duration;
 
 mod concurrency;
 mod failure_modes;
+mod lifecycle_events;
 mod resume_offset;
 mod session_ops;
 mod transfer;

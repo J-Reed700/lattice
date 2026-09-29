@@ -3,7 +3,6 @@ use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
 use crate::infrastructure::event_bus::EventBus;
 use crate::shared::utils::supervised_task::supervise_cancellable;
-use tokio_util::sync::CancellationToken;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
 use std::path::PathBuf;
@@ -188,6 +187,10 @@ pub fn initialize_app(app: &mut tauri::App) {
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
 async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), StartupFailure> {
+    let background = crate::shared::background::BackgroundTasks::install();
+    let shutdown_token = background.token();
+    app_handle.manage(background);
+    app_handle.manage(shutdown_token.clone());
     let app_dir = super::setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
 
     crate::infrastructure::crash::set_crashes_directory(app_dir.clone());
@@ -204,6 +207,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let container = async move {
         // Sequential initialization with clear error propagation
         let conn = initialize_database_layer(db_path).await?;
+        crate::infrastructure::audit::sinks::sqlite::configure_sqlite_audit_sink(
+            &crate::infrastructure::audit::get_audit_logger(),
+            conn.pool().clone(),
+        )
+        .await
+        .map_err(|error| format!("Failed to initialize local audit persistence: {error}"))?;
         let security_context = initialize_security_layer();
 
         // During DDD migration, we run BOTH containers:
@@ -298,6 +307,27 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     .await
     .map_err(StartupFailure::initialization)?;
 
+    // Age retention is enforced at startup and daily while the app is open;
+    // the SQLite insert trigger independently enforces the hard row cap.
+    let audit_pool = container.db_pool().clone();
+    let audit_shutdown = shutdown_token.clone();
+    crate::shared::background::spawn(async move {
+        let mut prune_tick = tokio::time::interval_at(
+            tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 60 * 60),
+            std::time::Duration::from_secs(24 * 60 * 60),
+        );
+        loop {
+            tokio::select! {
+                _ = audit_shutdown.cancelled() => break,
+                _ = prune_tick.tick() => {
+                    if let Err(error) = crate::infrastructure::audit::sinks::sqlite::SqliteAuditSink::prune_expired_from_pool(&audit_pool).await {
+                        tracing::warn!(%error, "Failed to prune expired local audit events");
+                    }
+                }
+            }
+        }
+    });
+
     if let Err(e) = container
         .system
         .startup_auto_backup_use_case()
@@ -336,7 +366,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     );
 
     let model_dir_for_cleanup = model_dir.clone();
-    tokio::spawn(async move {
+    crate::shared::background::spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::{
             reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
         };
@@ -378,10 +408,26 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         }
     });
 
+    // A question the last run quit under would show as in flight for good;
+    // fail it so it can be retried.
+    let turns_pool = container.db_pool().clone();
+    crate::shared::background::spawn(async move {
+        use crate::infrastructure::services::startup_reconciliation::reconcile_stuck_turns;
+        match reconcile_stuck_turns(&turns_pool).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "Marked interrupted conversation turns as failed");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, "Failed to reconcile interrupted conversation turns");
+            }
+        }
+    });
+
     // A grounding check the last run quit under would show "Checking…" for
     // good; mark it not checked before the first conversation loads.
     let verification_pool = container.db_pool().clone();
-    tokio::spawn(async move {
+    crate::shared::background::spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::reconcile_interrupted_verifications;
         match reconcile_interrupted_verifications(&verification_pool).await {
             Ok(count) if count > 0 => {
@@ -399,7 +445,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // the files. Without this they stay on disk forever and get packed into
     // every backup.
     let library_gc = container.library_gc();
-    tokio::spawn(async move {
+    crate::shared::background::spawn(async move {
         match library_gc.sweep().await {
             Ok(report) => tracing::info!(
                 removed = report.removed,
@@ -420,7 +466,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // on the next startup.
     let orphan_scope = container.document_scope();
     let orphan_delete = container.delete_document_use_case();
-    tokio::spawn(async move {
+    crate::shared::background::spawn(async move {
         let orphans = match orphan_scope.orphaned_conversation_owned_documents().await {
             Ok(ids) => ids,
             Err(error) => {
@@ -452,8 +498,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // preempt long-running event loops that would otherwise wait
     // passively for the bus to close. Stored in Tauri state so command
     // handlers / shutdown hooks can fire it.
-    let shutdown_token = CancellationToken::new();
-    app_handle.manage(shutdown_token.clone());
 
     // DownloadSaga exists but was never subscribed to events, so completions were missed.
 
@@ -527,6 +571,23 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         bridge_handle,
     ]));
     tracing::info!("Download event bridge started with EventBus integration");
+
+    // Queue promotion must not run inside the event consumer: a full bounded
+    // event channel would otherwise deadlock the consumer on its own sends.
+    let queue_manager = download_manager.clone();
+    let queue_cancel = shutdown_token.clone();
+    crate::shared::background::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                _ = queue_cancel.cancelled() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+            }
+            if let Err(error) = queue_manager.process_pending_queue().await {
+                tracing::warn!(%error, "Download queue promotion failed");
+            }
+        }
+    });
 
     let download_state =
         crate::features::download::commands::DownloadCommandState::new(download_manager);

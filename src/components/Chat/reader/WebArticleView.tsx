@@ -1,10 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
-import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
@@ -21,12 +19,11 @@ import {
 /**
  * A cited web page, read.
  *
- * The search engine's one-line snippet is not a source — it is an
- * advertisement for one — so the reader shows the article the turn actually
- * read, out of the page cache, and marks the passages whose wording the
- * answer's cited sentences share.
+ * The reader shows the immutable page text saved with the citation and marks
+ * passages whose wording the answer's cited sentences share. Older citations
+ * without a snapshot can still show their saved source text, clearly labelled.
  *
- * Those marks are a wording match and are described as one. The page cache
+ * Those marks are a wording match and are described as one. The snapshot
  * records what was read, not what the model leaned on, and a highlight that
  * claimed otherwise would be inventing a provenance nobody recorded.
  */
@@ -38,6 +35,8 @@ export interface WebArticleViewProps {
   source: SourceWithMetadata;
   /** The message whose citations the reader is showing, when it came from one. */
   ownerKey?: string;
+  /** Citation-bearing journal text, independent of the loaded chat history. */
+  citationContent?: string;
   /**
    * Which of the answer's marks for this source was clicked. The answer cites a
    * page from several sentences; the reader opens on the passage for this one.
@@ -89,18 +88,21 @@ function indexOfSentence(sentences: readonly string[], target: string | undefine
 function useCitedSentences(
   ownerKey: string | undefined,
   citationNumber: number | undefined,
-  occurrence: number | null
+  occurrence: number | null,
+  citationContent: string | undefined,
 ): CitedSentences {
   const messageVerification = useConversationsStore((state) => state.messageVerification);
   const conversations = useConversationsStore((state) => state.conversations);
 
   return useMemo(() => {
-    if (!ownerKey || !citationNumber) return EMPTY_SENTENCES;
+    if (!citationNumber) return EMPTY_SENTENCES;
 
-    let content: string | undefined;
-    for (const conversation of conversations) {
-      content = conversation.messages?.find((candidate) => candidate.id === ownerKey)?.content;
-      if (content !== undefined) break;
+    let content = citationContent;
+    if (content === undefined && ownerKey) {
+      for (const conversation of conversations) {
+        content = conversation.messages?.find((candidate) => candidate.id === ownerKey)?.content;
+        if (content !== undefined) break;
+      }
     }
     // The chips are drawn from the answer's text, so that is where a clicked
     // one is looked up, whichever record then supplies the sentences.
@@ -109,7 +111,7 @@ function useCitedSentences(
         ? undefined
         : sentencesByOccurrence(content, citationNumber)[occurrence];
 
-    const verdicts = (messageVerification.get(ownerKey)?.claimVerdicts ?? []).filter((verdict) =>
+    const verdicts = (ownerKey && citationContent === undefined ? messageVerification.get(ownerKey)?.claimVerdicts ?? [] : []).filter((verdict) =>
       verdict.citationIds.includes(citationNumber)
     );
     if (verdicts.length > 0) {
@@ -126,7 +128,7 @@ function useCitedSentences(
     if (content === undefined) return EMPTY_SENTENCES;
     const sentences = sentencesCiting(content, citationNumber);
     return { sentences, quotes: [], focus: indexOfSentence(sentences, clicked) };
-  }, [ownerKey, citationNumber, occurrence, messageVerification, conversations]);
+  }, [ownerKey, citationNumber, occurrence, citationContent, messageVerification, conversations]);
 }
 
 interface Span {
@@ -202,28 +204,16 @@ export function WebArticleView({
   url,
   source,
   ownerKey,
+  citationContent,
   occurrence = null,
   actions,
   onActivePassageChange,
 }: WebArticleViewProps) {
-  const {
-    data: page,
-    error,
-    isLoading,
-  } = useQuery({
-    queryKey: ['web-page', url],
-    enabled: Boolean(url),
-    queryFn: async () => {
-      const result = await VaultAPI.readWebPage(url!);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
-
-  const pageText = page?.text ?? '';
-  const { sentences, quotes, focus } = useCitedSentences(ownerKey, source.citationId, occurrence);
+  const snapshot = source.webSnapshot;
+  const hasSnapshotText = Boolean(snapshot?.text.trim());
+  const savedExcerpt = source.excerpt?.trim() || source.content || '';
+  const pageText = hasSnapshotText && snapshot ? snapshot.text : savedExcerpt;
+  const { sentences, quotes, focus } = useCitedSentences(ownerKey, source.citationId, occurrence, citationContent);
 
   const passages = useMemo<SourcedPassage[]>(() => {
     if (!pageText) return [];
@@ -289,11 +279,12 @@ export function WebArticleView({
     else markRefs.current.delete(index);
   }, []);
 
-  const snippet = source.excerpt || source.content || '';
-  const title = page?.title?.trim() || source.fileName;
+  const title = snapshot?.title?.trim() || source.fileName;
   const meta = [
-    page ? `Read ${formatRelativeTime(page.fetchedAt).toLowerCase()}` : null,
-    page ? `${page.wordCount.toLocaleString()} words` : null,
+    snapshot
+      ? `Saved snapshot${snapshot.fetchedAt ? ` · captured ${formatRelativeTime(snapshot.fetchedAt).toLowerCase()}` : ' · capture date unavailable'}`
+      : 'Saved source text · full page snapshot unavailable',
+    snapshot ? `${pageText.trim() ? pageText.trim().split(/\s+/).length.toLocaleString() : '0'} words` : null,
   ].filter((entry): entry is string => Boolean(entry));
 
   const renderParagraph = (paragraph: Span): ReactNode => {
@@ -337,38 +328,21 @@ export function WebArticleView({
     return nodes;
   };
 
-  const renderBody = (): ReactNode => {
-    if (isLoading) {
-      return (
-        <div className="flex h-40 items-center justify-center gap-3 text-sm text-[hsl(var(--text-muted))]">
-          <Loader2 size={16} className="animate-spin" />
-          Reading the page…
-        </div>
-      );
-    }
-
-    if (error || !page) {
-      return (
-        <div className="py-6">
-          <p className="text-sm text-[hsl(var(--warning-fg))]">
-            {url
-              ? `Couldn't read this page — ${error instanceof Error ? error.message : 'the page cache has no copy of it.'}`
-              : 'This source carries no address to read.'}
-          </p>
-          <p className="mt-4 font-serif text-[15px] leading-7 text-[hsl(var(--text-primary))]">
-            {snippet || 'No preview available.'}
-          </p>
-          {snippet && (
-            <p className="mt-2 text-xs text-[hsl(var(--text-muted))]">
-              The search result's summary, not the article.
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    return (
+  const renderBody = (): ReactNode => (
       <div className="mx-auto max-w-[68ch] py-5">
+        {!hasSnapshotText && (
+          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+            {snapshot
+              ? 'The saved page snapshot contains no text; showing the saved source excerpt instead.'
+              : 'This is the saved source excerpt. A full page snapshot was not saved with this citation.'}
+          </p>
+        )}
+        {snapshot?.truncated && (
+          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+            This saved snapshot was truncated when captured; it may not contain the full page.
+          </p>
+        )}
+        {!pageText && <p className="text-sm text-[hsl(var(--text-muted))]">No saved source text is available.</p>}
         {paragraphs.map((paragraph) => (
           <p
             key={paragraph.start}
@@ -378,13 +352,12 @@ export function WebArticleView({
           </p>
         ))}
       </div>
-    );
-  };
+  );
 
-  const showMatchNotice = Boolean(page) && sentences.length > 0;
+  const showMatchNotice = Boolean(pageText) && sentences.length > 0;
   // A verdict's sentence is raw markdown; a reader is shown words.
   const focusedSentence =
-    page && focus !== null
+    pageText && focus !== null
       ? stripCitationMarkers(sentences[focus] ?? '')
           .replace(/[*_`#>|]+/g, '')
           .replace(/\s+/g, ' ')

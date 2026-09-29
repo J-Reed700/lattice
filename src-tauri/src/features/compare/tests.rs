@@ -1,4 +1,5 @@
-//! Parser and citation-mapping tests. All pure — no database, no LLM.
+//! Parser and citation-mapping tests, pure, plus one retrieval test over an
+//! in-memory container. No LLM.
 
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -182,4 +183,44 @@ fn parses_nothing_from_prose_with_multibyte_characters() {
     let cells = assemble_cells(&parsed, &columns(), &sample_chunks());
     assert_eq!(cells.len(), 2);
     assert!(cells.iter().all(|cell| cell.value.is_none()));
+}
+
+/// With no embedding model the scoped search errors: the row still gets the
+/// document's opening chunks, capped by the query, and says it is degraded.
+#[tokio::test]
+async fn a_search_failure_falls_back_to_opening_chunks_and_marks_the_row_degraded() {
+    let container = crate::tests::common::setup_test_container()
+        .await
+        .expect("container");
+    let pool = container.db_pool().clone();
+    sqlx::query(
+        "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum)
+         VALUES ('doc', '/lib/doc.md', 'doc.md', 1, '2026-01-01T00:00:00Z', 'sum')",
+    )
+    .execute(&pool)
+    .await
+    .expect("document");
+    for index in 0..(super::use_case::MAX_CHUNKS_PER_DOCUMENT + 5) {
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES (?, 'doc', ?, ?)",
+        )
+        .bind(format!("c{index}"))
+        .bind(format!("passage {index}"))
+        .bind(index as i64)
+        .execute(&pool)
+        .await
+        .expect("chunk");
+    }
+
+    let retrieved = super::retrieval::retrieve_for_document(&container, "doc", &columns())
+        .await
+        .expect("retrieve");
+
+    assert_eq!(
+        retrieved.degraded.as_deref(),
+        Some(super::retrieval::DEGRADED_NOTE)
+    );
+    assert!(!retrieved.chunks.is_empty());
+    assert!(retrieved.chunks.len() <= super::use_case::MAX_CHUNKS_PER_DOCUMENT);
+    assert_eq!(retrieved.chunks[0].chunk_id, "c0");
 }

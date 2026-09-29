@@ -21,6 +21,15 @@ use crate::domain::conversation_memory::{
 
 use super::segment::SourceSegment;
 
+/// The largest `maxLength` / `maxItems` a schema handed to llama.cpp may carry.
+///
+/// llama.cpp turns a JSON schema into a GBNF grammar, and its parser throws
+/// on any repetition bound above `MAX_REPETITION_THRESHOLD` (2000 in
+/// `llama-grammar.cpp`). The server logs the throw and then samples with no
+/// grammar at all, so one over-large bound silently discards
+/// `additionalProperties: false` and every enum in the schema.
+pub const GRAMMAR_REPETITION_LIMIT: usize = 2000;
+
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
 pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-09-20.12";
 /// Identity of the semantic-review contract.
@@ -59,7 +68,13 @@ pub fn patch_schema() -> serde_json::Value {
                 "additionalProperties": false,
                 "properties": {
                     "message_id": { "type": "string" },
-                    "quote": { "type": "string", "maxLength": MAX_QUOTE_BYTES },
+                    // No `maxLength` here: llama.cpp compiles the schema to a
+                    // grammar and refuses any repetition bound above
+                    // `GRAMMAR_REPETITION_LIMIT`, dropping the whole grammar
+                    // silently, so a bound of `MAX_QUOTE_BYTES` (2048) cost
+                    // every other constraint too. The byte cap is enforced by
+                    // the parser after the round trip.
+                    "quote": { "type": "string" },
                     "occurrence": { "type": ["integer", "null"], "minimum": 0 },
                     "purpose": { "type": "string", "enum": purposes }
                 },

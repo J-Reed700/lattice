@@ -503,17 +503,79 @@ fn streamed_tool_arguments_reasoning_and_usage_survive_fragmentation() {
 }
 
 #[test]
-fn incomplete_or_invalid_streamed_tool_calls_fail() {
-    for arguments in ["{", "not json"] {
+fn a_malformed_streamed_tool_call_comes_back_as_an_invalid_call_not_an_error() {
+    for (arguments, finish) in [
+        ("{", "tool_calls"),
+        ("not json", "tool_calls"),
+        ("{\"q\":\"ru", "length"),
+    ] {
         let mut decoder = streaming::Decoder::for_completion();
-        decoder.push(stream_reply(json!({"tool_calls":[{"id":"call", "function":{"name":"search", "arguments":arguments}}]}), "tool_calls").as_bytes()).unwrap();
-        assert!(decoder.into_response().is_err());
+        decoder.push(stream_reply(json!({"content":"Let me look.","tool_calls":[{"id":"call", "function":{"name":"search", "arguments":arguments}}]}), finish).as_bytes()).unwrap();
+        let response = decoder.into_response().unwrap();
+        assert_eq!(response.text, "Let me look.");
+        let [CompletionInput::ToolCall {
+            id,
+            name,
+            arguments: marker,
+        }] = response.tool_calls.as_slice()
+        else {
+            panic!("expected one call, got {:?}", response.tool_calls);
+        };
+        assert_eq!((id.as_str(), name.as_str()), ("call", "search"));
+        assert_eq!(marker["raw"], arguments);
+        let problem = invalid_tool_call_problem(marker).unwrap();
+        assert!(problem.contains(arguments), "{problem}");
+        if finish == "length" {
+            assert!(problem.contains("cut off"), "{problem}");
+        }
+        // The replayed assistant message carries arguments the template can parse.
+        let replayed = response.provider_output["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .unwrap();
+        assert!(serde_json::from_str::<Value>(replayed).is_ok());
     }
     let mut decoder = streaming::Decoder::for_completion();
     decoder
         .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
         .unwrap();
     assert!(decoder.into_response().is_err());
+}
+
+#[test]
+fn a_call_with_no_id_or_no_name_is_given_one_and_kept() {
+    let response = parse_completion(json!({"choices":[{"message":{"tool_calls":[
+        {"type":"function","function":{"name":"search","arguments":"{\"q\":\"x\"}"}},
+        {"id":"b","type":"function","function":{"arguments":"{}"}}
+    ]},"finish_reason":"tool_calls"}]}))
+    .unwrap();
+    let ids: Vec<_> = response
+        .tool_calls
+        .iter()
+        .map(|call| match call {
+            CompletionInput::ToolCall { id, arguments, .. } => {
+                (id.clone(), invalid_tool_call_problem(arguments).is_some())
+            }
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    // The id-less call is valid and runnable; the nameless one is reported.
+    assert_eq!(
+        ids,
+        [
+            ("call_invalid_0".to_string(), false),
+            ("b".to_string(), true)
+        ]
+    );
+    assert_eq!(
+        response.provider_output["tool_calls"][0]["id"],
+        "call_invalid_0"
+    );
+}
+
+#[test]
+fn ordinary_arguments_are_never_mistaken_for_the_invalid_marker() {
+    assert!(invalid_tool_call_problem(&json!({"invalid": true, "query": "x"})).is_none());
+    assert!(invalid_tool_call_problem(&json!({"q": "x"})).is_none());
 }
 
 async fn read_request_body(socket: &mut tokio::net::TcpStream) -> Value {
@@ -838,19 +900,27 @@ async fn empty_response_exhaustion_returns_error_after_five_attempts() {
 
 #[tokio::test]
 async fn authentication_and_invalid_tools_are_not_retried() {
-    for response in [
-        ResponseTemplate::new(401),
-        sse_response(
-            json!({"tool_calls":[{"id":"x","type":"function","function":{"name":"search","arguments":"[1]"}}]}),
-        ),
-    ] {
-        let server = sequence_server(vec![response]).await;
-        let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
-        assert!(client
-            .complete(&CompletionRequest::default())
-            .await
-            .is_err());
-    }
+    let server = sequence_server(vec![ResponseTemplate::new(401)]).await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    assert!(client
+        .complete(&CompletionRequest::default())
+        .await
+        .is_err());
+
+    // A malformed call is the model's to fix next round, not a request to
+    // repeat: it comes back once, marked, with no retry.
+    let server = sequence_server(vec![sse_response(
+        json!({"tool_calls":[{"id":"x","type":"function","function":{"name":"search","arguments":"[1]"}}]}),
+    )])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let response = client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert!(matches!(&response.tool_calls[..],
+        [CompletionInput::ToolCall { arguments, .. }] if invalid_tool_call_problem(arguments).is_some()));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -917,12 +987,21 @@ async fn callback_failure_does_not_retry() {
 }
 
 #[test]
-fn done_marker_without_finish_reason_and_duplicate_tool_ids_are_rejected() {
+fn done_marker_without_finish_reason_is_rejected_and_duplicate_tool_ids_are_split() {
     let mut decoder = streaming::Decoder::for_completion();
     decoder.push(b"data: [DONE]\n\n").unwrap();
     assert!(decoder.into_response().is_err());
+    // Two calls sharing an id would have their results confused; the second
+    // is given its own, and the replayed message says so too.
     let call = json!({"id":"same","type":"function","function":{"name":"search","arguments":"{}"}});
-    assert!(parse_completion(json!({"choices":[{"message":{"tool_calls":[call.clone(), call]},"finish_reason":"tool_calls"}]})).is_err());
+    let response = parse_completion(json!({"choices":[{"message":{"tool_calls":[call.clone(), call]},"finish_reason":"tool_calls"}]})).unwrap();
+    let ids: Vec<_> = response.provider_output["tool_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| call["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, ["same", "call_invalid_1"]);
 }
 
 #[tokio::test]
@@ -990,4 +1069,36 @@ fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
     // Not asked for: nothing reported.
     let parsed = parse_completion(reply()).unwrap();
     assert!(parsed.first_token_logprobs.is_none());
+}
+
+#[test]
+fn calls_made_in_one_round_replay_as_one_assistant_message() {
+    let call = |id: &str| CompletionInput::ToolCall {
+        id: id.into(),
+        name: "search".into(),
+        arguments: json!({"q": id}),
+    };
+    let result = |id: &str| CompletionInput::ToolResult {
+        id: id.into(),
+        output: "found".into(),
+    };
+    let messages = chat_messages(&[
+        CompletionInput::Message {
+            role: "user".into(),
+            content: "q".into(),
+        },
+        call("a"),
+        call("b"),
+        result("a"),
+        result("b"),
+        call("c"),
+    ])
+    .unwrap();
+    let roles: Vec<_> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool", "assistant"]);
+    assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(messages[4]["tool_calls"].as_array().unwrap().len(), 1);
 }

@@ -301,6 +301,15 @@ pub trait LLMPort: Send + Sync {
         "unknown"
     }
 
+    /// Whether the process behind this port is still there to answer. Cheap:
+    /// no network round trip. The role caches drop a port that says no, so a
+    /// local server that crashed is started again on the next request instead
+    /// of failing every turn until restart. Remote and in-process ports have
+    /// nothing of their own to die and stay `true`.
+    fn is_alive(&self) -> bool {
+        true
+    }
+
     /// Generate a streaming response with optional tool definitions.
     ///
     /// When tools are provided, the stream may yield `StreamChunk::ToolCalls`

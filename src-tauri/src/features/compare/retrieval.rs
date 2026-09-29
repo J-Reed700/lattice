@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
 use crate::interfaces::di::Container;
@@ -23,6 +23,20 @@ pub struct RetrievedChunk {
     pub section: Option<String>,
     pub index: usize,
 }
+
+/// What one document contributes to a compare row.
+#[derive(Debug, Clone, Default)]
+pub struct DocumentChunks {
+    pub chunks: Vec<RetrievedChunk>,
+    /// Set when semantic search failed and the row answers from the
+    /// document's opening passages instead: the values may not come from the
+    /// parts of the document the columns ask about.
+    pub degraded: Option<String>,
+}
+
+/// Shown on a row whose chunks came from the fallback after a search error.
+pub(super) const DEGRADED_NOTE: &str =
+    "Search failed for this document, so these values come from its opening passages.";
 
 /// Char-safe truncation with a trailing ellipsis.
 pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -43,13 +57,14 @@ pub async fn retrieve_for_document(
     container: &Container,
     document_id: &str,
     columns: &[String],
-) -> Result<Vec<RetrievedChunk>> {
+) -> Result<DocumentChunks> {
     let mut scope: HashSet<String> = HashSet::new();
     scope.insert(document_id.to_string());
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut chunks: Vec<RetrievedChunk> = Vec::new();
 
+    let mut search_failed = false;
     let search = container.semantic_search_use_case();
     for column in columns {
         let request = SearchRequestDto {
@@ -73,7 +88,8 @@ pub async fn retrieve_for_document(
                 }
             }
             Err(error) => {
-                debug!(
+                search_failed = true;
+                warn!(
                     document_id,
                     column = column.as_str(),
                     %error,
@@ -86,14 +102,25 @@ pub async fn retrieve_for_document(
     // Fallback: no embeddings, or nothing cleared the threshold. A document's
     // opening chunks are the best no-embedding guess, and this keeps compare
     // usable on a fresh install.
+    let mut degraded = None;
     if chunks.is_empty() {
-        debug!(document_id, "compare: falling back to the chunk repository");
-        let mut stored = container
+        if search_failed {
+            warn!(
+                document_id,
+                "compare: search failed; answering from the opening chunks"
+            );
+            degraded = Some(DEGRADED_NOTE.to_string());
+        } else {
+            debug!(
+                document_id,
+                "compare: nothing cleared the threshold; using the opening chunks"
+            );
+        }
+        let stored = container
             .chunk_repository()
-            .find_by_document(document_id)
+            .find_first_by_document(document_id, MAX_CHUNKS_PER_DOCUMENT)
             .await?;
-        stored.sort_by_key(|chunk| chunk.index());
-        for chunk in stored.into_iter().take(MAX_CHUNKS_PER_DOCUMENT) {
+        for chunk in stored {
             chunks.push(RetrievedChunk {
                 chunk_id: chunk.id().to_string(),
                 content: chunk.content().to_string(),
@@ -116,5 +143,5 @@ pub async fn retrieve_for_document(
         chunks.pop();
     }
 
-    Ok(chunks)
+    Ok(DocumentChunks { chunks, degraded })
 }

@@ -97,5 +97,5 @@ pub trait DownloadManager: Send + Sync {
     /// Process pending queue items if concurrency slots are available.
     async fn process_pending_queue(&self) -> Result<(), DownloadError>;
 
-    fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>>;
+    fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>;
 }

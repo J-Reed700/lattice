@@ -8,10 +8,6 @@ use tokio_util::sync::CancellationToken;
 // Extended timeouts to handle SQLite busy conditions
 const DB_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
-/// A large HNSW graph takes a moment to write. Overrunning this only costs a
-/// rebuild on the next launch, so it stays well inside the total budget.
-const INDEX_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
-
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tracing::info!("Exit requested, starting graceful shutdown");
 
@@ -37,6 +33,15 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
         let shutdown_future = async {
             let mut cleanup_results = Vec::new();
 
+            if let Some(tasks) =
+                app_handle.try_state::<std::sync::Arc<crate::shared::background::BackgroundTasks>>()
+            {
+                tasks.close();
+                // Critical writes finish or remain durably queued. The outer
+                // process deadline handles a stuck worker without closing its DB.
+                tasks.wait().await;
+            }
+
             if let Some(cancel) = app_handle.try_state::<CancellationToken>() {
                 cancel.cancel();
                 if let Some(workers) = app_handle.try_state::<BackgroundWorkers>() {
@@ -50,18 +55,12 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
                 // launch can trust it. Without this the index is still
                 // correct — the next launch just rebuilds it from SQLite.
                 if let Some(persistence) = container.search.index_persistence() {
-                    match tokio::time::timeout(INDEX_FLUSH_TIMEOUT, persistence.flush_if_dirty())
-                        .await
-                    {
-                        Ok(Ok(true)) => tracing::info!("Vector index flushed before shutdown"),
-                        Ok(Ok(false)) => {}
-                        Ok(Err(error)) => {
+                    match persistence.flush_if_dirty().await {
+                        Ok(true) => tracing::info!("Vector index flushed before shutdown"),
+                        Ok(false) => {}
+                        Err(error) => {
                             tracing::warn!(%error, "Could not flush the vector index; it will be rebuilt on next launch")
                         }
-                        Err(_) => tracing::warn!(
-                            timeout_secs = INDEX_FLUSH_TIMEOUT.as_secs(),
-                            "Vector index flush timed out; it will be rebuilt on next launch"
-                        ),
                     }
                 }
 

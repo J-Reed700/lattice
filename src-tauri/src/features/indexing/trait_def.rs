@@ -83,6 +83,14 @@ pub trait IndexStorageTrait: Send + Sync {
         )>,
     ) -> crate::features::indexing::engine::error::Result<Vec<String>>;
 
+    /// Chunk ids of a stored document, in chunk order. Importers that commit
+    /// through this storage need them to publish the chunks to the live
+    /// vector index, because the ids are minted inside the commit.
+    async fn chunk_ids_in_order(
+        &self,
+        document_id: &str,
+    ) -> crate::shared::error::Result<Vec<String>>;
+
     /// Store document with contextualized chunks.
     async fn store_document_with_context_for_model(
         &self,

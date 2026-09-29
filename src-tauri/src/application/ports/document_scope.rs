@@ -30,6 +30,10 @@ pub trait DocumentScopePort: Send + Sync {
         conversation_id: Option<&str>,
     ) -> Result<()>;
 
+    /// The conversation that owns this document, or `None` when it is filed in
+    /// the library (or does not exist).
+    async fn conversation_owner(&self, document_id: &str) -> Result<Option<String>>;
+
     /// The documents this conversation owns, in insertion order.
     async fn documents_owned_by_conversation(&self, conversation_id: &str) -> Result<Vec<String>>;
 

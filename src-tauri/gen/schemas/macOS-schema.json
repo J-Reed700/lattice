@@ -807,6 +807,12 @@
           "markdownDescription": "Enables the compact_conversation command without any pre-configured scope."
         },
         {
+          "description": "Enables the continue_in_new_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-continue-in-new-conversation",
+          "markdownDescription": "Enables the continue_in_new_conversation command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-create-conversation",
@@ -1105,6 +1111,12 @@
           "type": "string",
           "const": "conversation:deny-compact-conversation",
           "markdownDescription": "Denies the compact_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the continue_in_new_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-continue-in-new-conversation",
+          "markdownDescription": "Denies the continue_in_new_conversation command without any pre-configured scope."
         },
         {
           "description": "Denies the create_conversation command without any pre-configured scope.",

@@ -84,7 +84,7 @@ export function useSynthesizeConversationMutation() {
         entryCount: result.entryCount,
         synthesis: result.synthesis,
         citations: result.citations,
-      })));
+      }), result.sources ?? [], result.conversationIds));
     },
     onSuccess: () => client.invalidateQueries({ queryKey: ['workspace-notes'] }),
   });

@@ -28,9 +28,7 @@
 use std::time::Duration;
 
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
 use tokio::sync::OnceCell;
-use tokio::time::timeout;
 
 use super::gpu::{map_vendor_from_name, GPUVendor};
 
@@ -182,30 +180,20 @@ pub fn cached_backend_devices() -> Option<&'static [BackendDevice]> {
 }
 
 async fn probe(app: &AppHandle) -> Option<Vec<BackendDevice>> {
-    let command = app
-        .shell()
-        .sidecar(super::super::sidecar_manager::SIDECAR_BIN)
-        .map_err(|err| tracing::debug!("device probe: sidecar unavailable: {err}"))
-        .ok()?
-        .arg("--list-devices");
-
-    let output = match timeout(PROBE_TIMEOUT, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(err)) => {
-            tracing::debug!("device probe: could not run --list-devices: {err}");
-            return None;
-        }
-        Err(_) => {
-            tracing::debug!("device probe: --list-devices timed out");
-            return None;
-        }
-    };
+    let (stdout, stderr) = super::super::sidecar_manager::SpawnedChild::run_bounded_probe(
+        app,
+        super::super::sidecar_manager::SidecarBinary::Primary,
+        "--list-devices",
+        "probe://llama-server/list-devices",
+        PROBE_TIMEOUT,
+    )
+    .await?;
 
     // ggml writes its banner to stderr and the device list to stdout, but which
     // stream carries what has moved between builds, so read both.
-    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut text = String::from_utf8_lossy(&stdout).into_owned();
     text.push('\n');
-    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text.push_str(&String::from_utf8_lossy(&stderr));
 
     let devices = parse_list_devices(&text);
     let accelerators: Vec<&BackendDevice> = devices.iter().filter(|d| d.is_accelerator()).collect();

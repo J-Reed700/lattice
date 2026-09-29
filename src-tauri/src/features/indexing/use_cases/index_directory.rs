@@ -29,7 +29,7 @@
 //! # }
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::features::indexing::dto::{
@@ -37,7 +37,7 @@ use crate::features::indexing::dto::{
 };
 use crate::features::indexing::engine::IndexingState;
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 
 /// Index directory use case.
 ///
@@ -98,12 +98,15 @@ impl IndexDirectoryUseCase {
         self.indexing_state.reset();
         self.indexing_state.start_scanning();
 
-        // 1. Discover files
-        let files = self.discover_files(
-            &directory_path,
-            request.recursive,
-            request.include_extensions.as_ref(),
-        )?;
+        // 1. Discover files. A big tree is a lot of blocking stat calls; keep
+        // them off the async workers that chat and search share.
+        let recursive = request.recursive;
+        let include_extensions = request.include_extensions.clone();
+        let files = tokio::task::spawn_blocking(move || {
+            discover_files(&directory_path, recursive, include_extensions.as_ref())
+        })
+        .await
+        .map_err(|error| AppError::Other(format!("Directory scan task failed: {error}")))??;
 
         self.indexing_state.set_total_files(files.len());
 
@@ -187,73 +190,131 @@ impl IndexDirectoryUseCase {
             errors,
         })
     }
+}
 
-    /// Discover files in directory.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Directory to search
-    /// * `recursive` - Whether to search subdirectories
-    /// * `include_extensions` - Optional filter for file extensions
-    ///
-    /// # Returns
-    ///
-    /// List of file paths to index
-    fn discover_files(
-        &self,
-        path: &PathBuf,
-        recursive: bool,
-        include_extensions: Option<&Vec<String>>,
-    ) -> Result<Vec<PathBuf>> {
-        let mut files = Vec::new();
+/// Folders an import never descends into: hidden folders (`.git`, `.Trash`,
+/// editor state) and dependency or cache trees that hold thousands of files
+/// nobody means to put in their library.
+const SKIPPED_FOLDERS: &[&str] = &["node_modules", "__pycache__"];
 
-        // repository-barrier-allow: indexing walks the user-provided directory resource.
-        if !path.is_dir() {
-            return Err(crate::shared::error::AppError::NotFound(format!(
-                "Directory not found: {}",
-                path.display()
-            )));
-        }
+fn is_skipped_name(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED_FOLDERS.contains(&name)
+}
 
-        self.scan_directory(path, recursive, include_extensions, &mut files)?;
-
-        Ok(files)
+/// Discover the files to index under `path`.
+///
+/// Symlinks are not followed, so a link back to a parent folder cannot loop
+/// the walk. A folder that cannot be read is logged and skipped rather than
+/// aborting the import before anything was indexed.
+fn discover_files(
+    path: &Path,
+    recursive: bool,
+    include_extensions: Option<&Vec<String>>,
+) -> Result<Vec<PathBuf>> {
+    // repository-barrier-allow: indexing walks the user-provided directory resource.
+    if !path.is_dir() {
+        return Err(AppError::NotFound(format!(
+            "Directory not found: {}",
+            path.display()
+        )));
     }
 
-    /// Recursively scan directory for files.
-    #[allow(clippy::only_used_in_recursion)]
-    fn scan_directory(
-        &self,
-        path: &PathBuf,
-        recursive: bool,
-        include_extensions: Option<&Vec<String>>,
-        files: &mut Vec<PathBuf>,
-    ) -> Result<()> {
-        // repository-barrier-allow: walking user-provided ingestion directory to discover files for indexing.
-        let entries = std::fs::read_dir(path)?;
+    let walker = walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .max_depth(if recursive { usize::MAX } else { 1 })
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0 || !entry.file_name().to_str().is_some_and(is_skipped_name)
+        });
 
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
-            // repository-barrier-allow: classify entries in the user-provided ingestion tree.
-            if path.is_file() {
-                if let Some(extensions) = include_extensions {
-                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        if extensions.contains(&ext.to_string()) {
-                            files.push(path);
-                        }
-                    }
-                } else {
-                    // No filter, include all files
-                    files.push(path);
-                }
-            // repository-barrier-allow: recurse only into directories in that ingestion tree.
-            } else if path.is_dir() && recursive {
-                self.scan_directory(&path, recursive, include_extensions, files)?;
+    let mut files = Vec::new();
+    for entry in walker {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(
+                    path = ?error.path(),
+                    %error,
+                    "Skipping a folder the import cannot read"
+                );
+                continue;
             }
+        };
+        // repository-barrier-allow: enumerating user-selected import resources, not persisted state.
+        if !entry.file_type().is_file() {
+            continue;
         }
+        let keep = match include_extensions {
+            Some(extensions) => entry
+                .path()
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| extensions.iter().any(|allowed| allowed == ext)),
+            None => true,
+        };
+        if keep {
+            files.push(entry.into_path());
+        }
+    }
+    Ok(files)
+}
 
-        Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn names(files: &[PathBuf], root: &Path) -> Vec<String> {
+        let mut names: Vec<_> = files
+            .iter()
+            .map(|f| f.strip_prefix(root).unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn an_unreadable_subfolder_is_skipped_not_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("keep.txt"), "a").unwrap();
+        let locked = root.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("hidden.txt"), "b").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = discover_files(root, true, None);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(names(&result.unwrap(), root), vec!["keep.txt"]);
+    }
+
+    #[test]
+    fn a_symlink_to_a_parent_folder_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let sub = root.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("note.md"), "a").unwrap();
+        std::os::unix::fs::symlink(root, sub.join("loop")).unwrap();
+
+        let files = discover_files(root, true, None).unwrap();
+
+        assert_eq!(names(&files, root), vec!["sub/note.md"]);
+    }
+
+    #[test]
+    fn hidden_and_dependency_folders_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for folder in [".git", "node_modules", "docs"] {
+            std::fs::create_dir(root.join(folder)).unwrap();
+            std::fs::write(root.join(folder).join("file.md"), "a").unwrap();
+        }
+        std::fs::write(root.join(".DS_Store"), "x").unwrap();
+
+        let files = discover_files(root, true, None).unwrap();
+
+        assert_eq!(names(&files, root), vec!["docs/file.md"]);
     }
 }

@@ -96,6 +96,25 @@ pub fn detect_mime_type(path: &Path) -> Result<String> {
     Ok(mime_type.to_string())
 }
 
+/// Whether a MIME type from [`detect_mime_type`] is source code, config or
+/// a shell script rather than prose. In these a `# ` line is a comment, never
+/// a section heading.
+pub fn is_code_mime(mime_type: &str) -> bool {
+    mime_type.starts_with("text/x-")
+        || mime_type.starts_with("application/x-")
+        || matches!(
+            mime_type,
+            "text/javascript"
+                | "text/javascript-jsx"
+                | "text/typescript"
+                | "text/typescript-jsx"
+                | "text/css"
+                | "application/json"
+                | "application/xml"
+                | "application/graphql"
+        )
+}
+
 /// List of all supported file extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
     &[

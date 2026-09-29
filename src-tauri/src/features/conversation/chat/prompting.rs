@@ -420,6 +420,8 @@ mod citation_numbering_tests {
             chunk_index: None,
             chunk_excerpts: None,
             citation_id: Some(citation_id),
+
+            web_snapshot: None,
         }
     }
 

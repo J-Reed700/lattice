@@ -5,9 +5,9 @@
 use lattice::features::credentials::commands;
 use lattice::infrastructure::audit::sinks::{memory::MemoryAuditSink, sqlite::SqliteAuditSink};
 use lattice::infrastructure::audit::{
-    get_audit_logger, AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink,
+    AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink, get_audit_logger,
 };
-use lattice::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
+use lattice::infrastructure::persistence::database::{DatabaseConnection, initialize_database};
 use lattice::interfaces::di::Container;
 use std::{collections::HashSet, sync::Arc};
 
@@ -48,10 +48,15 @@ async fn rejected_credential_command_records_failure_without_logging_secret() {
         .unwrap();
     let event = events
         .iter()
-        .find(|event| event.resource_id.as_deref() == Some(&format!("api_key:{service}")))
+        .find(|event| {
+            event.action == AuditAction::CredentialStored
+                && event.metadata.get("operation").map(String::as_str) == Some("set_api_key")
+        })
         .unwrap();
     assert_eq!(event.action, AuditAction::CredentialStored);
     assert!(event.result.is_failure());
+    assert_eq!(event.resource_id, None);
+    assert_eq!(event.user_id, None);
     assert_eq!(
         event.metadata.get("operation").map(String::as_str),
         Some("set_api_key")
@@ -60,7 +65,7 @@ async fn rejected_credential_command_records_failure_without_logging_secret() {
 }
 
 #[tokio::test]
-async fn sqlite_round_trip_preserves_event_identity_metadata_and_failure() {
+async fn sqlite_round_trip_preserves_safe_fields_and_redacts_sensitive_fields() {
     let directory = tempfile::tempdir().unwrap();
     let database = DatabaseConnection::new(directory.path().join("audit.db"))
         .await
@@ -91,10 +96,17 @@ async fn sqlite_round_trip_preserves_event_identity_metadata_and_failure() {
     assert_eq!(stored[0].id, event.id);
     assert_eq!(stored[0].timestamp, event.timestamp);
     assert_eq!(stored[0].action, event.action);
-    assert_eq!(stored[0].result, event.result);
-    assert_eq!(stored[0].metadata, event.metadata);
-    assert_eq!(stored[0].resource_id, event.resource_id);
-    assert_eq!(stored[0].user_id, event.user_id);
+    assert_eq!(stored[0].result, AuditResult::failure("[redacted]"));
+    assert_eq!(
+        stored[0].metadata.get("operation").map(String::as_str),
+        Some("get_api_key")
+    );
+    assert_eq!(stored[0].resource_id, None);
+    assert_eq!(stored[0].user_id, None);
+    let serialized = serde_json::to_string(&stored[0]).unwrap();
+    assert!(!serialized.contains("api_key:ollama"));
+    assert!(!serialized.contains("local"));
+    assert!(!serialized.contains("denied"));
 }
 
 #[tokio::test]

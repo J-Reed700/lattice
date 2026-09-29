@@ -18,6 +18,28 @@ use crate::domain::conversation_memory::{
 };
 use crate::features::conversation::repository::ConversationRepository;
 
+async fn write_test_vector(
+    repository: &ConversationRepository,
+    conversation_id: &str,
+    vector_id: &str,
+    message_id: &str,
+    content: &str,
+) -> crate::shared::error::Result<u64> {
+    repository
+        .persist_memory_vector(
+            conversation_id,
+            vector_id,
+            message_id,
+            "user",
+            content,
+            vec![1, 2, 3, 4],
+            1,
+            "model-a",
+            "2026-09-28T00:00:00Z",
+        )
+        .await
+}
+
 /// A conversation with `user`/`assistant` turns whose text is predictable.
 async fn seed_memory_thread(pool: &SqlitePool) -> String {
     sqlx::query(
@@ -49,6 +71,144 @@ async fn seed_memory_thread(pool: &SqlitePool) -> String {
         .await;
     }
     "conv-mem".to_string()
+}
+
+#[tokio::test]
+async fn memory_vector_write_skips_deleted_moved_or_edited_sources() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let other = ConversationRepository::new(pool.clone())
+        .create_conversation("Other", "model", None)
+        .await
+        .unwrap();
+    seed_message(
+        &pool,
+        &other.id.to_string(),
+        "other-message",
+        "user",
+        "other thread text",
+        3,
+        "2026-09-01T10:00:00Z",
+    )
+    .await;
+    let repository = ConversationRepository::new(pool.clone());
+
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-mm1",
+            "mm1",
+            "Do not deploy until I approve."
+        )
+        .await
+        .unwrap(),
+        1
+    );
+
+    // The production trigger removes an existing vector on a source rewrite;
+    // a slow embedding of the old snapshot must not put it back afterward.
+    sqlx::query("UPDATE conversation_messages SET content = 'Edited source' WHERE id = 'mm1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-mm1-old",
+            "mm1",
+            "Do not deploy until I approve."
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    // Even a live message cannot be attached to a different conversation.
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-wrong-conversation",
+            "other-message",
+            "other thread text"
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    sqlx::query("DELETE FROM conversation_messages WHERE id = 'mm2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-deleted-message",
+            "mm2",
+            "Understood, I will wait."
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        write_test_vector(
+            &repository,
+            &conversation_id,
+            "vector-deleted-conversation",
+            "mm1",
+            "Edited source"
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_memory_vectors")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+async fn memory_vector_write_propagates_unrelated_database_errors() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repository = ConversationRepository::new(pool.clone());
+    sqlx::query(
+        "CREATE TRIGGER reject_memory_vector BEFORE INSERT ON conversation_memory_vectors BEGIN SELECT RAISE(ABORT, 'sentinel'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = repository
+        .persist_memory_vector(
+            &conversation_id,
+            "vector-error",
+            "mm1",
+            "user",
+            "Do not deploy until I approve.",
+            vec![1, 2, 3, 4],
+            1,
+            "model-a",
+            "2026-09-28T00:00:00Z",
+        )
+        .await;
+    assert!(error.is_err());
 }
 
 /// An evidence span over the whole of one seeded message.

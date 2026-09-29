@@ -680,6 +680,33 @@ impl DocumentRepositoryPort for DocumentRepository {
         self.find_all_entities_internal().await
     }
 
+    async fn find_metadata_by_ids(&self, ids: &[String]) -> Result<Vec<Document>> {
+        let mut documents = Vec::with_capacity(ids.len());
+        // Bounded IN-lists: SQLite caps bound parameters per statement.
+        for batch in ids.chunks(500) {
+            let pool = self.pool.clone();
+            let db_models: Vec<DocumentModel> = query_with_timeout(|| async {
+                let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
+                    "SELECT id, file_path, file_name, file_type, mime_type,
+                        size_bytes, modified_at, indexed_at, checksum, status,
+                        language, category, quality_score, access_count,
+                        last_accessed_at, word_count, source_context
+                     FROM documents WHERE id IN (",
+                );
+                let mut separated = qb.separated(", ");
+                for id in batch {
+                    separated.push_bind(id);
+                }
+                separated.push_unseparated(")");
+                qb.build_query_as::<DocumentModel>().fetch_all(&pool).await
+            })
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to load documents by id: {}", e)))?;
+            documents.extend(DocumentMapper::to_entities(&db_models));
+        }
+        Ok(documents)
+    }
+
     async fn find_file_path_by_id(&self, document_id: &str) -> Result<String> {
         let pool = self.pool.clone();
         let id = document_id.to_string();
@@ -1226,8 +1253,9 @@ mod tests {
         sqlx::query(
             "INSERT INTO documents \
              (id, file_path, file_name, file_type, mime_type, size_bytes, \
-              modified_at, checksum, status) \
-             VALUES (?1, ?2, ?3, 'txt', 'text/plain', 4, CURRENT_TIMESTAMP, ?4, 'indexed')",
+              modified_at, indexed_at, checksum, status) \
+             VALUES (?1, ?2, ?3, 'txt', 'text/plain', 4, '2026-09-25T00:00:00Z', \
+                     '2026-09-25T00:00:00Z', ?4, 'indexed')",
         )
         .bind(id)
         .bind(path)
@@ -1251,6 +1279,26 @@ mod tests {
         assert_eq!(repo.count_by_checksum(&shared).await.unwrap(), 2);
         assert_eq!(repo.count_by_checksum(&lonely).await.unwrap(), 1);
         assert_eq!(repo.count_by_checksum(&"c".repeat(64)).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn find_metadata_by_ids_reads_only_the_asked_rows() {
+        let repo = repository().await;
+        insert(&repo, "doc-1", "/lib/a/one.txt", &"a".repeat(64)).await;
+        insert(&repo, "doc-2", "/lib/b/two.txt", &"b".repeat(64)).await;
+        insert(&repo, "doc-3", "/lib/c/three.txt", &"c".repeat(64)).await;
+
+        let mut found: Vec<String> = repo
+            .find_metadata_by_ids(&["doc-3".into(), "doc-1".into(), "missing".into()])
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|doc| doc.id().as_str().to_owned())
+            .collect();
+        found.sort();
+
+        assert_eq!(found, vec!["doc-1", "doc-3"]);
+        assert!(repo.find_metadata_by_ids(&[]).await.unwrap().is_empty());
     }
 
     #[tokio::test]

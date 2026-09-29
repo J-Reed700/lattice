@@ -162,6 +162,11 @@ impl BatchJobRepositoryPort for BatchJobRepository {
         Ok(job)
     }
 
+    async fn get_batch_job_status(&self, job_id: &str) -> Result<String, AppError> {
+        let mut conn = self.pool.acquire().await?;
+        super::batch_job::ops::get_batch_job_status(&mut conn, job_id).await
+    }
+
     async fn get_pending_items(&self, job_id: &str) -> Result<Vec<BatchJobItem>, AppError> {
         let items = sqlx::query_as::<_, (String, String)>("SELECT id, item_url FROM batch_job_items WHERE job_id = ? AND status = 'pending' ORDER BY created_at ASC, rowid ASC").bind(job_id)
         .fetch_all(&self.pool)

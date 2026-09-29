@@ -5,60 +5,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+#[cfg(test)]
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
 use crate::features::settings::use_cases::GetSettingsUseCase;
 use crate::interfaces::di::Container;
 
-pub fn spawn_sync_workspace_note(
-    container: &Container,
-    id: String,
-    title: String,
-    body: String,
-    created_at: String,
-    updated_at: String,
-    tags: Vec<String>,
-) {
-    let handle = container.vault_writer();
-    handle.submit(VaultWriteJob::WorkspaceNote {
-        id,
-        title,
-        body,
-        created_at,
-        updated_at,
-        tags,
-    });
+/// The note transaction already persisted its outbox entry. A notification
+/// merely avoids waiting for the periodic recovery tick.
+pub fn spawn_sync_workspace_note(container: &Container) {
+    container.vault_writer().wake.notify_one();
 }
 
-/// Removes a note's markdown file from the vault.
-///
-/// Must go through the writer queue rather than deleting inline from the
-/// command: the queue serializes against in-flight writes for the same note,
-/// and it stamps the suppression registry so the watcher doesn't observe the
-/// removal as an external change. Deleting the file directly would race a
-/// pending `WorkspaceNote` write, which could re-create the file we just
-/// removed.
-pub fn spawn_delete_workspace_note(container: &Container, id: String) {
-    let handle = container.vault_writer();
-    handle.submit(VaultWriteJob::DeleteWorkspaceNote { id });
-}
-
-pub enum VaultWriteJob {
-    WorkspaceNote {
-        id: String,
-        title: String,
-        body: String,
-        created_at: String,
-        updated_at: String,
-        tags: Vec<String>,
-    },
-    DeleteWorkspaceNote {
-        id: String,
-    },
-    Backfill {
-        pool: SqlitePool,
-        vault_root: PathBuf,
-    },
+pub fn spawn_delete_workspace_note(container: &Container) {
+    container.vault_writer().wake.notify_one();
 }
 
 /// What the corpus should do about a note whose markdown file just changed.
@@ -94,9 +55,20 @@ pub fn note_index_action(outcome: NoteSyncOutcome<'_>) -> NoteIndexAction {
     }
 }
 
+struct WriterLifetime(tokio_util::sync::CancellationToken);
+
+impl Drop for WriterLifetime {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 #[derive(Clone)]
 pub struct VaultWriterHandle {
-    tx: mpsc::UnboundedSender<VaultWriteJob>,
+    wake: Arc<Notify>,
+    // Only handles own this guard; the worker holds a token clone. Dropping
+    // standalone containers therefore stops their worker without an app scope.
+    _lifetime: Arc<WriterLifetime>,
     /// Shared cell the worker reads on every error to decide whether
     /// to emit a `vault:write-error` Tauri event. Populated post-
     /// construction via `set_app_handle` because the AppHandle isn't
@@ -105,10 +77,10 @@ pub struct VaultWriterHandle {
 }
 
 impl VaultWriterHandle {
-    pub fn submit(&self, job: VaultWriteJob) {
-        if let Err(e) = self.tx.send(job) {
-            tracing::warn!(error = %e, "vault writer queue dropped a job (worker shut down)");
-        }
+    pub async fn enqueue_backfill(&self, pool: &SqlitePool) -> crate::shared::error::Result<()> {
+        super::repository::enqueue_all(pool).await?;
+        self.wake.notify_one();
+        Ok(())
     }
 
     /// Install the Tauri AppHandle so the worker can emit
@@ -127,125 +99,195 @@ impl VaultWriterHandle {
 pub fn start_vault_writer(
     settings_uc: Arc<GetSettingsUseCase>,
     suppression: super::watcher::WriteSuppressionRegistry,
+    pool: SqlitePool,
 ) -> VaultWriterHandle {
-    let (tx, rx) = mpsc::unbounded_channel();
+    let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
-    tokio::spawn(run_worker(
-        rx,
+    let cancel = crate::shared::background::cancellation_token().child_token();
+    let lifetime = Arc::new(WriterLifetime(cancel.clone()));
+    crate::shared::background::spawn(run_worker(
+        wake.clone(),
         settings_uc,
-        Arc::clone(&app_handle),
+        app_handle.clone(),
         suppression,
+        pool,
+        cancel,
     ));
-    VaultWriterHandle { tx, app_handle }
+    VaultWriterHandle {
+        wake,
+        app_handle,
+        _lifetime: lifetime,
+    }
 }
 
 async fn run_worker(
-    mut rx: mpsc::UnboundedReceiver<VaultWriteJob>,
+    wake: Arc<Notify>,
     settings_uc: Arc<GetSettingsUseCase>,
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
     suppression: super::watcher::WriteSuppressionRegistry,
+    pool: SqlitePool,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
-    tracing::info!("vault writer worker started");
-    while let Some(job) = rx.recv().await {
-        let settings = match settings_uc.execute().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!(error = %e, "vault worker: settings read failed — skipping job");
-                continue;
-            }
-        };
-        if !settings.vault.enabled {
-            continue;
+    let repository =
+        crate::features::daily_notes::repository::DailyNotesRepository::new(pool.clone());
+    loop {
+        // Intents survive process shutdown. Finish the current atomic write;
+        // leave the rest in SQLite for startup replay.
+        if cancel.is_cancelled() {
+            break;
         }
-        let vault_root = match resolve_vault_root(&settings.vault.vault_path) {
-            Some(p) => p,
-            None => {
-                tracing::warn!("vault worker: could not resolve vault root — skipping job");
+        let settings = match settings_uc.execute().await {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(%error, "Vault writer could not load settings");
+                tokio::select! { _ = cancel.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {} }
                 continue;
             }
         };
-
-        match job {
-            VaultWriteJob::WorkspaceNote {
-                id,
-                title,
-                body,
-                created_at,
-                updated_at,
-                tags,
-            } => {
-                let target = vault_root.join("notes").join(format!("{}.md", id));
-                let frontmatter = build_frontmatter(&id, &title, &created_at, &updated_at, &tags);
-                let document = format!("{}\n\n{}", frontmatter, body);
-                if let Err(e) = atomic_write(&target, &document).await {
-                    tracing::warn!(
-                        target = %target.display(),
-                        error = %e,
-                        "vault worker: workspace note write failed"
-                    );
-                    emit_write_error(&app_handle, Some(&id), &target, &e.to_string());
-                } else {
-                    // Stamp the suppression registry so the watcher
-                    // doesn't treat our own write as an external edit
-                    // and bounce it back through SQL → vault → ...
-                    suppression.mark_written(target.clone()).await;
-                    tracing::debug!(target = %target.display(), "vault worker: workspace note synced");
-                    apply_note_index_action(
-                        &app_handle,
-                        &target,
-                        note_index_action(NoteSyncOutcome::Written { body: &body }),
-                    )
-                    .await;
+        if settings.vault.enabled {
+            if let Some(root) = resolve_vault_root(&settings.vault.vault_path) {
+                match super::repository::pending(&pool).await {
+                    Ok(writes) => {
+                        let more = writes.len() == 64;
+                        let mut failed = false;
+                        for write in writes {
+                            if cancel.is_cancelled() {
+                                break;
+                            }
+                            // Imported front matter is untrusted: note ids
+                            // must never escape the flat notes directory.
+                            if !safe_note_id(&write.note_id) {
+                                emit_write_error(
+                                    &app_handle,
+                                    Some(&write.note_id),
+                                    &root,
+                                    "Invalid note file identity",
+                                );
+                                let _ = super::repository::defer(&pool, &write).await;
+                                failed = true;
+                                continue;
+                            }
+                            let target = root.join("notes").join(format!("{}.md", write.note_id));
+                            if !write.mirror_complete {
+                                suppression.mark_written(target.clone()).await;
+                            }
+                            let result = match repository.get(&write.note_id).await {
+                                Ok(note) => {
+                                    let mirror_result = if write.mirror_complete {
+                                        Ok(())
+                                    } else {
+                                        let frontmatter = build_frontmatter(
+                                            &note.id,
+                                            &note.title,
+                                            &note.created_at,
+                                            &note.updated_at,
+                                            &[],
+                                        );
+                                        let document = format!("{frontmatter}\n\n{}", note.content);
+                                        match atomic_write(&target, &document).await {
+                                            Ok(()) => {
+                                                suppression.mark_written(target.clone()).await;
+                                                super::repository::mark_mirrored(&pool, &write)
+                                                    .await
+                                                    .map_err(|error| error.to_string())
+                                            }
+                                            Err(error) => Err(error.to_string()),
+                                        }
+                                    };
+                                    match mirror_result {
+                                        Ok(()) => {
+                                            // Keep the markdown write durable even if this index
+                                            // action fails; retries skip the file rewrite.
+                                            apply_note_index_action(
+                                                &app_handle,
+                                                &target,
+                                                note_index_action(NoteSyncOutcome::Written {
+                                                    body: &note.content,
+                                                }),
+                                            )
+                                            .await
+                                        }
+                                        Err(error) => Err(error),
+                                    }
+                                }
+                                Err(crate::shared::error::AppError::NotFound(_)) => {
+                                    let mirror_result: std::result::Result<(), String> = async {
+                                        if !write.mirror_complete {
+                                            match tokio::fs::remove_file(&target).await {
+                                                Ok(()) => {}
+                                                Err(error)
+                                                    if error.kind()
+                                                        == std::io::ErrorKind::NotFound => {}
+                                                Err(error) => return Err(error.to_string()),
+                                            }
+                                            super::repository::mark_mirrored(&pool, &write)
+                                                .await
+                                                .map_err(|error| error.to_string())?;
+                                        }
+                                        Ok(())
+                                    }
+                                    .await;
+                                    match mirror_result {
+                                        Ok(()) => {
+                                            apply_note_index_action(
+                                                &app_handle,
+                                                &target,
+                                                NoteIndexAction::Remove,
+                                            )
+                                            .await
+                                        }
+                                        Err(error) => Err(error),
+                                    }
+                                }
+                                Err(error) => Err(error.to_string()),
+                            };
+                            match settle_write(&pool, &write, result).await {
+                                Ok(()) => {}
+                                Err(error) => {
+                                    emit_write_error(
+                                        &app_handle,
+                                        Some(&write.note_id),
+                                        &target,
+                                        &error.to_string(),
+                                    );
+                                    tracing::warn!(%error, "Vault write remains in the outbox for retry");
+                                    failed = true;
+                                }
+                            }
+                        }
+                        if more && !failed {
+                            continue;
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "Vault outbox read failed; retrying"),
                 }
             }
-            VaultWriteJob::DeleteWorkspaceNote { id } => {
-                let target = vault_root.join("notes").join(format!("{}.md", id));
-
-                // Mark before unlinking. The watcher keys suppression on the
-                // path, and a delete event can reach it before this await
-                // returns; marking first closes that window.
-                suppression.mark_written(target.clone()).await;
-
-                match tokio::fs::remove_file(&target).await {
-                    Ok(()) => {
-                        tracing::debug!(target = %target.display(), "vault worker: workspace note removed");
-                        apply_note_index_action(
-                            &app_handle,
-                            &target,
-                            note_index_action(NoteSyncOutcome::Deleted),
-                        )
-                        .await;
-                    }
-                    // Already gone is the desired end state, not a failure —
-                    // the user may have deleted it from the vault side first.
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        tracing::debug!(target = %target.display(), "vault worker: note file already absent");
-                        apply_note_index_action(
-                            &app_handle,
-                            &target,
-                            note_index_action(NoteSyncOutcome::Deleted),
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target = %target.display(),
-                            error = %e,
-                            "vault worker: workspace note delete failed"
-                        );
-                        emit_write_error(&app_handle, Some(&id), &target, &e.to_string());
-                    }
-                }
-            }
-            VaultWriteJob::Backfill {
-                pool,
-                vault_root: backfill_root,
-            } => {
-                run_backfill(pool, backfill_root, &app_handle, &suppression).await;
-            }
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break,
+            _ = wake.notified() => {},
+            _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {},
         }
     }
-    tracing::info!("vault writer worker exited (all senders dropped)");
+}
+
+pub(super) fn safe_note_id(id: &str) -> bool {
+    !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0'])
+}
+
+async fn settle_write(
+    pool: &SqlitePool,
+    write: &super::repository::PendingWrite,
+    apply_result: std::result::Result<(), String>,
+) -> crate::shared::error::Result<()> {
+    match apply_result {
+        Ok(()) => super::repository::acknowledge(pool, write).await,
+        Err(error) => {
+            super::repository::defer(pool, write).await?;
+            Err(crate::shared::error::AppError::InternalError(error))
+        }
+    }
 }
 
 /// Emit a `vault:write-error` Tauri event so the frontend can surface
@@ -287,22 +329,20 @@ fn emit_write_error(
 /// The writer queue is constructed before the DI container exists, so it cannot
 /// hold one — it reaches the container through the Tauri state the app manages
 /// at boot, the same way every command does. A missing handle or container
-/// (boot order, test fixtures) is a silent no-op: the markdown mirror is durable
-/// either way, and the next edit retries the indexing.
+/// (boot order, test fixtures) retains the durable index intent for retry.
 ///
-/// Runs inline in the worker on purpose. The queue is FIFO, so indexing the same
-/// note twice concurrently is impossible; the cost is that the next note's mirror
-/// waits, which is latency, not data loss.
+/// Runs inline in the single worker so the same note is never indexed twice
+/// concurrently. Failed index work is deferred without rewriting its mirror.
 async fn apply_note_index_action(
     app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
     target: &Path,
     action: NoteIndexAction,
-) {
+) -> std::result::Result<(), String> {
     use tauri::Manager;
 
     if matches!(action, NoteIndexAction::Skip) {
         tracing::debug!(target = %target.display(), "vault worker: empty note — not indexed");
-        return;
+        return Ok(());
     }
 
     let handle = {
@@ -312,12 +352,13 @@ async fn apply_note_index_action(
         };
         match guard.as_ref() {
             Some(h) => h.clone(),
-            None => return,
+            None => {
+                return Err("Tauri app handle is unavailable; vault index action deferred".into())
+            }
         }
     };
     let Some(container) = handle.try_state::<Container>() else {
-        tracing::debug!("vault worker: container not in Tauri state yet — note not indexed");
-        return;
+        return Err("Tauri container is unavailable; vault index action deferred".into());
     };
 
     let path = target.to_string_lossy().to_string();
@@ -334,84 +375,17 @@ async fn apply_note_index_action(
         }
     };
 
-    match outcome {
-        Ok(()) => tracing::debug!(target = %path, ?action, "vault worker: note index updated"),
-        Err(e) => tracing::warn!(
+    outcome.map_err(|e| {
+        tracing::warn!(
             target = %path,
             error = %e.message,
             ?action,
             "vault worker: note index update failed"
-        ),
-    }
-}
-
-async fn run_backfill(
-    pool: SqlitePool,
-    vault_root: PathBuf,
-    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
-    suppression: &super::watcher::WriteSuppressionRegistry,
-) {
-    let rows = match sqlx::query_as::<_, BackfillRow>(
-        r#"
-        SELECT id, title, content, created_at, updated_at
-        FROM daily_notes_workspace
-        "#,
-    )
-    .fetch_all(&pool)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "vault backfill: failed to enumerate notes");
-            return;
-        }
-    };
-
-    let total = rows.len();
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-    for row in rows {
-        let target = vault_root.join("notes").join(format!("{}.md", row.id));
-        let frontmatter =
-            build_frontmatter(&row.id, &row.title, &row.created_at, &row.updated_at, &[]);
-        let document = format!("{}\n\n{}", frontmatter, row.content);
-        match atomic_write(&target, &document).await {
-            Ok(()) => {
-                suppression.mark_written(target.clone()).await;
-                apply_note_index_action(
-                    app_handle,
-                    &target,
-                    note_index_action(NoteSyncOutcome::Written { body: &row.content }),
-                )
-                .await;
-                succeeded += 1;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target = %target.display(),
-                    error = %e,
-                    "vault backfill: write failed for one note"
-                );
-                failed += 1;
-                // Don't spam an event per row — surface a single
-                // representative error after the walk completes.
-                // (See post-loop emit below.)
-                if failed == 1 {
-                    emit_write_error(app_handle, Some(&row.id), &target, &e.to_string());
-                }
-            }
-        }
-    }
-    tracing::info!(succeeded, failed, total, "vault backfill complete");
-}
-
-#[derive(sqlx::FromRow)]
-struct BackfillRow {
-    id: String,
-    title: String,
-    content: String,
-    created_at: String,
-    updated_at: String,
+        );
+        e.message
+    })?;
+    tracing::debug!(target = %path, ?action, "vault worker: note index updated");
+    Ok(())
 }
 
 /// Resolve vault path; empty string falls back to `<home>/Lattice`.
@@ -647,6 +621,64 @@ mod tests {
         assert_eq!(
             final_contents, "version-49",
             "FIFO worker must end at the last submitted version"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_index_action_keeps_the_durable_write_for_retry() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE daily_notes_workspace(id TEXT PRIMARY KEY, title TEXT, content TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20260927000000_vault_write_outbox.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO daily_notes_workspace VALUES ('note', 'Title', 'body')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let write = super::super::repository::pending(&pool)
+            .await
+            .unwrap()
+            .remove(0);
+
+        super::super::repository::mark_mirrored(&pool, &write)
+            .await
+            .unwrap();
+        assert!(
+            settle_write(&pool, &write, Err("simulated index failure".into()))
+                .await
+                .is_err()
+        );
+        assert!(!super::super::repository::has_pending(&pool, "note")
+            .await
+            .unwrap());
+        assert_eq!(
+            super::super::repository::pending(&pool)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+        sqlx::query("UPDATE daily_notes_workspace SET content = 'new edit' WHERE id = 'note'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(super::super::repository::has_pending(&pool, "note")
+            .await
+            .unwrap());
+        assert_eq!(
+            super::super::repository::pending(&pool)
+                .await
+                .unwrap()
+                .len(),
+            1
         );
     }
 }

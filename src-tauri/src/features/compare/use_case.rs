@@ -160,6 +160,7 @@ fn empty_row(document: &ResolvedDocument, columns: &[String], error: String) -> 
         file_path: document.file_path.clone(),
         cells: empty_cells(columns),
         error: Some(error),
+        degraded: None,
     }
 }
 
@@ -204,7 +205,8 @@ async fn build_row(
     document: &ResolvedDocument,
     columns: &[String],
 ) -> Result<CompareRowDto> {
-    let chunks = retrieve_for_document(container, &document.id, columns).await?;
+    let super::retrieval::DocumentChunks { chunks, degraded } =
+        retrieve_for_document(container, &document.id, columns).await?;
     if chunks.is_empty() {
         return Ok(empty_row(
             document,
@@ -231,6 +233,7 @@ async fn build_row(
         file_path: document.file_path.clone(),
         cells: assemble_cells(&parsed, columns, &chunks),
         error: None,
+        degraded,
     })
 }
 

@@ -6,6 +6,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useSidebarBookmarksQuery } from '@/components/Chat/sidebar/workspaceQueries';
+import { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS } from '@/hooks/useConversationsController';
 import { VaultAPI } from '@/lib/api';
 import { ConversationsProvider, useConversationsStore } from '@/stores/conversationsStore';
 import { conversationUiStore } from '@/stores/conversationUiStore';
@@ -62,6 +63,49 @@ describe('useConversationsController optimistic cleanup', () => {
       data: { messages: [], total: 0 },
     });
     api.cancelConversationGeneration = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+  });
+
+  it('keeps unrelated selector consumers asleep during streaming state changes', async () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useConversationsStore((state) => state.selectedSpaceId);
+    }, { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current).toBeNull());
+    const before = renders;
+
+    act(() => conversationUiStore.setState({ optimisticMessages: new Map() }));
+
+    await waitFor(() => expect(renders).toBe(before));
+  });
+
+  it('retains captured web text when loading citation metadata', async () => {
+    const webSnapshot = {
+      url: 'https://example.com/growing',
+      title: 'Growing guide',
+      text: 'The original article, preserved even after the website changes.',
+      fetchedAt: '2026-09-24T00:00:00.000Z',
+      truncated: false,
+    };
+    conversationUiStore.setState({ activeConversationId: conversation.id });
+    api.getConversationMessages.mockResolvedValue({
+      ok: true,
+      data: { messages: [{
+        id: 'saved-answer', conversationId: conversation.id, role: 'assistant',
+        content: 'A claim [1].', tokens: 5, status: 'completed',
+        createdAt: '2026-09-24T00:00:00.000Z',
+        metadata: JSON.stringify({ sources: [{
+          documentId: 'web:https://example.com/growing', chunkId: 'web-chunk',
+          fileName: 'Growing guide', filePath: webSnapshot.url,
+          mimeType: 'text/html', category: 'Web Article', content: 'Saved search excerpt',
+          score: 1, fileSizeBytes: 0, modifiedAt: '', citationId: 1, webSnapshot,
+        }] }),
+      }], total: 1 },
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.lastMessageSources.get('saved-answer')?.[0]?.webSnapshot)
+      .toEqual(webSnapshot));
+    expect(result.current.lastMessageSources.get('saved-answer')?.[0]?.content).toBe('Saved search excerpt');
   });
 
   it('creates a llama.cpp conversation without a downloaded local model', async () => {
@@ -167,7 +211,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const steps = () => result.current.liveSteps.get('conversation-1') ?? [];
 
     send({ content: 'Partial answer. ' });
-    expect(draft()).toBe('Partial answer. ');
+    await waitFor(() => expect(draft()).toBe('Partial answer. '));
 
     const retryStep = {
       id: 's3', kind: 'retry', label: 'Asking again — the model returned nothing',
@@ -183,7 +227,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
     send({ content: 'Recovered ' });
     send({ content: 'answer' });
-    expect(draft()).toBe('Partial answer. Recovered answer');
+    await waitFor(() => expect(draft()).toBe('Partial answer. Recovered answer'));
     await act(async () => { resolveChat?.({ ok: false, error: 'fixture finished' }); await sending; });
   });
 
@@ -400,6 +444,29 @@ describe('useConversationsController optimistic cleanup', () => {
       expect(api.listConversationsExplorer.mock.calls.length).toBe(before);
     });
 
+    it('keeps the chat open when opening it moves the sidebar to its space', async () => {
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.selectConversation('conversation-1'); });
+
+      expect(conversationUiStore.getState().activeConversationId).toBe('conversation-1');
+    });
+
+    it('closes the open chat when the reader switches to another space', async () => {
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.selectConversation('conversation-1'); });
+      await act(async () => { await result.current.loadConversations({ spaceId: 'movies' }); });
+
+      expect(conversationUiStore.getState().activeConversationId).toBeNull();
+    });
+
+    it('keeps the open chat when the reader switches to All spaces', async () => {
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.selectConversation('conversation-1'); });
+      await act(async () => { await result.current.loadConversations({ spaceId: null }); });
+
+      expect(conversationUiStore.getState().activeConversationId).toBe('conversation-1');
+    });
+
     it('does not drag the sidebar to a chat the reader has already left', async () => {
       // The open chat's own detail query asks too, so every caller is answered.
       const waiting: ((_value: unknown) => void)[] = [];
@@ -416,6 +483,53 @@ describe('useConversationsController optimistic cleanup', () => {
       });
 
       expect(conversationUiStore.getState().selectedSpaceId).toBeNull();
+    });
+
+    it('stops observing a deleted conversation and deletes one the list filter hides', async () => {
+      const hidden = 'hidden-by-search';
+      api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.selectConversation(hidden); });
+      expect(conversationUiStore.getState().requestedLinkedConversationIds.has(hidden)).toBe(true);
+      const linkedCalls = api.listConversationLinkedDocuments.mock.calls.length;
+
+      await act(async () => { await result.current.deleteConversation(hidden); });
+
+      expect(api.deleteConversation).toHaveBeenCalledWith(hidden);
+      expect(result.current.error).toBeNull();
+      const ui = conversationUiStore.getState();
+      expect(ui.requestedLinkedConversationIds.has(hidden)).toBe(false);
+      expect(ui.requestedWebSourceConversationIds.has(hidden)).toBe(false);
+      // No observer is left to re-create and refetch the deleted conversation.
+      expect(api.listConversationLinkedDocuments.mock.calls.length).toBe(linkedCalls);
+    });
+
+    it('keeps observers only for the most recent conversations', async () => {
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      for (let i = 0; i <= MAX_OBSERVED_CONVERSATIONS; i += 1) {
+        await act(async () => { await result.current.selectConversation(`c-${i}`); });
+      }
+      const linked = conversationUiStore.getState().requestedLinkedConversationIds;
+      expect(linked.size).toBe(MAX_OBSERVED_CONVERSATIONS);
+      expect(linked.has('c-0')).toBe(false);
+      expect(linked.has(`c-${MAX_OBSERVED_CONVERSATIONS}`)).toBe(true);
+    });
+
+    it('bounds membership observers and reloads an evicted document on demand', async () => {
+      api.listDocumentSpaceMemberships = vi.fn().mockResolvedValue({ ok: true, data: [] });
+      conversationUiStore.setState({
+        requestedMembershipDocumentIds: new Set(
+          Array.from({ length: MAX_OBSERVED_MEMBERSHIPS }, (_, i) => `doc-${i}`)
+        ),
+      });
+      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      await act(async () => { await result.current.loadDocumentSpaceMemberships('new-doc'); });
+      expect(conversationUiStore.getState().requestedMembershipDocumentIds.size).toBe(MAX_OBSERVED_MEMBERSHIPS);
+      expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-0')).toBe(false);
+      await act(async () => { await result.current.loadDocumentSpaceMemberships('doc-0'); });
+      expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-0')).toBe(true);
+      expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-1')).toBe(false);
+      expect(conversationUiStore.getState().requestedMembershipDocumentIds.size).toBe(MAX_OBSERVED_MEMBERSHIPS);
     });
   });
 

@@ -305,6 +305,23 @@ describe('claimToMarkdown', () => {
     const markdown = claimToMarkdown({ ...backed, method: 'lexical' }, citationMap, { capturedAt: AT });
     expect(markdown).toContain('matched on shared wording, not read for meaning');
   });
+
+  it('does not export a low-confidence check as a missing citation', () => {
+    const markdown = claimToMarkdown(
+      {
+        ...backed,
+        verdict: 'unverified',
+        unverifiedReason: 'low_confidence',
+        confidence: 0.46,
+        reason: 'The checker was only 46% sure, so this sentence was not marked as a finding.',
+      },
+      citationMap,
+      { capturedAt: AT },
+    );
+    expect(markdown).toContain('Why: The checker was only 46% sure');
+    expect(markdown).toContain('Not checked — the checker was not confident enough');
+    expect(markdown).not.toContain('Not found in the cited passage');
+  });
 });
 
 describe('askWhyPrefill', () => {

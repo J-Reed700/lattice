@@ -170,19 +170,6 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: '/tmp/lattice/models' }),
 
-    // Q&A operations
-    askQuestion: vi.fn().mockResolvedValue({
-      answer: 'mock answer',
-      sources: []
-    }),
-    askQuestionStream: vi.fn().mockResolvedValue({
-      ok: true,
-      data: {
-        answer: 'mock answer',
-        sources: [],
-      },
-    }),
-
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
@@ -288,6 +275,16 @@ export function createVaultAPIMock() {
     truncateConversationAfter: vi.fn().mockResolvedValue({
       ok: true,
       data: { conversationId: 'test-conversation', deletedCount: 0, messages: [] },
+    }),
+    continueInNewConversation: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        conversation: {
+          id: 'test-continued',
+          title: 'Test · continued',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
     }),
     forkConversation: vi.fn().mockResolvedValue({
       ok: true,

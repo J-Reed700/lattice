@@ -146,10 +146,11 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
         .filter(|item| item.url.ends_with("first.txt"))
         .collect();
     assert_eq!(completed[0].document_id, completed[1].document_id);
-    assert!(status.items.iter().any(|item| item
-        .error_message
-        .as_deref()
-        .is_some_and(|message| message.contains("injected embedding save failure"))));
+    assert!(status.items.iter().any(|item| {
+        item.error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("injected embedding save failure"))
+    }));
 
     // Model an interrupted job: first item committed, counters stale, second
     // item running. Startup must keep the first and retry only unfinished work.
@@ -219,10 +220,12 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
     assert_eq!(resolved.status, "completed");
     assert_eq!((resolved.completed_items, resolved.failed_items), (4, 0));
     assert_eq!(resolved.items.len(), failed_again.items.len());
-    assert!(resolved.items.iter().all(|item| failed_again
-        .items
-        .iter()
-        .any(|original| original.id == item.id)));
+    assert!(resolved.items.iter().all(|item| {
+        failed_again
+            .items
+            .iter()
+            .any(|original| original.id == item.id)
+    }));
     // Neither retry nor replacement adds a history block or another file row.
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM batch_jobs")
@@ -866,5 +869,83 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
         .retrieval_section_passages(&["201".into()], &[ids[0].clone()].into())
         .await?
         .is_empty());
+    Ok(())
+}
+
+/// The attachment rule on the Duplicate path: a file already attached to one
+/// chat moves to the chat that attaches it next, a file filed in the library
+/// stays filed, and a document this item committed before its owner stamp
+/// failed is stamped on retry.
+#[tokio::test]
+async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let embedding = Arc::new(GatedEmbedding {
+        entered: Notify::new(),
+        release: Notify::new(),
+    });
+    let harness = ImportHarness::new(dir.path(), embedding).await?;
+    let pool = harness.db.pool().clone();
+    let worker = harness.worker.clone().with_document_scope(Arc::new(
+        crate::infrastructure::document_scope::SqliteDocumentScope::new(pool.clone()),
+    ));
+    sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('chat-a', 'A', 'm'), ('chat-b', 'B', 'm')")
+        .execute(&pool)
+        .await?;
+    let owner_of = |name: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT owner_conversation_id FROM documents WHERE file_name = ?",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+        }
+    };
+    let import = |path: &std::path::Path, owner: Option<&str>| {
+        worker.execute(StartBatchFileImportRequestDto {
+            indexing: None,
+            file_paths: vec![path.to_string_lossy().into_owned()],
+            space_id: None,
+            owner_conversation_id: owner.map(str::to_owned),
+        })
+    };
+
+    // Attached to A, then to B: B owns it now.
+    let shared = dir.path().join("shared.txt");
+    std::fs::write(&shared, "a file two chats attach")?;
+    let job = import(&shared, Some("chat-a")).await?;
+    wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    assert_eq!(owner_of("shared.txt").await?.as_deref(), Some("chat-a"));
+    let job = import(&shared, Some("chat-b")).await?;
+    wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    assert_eq!(owner_of("shared.txt").await?.as_deref(), Some("chat-b"));
+
+    // Filed in the library first: attaching it leaves it filed.
+    let filed = dir.path().join("filed.txt");
+    std::fs::write(&filed, "a file the user filed in the library")?;
+    let job = import(&filed, None).await?;
+    wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    let job = import(&filed, Some("chat-a")).await?;
+    wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    assert_eq!(owner_of("filed.txt").await?, None);
+
+    // The stamp fails after the commit; the retry finishes it.
+    sqlx::query("CREATE TRIGGER fail_owner_stamp BEFORE UPDATE OF owner_conversation_id ON documents BEGIN SELECT RAISE(ABORT, 'injected owner stamp failure'); END")
+        .execute(&pool)
+        .await?;
+    let late = dir.path().join("late.txt");
+    std::fs::write(&late, "a file whose owner stamp fails once")?;
+    let job = import(&late, Some("chat-a")).await?;
+    let status = wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    assert_eq!(status.failed_items, 1);
+    assert_eq!(owner_of("late.txt").await?, None);
+    sqlx::query("DROP TRIGGER fail_owner_stamp")
+        .execute(&pool)
+        .await?;
+    worker.retry_failed(&job.job_id, None, None).await?;
+    let status = wait_for_job(harness.repo.as_ref(), &job.job_id).await?;
+    assert_eq!(status.completed_items, 1);
+    assert_eq!(owner_of("late.txt").await?.as_deref(), Some("chat-a"));
     Ok(())
 }

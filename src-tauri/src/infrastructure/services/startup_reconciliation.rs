@@ -30,6 +30,25 @@ pub async fn reconcile_interrupted_verifications(
     Ok(result.rows_affected())
 }
 
+/// Close out turns the last run never finished.
+///
+/// A question is written `pending` before generation and settled when the
+/// answer commits or the turn fails. A crash or force-quit in between leaves it
+/// `pending`, which renders as still in flight with nothing left to finish it.
+/// No turn survives a restart, so every such row is failed and can be retried.
+///
+/// # Returns
+/// Number of messages marked failed.
+pub async fn reconcile_stuck_turns(pool: &sqlx::SqlitePool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE conversation_messages SET status = 'failed' \
+         WHERE status IN ('pending', 'streaming')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Reconcile stale download sessions on app startup
 ///
 /// Finds downloads stuck in "Downloading" state (from app crash)
@@ -425,6 +444,56 @@ mod tests {
         .unwrap();
         session.start().unwrap();
         session
+    }
+
+    #[tokio::test]
+    async fn a_turn_the_last_run_never_finished_is_marked_failed() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('c', 'c', 'm')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, role, status) in [
+            ("asked", "user", "pending"),
+            ("half-written", "assistant", "streaming"),
+            ("answered", "user", "completed"),
+            ("already-failed", "user", "failed"),
+        ] {
+            sqlx::query(
+                "INSERT INTO conversation_messages (id, conversation_id, role, content, status) \
+                 VALUES (?, 'c', ?, 'text', ?)",
+            )
+            .bind(id)
+            .bind(role)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(reconcile_stuck_turns(&pool).await.unwrap(), 2);
+
+        let statuses: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, status FROM conversation_messages ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let status = |id: &str| {
+            statuses
+                .iter()
+                .find(|(row, _)| row == id)
+                .map(|(_, status)| status.as_str())
+                .unwrap()
+        };
+        assert_eq!(status("asked"), "failed");
+        assert_eq!(status("half-written"), "failed");
+        assert_eq!(status("answered"), "completed");
+        assert_eq!(status("already-failed"), "failed");
     }
 
     /// The case that shipped broken: the app is closed mid-download and opened

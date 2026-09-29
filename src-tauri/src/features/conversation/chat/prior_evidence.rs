@@ -227,6 +227,8 @@ mod tests {
             citation_id: Some(1),
             page_number: None,
             position: None,
+
+            web_snapshot: None,
         }
     }
 

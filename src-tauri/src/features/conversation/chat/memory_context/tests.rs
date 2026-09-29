@@ -400,6 +400,17 @@ async fn recall_availability_is_reported_even_when_nothing_was_found() {
         "a no-hit note must say it is not proof of absence: {}",
         built.recall_note
     );
+    assert!(
+        built.plan.messages.iter().any(|message| matches!(
+            message,
+            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+                if role == "user"
+                    && content.contains("Automatic recall status")
+                    && content.contains("found nothing")
+                    && content.contains("not new requests")
+        )),
+        "the availability note must reach generation as historical user context"
+    );
 }
 
 #[tokio::test]

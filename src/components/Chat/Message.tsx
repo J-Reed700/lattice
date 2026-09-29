@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 import {
   AlertCircle,
@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  MessageSquareShare,
   Paperclip,
   RefreshCw,
   ShieldAlert,
@@ -74,12 +75,12 @@ interface MessageProps {
   previousMessageId?: string;
 }
 
-export function Message({
+export const Message = memo(({
   message,
   isFresh = false,
   isLastTurn = false,
   previousMessageId,
-}: MessageProps) {
+}: MessageProps) => {
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const verificationPanelId = useId();
@@ -107,6 +108,7 @@ export function Message({
   const regenerateResponse = useConversationsStore((s) => s.regenerateResponse);
   const truncateAfter = useConversationsStore((s) => s.truncateAfter);
   const forkConversation = useConversationsStore((s) => s.forkConversation);
+  const selectConversation = useConversationsStore((s) => s.selectConversation);
   const sendMessage = useConversationsStore((s) => s.sendMessage);
   const createConversation = useConversationsStore((s) => s.createConversation);
 
@@ -153,6 +155,20 @@ export function Message({
       return names.filter((name): name is string => typeof name === 'string');
     } catch {
       return [] as string[];
+    }
+  }, [isUser, message]);
+
+  // A chat continued from another opens with a summary of it. That turn was
+  // written from the old thread, not in answer to anything here, so it says
+  // where it came from and links back.
+  const continuedFrom = useMemo(() => {
+    if (isUser || !('metadata' in message) || !message.metadata) return null;
+    try {
+      const parsed = (JSON.parse(message.metadata) as { continuedFrom?: { conversationId?: unknown; title?: unknown } })?.continuedFrom;
+      if (typeof parsed?.conversationId !== 'string') return null;
+      return { conversationId: parsed.conversationId, title: typeof parsed.title === 'string' ? parsed.title : 'the earlier chat' };
+    } catch {
+      return null;
     }
   }, [isUser, message]);
 
@@ -280,6 +296,13 @@ export function Message({
       if (verdict.evidenceQuote) quotes.set(verdict.sentence, verdict.evidenceQuote);
     }
     return quotes;
+  }, [verificationSummary]);
+  const reasonByClaim = useMemo(() => {
+    const reasons = new Map<string, string>();
+    for (const verdict of verificationSummary?.claimVerdicts ?? []) {
+      if (verdict.reason) reasons.set(verdict.sentence, verdict.reason);
+    }
+    return reasons;
   }, [verificationSummary]);
   const canExpandVerification =
     verificationSummary?.enabled === true && !verificationPending && claimsEvaluated > 0;
@@ -704,6 +727,17 @@ export function Message({
         <header className={`mb-1.5 flex items-center gap-3 ${isUser ? 'justify-end' : 'justify-between'}`}>
           <div className="flex min-w-0 items-center gap-2">
             <span className="sr-only">{isUser ? 'You' : 'Assistant'}</span>
+            {continuedFrom && (
+              <button
+                type="button"
+                onClick={() => { void selectConversation(continuedFrom.conversationId); }}
+                title={`Open "${continuedFrom.title}"`}
+                className="inline-flex min-w-0 items-center gap-1 rounded-sm text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <MessageSquareShare className="h-3 w-3 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+                <span className="truncate">Summary of {continuedFrom.title}</span>
+              </button>
+            )}
             {isPending && (
               <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-muted))]">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -794,10 +828,16 @@ export function Message({
                     {contradictedClaims.map((claim, idx) => (
                       <li key={`contradicted-${idx}`} className={CLAIM_ITEM_CLASS}>
                         {claim}
+                        {reasonByClaim.get(claim) && (
+                          <span className="mt-1 block text-xs leading-relaxed text-[hsl(var(--text-secondary))]">
+                            {reasonByClaim.get(claim)}
+                          </span>
+                        )}
                         {/* The passage the judge read. Without it the verdict is
                             an assertion; with it the reader can check. */}
                         {evidenceByClaim.get(claim) && (
                           <span className="mt-1 block border-l-2 border-[hsl(var(--danger-muted))] pl-2 text-xs italic text-[hsl(var(--text-muted))]">
+                            <span className="not-italic font-medium">What the source says: </span>
                             &ldquo;{evidenceByClaim.get(claim)}&rdquo;
                           </span>
                         )}
@@ -865,11 +905,16 @@ export function Message({
                     Not checked
                   </p>
                   <ul className={CLAIM_LIST_CLASS}>
-                    {uncheckedClaims.map((claim, idx) => (
-                      <li key={`unchecked-${idx}`} className={CLAIM_ITEM_CLASS}>
-                        {claim}
-                      </li>
-                    ))}
+                      {uncheckedClaims.map((claim, idx) => (
+                        <li key={`unchecked-${idx}`} className={CLAIM_ITEM_CLASS}>
+                          {claim}
+                          {reasonByClaim.get(claim) && (
+                            <span className="mt-1 block text-xs leading-relaxed text-[hsl(var(--text-secondary))]">
+                              {reasonByClaim.get(claim)}
+                            </span>
+                          )}
+                        </li>
+                      ))}
                   </ul>
                 </div>
               )}
@@ -1019,4 +1064,4 @@ export function Message({
       )}
     </>
   );
-}
+});

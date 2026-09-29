@@ -275,6 +275,7 @@ pub async fn build_memory_plan_for_query(
             processed_through_sequence: watermark,
             recalled: recalled.passages(),
             retrieval: recalled.diagnostics.clone(),
+            recall_status: Some(recalled.availability().note()),
             document_evidence,
             capacity,
         },

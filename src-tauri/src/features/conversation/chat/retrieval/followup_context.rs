@@ -274,6 +274,8 @@ fn build_followup_sources(
         chunk_index,
         chunk_excerpts: None,
         citation_id: None,
+
+        web_snapshot: None,
     }]
 }
 
@@ -302,6 +304,8 @@ mod followup_label_tests {
             chunk_index: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 

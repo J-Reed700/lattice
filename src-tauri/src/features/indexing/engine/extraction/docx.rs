@@ -1,9 +1,10 @@
 //! Word document (DOCX) extraction.
 
+use super::archive_budget::{run_archive_work, ArchiveBudget};
+use super::markup::{decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -28,9 +29,7 @@ pub async fn extract_docx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
 
     let path_clone = path.to_path_buf();
 
-    let text = tokio::task::spawn_blocking(move || extract_docx_sync(&path_clone))
-        .await
-        .map_err(|e| IndexingError::Other(format!("Task join error: {}", e)))??;
+    let text = run_archive_work(path.to_path_buf(), move || extract_docx_sync(&path_clone)).await?;
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -60,22 +59,9 @@ fn extract_docx_sync(path: &Path) -> Result<String> {
         path: path.display().to_string(),
         reason: format!("Failed to open DOCX as ZIP: {}", e),
     })?;
-
-    let mut document_xml =
-        archive
-            .by_name("word/document.xml")
-            .map_err(|e| IndexingError::ContentExtraction {
-                path: path.display().to_string(),
-                reason: format!("Failed to find document.xml in DOCX: {}", e),
-            })?;
-
-    let mut xml_content = String::new();
-    document_xml.read_to_string(&mut xml_content).map_err(|e| {
-        IndexingError::ContentExtraction {
-            path: path.display().to_string(),
-            reason: format!("Failed to read document.xml: {}", e),
-        }
-    })?;
+    let mut budget = ArchiveBudget::default();
+    budget.check_members(&archive, path)?;
+    let xml_content = budget.read_part(&mut archive, "word/document.xml", path)?;
 
     let text = extract_text_from_docx_xml(&xml_content);
 
@@ -83,52 +69,72 @@ fn extract_docx_sync(path: &Path) -> Result<String> {
 }
 
 /// Extract text from DOCX XML content.
+///
+/// Word writes `document.xml` as a single line, so this walks the markup tag
+/// by tag. Only `<w:t>` holds body text: `<w:delText>` (deleted revisions) and
+/// `<w:instrText>` (field codes) are left out, and `<w:tab/>` / `<w:br/>` count
+/// only inside a run, since `<w:tabs><w:tab …/>` in paragraph properties
+/// defines tab stops rather than typing a tab.
 fn extract_text_from_docx_xml(xml: &str) -> String {
-    let mut text_parts = Vec::new();
-    let mut in_text_tag = false;
-    let mut current_text = String::new();
+    let mut out = String::new();
+    let mut in_run = false;
+    let mut in_text = false;
 
-    for line in xml.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.contains("<w:t") {
-            in_text_tag = true;
-            if let Some(start) = trimmed.find(">") {
-                let after_tag = &trimmed[start + 1..];
-                if let Some(end) = after_tag.find("</w:t>") {
-                    current_text.push_str(&after_tag[..end]);
-                    in_text_tag = false;
-                } else {
-                    current_text.push_str(after_tag);
-                }
-            }
-        } else if in_text_tag {
-            if let Some(end) = trimmed.find("</w:t>") {
-                current_text.push_str(&trimmed[..end]);
-                in_text_tag = false;
-            } else {
-                current_text.push_str(trimmed);
-            }
-        }
-
-        if !in_text_tag && !current_text.is_empty() {
-            text_parts.push(decode_xml_entities(&current_text));
-            current_text.clear();
-        }
-
-        if trimmed.contains("</w:p>") && !text_parts.is_empty() {
-            text_parts.push("\n".to_string());
+    for event in MarkupCursor::new(xml) {
+        match event {
+            Markup::Open {
+                name: "w:r", empty, ..
+            } => in_run = !empty,
+            Markup::Close { name: "w:r" } => in_run = false,
+            Markup::Open {
+                name: "w:t", empty, ..
+            } => in_text = !empty,
+            Markup::Close { name: "w:t" } => in_text = false,
+            Markup::Open { name: "w:tab", .. } if in_run => out.push('\t'),
+            Markup::Open {
+                name: "w:br" | "w:cr",
+                ..
+            } if in_run => out.push('\n'),
+            Markup::Close { name: "w:p" } => out.push('\n'),
+            Markup::Text(text) if in_text => out.push_str(&decode_entities(text)),
+            _ => {}
         }
     }
 
-    text_parts.join("")
+    tidy_lines(&out)
 }
 
-/// Decode XML entities in text.
-fn decode_xml_entities(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A body shaped the way Word saves it: one line, runs split mid-word, a
+    /// tab stop definition, a typed tab, a line break and a two-cell table.
+    const DOCUMENT_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Title"/><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr><w:r><w:t>Cover</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve"> Letter</w:t></w:r></w:p><w:p><w:r><w:t>Name</w:t></w:r><w:r><w:tab/><w:t>Jo &amp; Co</w:t></w:r><w:r><w:br/><w:t>it&#8217;s here</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>Cell A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Cell B</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:delText>gone</w:delText></w:r><w:r><w:t>Last paragraph.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#;
+
+    #[test]
+    fn a_single_line_document_keeps_every_run_and_paragraph() {
+        let text = extract_text_from_docx_xml(DOCUMENT_XML);
+        assert_eq!(
+            text,
+            "Cover Letter\nName\tJo & Co\nit\u{2019}s here\nCell A\nCell B\nLast paragraph."
+        );
+        assert!(!text.contains('<'));
+    }
+
+    #[tokio::test]
+    async fn a_docx_file_is_read_from_its_zip() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("letter.docx");
+        let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file("word/document.xml", zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(DOCUMENT_XML.as_bytes()).unwrap();
+        zip.finish().unwrap();
+
+        let content = extract_docx(&path, 1 << 20).await.unwrap();
+        assert!(content.text.starts_with("Cover Letter\n"));
+        assert!(content.text.ends_with("Last paragraph."));
+    }
 }

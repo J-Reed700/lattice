@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
-  Combine
+  Combine,
+  MessageSquareShare,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
@@ -14,7 +15,8 @@ import { useSynthesizeConversationMutation } from './workspaceQueries';
 
 export function useConversationSynthesis() {
   const navigate = useNavigate();
-  const { conversations, activeConversationId } = useConversationsStore();
+  const { conversations, activeConversationId, continueInNewConversation } = useConversationsStore();
+  const [continuingConversationId, setContinuingConversationId] = useState<string | null>(null);
   const mutation = useSynthesizeConversationMutation();
   const { mutateAsync } = mutation;
   const synthesizeConversationToJournal = useCallback(async (id: string, title: string) => {
@@ -35,6 +37,26 @@ export function useConversationSynthesis() {
       toast.dismiss(working);
     }
   }, [mutateAsync, navigate]);
+  // A long thread slows every turn and its opening falls out of the model's
+  // window. This carries what it established into a fresh chat in the same
+  // space; the old one stays as it was.
+  const continueConversationInNewChat = useCallback(async (id: string, title: string) => {
+    if (continuingConversationId) return;
+    setContinuingConversationId(id);
+    const working = toast.info(`Summarizing "${title}"…`, {
+      message: 'The new chat opens with the summary when it is ready.',
+      duration: 0,
+    });
+    try {
+      await continueInNewConversation(id);
+      toast.success('Continued in a new chat', { message: `It starts from a summary of "${title}".` });
+    } catch (error) {
+      toast.error("Couldn't continue in a new chat", { message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      toast.dismiss(working);
+      setContinuingConversationId(null);
+    }
+  }, [continueInNewConversation, continuingConversationId]);
   const synthesizePaletteCommands = useMemo<PaletteCommand[]>(
     () => [
       {
@@ -52,13 +74,27 @@ export function useConversationSynthesis() {
           );
         },
       },
+      {
+        id: 'chat.continueInNewChat',
+        label: 'Continue this conversation in a new chat',
+        group: 'Chat',
+        icon: MessageSquareShare,
+        enabled: Boolean(activeConversationId) && !continuingConversationId,
+        run: () => {
+          if (!activeConversationId) return;
+          const conversation = conversations.find((c) => c.id === activeConversationId);
+          void continueConversationInNewChat(activeConversationId, conversation?.title ?? 'Conversation');
+        },
+      },
     ],
-    [activeConversationId, conversations, synthesizeConversationToJournal],
+    [activeConversationId, continueConversationInNewChat, continuingConversationId, conversations, synthesizeConversationToJournal],
   );
   useRegisterPaletteCommands(synthesizePaletteCommands);
 
   return {
     synthesizeConversationToJournal,
     synthesizingConversationId: mutation.isPending ? mutation.variables.id : null,
+    continueConversationInNewChat,
+    continuingConversationId,
   };
 }

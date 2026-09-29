@@ -8,7 +8,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::application::ports::{
-    DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
+    ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
 use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
@@ -20,7 +20,7 @@ use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig,
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
-use crate::features::search::engine::vector_search::persistence::open_or_rebuild;
+use crate::features::search::engine::vector_search::persistence::open_or_rebuild_streaming;
 use crate::features::search::engine::vector_search::{
     IndexPersistence, USearchVectorIndex, VectorIndexCompression,
 };
@@ -171,14 +171,17 @@ pub async fn build_with_compression(
     let mut coverage: Option<(usize, usize)> = None;
     let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {
-        let restore = || {
+        let restore = |cursor: String| {
             let pool = db_pool.clone();
             let identity = identity.clone();
             async move {
-                crate::features::embedding::generation::restore(&pool, &identity, dimension).await
+                crate::features::embedding::generation::restore_page(
+                    &pool, &identity, dimension, &cursor, 128,
+                )
+                .await
             }
         };
-        open_or_rebuild(
+        open_or_rebuild_streaming(
             &usearch_index,
             &db_pool,
             &usearch_index_path,
@@ -218,7 +221,7 @@ pub async fn build_with_compression(
                 })??;
                 crate::features::embedding::generation::prepare(&db_pool, &model).await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
-                open_or_rebuild(
+                open_or_rebuild_streaming(
                     &usearch_index,
                     &db_pool,
                     &usearch_index_path,
@@ -247,7 +250,7 @@ pub async fn build_with_compression(
             dimension,
             usearch_index_path.clone(),
         ));
-        tokio::spawn(Arc::clone(&persistence).run());
+        crate::shared::background::spawn(Arc::clone(&persistence).run());
         index_persistence = Some(persistence);
     }
 
@@ -304,6 +307,9 @@ pub async fn build_with_compression(
 
     let dynamic_embedding =
         Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
+    let chunk_repository = Arc::new(
+        crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
+    ) as Arc<dyn ChunkRepositoryPort>;
     // Both retrieval paths get the same third branch, wired unconditionally and
     // gated identically: `sparse_enabled` above is the product switch, and
     // `SparseSearchTrait::is_available` tracks whether the loaded model has a
@@ -317,20 +323,22 @@ pub async fn build_with_compression(
         HybridSearchService::new(
             search_service.clone(),
             bm25_search.clone(),
-            db_pool,
+            db_pool.clone(),
             search_enrichment_service.clone(),
             hybrid_config,
         )
+        .with_chunk_repository(Arc::clone(&chunk_repository))
         .with_reranker(Arc::clone(&reranker))
         .with_sparse_search(Arc::clone(&sparse_search)),
     ) as Arc<dyn HybridSearchTrait>;
 
-    let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
-        dynamic_embedding.clone(),
-        vector_search.clone(),
-    ));
+    let semantic_search_use_case = Arc::new(
+        SemanticSearchUseCase::new(dynamic_embedding.clone(), vector_search.clone())
+            .with_chunk_repository(Arc::clone(&chunk_repository)),
+    );
     let hybrid_search_use_case = Arc::new(
         HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
+            .with_chunk_repository(chunk_repository)
             .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED),
     );
 

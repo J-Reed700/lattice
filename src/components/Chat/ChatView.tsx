@@ -296,7 +296,7 @@ export function ChatView() {
   }, [activeConversationId, searchParams, setSearchParams]);
 
   return (
-    <div ref={rowRef} className="flex h-full w-full min-w-0 overflow-hidden">
+    <div ref={rowRef} className="flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       {sidebarCollapsed ? (
         <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface py-2">
           <IconButton label="Show sidebar" shortcut="⌘\" tooltipSide="right" onClick={() => setSidebarCollapsed(false)}>
