@@ -10,9 +10,53 @@
 
 use sqlx::SqlitePool;
 
-use super::commands::{appended_capture, capture_snippet};
+use super::commands::{
+    append_sources_and_remap_citations, appended_capture, capture_snippet, hydrate_workspace_note,
+    row_to_dto, WorkspaceNoteDto,
+};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
+use crate::features::conversation::repository::ConversationRepository;
+use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto, WebSnapshotDto};
 use crate::shared::error::AppError;
+
+fn source(citation_id: u32, document_id: &str) -> SourceDto {
+    SourceDto {
+        document_id: document_id.into(),
+        chunk_id: format!("{document_id}-chunk"),
+        content: "source content".into(),
+        score: 1.0,
+        path: None,
+        position: None,
+        file_name: format!("{document_id}.md"),
+        file_path: format!("/vault/{document_id}.md"),
+        mime_type: "text/markdown".into(),
+        category: "Markdown".into(),
+        file_size_bytes: 10,
+        modified_at: "2026-09-28T00:00:00Z".into(),
+        excerpt: Some("excerpt".into()),
+        highlights: Some(vec!["highlight".into()]),
+        section: Some("Heading".into()),
+        chunk_index: Some(0),
+        page_number: None,
+        chunk_excerpts: None,
+        citation_id: Some(citation_id),
+        web_snapshot: None,
+    }
+}
+
+#[test]
+fn capture_remaps_only_colliding_citations_without_cascading() {
+    let (content, sources) = append_sources_and_remap_citations(
+        &[source(1, "existing")],
+        "First [1], second [2]",
+        vec![source(1, "incoming-one"), source(2, "incoming-two")],
+    );
+    assert_eq!(content, "First [3], second [2]");
+    assert_eq!(sources[0].citation_id, Some(3));
+    assert_eq!(sources[1].citation_id, Some(2));
+    assert_eq!(sources[0].excerpt.as_deref(), Some("excerpt"));
+    assert!(sources[0].chunk_excerpts.is_none());
+}
 
 async fn fresh_pool() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -50,9 +94,275 @@ fn record(id: &str, title: &str, content: &str, updated_at: &str) -> WorkspaceNo
         highlights_json: "[]".to_string(),
         sticky_notes_json: "[]".to_string(),
         conversation_snapshots_json: "[]".to_string(),
+        sources_json: "[]".to_string(),
         created_at: updated_at.to_string(),
         updated_at: updated_at.to_string(),
     }
+}
+
+#[tokio::test]
+async fn vault_updates_preserve_saved_source_metadata() {
+    let repository = fresh_repository().await;
+    let mut note = record("with_sources", "Page", "See [1]", "2026-09-17T10:00:00Z");
+    let sources: Vec<SourceDto> = (1..=25)
+        .map(|id| {
+            let mut source = source(id, &format!("doc-{id}"));
+            source.page_number = Some(id);
+            source.chunk_excerpts = Some(vec![SourceChunkExcerptDto {
+                chunk_id: format!("doc-{id}-extra"),
+                excerpt: format!("supporting excerpt {id}"),
+                section: Some(format!("Section {id}")),
+                chunk_index: Some(id as usize),
+                page_number: Some(id),
+                score: 0.8,
+                highlights: Some(vec![format!("term {id}")]),
+            }]);
+            source
+        })
+        .collect();
+    let expected_sources = serde_json::to_value(&sources).unwrap();
+    note.sources_json = serde_json::to_string(&sources).unwrap();
+    repository.insert(&note).await.unwrap();
+
+    // A normal note edit must bind the new column and preserve every source
+    // field through the repository's UPDATE path.
+    let mut edited = repository.get("with_sources").await.unwrap();
+    edited.content = "Updated body".into();
+    repository.update(&edited).await.unwrap();
+
+    let stored = row_to_dto(repository.get("with_sources").await.unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&stored.sources).unwrap(),
+        expected_sources
+    );
+
+    repository
+        .upsert_from_vault(super::repository::VaultNoteUpsert {
+            id: "with_sources",
+            title: "Renamed from disk",
+            content: "Edited in vault",
+            created_at: "2026-09-17T10:00:00Z",
+            updated_at: "2026-09-17T11:00:00Z",
+        })
+        .await
+        .unwrap();
+
+    let stored = row_to_dto(repository.get("with_sources").await.unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&stored.sources).unwrap(),
+        expected_sources
+    );
+}
+
+#[tokio::test]
+async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
+    let pool = fresh_pool().await;
+    let notes = DailyNotesRepository::new(pool.clone());
+    let conversations = ConversationRepository::new(pool.clone());
+    let conversation = conversations
+        .create_conversation("Archived source", "test", None)
+        .await
+        .unwrap();
+    let conversation_id = conversation.id.to_string();
+    let url = "HTTPS://en.wikipedia.org/wiki/Citation";
+    conversations
+        .store_conversation_web_source_snapshot(
+            conversation_id.clone(),
+            url.into(),
+            Some("Citation (wiki)".into()),
+            "The archived article text.".into(),
+            false,
+        )
+        .await
+        .unwrap();
+
+    let mut old_note = record("old-page", "Old page", "See [1]", "2026-09-20T00:00:00Z");
+    old_note.linked_conversation_ids =
+        serde_json::to_string(&vec![conversation_id.clone()]).unwrap();
+    let mut citation = source(1, "web-source");
+    citation.file_path = url.into();
+    // This is an older journal payload: it has a general HTTPS URL and no
+    // web: document-ID prefix or inline snapshot.
+    old_note.sources_json = serde_json::to_string(&vec![citation]).unwrap();
+    notes.insert(&old_note).await.unwrap();
+
+    let hydrated =
+        hydrate_workspace_note(&notes, &conversations, notes.get("old-page").await.unwrap())
+            .await
+            .unwrap();
+    let snapshot = hydrated.sources[0].web_snapshot.as_ref().unwrap();
+    assert_eq!(snapshot.url, url);
+    assert_eq!(snapshot.text, "The archived article text.");
+    assert_eq!(snapshot.title.as_deref(), Some("Citation (wiki)"));
+    assert!(snapshot.fetched_at.is_some());
+
+    let stored: Vec<SourceDto> =
+        serde_json::from_str(&notes.get("old-page").await.unwrap().sources_json).unwrap();
+    assert_eq!(stored[0].web_snapshot.as_ref().unwrap().text, snapshot.text);
+
+    // The new snapshot belongs to the page itself now. Deleting the source
+    // conversation removes its archive row but does not erase the journal copy.
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let after_delete: Vec<SourceDto> =
+        serde_json::from_str(&notes.get("old-page").await.unwrap().sources_json).unwrap();
+    assert_eq!(
+        after_delete[0].web_snapshot.as_ref().unwrap().text,
+        "The archived article text."
+    );
+}
+
+#[tokio::test]
+async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots() {
+    let pool = fresh_pool().await;
+    let notes = DailyNotesRepository::new(pool.clone());
+    let conversations = ConversationRepository::new(pool.clone());
+    let first = conversations
+        .create_conversation("First", "test", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    let second = conversations
+        .create_conversation("Second", "test", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    let missing = conversations
+        .create_conversation("No archive", "test", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    let url = "https://example.org/wiki";
+    for (conversation_id, content) in [
+        (&first, "First archived version"),
+        (&second, "Different archived version"),
+    ] {
+        conversations
+            .store_conversation_web_source_snapshot(
+                conversation_id.clone(),
+                url.into(),
+                Some("Example".into()),
+                content.into(),
+                false,
+            )
+            .await
+            .unwrap();
+    }
+
+    let linked_ids = serde_json::to_string(&vec![first.clone(), second]).unwrap();
+    let mut missing_snapshot = source(1, "url-source");
+    missing_snapshot.file_path = url.into();
+    let mut note = record("conflict", "Conflict", "", "2026-09-20T00:00:00Z");
+    note.linked_conversation_ids = linked_ids.clone();
+    note.sources_json = serde_json::to_string(&vec![missing_snapshot]).unwrap();
+    notes.insert(&note).await.unwrap();
+
+    let hydrated =
+        hydrate_workspace_note(&notes, &conversations, notes.get("conflict").await.unwrap())
+            .await
+            .unwrap();
+    assert!(hydrated.sources[0].web_snapshot.is_none());
+    assert_eq!(
+        notes.get("conflict").await.unwrap().sources_json,
+        note.sources_json
+    );
+
+    let mut provenance_unknown = source(3, "provenance-unknown");
+    provenance_unknown.file_path = url.into();
+    let mut unknown_note = record("unknown", "Unknown", "", "2026-09-20T00:00:00Z");
+    unknown_note.linked_conversation_ids = serde_json::to_string(&vec![first, missing]).unwrap();
+    unknown_note.sources_json = serde_json::to_string(&vec![provenance_unknown]).unwrap();
+    notes.insert(&unknown_note).await.unwrap();
+
+    let hydrated =
+        hydrate_workspace_note(&notes, &conversations, notes.get("unknown").await.unwrap())
+            .await
+            .unwrap();
+    assert!(hydrated.sources[0].web_snapshot.is_none());
+    assert_eq!(
+        notes.get("unknown").await.unwrap().sources_json,
+        unknown_note.sources_json
+    );
+
+    let saved_snapshot = WebSnapshotDto {
+        url: url.into(),
+        title: Some("Previously saved title".into()),
+        text: "Previously saved page text".into(),
+        fetched_at: Some("2026-09-19T00:00:00Z".into()),
+        truncated: true,
+    };
+    let mut already_archived = source(2, "already-archived");
+    already_archived.file_path = url.into();
+    already_archived.web_snapshot = Some(saved_snapshot.clone());
+    let mut note_with_snapshot = record("saved", "Saved", "", "2026-09-20T00:00:00Z");
+    note_with_snapshot.linked_conversation_ids = linked_ids;
+    note_with_snapshot.sources_json = serde_json::to_string(&vec![already_archived]).unwrap();
+    notes.insert(&note_with_snapshot).await.unwrap();
+
+    let hydrated =
+        hydrate_workspace_note(&notes, &conversations, notes.get("saved").await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(
+        hydrated.sources[0].web_snapshot.as_ref().unwrap().text,
+        saved_snapshot.text
+    );
+    let stored: Vec<SourceDto> =
+        serde_json::from_str(&notes.get("saved").await.unwrap().sources_json).unwrap();
+    assert_eq!(
+        stored[0].web_snapshot.as_ref().unwrap().text,
+        saved_snapshot.text
+    );
+}
+
+#[tokio::test]
+async fn hydration_compare_and_swap_does_not_overwrite_a_concurrent_note_edit() {
+    let pool = fresh_pool().await;
+    let repository = DailyNotesRepository::new(pool.clone());
+    let note = record("racing", "Before", "Before edit", "2026-09-20T00:00:00Z");
+    repository.insert(&note).await.unwrap();
+    sqlx::query(
+        "UPDATE daily_notes_workspace SET title = ?, content = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind("Concurrent title")
+    .bind("Concurrent content")
+    .bind("2026-09-21T00:00:00Z")
+    .bind(&note.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let updated = repository
+        .update_sources_if_unchanged(
+            &note.id,
+            &note.sources_json,
+            &note.updated_at,
+            r#"[{"webSnapshot":{"text":"stale"}}]"#,
+        )
+        .await
+        .unwrap();
+    assert!(!updated);
+    let stored = repository.get(&note.id).await.unwrap();
+    assert_eq!(stored.title, "Concurrent title");
+    assert_eq!(stored.content, "Concurrent content");
+    assert_eq!(stored.sources_json, note.sources_json);
+}
+
+#[test]
+fn older_workspace_note_payloads_default_to_no_sources() {
+    let note: WorkspaceNoteDto = serde_json::from_value(serde_json::json!({
+        "id": "n", "title": "Page", "journalId": null, "content": "",
+        "linkedDocumentIds": [], "linkedConversationIds": [], "highlights": [],
+        "stickyNotes": [], "conversationSnapshots": [], "createdAt": "now", "updatedAt": "now"
+    }))
+    .unwrap();
+    assert!(note.sources.is_empty());
 }
 
 #[tokio::test]

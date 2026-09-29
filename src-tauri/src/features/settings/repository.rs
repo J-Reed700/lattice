@@ -1115,7 +1115,13 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn export(&self, path: &str) -> Result<()> {
-        let settings = self.get_all().await?;
+        let mut settings = self.get_all().await?;
+        // The remote servers' auth headers are bearer tokens. An export is a
+        // file the user moves around and shares; it carries the header names
+        // and the import puts back this machine's tokens (see
+        // `restore_redacted_secrets`).
+        settings.llm.ollama_auth_header_value.clear();
+        settings.llm.llama_cpp.auth_header_value.clear();
 
         // Serialize to JSON with pretty printing
         let json = serde_json::to_string_pretty(&settings)
@@ -1142,6 +1148,9 @@ impl SettingsRepositoryPort for SettingsRepository {
         // wholesale over one repurposed number.
         resolve_out_of_range_values(&mut imported_settings);
 
+        let existing = self.get_all().await?;
+        restore_redacted_secrets(&mut imported_settings, &existing);
+
         let validation = self.validate_settings(&imported_settings);
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
@@ -1152,7 +1161,7 @@ impl SettingsRepositoryPort for SettingsRepository {
 
         let final_settings = if merge {
             // Merge with existing settings
-            let mut existing = self.get_all().await?;
+            let mut existing = existing;
 
             // Merge each category (imported values override existing)
             existing.indexing = imported_settings.indexing;
@@ -1183,6 +1192,36 @@ impl SettingsRepositoryPort for SettingsRepository {
         // repository-barrier-allow: settings validation checks a user-selected folder resource.
         path.exists() && path.is_dir()
     }
+}
+
+/// Put this machine's auth tokens back into an imported export, which never
+/// carries them. A header whose token is not here (another machine, or a
+/// different header) loses its name too: a name without a token is refused by
+/// validation and useless to a request, and the user re-enters both.
+fn restore_redacted_secrets(imported: &mut SettingsDto, existing: &SettingsDto) {
+    fn restore(name: &mut String, value: &mut String, existing_name: &str, existing_value: &str) {
+        if !value.trim().is_empty() || name.trim().is_empty() {
+            return;
+        }
+        if name.trim() == existing_name.trim() && !existing_value.trim().is_empty() {
+            *value = existing_value.to_string();
+        } else {
+            name.clear();
+        }
+    }
+    let llm = &mut imported.llm;
+    restore(
+        &mut llm.ollama_auth_header_name,
+        &mut llm.ollama_auth_header_value,
+        &existing.llm.ollama_auth_header_name,
+        &existing.llm.ollama_auth_header_value,
+    );
+    restore(
+        &mut llm.llama_cpp.auth_header_name,
+        &mut llm.llama_cpp.auth_header_value,
+        &existing.llm.llama_cpp.auth_header_name,
+        &existing.llm.llama_cpp.auth_header_value,
+    );
 }
 
 #[cfg(test)]
@@ -1442,6 +1481,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(imported.search.max_results, 25);
+    }
+
+    #[tokio::test]
+    async fn export_leaves_out_auth_tokens_and_import_restores_them() {
+        let (repo, temp_dir) = create_test_repository().await;
+        let mut settings = repo.get_all().await.unwrap();
+        settings.llm.ollama_auth_header_name = "Authorization".to_string();
+        settings.llm.ollama_auth_header_value = "Bearer ollama-secret".to_string();
+        settings.llm.llama_cpp.auth_header_name = "X-Api-Key".to_string();
+        settings.llm.llama_cpp.auth_header_value = "llama-secret".to_string();
+        repo.save_all(&settings).await.unwrap();
+
+        let export_path = temp_dir.path().join("export.json");
+        repo.export(export_path.to_str().unwrap()).await.unwrap();
+        let exported = fs::read_to_string(&export_path).await.unwrap();
+        assert!(!exported.contains("ollama-secret"), "{exported}");
+        assert!(!exported.contains("llama-secret"), "{exported}");
+        assert!(exported.contains("X-Api-Key"));
+
+        let imported = repo
+            .import(export_path.to_str().unwrap(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            imported.llm.ollama_auth_header_value,
+            "Bearer ollama-secret"
+        );
+        assert_eq!(imported.llm.llama_cpp.auth_header_value, "llama-secret");
+    }
+
+    #[test]
+    fn a_header_whose_token_is_not_here_is_dropped_on_import() {
+        let mut imported = SettingsDto::default();
+        imported.llm.ollama_auth_header_name = "Authorization".to_string();
+        let existing = SettingsDto::default();
+
+        restore_redacted_secrets(&mut imported, &existing);
+
+        assert!(imported.llm.ollama_auth_header_name.is_empty());
+        assert!(imported.llm.ollama_auth_header_value.is_empty());
     }
 
     #[tokio::test]

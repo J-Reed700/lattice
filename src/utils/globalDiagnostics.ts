@@ -24,7 +24,7 @@ export function installGlobalDiagnostics(): () => void {
   const originalWarn = console.warn;
   const wrap = (level: 'error' | 'warn', original: typeof console.error) => (...args: unknown[]) => {
     // The structured logger already records its own output.
-    if (!(typeof args[0] === 'string' && /^[❌⚠️]/u.test(args[0]))) {
+    if (!(typeof args[0] === 'string' && /^(?:❌|⚠️)/u.test(args[0]))) {
       const message = args.map(arg => {
         try { return arg instanceof Error ? arg.message : typeof arg === 'string' ? arg : JSON.stringify(arg); }
         catch { return '[Unserializable value]'; }

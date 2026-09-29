@@ -31,8 +31,10 @@ use crate::shared::result::Result;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::Ordering as CmpOrdering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
@@ -61,6 +63,35 @@ const HNSW_EXPANSION_SEARCH: usize = 256;
 /// compressed candidate selection can still differ from full-vector cosine.
 /// The graph is still built and saved, so crossing the line needs no rebuild.
 const EXACT_SEARCH_MAX_VECTORS: usize = 20_000;
+/// Limit an approximate scoped walk even when the eligible scope is huge.
+const MAX_SCOPED_CANDIDATES: usize = 8_192;
+
+#[derive(Debug, Clone, Copy)]
+struct ScopedCandidate {
+    key: u64,
+    score: f32,
+}
+
+// Reverse score ordering so the heap head is the worst retained candidate.
+impl PartialEq for ScopedCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.score.to_bits() == other.score.to_bits()
+    }
+}
+impl Eq for ScopedCandidate {}
+impl PartialOrd for ScopedCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ScopedCandidate {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        other
+            .score
+            .total_cmp(&self.score)
+            .then_with(|| self.key.cmp(&other.key))
+    }
+}
 
 /// When to write the index to disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,17 +108,12 @@ pub enum SavePolicy {
 
 /// Metadata stored alongside each vector for search result enrichment.
 ///
-/// `content` is the one field that is *not* persisted with the key map: it is
-/// a second copy of `text_chunks.content`, and writing every chunk's text back
-/// to disk on every save is what made saving cost the whole corpus. It is
-/// filled in by whoever supplies the vector (indexing, or the startup rebuild)
-/// and re-filled from SQLite by `hydrate_content` when an index is loaded
-/// without a rebuild.
+/// Search identity and scope metadata only. Candidate text is fetched from
+/// SQLite after ranking so corpus text is never retained in the vector index.
 #[derive(Clone, Debug)]
 struct VectorMeta {
     chunk_id: String,
     document_id: String,
-    content: String,
 }
 
 /// Whether the in-memory index has changes the file on disk does not.
@@ -127,6 +153,8 @@ struct KeyState {
     key_to_id: HashMap<u64, String>,
     /// Metadata map: string ID → chunk metadata
     metadata: HashMap<String, VectorMeta>,
+    /// Reverse scope index so a narrow document filter can visit just its keys.
+    document_to_keys: HashMap<String, HashSet<u64>>,
 }
 
 /// USearch-backed vector index implementing both `VectorSearchPort` (application layer)
@@ -159,6 +187,9 @@ pub struct USearchVectorIndex {
     /// Always [`EXACT_SEARCH_MAX_VECTORS`] outside tests, which lower it to
     /// reach the graph path without building twenty thousand vectors.
     exact_search_max: usize,
+
+    #[cfg(test)]
+    exact_scope_scored: AtomicUsize,
 
     /// Path for persisting the index to disk
     index_path: Option<PathBuf>,
@@ -288,12 +319,15 @@ impl USearchVectorIndex {
                 id_to_key: HashMap::new(),
                 key_to_id: HashMap::new(),
                 metadata: HashMap::new(),
+                document_to_keys: HashMap::new(),
             }),
             next_key: AtomicU64::new(1),
             dimension,
             compression,
             rescore,
             exact_search_max: EXACT_SEARCH_MAX_VECTORS,
+            #[cfg(test)]
+            exact_scope_scored: AtomicUsize::new(0),
             index_path,
             keymap_path,
             persistence: Mutex::new(()),
@@ -371,7 +405,8 @@ impl USearchVectorIndex {
         query: &[f32],
         count: usize,
         scope: Option<&HashSet<String>>,
-    ) -> Result<(Vec<u64>, Vec<f32>)> {
+        full_query: &[f32],
+    ) -> Result<(Vec<u64>, Vec<f32>, bool)> {
         let in_scope = |key: u64, scope: &HashSet<String>| {
             state
                 .key_to_id
@@ -388,19 +423,25 @@ impl USearchVectorIndex {
         let failed = |e| AppError::InternalError(format!("USearch search failed: {}", e));
 
         let index_size = self.index.size();
+        if let Some(scope) = scope {
+            let eligible = scope
+                .iter()
+                .filter_map(|document_id| state.document_to_keys.get(document_id))
+                .map(HashSet::len)
+                .sum::<usize>();
+            if eligible <= self.exact_search_max {
+                let (keys, distances) =
+                    self.exact_scoped(state, query, full_query, count.min(eligible), scope)?;
+                return Ok((keys, distances, true));
+            }
+        }
         if index_size <= self.exact_search_max {
             let Some(scope) = scope else {
                 let matches = self.index.exact_search(query, count).map_err(failed)?;
-                return Ok((matches.keys, matches.distances));
+                return Ok((matches.keys, matches.distances, false));
             };
-            let matches = self.index.exact_search(query, index_size).map_err(failed)?;
-            return Ok(matches
-                .keys
-                .into_iter()
-                .zip(matches.distances)
-                .filter(|(key, _)| in_scope(*key, scope))
-                .take(count)
-                .unzip());
+            let (keys, distances) = self.exact_scoped(state, query, full_query, count, scope)?;
+            return Ok((keys, distances, true));
         }
 
         let matches = match scope {
@@ -410,7 +451,71 @@ impl USearchVectorIndex {
                 .filtered_search(query, count, |key| in_scope(key, scope)),
         }
         .map_err(failed)?;
-        Ok((matches.keys, matches.distances))
+        Ok((matches.keys, matches.distances, false))
+    }
+
+    /// Exact-score only vectors in a small scope and retain at most `count`.
+    fn exact_scoped(
+        &self,
+        state: &KeyState,
+        query: &[f32],
+        full_query: &[f32],
+        count: usize,
+        scope: &HashSet<String>,
+    ) -> Result<(Vec<u64>, Vec<f32>)> {
+        let failed = |e| AppError::InternalError(format!("USearch vector lookup failed: {e}"));
+        if count == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut best = BinaryHeap::with_capacity(count);
+        let mut projected_vector = vec![0.0f32; query.len()];
+        let mut full_vector = vec![0.0f32; full_query.len()];
+        let mut full_vector_bytes = vec![0u8; full_query.len().saturating_mul(4)];
+        for document_id in scope {
+            let Some(keys) = state.document_to_keys.get(document_id) else {
+                continue;
+            };
+            for &key in keys {
+                #[cfg(test)]
+                self.exact_scope_scored.fetch_add(1, Ordering::Relaxed);
+                let has_full_vector = self.rescore.as_ref().is_some_and(|full_vectors| {
+                    full_vectors.get_into(key, &mut full_vector, &mut full_vector_bytes)
+                });
+                let similarity = if has_full_vector {
+                    cosine_similarity_simd(full_query, &full_vector)
+                } else {
+                    let found = self.index.get(key, &mut projected_vector).map_err(failed)?;
+                    if found == 0 {
+                        continue;
+                    }
+                    cosine_similarity_simd(query, &projected_vector)
+                };
+                if !similarity.is_finite() {
+                    continue;
+                }
+                let candidate = ScopedCandidate {
+                    key,
+                    score: similarity,
+                };
+                if best.len() < count {
+                    best.push(candidate);
+                } else if best.peek().is_some_and(|worst| candidate < *worst) {
+                    best.pop();
+                    best.push(candidate);
+                }
+            }
+        }
+        let mut best = best.into_vec();
+        best.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.key.cmp(&right.key))
+        });
+        Ok(best
+            .into_iter()
+            .map(|candidate| (candidate.key, 1.0 - candidate.score))
+            .unzip())
     }
 
     /// Candidates to ask USearch for when `top_k` results are wanted.
@@ -531,8 +636,22 @@ impl USearchVectorIndex {
         &self,
         embeddings: Vec<(String, Vec<f32>, String, String, String)>,
     ) -> Result<usize> {
-        self.clear()?;
+        self.begin_rebuild()?;
+        let added = self.add_rebuild_batch(embeddings)?;
+        self.finish_rebuild()?;
+        Ok(added)
+    }
 
+    /// Start a rebuild before streaming bounded pages from SQLite.
+    pub fn begin_rebuild(&self) -> Result<()> {
+        self.clear()
+    }
+
+    /// Insert one bounded restore page without saving the whole graph.
+    pub fn add_rebuild_batch(
+        &self,
+        embeddings: Vec<(String, Vec<f32>, String, String, String)>,
+    ) -> Result<usize> {
         // Reserve the whole batch up front so the per-vector path never has to
         // grow. Scoped so the lock is released before `add_internal` re-takes it.
         let count = embeddings.len();
@@ -561,15 +680,12 @@ impl USearchVectorIndex {
             }
         }
 
-        // Persist to disk
-        self.save_to_disk()?;
-
-        tracing::info!(
-            added,
-            total = count,
-            "USearch index rebuilt from embeddings"
-        );
         Ok(added)
+    }
+
+    /// Persist the completed streamed rebuild once, after all rows validate.
+    pub fn finish_rebuild(&self) -> Result<()> {
+        self.save_to_disk()
     }
 
     /// Guarantees the index has room for `additional` more vectors.
@@ -680,15 +796,23 @@ impl USearchVectorIndex {
         state.id_to_key.insert(id.clone(), key);
         state.key_to_id.insert(key, id.clone());
 
-        if let (Some(content), Some(chunk_id), Some(doc_id)) = (content, chunk_id, document_id) {
+        if let (Some(_content), Some(chunk_id), Some(doc_id)) = (content, chunk_id, document_id) {
+            state
+                .document_to_keys
+                .entry(doc_id.clone())
+                .or_default()
+                .insert(key);
             state.metadata.insert(
                 id,
                 VectorMeta {
                     chunk_id,
                     document_id: doc_id,
-                    content,
                 },
             );
+        } else {
+            // Legacy bare-vector callers identify the document with the vector
+            // id. Keep their scope lookup indexed as well.
+            state.document_to_keys.entry(id).or_default().insert(key);
         }
 
         Ok(())
@@ -722,7 +846,7 @@ impl USearchVectorIndex {
                 Err(e) => {
                     return Err(AppError::FileStorage(format!(
                         "Failed to invalidate vector index manifest: {e}"
-                    )))
+                    )));
                 }
             }
             // Ensure parent directory exists
@@ -804,26 +928,16 @@ impl USearchVectorIndex {
         write_file_atomically(path, &bytes)
     }
 
-    /// Re-attach chunk text to keys loaded from disk.
-    ///
-    /// The key map deliberately does not persist content, so an index opened
-    /// without a rebuild knows which chunk each vector is but not what it
-    /// says. `rows` is `(embedding id, content)` straight out of SQLite.
-    /// Returns how many keys were filled. Unknown ids are ignored: SQLite
-    /// holds chunks this generation has no vector for.
+    /// Check membership for a bounded page of authoritative chunk IDs. The
+    /// contents are deliberately not copied into the index.
     pub fn hydrate_content<I>(&self, rows: I) -> usize
     where
-        I: IntoIterator<Item = (String, String)>,
+        I: IntoIterator<Item = String>,
     {
-        let mut state = self.state.write();
-        let mut filled = 0;
-        for (id, content) in rows {
-            if let Some(meta) = state.metadata.get_mut(&id) {
-                meta.content = content;
-                filled += 1;
-            }
-        }
-        filled
+        let state = self.state.read();
+        rows.into_iter()
+            .filter(|id| state.id_to_key.contains_key(id))
+            .count()
     }
 
     /// Load the key map from a JSON file.
@@ -846,15 +960,31 @@ impl USearchVectorIndex {
             .collect();
 
         for (id, m) in data.metadata {
+            if let Some(&key) = state.id_to_key.get(&id) {
+                state
+                    .document_to_keys
+                    .entry(m.document_id.clone())
+                    .or_default()
+                    .insert(key);
+            }
             state.metadata.insert(
                 id,
                 VectorMeta {
                     chunk_id: m.chunk_id,
                     document_id: m.document_id,
-                    // Filled by `hydrate_content` from SQLite; see `KeyMapData`.
-                    content: String::new(),
                 },
             );
+        }
+        let KeyState {
+            id_to_key,
+            metadata,
+            document_to_keys,
+            ..
+        } = &mut *state;
+        for (id, key) in id_to_key.iter() {
+            if !metadata.contains_key(id) {
+                document_to_keys.entry(id.clone()).or_default().insert(*key);
+            }
         }
 
         self.next_key.store(data.next_key, Ordering::SeqCst);
@@ -935,32 +1065,52 @@ impl VectorSearchPort for USearchVectorIndex {
         }
 
         let index_size = self.index.size();
+        let eligible_count = allowed_document_ids.map_or(index_size, |scope| {
+            scope
+                .iter()
+                .filter_map(|document_id| state.document_to_keys.get(document_id))
+                .map(HashSet::len)
+                .sum::<usize>()
+        });
+        let target_k = top_k.min(eligible_count);
+        if target_k == 0 {
+            return Ok(Vec::new());
+        }
         let rescoring = self.compression.is_active();
-        let mut candidate_k = self.candidate_window(top_k, index_size);
+        let mut candidate_k = self
+            .candidate_window(target_k, index_size)
+            .min(eligible_count);
         if allowed_document_ids.is_some() {
             // A predicate keeps out-of-scope neighbours out of the result set
             // but cannot conjure in-scope ones the traversal never reached, so
             // a scoped search still asks for a wider window than an open one.
-            let widened_start = top_k.saturating_mul(4).max(32).min(index_size);
+            let widened_start = target_k.saturating_mul(4).max(32).min(eligible_count);
             candidate_k = candidate_k.max(widened_start);
         }
+        let maximum_candidate_k = if allowed_document_ids.is_some() {
+            target_k.max(MAX_SCOPED_CANDIDATES).min(eligible_count)
+        } else {
+            candidate_k
+        };
+        candidate_k = candidate_k.min(maximum_candidate_k);
 
         // The stored vectors are truncated/quantized, so the query has to be
         // projected into the same space before USearch can compare them. The
         // untouched `query_embedding` stays the reference for rescoring.
         let projected_query = self.compression.project(query_embedding)?;
 
-        // At most two passes: the sized window, then — only if the scope is so
-        // sparse that the first traversal could not fill it — one exhaustive
-        // pass. The old code doubled `candidate_k` until it gave up, which on
-        // a real session cost nine passes over 29,766 vectors to return the
-        // empty list its first pass had already established.
+        // At most two bounded filtered traversals. Small scopes have already
+        // taken the exact path; large scopes do not turn an underfill into a
+        // full-index scan.
+        let mut passes = 0;
         loop {
-            let (keys, distances) = self.nearest(
+            passes += 1;
+            let (keys, distances, exact_scope) = self.nearest(
                 &state,
                 projected_query.as_ref(),
                 candidate_k,
                 allowed_document_ids,
+                query_embedding,
             )?;
 
             let mut results = Vec::new();
@@ -974,20 +1124,20 @@ impl VectorSearchPort for USearchVectorIndex {
                 let Some(id) = state.key_to_id.get(&key) else {
                     continue;
                 };
-                let (doc_id, chunk_id, content) = if let Some(m) = state.metadata.get(id) {
-                    (
-                        m.document_id.as_str(),
-                        m.chunk_id.as_str(),
-                        m.content.as_str(),
-                    )
+                let (doc_id, chunk_id) = if let Some(m) = state.metadata.get(id) {
+                    (m.document_id.as_str(), m.chunk_id.as_str())
                 } else {
-                    (id.as_str(), id.as_str(), "")
+                    (id.as_str(), id.as_str())
                 };
 
                 // USearch cosine distance = 1.0 - cosine_similarity; rescoring
                 // replaces it with the exact full-precision cosine. Threshold
                 // is applied to the score we report, not to the lossy one.
-                let similarity = self.candidate_similarity(key, query_embedding, distance);
+                let similarity = if exact_scope {
+                    1.0 - distance
+                } else {
+                    self.candidate_similarity(key, query_embedding, distance)
+                };
                 best_seen = Some(best_seen.map_or(similarity, |best: f32| best.max(similarity)));
                 if similarity < threshold {
                     continue;
@@ -997,11 +1147,11 @@ impl VectorSearchPort for USearchVectorIndex {
                     doc_id: doc_id.to_string(),
                     chunk_id: chunk_id.to_string(),
                     score: similarity,
-                    content: content.to_string(),
+                    content: String::new(),
                 });
                 // Rescoring reorders the window, so the first `top_k` matches
                 // USearch handed back are not necessarily the best `top_k`.
-                if !rescoring && results.len() >= top_k {
+                if !rescoring && results.len() >= target_k {
                     break;
                 }
             }
@@ -1010,7 +1160,7 @@ impl VectorSearchPort for USearchVectorIndex {
                 Self::sort_by_score_desc(&mut results, |r| r.score);
             }
 
-            if results.len() >= top_k || candidate_k >= index_size {
+            if results.len() >= target_k || candidate_k >= eligible_count || passes >= 2 {
                 if results.len() > top_k {
                     results.truncate(top_k);
                 }
@@ -1037,11 +1187,13 @@ impl VectorSearchPort for USearchVectorIndex {
 
             tracing::debug!(
                 candidate_k,
-                index_size,
-                top_k,
-                "USearch scoped search falling back to an exhaustive pass"
+                target_k,
+                "USearch filtered search widening its bounded candidate window"
             );
-            candidate_k = index_size;
+            candidate_k = candidate_k
+                .saturating_mul(2)
+                .max(candidate_k.saturating_add(1))
+                .min(maximum_candidate_k);
         }
     }
 
@@ -1111,7 +1263,16 @@ impl VectorSearchPort for USearchVectorIndex {
             }
             state.id_to_key.remove(id);
             state.key_to_id.remove(&key);
-            state.metadata.remove(id);
+            let document_id = state
+                .metadata
+                .remove(id)
+                .map_or_else(|| id.clone(), |meta| meta.document_id);
+            if let Some(keys) = state.document_to_keys.get_mut(&document_id) {
+                keys.remove(&key);
+                if keys.is_empty() {
+                    state.document_to_keys.remove(&document_id);
+                }
+            }
             changed = true;
         }
         drop(state);
@@ -1134,6 +1295,7 @@ impl VectorSearchPort for USearchVectorIndex {
         state.id_to_key.clear();
         state.key_to_id.clear();
         state.metadata.clear();
+        state.document_to_keys.clear();
         self.next_key.store(1, Ordering::SeqCst);
         drop(state);
         // No save here: `clear` is only ever the first half of a rebuild, and
@@ -1167,8 +1329,13 @@ impl SearchServiceTrait for USearchVectorIndex {
         let candidate_k = self.candidate_window(top_k, self.index.size());
         let projected_query = self.compression.project(query_embedding)?;
 
-        let (keys, distances) =
-            self.nearest(&state, projected_query.as_ref(), candidate_k, None)?;
+        let (keys, distances, _) = self.nearest(
+            &state,
+            projected_query.as_ref(),
+            candidate_k,
+            None,
+            query_embedding,
+        )?;
 
         let mut results: Vec<SearchResult> = keys
             .iter()
@@ -1360,7 +1527,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].doc_id, "doc_1");
         assert_eq!(results[0].chunk_id, "chunk_1");
-        assert_eq!(results[0].content, "Hello world");
+        assert_eq!(results[0].content, "");
     }
 
     #[test]
@@ -1492,12 +1659,9 @@ mod tests {
         // it, and a copy of the whole corpus is what made every save expensive.
         assert_eq!(results[0].content, "");
 
-        assert_eq!(
-            index2.hydrate_content([("emb_1".to_string(), "test content".to_string())]),
-            1
-        );
+        assert_eq!(index2.hydrate_content(["emb_1".to_string()]), 1);
         let rehydrated = VectorSearchPort::search(&index2, &[1.0, 0.0, 0.0, 0.0], 1, 0.0).unwrap();
-        assert_eq!(rehydrated[0].content, "test content");
+        assert_eq!(rehydrated[0].content, "");
     }
 
     #[test]
@@ -1513,14 +1677,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            index.hydrate_content([
-                ("emb_1".to_string(), "kept".to_string()),
-                ("emb_absent".to_string(), "dropped".to_string()),
-            ]),
+            index.hydrate_content(["emb_1".to_string(), "emb_absent".to_string()]),
             1
         );
         let hits = VectorSearchPort::search(&index, &[1.0, 0.0, 0.0, 0.0], 1, 0.0).unwrap();
-        assert_eq!(hits[0].content, "kept");
+        assert_eq!(hits[0].content, "");
     }
 
     #[test]
@@ -1796,7 +1957,12 @@ mod tests {
                 .count();
         }
         let recall = found as f64 / (queries.len() * TOP_K) as f64;
-        eprintln!("20,001 vectors, 64 dims, {} held-out synthetic queries: recall@10={recall:.4}, mean graph query={:?}, exact checks including oracle={exact_elapsed:?}, total={:?}", queries.len(), search_elapsed / queries.len() as u32, build_started.elapsed());
+        eprintln!(
+            "20,001 vectors, 64 dims, {} held-out synthetic queries: recall@10={recall:.4}, mean graph query={:?}, exact checks including oracle={exact_elapsed:?}, total={:?}",
+            queries.len(),
+            search_elapsed / queries.len() as u32,
+            build_started.elapsed()
+        );
         assert!(
             recall >= 0.95,
             "graph recall below the fixture's regression floor: {recall}"
@@ -2109,6 +2275,85 @@ mod tests {
     #[test]
     fn a_scoped_search_returns_only_allowed_documents_and_still_fills_top_k() {
         scoped_search_fills_top_k_with_the_best_in_scope_chunks(EXACT_SEARCH_MAX_VECTORS);
+    }
+
+    #[test]
+    fn small_scope_in_large_index_exact_scores_only_eligible_vectors_and_caps_k() {
+        let mut index =
+            USearchVectorIndex::with_compression(4, None, VectorIndexCompression::None).unwrap();
+        index.exact_search_max = 8;
+        let query = unit(&[1.0, 0.0, 0.0, 0.0]);
+        for i in 0..80 {
+            let document_id = if i < 3 { "allowed" } else { "other" };
+            let mut vector = vec![1.0f32, i as f32 / 1000.0, 0.0, 0.0];
+            let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+            vector.iter_mut().for_each(|value| *value /= norm);
+            index
+                .add_embedding_with_content(
+                    format!("emb_{i}"),
+                    vector,
+                    format!("text {i}"),
+                    format!("chunk_{i}"),
+                    document_id.to_string(),
+                )
+                .unwrap();
+        }
+        let scope = HashSet::from(["allowed".to_string()]);
+        let results =
+            VectorSearchPort::search_scoped(&index, &query, 10, 0.0, Some(&scope)).unwrap();
+        assert_eq!(results.len(), 3, "top_k is capped by scoped cardinality");
+        assert!(results.iter().all(|result| result.doc_id == "allowed"));
+        assert!(results
+            .windows(2)
+            .all(|pair| pair[0].score >= pair[1].score));
+    }
+
+    #[test]
+    fn narrow_scope_cost_and_exact_ids_depend_on_scope_not_corpus_size() {
+        const DIM: usize = 8;
+        const CORPUS: usize = 10_000;
+        const SCOPE: usize = 100;
+        const TOP_K: usize = 7;
+        let index =
+            USearchVectorIndex::with_compression(DIM, None, VectorIndexCompression::None).unwrap();
+        let query = synthetic_vector(100, DIM, 0.8);
+        let mut eligible = Vec::with_capacity(SCOPE);
+        for i in 0..CORPUS {
+            let vector = synthetic_vector(i as u64 + 100, DIM, 0.8);
+            let in_scope = i < SCOPE;
+            let document_id = if in_scope {
+                format!("allowed-{i}")
+            } else {
+                format!("other-{i}")
+            };
+            let id = format!("chunk-{i}");
+            index
+                .add_embedding_with_content(
+                    id.clone(),
+                    vector.clone(),
+                    String::new(),
+                    id.clone(),
+                    document_id,
+                )
+                .unwrap();
+            if in_scope {
+                eligible.push((id, cosine_similarity_simd(&query, &vector)));
+            }
+        }
+
+        let scope: HashSet<String> = (0..SCOPE).map(|i| format!("allowed-{i}")).collect();
+        let hits =
+            VectorSearchPort::search_scoped(&index, &query, TOP_K, 0.0, Some(&scope)).unwrap();
+        eligible.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let expected: Vec<_> = eligible.iter().take(TOP_K).map(|(id, _)| id).collect();
+        let actual: Vec<_> = hits.iter().map(|hit| &hit.chunk_id).collect();
+
+        assert_eq!(actual, expected, "scoped results match exact ground truth");
+        assert_eq!(
+            index.exact_scope_scored.load(Ordering::Relaxed),
+            SCOPE,
+            "the exact scorer visits only eligible vectors, independent of the 10k corpus"
+        );
     }
 
     /// The same contract past the exact-scan size, where the scope runs as a

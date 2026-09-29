@@ -88,6 +88,36 @@ fn keyring_guarded<T>(
     }
 }
 
+type DeleteResult = Result<(), Box<dyn Error>>;
+
+/// `Ok` when every deletion succeeded or found nothing to delete; otherwise an
+/// error naming each credential that is still there.
+fn all_deleted(results: Vec<(&str, DeleteResult)>) -> DeleteResult {
+    let failures: Vec<String> = results
+        .into_iter()
+        .filter_map(|(name, result)| match result {
+            Ok(()) => None,
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<keyring::Error>(),
+                    Some(keyring::Error::NoEntry)
+                ) =>
+            {
+                None
+            }
+            Err(e) => Some(format!("{name}: {e}")),
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(Box::new(io::Error::other(format!(
+            "could not delete {}",
+            failures.join("; ")
+        ))))
+    }
+}
+
 impl SecureStorage {
     pub fn set_ollama_key(key: &str) -> Result<(), Box<dyn Error>> {
         keyring_guarded(|| {
@@ -170,11 +200,15 @@ impl SecureStorage {
         })
     }
 
+    /// Delete every stored credential. Each is attempted even when an earlier
+    /// one fails; a credential that was never stored is not a failure, but
+    /// any other is reported, since "cleared" must mean cleared.
     pub fn clear_all() -> Result<(), Box<dyn Error>> {
-        let _ = Self::delete_ollama_key();
-        let _ = Self::delete_openai_key();
-        let _ = Self::delete_custom_endpoint();
-        Ok(())
+        all_deleted(vec![
+            ("ollama_api_key", Self::delete_ollama_key()),
+            ("openai_api_key", Self::delete_openai_key()),
+            ("custom_api_endpoint", Self::delete_custom_endpoint()),
+        ])
     }
 
     pub fn has_credentials() -> bool {
@@ -186,6 +220,20 @@ impl SecureStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_reports_failed_deletions_but_not_missing_ones() {
+        let missing: Result<(), Box<dyn Error>> = Err(Box::new(keyring::Error::NoEntry));
+        let failed: Result<(), Box<dyn Error>> = Err(Box::new(io::Error::other("locked")));
+
+        let error = all_deleted(vec![("a", Ok(())), ("b", missing), ("c", failed)]).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("c: locked"), "{message}");
+        assert!(!message.contains("b:"), "{message}");
+
+        let missing: Result<(), Box<dyn Error>> = Err(Box::new(keyring::Error::NoEntry));
+        assert!(all_deleted(vec![("a", Ok(())), ("b", missing)]).is_ok());
+    }
 
     #[test]
     #[ignore = "Requires OS keyring access - may not be available in CI"]

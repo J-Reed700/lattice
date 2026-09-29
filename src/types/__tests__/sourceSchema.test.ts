@@ -24,4 +24,28 @@ describe('SourceWithMetadataSchema', () => {
     }]);
     expect(parsed.success).toBe(true);
   });
+
+  it('accepts an optional saved web snapshot with nullable title and capture time', () => {
+    const parsed = SourcesArraySchema.safeParse([{
+      documentId: 'web:https://example.com/article',
+      chunkId: 'web-content-1',
+      fileName: 'Article',
+      filePath: 'https://example.com/article',
+      mimeType: 'text/html',
+      category: 'Web Article',
+      content: 'A source excerpt.',
+      webSnapshot: {
+        url: 'https://example.com/article',
+        title: null,
+        text: 'The captured page text.',
+        fetchedAt: null,
+        truncated: true,
+      },
+      score: 1,
+      fileSizeBytes: 0,
+      modifiedAt: '',
+    }]);
+
+    expect(parsed.success).toBe(true);
+  });
 });

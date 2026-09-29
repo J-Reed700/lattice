@@ -35,6 +35,7 @@ pub fn build(
     db_pool: SqlitePool,
     model_dir: &Path,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    vector_search: Arc<dyn crate::application::ports::VectorSearchPort>,
 ) -> Result<WebDi> {
     let web_capture_service =
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
@@ -61,6 +62,7 @@ pub fn build(
             .embedding_service(embedding_service)
             .index_storage(index_storage)
             .tokenizer(tokenizer)
+            .vector_search(vector_search)
             .build()?,
     ) as Arc<dyn WebIngestionServiceTrait>;
 
@@ -83,14 +85,12 @@ fn build_fallback_tokenizer() -> Result<Arc<Tokenizer>> {
     use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
     let mut vocab = HashMap::new();
-    for c in b'a'..=b'z' {
-        vocab.insert((c as char).to_string(), c as u32);
-    }
-    for c in b'A'..=b'Z' {
-        vocab.insert((c as char).to_string(), (c + 26) as u32);
-    }
-    for c in b'0'..=b'9' {
-        vocab.insert((c as char).to_string(), (c + 52) as u32);
+    for (id, c) in (b'a'..=b'z')
+        .chain(b'A'..=b'Z')
+        .chain(b'0'..=b'9')
+        .enumerate()
+    {
+        vocab.insert((c as char).to_string(), id as u32);
     }
     vocab.insert(" ".to_string(), 62);
     vocab.insert(".".to_string(), 63);
@@ -101,6 +101,9 @@ fn build_fallback_tokenizer() -> Result<Arc<Tokenizer>> {
     let merges = vec![];
     let bpe = BPE::builder()
         .vocab_and_merges(vocab, merges)
+        // This character fallback has no merges to memoize. The default
+        // 10,000-entry BPE cache reserves ~800 KiB before its first use.
+        .cache_capacity(0)
         .unk_token("[UNK]".to_string())
         .build()
         .map_err(|error| AppError::Other(format!("Failed to build fallback tokenizer: {error}")))?;
@@ -134,5 +137,27 @@ impl Container {
     /// that cited it.
     pub fn web_service(&self) -> Arc<crate::features::web::services::web::WebService> {
         Arc::clone(&self.web_service)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_vocabulary_has_unique_ids_and_preserves_character_tokens() {
+        let tokenizer = build_fallback_tokenizer().unwrap();
+        let vocab = tokenizer.get_vocab(false);
+        let ids: std::collections::HashSet<_> = vocab.values().collect();
+        assert_eq!(
+            ids.len(),
+            vocab.len(),
+            "Reverse token lookup must be unambiguous"
+        );
+        let encoded = tokenizer.encode("aAGgZz09", false).unwrap();
+        assert_eq!(
+            encoded.get_tokens(),
+            &["a", "A", "G", "g", "Z", "z", "0", "9"]
+        );
     }
 }

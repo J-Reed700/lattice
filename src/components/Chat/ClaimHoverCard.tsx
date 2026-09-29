@@ -50,6 +50,12 @@ function howChecked(verdict: ClaimVerdict): string {
         return 'The cited page has no saved text to check against';
       case 'judge_failed':
         return 'The checking model gave no usable answer for this sentence';
+      case 'low_confidence': {
+        const sure = verdict.confidence != null
+          ? ` (${Math.round(verdict.confidence * 100)}% sure)`
+          : '';
+        return `The checker read the passage but was not confident enough to mark this as a finding${sure}`;
+      }
       default:
         return 'Nothing read the cited passage against this sentence';
     }
@@ -97,10 +103,20 @@ export function ClaimHoverCard({ hover, verdict, citationMap }: ClaimHoverCardPr
       <p className="mt-0.5 pl-5 text-xs text-text-muted">
         {howChecked(verdict)}
       </p>
-      {verdict.evidenceQuote ? (
-        <p className="mt-2.5 line-clamp-5 border-l-2 border-accent/50 pl-2.5 font-serif text-[13.5px] leading-relaxed text-text-secondary">
-          &ldquo;{verdict.evidenceQuote}&rdquo;
+      {verdict.reason ? (
+        <p className="mt-2 text-xs leading-relaxed text-text-secondary">
+          {verdict.reason}
         </p>
+      ) : null}
+      {verdict.evidenceQuote ? (
+        <div className="mt-2.5">
+          <p className="mb-1 text-xxs font-medium uppercase tracking-wide text-text-muted">
+            {verdict.verdict === 'contradicted' ? 'What the source says' : 'Source passage'}
+          </p>
+          <p className="line-clamp-5 border-l-2 border-accent/50 pl-2.5 font-serif text-[13.5px] leading-relaxed text-text-secondary">
+            &ldquo;{verdict.evidenceQuote}&rdquo;
+          </p>
+        </div>
       ) : null}
       {cited.length > 0 ? (
         <ul className="mt-2.5 space-y-1">

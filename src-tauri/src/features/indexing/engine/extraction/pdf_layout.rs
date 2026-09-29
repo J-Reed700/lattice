@@ -165,6 +165,26 @@ pub(super) struct PageLayout {
     pub has_image: bool,
 }
 
+impl PageLayout {
+    pub(super) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.fallback_text.as_ref().map_or(0, String::capacity)
+            + self.lines.capacity() * std::mem::size_of::<Line>()
+            + self
+                .lines
+                .iter()
+                .map(|line| {
+                    line.runs.capacity() * std::mem::size_of::<Run>()
+                        + line
+                            .runs
+                            .iter()
+                            .map(|run| run.text.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+}
+
 /// 2×3 affine matrix in PDF row-vector form: `[a b 0; c d 0; e f 1]`.
 #[derive(Debug, Clone, Copy)]
 struct Matrix {
@@ -454,21 +474,32 @@ fn page_fonts<'a>(
     let fonts = doc
         .get_page_fonts(page_id)
         .map_err(|error| format!("page fonts could not be read: {error}"))?;
-    Ok(fonts
+    fonts
         .into_iter()
         .map(|(name, dictionary)| {
             let base_font = dictionary.get(b"BaseFont").and_then(Object::as_name).ok();
             let bold = looks_bold(&name)
                 || base_font.is_some_and(looks_bold)
                 || descriptor_is_bold(doc, dictionary);
+            let encoding = match dictionary
+                .get_font_encoding_with_limit(doc, super::pdf::MAX_PDF_STREAM_BYTES)
+            {
+                Ok(encoding) => Some(encoding),
+                Err(
+                    error @ lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded {
+                        ..
+                    }),
+                ) => return Err(error.to_string()),
+                Err(_) => None,
+            };
             let info = FontInfo {
                 bold,
-                encoding: dictionary.get_font_encoding(doc).ok(),
+                encoding,
                 widths: font_widths(doc, dictionary),
             };
-            (name, info)
+            Ok((name, info))
         })
-        .collect())
+        .collect()
 }
 
 /// Whether the page paints an image. Together with "almost no text" this is
@@ -526,7 +557,7 @@ pub(super) fn read_page(
 ) -> Result<PageLayout, String> {
     let has_image = page_has_image(doc, page_id);
     let plain = |doc: &Document| {
-        doc.extract_text(&[page])
+        doc.extract_text_with_limit(&[page], super::pdf::MAX_PDF_STREAM_BYTES)
             .map(|text| text.trim().to_string())
     };
     match page_runs(doc, page_id) {
@@ -540,7 +571,8 @@ pub(super) fn read_page(
         // like, but also what a font we cannot decode looks like, so give the
         // plain path a chance before calling the page textless.
         Ok(_) => {
-            let recovered = plain(doc).ok().filter(|text| !text.is_empty());
+            let text = plain(doc).map_err(|error| error.to_string())?;
+            let recovered = (!text.is_empty()).then_some(text);
             if recovered.is_some() {
                 on_fallback("no positioned text runs were recovered".into());
             }
@@ -569,7 +601,10 @@ pub(super) fn read_page(
 /// to fall back to the plain path rather than index a page as empty.
 fn page_runs(doc: &Document, page_id: ObjectId) -> Result<Vec<Run>, String> {
     let fonts = page_fonts(doc, page_id)?;
-    let content = Content::decode(&doc.get_page_content(page_id))
+    let page_content = doc
+        .get_page_content_with_limit(page_id, super::pdf::MAX_PDF_STREAM_BYTES)
+        .map_err(|error| format!("page content exceeds budget or is invalid: {error}"))?;
+    let content = Content::decode(&page_content)
         .map_err(|error| format!("content stream could not be decoded: {error}"))?;
 
     let mut runs = Vec::new();

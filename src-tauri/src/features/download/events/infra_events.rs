@@ -2,7 +2,19 @@ use crate::domain::download_snapshot::{BatchSnapshot, DownloadStateSnapshot, Sin
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
+
+const RECONCILIATION_BATCH_SIZE: usize = 64;
+const RECONCILIATION_ACTIVE_POLL: std::time::Duration = std::time::Duration::from_secs(5);
+const RECONCILIATION_IDLE_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn reconciliation_poll_delay(page_len: usize, failed: bool) -> std::time::Duration {
+    if !failed && page_len == RECONCILIATION_BATCH_SIZE {
+        RECONCILIATION_ACTIVE_POLL
+    } else {
+        RECONCILIATION_IDLE_POLL
+    }
+}
 use tracing::Instrument;
 
 /// Download event with state snapshot payload
@@ -67,9 +79,8 @@ pub struct DownloadEventBridge {
     emitter: Arc<DownloadEventEmitter>,
     download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
     repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
-    event_rx_arc: Arc<
-        RwLock<Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>>,
-    >,
+    event_rx_arc:
+        Arc<RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>>,
     // reason: holds the repository handle supplied by DI wiring in
     // infrastructure/setup/app.rs; dropping it would change the public `new` signature.
     #[allow(dead_code)]
@@ -91,9 +102,7 @@ impl DownloadEventBridge {
         download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
         repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
         event_rx_arc: Arc<
-            RwLock<
-                Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>,
-            >,
+            RwLock<Option<mpsc::Receiver<crate::features::download::manager::DownloadEvent>>>,
         >,
         downloaded_model_repository: Option<
             Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
@@ -133,6 +142,12 @@ impl DownloadEventBridge {
 
         // Subscribe to domain events from EventBus if available.
         let mut domain_subscriber = self.event_bus.as_ref().map(|bus| bus.subscribe());
+        // Terminal manager events are an in-memory notification, while their
+        // durable session row survives a full channel or process restart.
+        // Reconcile a bounded keyset page until the saga's model_files write
+        // matches the session state.
+        let mut reconciliation_cursor: Option<String> = None;
+        let mut reconciliation_tick = Box::pin(tokio::time::sleep(std::time::Duration::ZERO));
 
         // Run two concurrent event loops:
         // STREAM A: Infrastructure events from DownloadManager (mpsc).
@@ -158,6 +173,70 @@ impl DownloadEventBridge {
                 biased;
                 // Finish any in-flight handler before observing shutdown here.
                 _ = cancel.cancelled() => break,
+                _ = &mut reconciliation_tick => {
+                    match self.repository
+                        .list_terminal_sessions_needing_reconciliation(
+                            reconciliation_cursor.as_deref(),
+                            RECONCILIATION_BATCH_SIZE,
+                        )
+                        .await
+                    {
+                        Ok(sessions) if sessions.is_empty() => {
+                            reconciliation_cursor = None;
+                            reconciliation_tick.as_mut().reset(
+                                tokio::time::Instant::now()
+                                    + reconciliation_poll_delay(0, false),
+                            );
+                        }
+                        Ok(sessions) => {
+                            if sessions.len() == RECONCILIATION_BATCH_SIZE {
+                                reconciliation_cursor = sessions.last().map(|session| session.id().to_string());
+                            } else {
+                                // This page exhausted the current backlog. Keep
+                                // the fallback, but stop querying an idle DB on
+                                // every short poll interval.
+                                reconciliation_cursor = None;
+                            }
+                            let delay = reconciliation_poll_delay(sessions.len(), false);
+                            for session in sessions {
+                                use crate::domain::download::DownloadState;
+                                use crate::features::download::manager::DownloadEvent as ManagerEvent;
+
+                                let event = match session.state() {
+                                    DownloadState::Completed => Some(ManagerEvent::Completed {
+                                        id: session.id().to_string(),
+                                    }),
+                                    DownloadState::Failed => Some(ManagerEvent::Failed {
+                                        id: session.id().to_string(),
+                                        error: session.error_message().unwrap_or("Download failed").to_string(),
+                                    }),
+                                    DownloadState::Cancelled => Some(ManagerEvent::Failed {
+                                        id: session.id().to_string(),
+                                        error: session.error_message().unwrap_or("Download cancelled").to_string(),
+                                    }),
+                                    _ => None,
+                                };
+                                if let Some(event) = event {
+                                    tracing::warn!(
+                                        download_id = %session.id(),
+                                        state = ?session.state(),
+                                        "Replaying terminal download state whose model file has not been reconciled"
+                                    );
+                                    self.handle_infrastructure_event(event).await;
+                                }
+                            }
+                            reconciliation_tick.as_mut().reset(tokio::time::Instant::now() + delay);
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "Failed to reconcile terminal download sessions");
+                            reconciliation_cursor = None;
+                            reconciliation_tick.as_mut().reset(
+                                tokio::time::Instant::now()
+                                    + reconciliation_poll_delay(0, true),
+                            );
+                        }
+                    }
+                }
                 // STREAM A: file-level mpsc events from DownloadManager.
                 maybe_event = event_rx.recv() => {
                     match maybe_event {
@@ -236,13 +315,7 @@ impl DownloadEventBridge {
         &self,
         manager_event: crate::features::download::manager::DownloadEvent,
     ) {
-        let is_terminal_event = matches!(
-            manager_event,
-            crate::features::download::manager::DownloadEvent::Completed { .. }
-                | crate::features::download::manager::DownloadEvent::Failed { .. }
-                | crate::features::download::manager::DownloadEvent::Cancelled { .. }
-        );
-
+        let terminal_event = is_terminal_manager_event(&manager_event);
         // Bridge manager events into domain download events so DownloadSaga can
         // update model_files/model status atomically.
         if let Err(e) = self.publish_domain_event(&manager_event).await {
@@ -275,13 +348,13 @@ impl DownloadEventBridge {
             }
         }
 
-        if is_terminal_event {
-            if let Err(e) = self.download_manager.process_pending_queue().await {
-                tracing::warn!(
-                    "Failed to continue download queue after terminal event: {}",
-                    e
-                );
-            }
+        // Terminal transfers release a concurrency slot in the manager task.
+        // Event delivery follows that cleanup; advancing here preserves the
+        // queue's normal lifecycle without waiting for another user command.
+        if let Err(error) =
+            process_queue_after_terminal(self.download_manager.as_ref(), terminal_event).await
+        {
+            tracing::warn!(%error, "Failed to promote queued download after terminal event");
         }
     }
 
@@ -865,6 +938,25 @@ impl DownloadEventBridge {
     }
 }
 
+async fn process_queue_after_terminal(
+    manager: &dyn crate::features::download::manager::DownloadManager,
+    terminal_event: bool,
+) -> Result<(), crate::domain::download::DownloadError> {
+    if terminal_event {
+        manager.process_pending_queue().await?;
+    }
+    Ok(())
+}
+
+fn is_terminal_manager_event(event: &crate::features::download::manager::DownloadEvent) -> bool {
+    matches!(
+        event,
+        crate::features::download::manager::DownloadEvent::Completed { .. }
+            | crate::features::download::manager::DownloadEvent::Failed { .. }
+            | crate::features::download::manager::DownloadEvent::Cancelled { .. }
+    )
+}
+
 fn model_file_name_for_session(session: &crate::domain::download::DownloadSession) -> String {
     session
         .model_file_name()
@@ -881,8 +973,180 @@ fn model_file_name_for_session(session: &crate::domain::download::DownloadSessio
 
 #[cfg(test)]
 mod tests {
-    use super::model_file_name_for_session;
+    use super::{
+        RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE, RECONCILIATION_IDLE_POLL,
+        is_terminal_manager_event, model_file_name_for_session, process_queue_after_terminal,
+        reconciliation_poll_delay,
+    };
     use crate::domain::download::DownloadSession;
+    use crate::features::download::download_repository::DownloadRepository;
+    use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use crate::features::download::manager::{
+        DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct GatedEngine {
+        first_url: String,
+        first_fails: bool,
+        first_started: tokio::sync::Notify,
+        release_first: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::features::download::engine::DownloadEngine for GatedEngine {
+        async fn download(
+            &self,
+            options: crate::features::download::engine::DownloadOptions,
+        ) -> Result<
+            crate::features::download::engine::DownloadResult,
+            crate::domain::download::DownloadError,
+        > {
+            if options.url == self.first_url {
+                self.first_started.notify_one();
+                self.release_first.notified().await;
+                if self.first_fails {
+                    return Err(crate::domain::download::DownloadError::NetworkError(
+                        "test failure".into(),
+                    ));
+                }
+            }
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "a".repeat(64),
+                elapsed: Duration::from_millis(1),
+            })
+        }
+
+        async fn get_file_size(
+            &self,
+            url: &str,
+        ) -> Result<(Option<u64>, String), crate::domain::download::DownloadError> {
+            Ok((Some(1000), url.to_string()))
+        }
+
+        async fn supports_resume(
+            &self,
+            _url: &str,
+        ) -> Result<bool, crate::domain::download::DownloadError> {
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn queue_promotion_is_requested_after_terminal_events_only() {
+        use crate::features::download::manager::DownloadEvent;
+        assert!(super::is_terminal_manager_event(
+            &DownloadEvent::Completed { id: "done".into() }
+        ));
+        assert!(super::is_terminal_manager_event(&DownloadEvent::Failed {
+            id: "failed".into(),
+            error: "x".into()
+        }));
+        assert!(super::is_terminal_manager_event(
+            &DownloadEvent::Cancelled {
+                id: "cancelled".into()
+            }
+        ));
+        assert!(!super::is_terminal_manager_event(
+            &DownloadEvent::Progress {
+                id: "active".into(),
+                bytes_downloaded: 1,
+                bytes_per_second: 1.0
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_and_completion_each_promote_the_next_queued_download() {
+        for first_fails in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let repository = Arc::new(MockDownloadRepository::new());
+            let first_url = if first_fails {
+                "https://example.test/failure"
+            } else {
+                "https://example.test/completion"
+            };
+            let second_url = "https://example.test/queued";
+            let engine = Arc::new(GatedEngine {
+                first_url: first_url.into(),
+                first_fails,
+                first_started: tokio::sync::Notify::new(),
+                release_first: tokio::sync::Notify::new(),
+            });
+            let manager = DownloadManagerService::new(
+                repository.clone(),
+                engine.clone(),
+                dir.path().to_path_buf(),
+            )
+            .with_max_concurrent(1);
+            let mut events = manager.subscribe_to_events().write().await.take().unwrap();
+
+            std::fs::write(dir.path().join("first.bin"), vec![1_u8; 1000]).unwrap();
+            std::fs::write(dir.path().join("queued.bin"), vec![1_u8; 1000]).unwrap();
+
+            let first_id = manager
+                .start_download(DownloadRequest {
+                    url: first_url.into(),
+                    destination: dir.path().join("first.bin"),
+                    checksum: None,
+                    auth_token: None,
+                    model_name: None,
+                    model_id: None,
+                    model_file_name: None,
+                })
+                .await
+                .unwrap();
+            engine.first_started.notified().await;
+            let queued_id = manager
+                .start_download(DownloadRequest {
+                    url: second_url.into(),
+                    destination: dir.path().join("queued.bin"),
+                    checksum: None,
+                    auth_token: None,
+                    model_name: None,
+                    model_id: None,
+                    model_file_name: None,
+                })
+                .await
+                .unwrap();
+            engine.release_first.notify_one();
+
+            let terminal = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let event = events.recv().await.expect("manager event channel closed");
+                    let terminal_for_first = matches!(
+                        &event,
+                        DownloadEvent::Completed { id } | DownloadEvent::Failed { id, .. } if id == &first_id
+                    );
+                    if terminal_for_first { break event; }
+                }
+            }).await.expect("first download should finish");
+            process_queue_after_terminal(&manager, is_terminal_manager_event(&terminal))
+                .await
+                .unwrap();
+
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if repository
+                        .get(&queued_id)
+                        .await
+                        .unwrap()
+                        .is_some_and(|session| {
+                            session.state() != &crate::domain::download::DownloadState::Pending
+                        })
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("terminal event should promote queued download");
+        }
+    }
 
     #[test]
     fn session_preserves_manifest_relative_file_name() {
@@ -897,5 +1161,22 @@ mod tests {
         .with_model_file_name("onnx/model.onnx".to_string());
 
         assert_eq!(model_file_name_for_session(&session), "onnx/model.onnx");
+    }
+
+    #[test]
+    fn reconciliation_poll_slows_when_idle_or_after_an_error_but_keeps_paging_backlog() {
+        assert_eq!(
+            reconciliation_poll_delay(0, false),
+            RECONCILIATION_IDLE_POLL
+        );
+        assert_eq!(
+            reconciliation_poll_delay(RECONCILIATION_BATCH_SIZE - 1, false),
+            RECONCILIATION_IDLE_POLL
+        );
+        assert_eq!(reconciliation_poll_delay(0, true), RECONCILIATION_IDLE_POLL);
+        assert_eq!(
+            reconciliation_poll_delay(RECONCILIATION_BATCH_SIZE, false),
+            RECONCILIATION_ACTIVE_POLL
+        );
     }
 }

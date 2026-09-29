@@ -122,6 +122,18 @@ impl<K: Clone + Eq + Hash, V: Liveness> SharedProcesses<K, V> {
             .count()
     }
 
+    /// Every running value with the key it was started from. The context
+    /// sizing of a new server reads this to leave room for the ones already
+    /// holding GPU memory.
+    pub fn running(&self) -> Vec<(K, Arc<V>)> {
+        self.slots
+            .lock()
+            .iter()
+            .filter_map(|(key, slot)| Some((key.clone(), slot.live.upgrade()?)))
+            .filter(|(_, value)| value.is_running())
+            .collect()
+    }
+
     /// The running value for `key`, if there is one. A value that exists but
     /// has stopped is not a hit — see [`Liveness`].
     fn live(&self, key: &K) -> Option<Arc<V>> {

@@ -58,6 +58,10 @@ pub struct BM25Search {
 /// One statement per index. Written out rather than built by string
 /// concatenation so `scripts/check-sql-contracts.py` can prepare both against
 /// the migration.
+///
+/// Both leave out chunks of files attached to a chat. Every caller is a
+/// vault-wide search, and dropping an attachment only after `LIMIT` would
+/// spend one of the requested slots on a hit that then vanishes.
 const WORDS_SQL: &str = "SELECT
         tc.id as chunk_id,
         tc.document_id as document_id,
@@ -71,6 +75,7 @@ const WORDS_SQL: &str = "SELECT
      JOIN text_chunks tc ON chunks_fts.chunk_id = tc.id
      LEFT JOIN documents d ON tc.document_id = d.id
      WHERE chunks_fts MATCH ?
+       AND d.owner_conversation_id IS NULL
      ORDER BY score
      LIMIT ?";
 
@@ -87,6 +92,7 @@ const TRIGRAM_SQL: &str = "SELECT
      JOIN text_chunks tc ON chunks_trigram.chunk_id = tc.id
      LEFT JOIN documents d ON tc.document_id = d.id
      WHERE chunks_trigram MATCH ?
+       AND d.owner_conversation_id IS NULL
      ORDER BY score
      LIMIT ?";
 
@@ -287,7 +293,8 @@ mod tests {
                 file_path TEXT,
                 mime_type TEXT,
                 size_bytes INTEGER,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                owner_conversation_id TEXT
             );
             CREATE TABLE text_chunks (
                 id TEXT PRIMARY KEY,
@@ -352,6 +359,30 @@ mod tests {
         assert_eq!(results[0].chunk_id, "chunk1");
         assert_eq!(results[0].document_id, "doc1");
         assert_eq!(results[0].filename.as_deref(), Some("rust.txt"));
+    }
+
+    #[tokio::test]
+    async fn a_chat_attachment_does_not_take_a_result_slot() {
+        let pool = setup_test_db().await.unwrap();
+        sqlx::query(
+            "INSERT INTO documents (id, file_name, created_at, owner_conversation_id)
+             VALUES ('attached', 'rust-notes.txt', '2024-02-01', 'some-chat')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index)
+             VALUES ('attached-chunk', 'attached', 'Rust Rust Rust systems language', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = BM25Search::new(pool).search("Rust", 1).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk_id, "chunk1");
     }
 
     #[tokio::test]

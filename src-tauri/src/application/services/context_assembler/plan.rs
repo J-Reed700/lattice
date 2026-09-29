@@ -119,6 +119,11 @@ pub struct ContextPlan {
     /// Output cap to apply to the request, so reserving output room is actually
     /// enforced rather than merely accounted for.
     pub max_output_tokens: usize,
+    /// Every memory item whose text is in `messages`: mandatory items, and the
+    /// optional ones that survived selection and overflow eviction. Recorded on
+    /// the answer as the memory it was given, so it is taken from the plan
+    /// itself rather than read back out of rendered prose.
+    pub used_memory_ids: Vec<String>,
 }
 
 impl ContextPlan {

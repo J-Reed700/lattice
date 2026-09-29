@@ -43,6 +43,7 @@ pub(super) struct ActiveDownload {
 }
 
 pub struct DownloadManagerService {
+    pub(super) shutdown: tokio_util::sync::CancellationToken,
     pub(super) repository: Arc<dyn DownloadRepository>,
     pub(super) engine: Arc<dyn DownloadEngine>,
     pub(super) active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
@@ -51,8 +52,8 @@ pub struct DownloadManagerService {
     /// observable until every one of its sessions exists.
     pub(super) queue_gate: Arc<Mutex<()>>,
     pub(super) max_concurrent_downloads: usize,
-    pub(super) event_tx: mpsc::UnboundedSender<DownloadEvent>,
-    pub(super) event_rx: Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>>,
+    pub(super) event_tx: mpsc::Sender<DownloadEvent>,
+    pub(super) event_rx: Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>,
     pub(super) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
     pub(super) file_cleanup: Arc<FileCleanupService>,
     pub(super) allowed_root: PathBuf,
@@ -64,9 +65,10 @@ impl DownloadManagerService {
         engine: Arc<dyn DownloadEngine>,
         allowed_root: PathBuf,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::channel(128);
 
         Self {
+            shutdown: crate::shared::background::cancellation_token().child_token(),
             repository,
             engine,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
@@ -84,5 +86,13 @@ impl DownloadManagerService {
     pub fn with_max_concurrent(mut self, max: usize) -> Self {
         self.max_concurrent_downloads = max;
         self
+    }
+}
+
+impl Drop for DownloadManagerService {
+    fn drop(&mut self) {
+        // Active tasks own registry Arcs, not this manager. Cancellation breaks
+        // those task/registry lifetimes even in standalone service tests.
+        self.shutdown.cancel();
     }
 }

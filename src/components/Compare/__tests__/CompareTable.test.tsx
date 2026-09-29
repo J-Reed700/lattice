@@ -26,6 +26,7 @@ function table(overrides: Partial<CompareTableDto> = {}): CompareTableDto {
           { value: null, citation: null },
         ],
         error: null,
+        degraded: null,
       },
     ],
     modelName: 'llama-3',
@@ -68,6 +69,16 @@ describe('CompareTable', () => {
 
     await user.click(screen.getByRole('button'));
     expect(onOpenCitation).toHaveBeenCalledWith(source.rows[0], source.rows[0].cells[0]);
+  });
+
+  it('says when a row was filled from the opening passages instead of a search', () => {
+    const source = table();
+    source.rows[0].degraded = 'Read from the opening passages; search failed.';
+    render(<CompareTable table={source} onOpenCitation={vi.fn()} />);
+    expect(
+      screen.getByText('Read from the opening passages; search failed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('randomised controlled trial')).toBeInTheDocument();
   });
 
   it('renders a row error as a muted line and still renders every cell', () => {

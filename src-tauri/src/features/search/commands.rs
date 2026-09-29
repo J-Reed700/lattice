@@ -1061,6 +1061,7 @@ pub async fn search_documents_impl(
         .validate_search_query(&options.query)?;
 
     let limit = options.limit.unwrap_or(10);
+    let cache_generation = QUERY_CACHE.generation();
     let search_mode = match options.search_mode.as_deref() {
         Some("semantic") => SearchMode::Vector,
         Some("keyword") => SearchMode::Keyword,
@@ -1077,6 +1078,8 @@ pub async fn search_documents_impl(
         }),
         limit,
         format!("{:?}", search_mode),
+        cache_generation,
+        container.search.embedding_identity().map(str::to_owned),
     );
 
     if let Some(cached) = QUERY_CACHE.get(&cache_key) {
@@ -1141,7 +1144,7 @@ pub async fn search_documents_impl(
         cached_at: chrono::Utc::now().timestamp(),
         execution_time_ms,
     };
-    QUERY_CACHE.put(cache_key, cached_result);
+    QUERY_CACHE.put_if_generation(cache_key, cached_result);
 
     let stats = QUERY_CACHE.stats();
     let response = EnhancedSearchResponse {

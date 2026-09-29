@@ -180,6 +180,7 @@ fn main() {
                     "synthesize_journal_entries",
                     "truncate_conversation_after",
                     "fork_conversation",
+                    "continue_in_new_conversation",
                     "regenerate_response",
                     "compact_conversation",
                     "get_conversation_memory",
@@ -350,8 +351,6 @@ fn main() {
             .plugin(
                 "qa",
                 tauri_build::InlinedPlugin::new().commands(&[
-                    "ask_question_wrapper",
-                    "ask_question_stream_wrapper",
                     "get_qa_model_wrapper",
                     "check_llm_health_wrapper",
                     "generate_chat_starters_wrapper",

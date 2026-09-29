@@ -43,7 +43,6 @@ import type {
   RemoveTagFromDocumentRequest,
   GetDocumentTagsRequest,
   DocumentTagsResponse,
-  QAResponse,
   LLMHealthStatus,
   CacheMetrics,
   HealthStatus,
@@ -225,8 +224,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   generate_tags_for_document: { domain: 'tags', command: 'generate_tags_for_document' },
 
   // QA domain
-  ask_question: { domain: 'qa', command: 'ask_question_wrapper' },
-  ask_question_stream: { domain: 'qa', command: 'ask_question_stream_wrapper' },
   check_llm_health: { domain: 'qa', command: 'check_llm_health_wrapper' },
   generate_chat_starters: { domain: 'qa', command: 'generate_chat_starters_wrapper' },
 
@@ -276,6 +273,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   synthesize_journal_entries: { domain: 'conversation', command: 'synthesize_journal_entries' },
   truncate_conversation_after: { domain: 'conversation', command: 'truncate_conversation_after' },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
+  continue_in_new_conversation: { domain: 'conversation', command: 'continue_in_new_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
   compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
   manage_knowledge: { domain: 'conversation', command: 'manage_knowledge' },
@@ -432,21 +430,28 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
 };
 
 /**
+ * Tauri's own rejection when no handler owns the invoked route: the core's
+ * `Command {cmd} not found` / `plugin {name} not found`, and the ACL's
+ * `… not allowed. Command not found` / `Plugin not found`. Only these mean
+ * "try another route"; a backend error that merely contains "not found"
+ * (e.g. "Space not found: x") is a real answer and must reach the caller.
+ */
+const UNKNOWN_COMMAND_PATTERNS: readonly RegExp[] = [
+  /^Command \S+ not found$/,
+  /^plugin \S+ not found$/,
+  /not allowed\. (Command|Plugin) not found$/,
+];
+
+export function isUnknownCommandError(error: unknown): boolean {
+  const message = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+  return UNKNOWN_COMMAND_PATTERNS.some((pattern) => pattern.test(message.trim()));
+}
+
+/**
  * Wrap a Tauri command invocation with ApiResult type
  * Routes through Plugin Pattern using plugin:domain|command syntax
  */
-function shouldRetryCommandRoute(error: unknown): boolean {
-  const message = String(error).toLowerCase();
-  return (
-    message.includes('not allowed') ||
-    message.includes('command not found') ||
-    message.includes('unknown command') ||
-    message.includes('not found')
-  );
-}
-
 async function invokeCommandWithFallback<T>(
-  command: string,
   args: Record<string, unknown> | undefined,
   domain: string,
   pluginCommand: string
@@ -457,22 +462,20 @@ async function invokeCommandWithFallback<T>(
     pluginCommand,
   ];
 
-  let lastError: unknown = null;
+  // A route whose handler answered, even with an error, ends the search.
+  // When every route is unknown, the first (canonical) route's error is the
+  // one worth showing; the fallbacks' "not found" would only hide it.
+  let firstError: unknown = null;
   for (let idx = 0; idx < attempts.length; idx += 1) {
-    const signature = attempts[idx];
     try {
-      return await invoke<T>(signature, args || {});
+      return await invoke<T>(attempts[idx], args || {});
     } catch (error) {
-      lastError = error;
-      const canRetry = idx < attempts.length - 1 && shouldRetryCommandRoute(error);
-      if (!canRetry) {
-        throw error;
-      }
-      console.warn(`[API] Falling back from '${signature}' for command '${command}':`, error);
+      if (idx === 0) firstError = error;
+      if (!isUnknownCommandError(error)) throw error;
     }
   }
 
-  throw lastError;
+  throw firstError;
 }
 
 async function apiCall<T>(command: string, args?: Record<string, unknown>): Promise<ApiResult<T>> {
@@ -486,7 +489,6 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
 
   try {
     const data = await invokeCommandWithFallback<T>(
-      command,
       args,
       pluginRoute.domain,
       pluginRoute.command
@@ -1466,7 +1468,15 @@ const VaultAPI = {
    * @param content - Text content to append to today's note
    * @returns Which page the capture landed on, so the UI can name it
    */
-  quickCapture: async (content: string): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<Wire.QuickCaptureResultDto>('quick_capture', { content }),
+  quickCapture: async (
+    content: string,
+    sources?: Wire.SourceDto[],
+    conversationIds?: string[],
+  ): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<Wire.QuickCaptureResultDto>('quick_capture', {
+    content,
+    ...(sources !== undefined ? { sources } : {}),
+    ...(conversationIds !== undefined ? { conversationIds } : {}),
+  }),
 
   /**
    * Retrieves all daily notes within a date range.
@@ -1793,34 +1803,6 @@ const VaultAPI = {
       }
     }),
 
-
-  /**
-   * Asks a question and retrieves an AI-generated answer based on indexed content.
-   * Uses retrieval-augmented generation (RAG) to find relevant documents
-   * and generate contextual answers.
-   *
-   * @param question - Question to answer
-   * @param contextLimit - Optional limit for number of context documents (default: 5)
-   * @returns Answer object with generated text and source references
-   */
-  askQuestion: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, context_limit: contextLimit };
-    return apiCall<QAResponse>('ask_question', { request });
-  },
-
-  /**
-   * Asks a question with streaming response.
-   * Returns answer incrementally as it's generated for better UX.
-   * Note: Currently falls back to non-streaming implementation.
-   *
-   * @param question - Question to answer
-   * @param contextLimit - Optional limit for number of context documents (default: 5)
-   * @returns Answer object with generated text (streaming not yet implemented)
-   */
-  askQuestionStream: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, context_limit: contextLimit };
-    return apiCall<QAResponse>('ask_question_stream', { request });
-  },
 
   /**
    * Checks if the LLM (Large Language Model) service is healthy and accessible.
@@ -2846,6 +2828,18 @@ const VaultAPI = {
   ): Promise<ApiResult<{ conversation: Conversation; copiedMessageCount: number }>> =>
     apiCall('fork_conversation', {
       request: { conversationId, upToMessageId },
+    }),
+
+  /**
+   * Summarizes a conversation and opens a new one in the same space whose
+   * first message is that summary. One or more full generations: minutes on
+   * a local model.
+   */
+  continueInNewConversation: async (
+    conversationId: string
+  ): Promise<ApiResult<{ conversation: Conversation }>> =>
+    apiCall('continue_in_new_conversation', {
+      request: { conversationId },
     }),
 
   /**

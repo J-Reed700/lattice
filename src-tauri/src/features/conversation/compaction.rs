@@ -9,12 +9,14 @@
 //! stopping one conversation from compacting twice at once.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tracing::info;
 
 use crate::application::ports::LLMPort;
 use crate::application::services::conversation_memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
+    COMPACTION_DEADLINE,
 };
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -47,12 +49,15 @@ pub async fn build_job(
         Arc::new(move |text: &str| llm.count_tokens(text))
     };
 
+    let deadline = compaction_deadline_for(utility_llm.provider_name());
+
     Ok(Some(CompactionJob::with_slots(
         container.conversation_memory(),
         utility_llm,
         count_tokens,
         CompactionConfig {
             summary_token_budget: summary_pool_for(&continuation_llm),
+            deadline,
             keep_recent_messages: keep_recent_messages
                 .unwrap_or(KEEP_RECENT_DEFAULT)
                 .max(KEEP_RECENT_MIN) as usize,
@@ -62,17 +67,57 @@ pub async fn build_job(
     )))
 }
 
+/// How long one compaction job may run, by where the utility model runs.
+///
+/// The default suits a remote llama-server at tens of tokens per second. The
+/// bundled sidecar on a laptop measured two to two and a half minutes for one
+/// extraction over a twelve-turn conversation, so any cycle that needed a
+/// repair round overran five minutes and committed nothing; one evaluated
+/// conversation lost three of its ten cycles that way. Three attempts at that
+/// speed plus review and summary fit in fifteen minutes. The job is a
+/// background task, so the cost of the longer bound is GPU time, not a turn.
+pub fn compaction_deadline_for(utility_provider: &str) -> Duration {
+    if utility_provider == "local-sidecar" {
+        LOCAL_SIDECAR_COMPACTION_DEADLINE
+    } else {
+        COMPACTION_DEADLINE
+    }
+}
+
+const LOCAL_SIDECAR_COMPACTION_DEADLINE: Duration = Duration::from_secs(15 * 60);
+
 /// The summary pool for a model, from the shared budget rules.
 ///
 /// Uses the same allocation the context assembler applies when it charges the
 /// prompt, so a summary this job accepts is one the next turn can actually
-/// carry. A model too small to plan for falls back to a small floor rather than
-/// failing compaction outright: the job rejects an oversized summary anyway, so
-/// the floor costs a rejected candidate, not a wrong commit.
+/// carry. That allocation is taken after the turn's fixed costs, so they are
+/// charged here too: sized against an empty prompt, the pool was 10% of the
+/// whole input budget while the turn's was 10% of what the system prompt,
+/// tool schemas and question left, and on a small window an accepted summary
+/// no longer fit the next turn. A model too small to plan for falls back to a
+/// small floor rather than failing compaction outright: the job rejects an
+/// oversized summary anyway, so the floor costs a rejected candidate, not a
+/// wrong commit.
 pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
+    let fixed = llm
+        .count_tokens(crate::application::services::context_assembler::render::MEMORY_USE_POLICY)
+        .saturating_add(TYPICAL_TURN_FIXED_TOKENS);
+    summary_pool(llm.model_name(), llm.max_context_tokens(), fixed)
+}
+
+/// What a typical turn spends before any history: its system prompt, the tool
+/// schemas it is offered, and the question. A representative figure, not a
+/// bound — the turn's own plan still drops a summary that does not fit.
+const TYPICAL_TURN_FIXED_TOKENS: usize = 1_200;
+
+fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
     use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
-    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens());
-    BudgetAllocation::plan(&capacity, 0)
+    let capacity = ModelCapacity::new(model, context_tokens);
+    // A window too small for the typical turn is planned with what it can
+    // hold; the smaller pool is the safe side of the error.
+    BudgetAllocation::plan(&capacity, fixed)
+        .or_else(|_| BudgetAllocation::plan(&capacity, fixed / 2))
+        .or_else(|_| BudgetAllocation::plan(&capacity, 0))
         .map(|allocation| allocation.summary)
         .unwrap_or(256)
 }
@@ -161,4 +206,43 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
                 .await;
         }
     });
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod tests {
+    use super::*;
+    use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
+
+    /// On a 4k window the turn's fixed costs are most of the prompt; a pool
+    /// sized against an empty prompt accepted summaries the turn then dropped.
+    #[test]
+    fn a_summary_pool_on_a_small_window_fits_the_turn_that_carries_it() {
+        let capacity = ModelCapacity::new("small", 4_096);
+        let fixed = 1_500;
+        let turn_pool = BudgetAllocation::plan(&capacity, fixed).unwrap().summary;
+        let empty_prompt_pool = BudgetAllocation::plan(&capacity, 0).unwrap().summary;
+
+        let pool = summary_pool("small", 4_096, fixed);
+
+        assert_eq!(pool, turn_pool);
+        assert!(pool < empty_prompt_pool, "{pool} vs {empty_prompt_pool}");
+    }
+
+    /// A laptop sidecar takes minutes per extraction; the remote default
+    /// deadline made every repaired cycle commit nothing.
+    #[test]
+    fn the_bundled_sidecar_gets_a_longer_compaction_deadline_than_a_remote_server() {
+        let local = compaction_deadline_for("local-sidecar");
+        assert!(local >= Duration::from_secs(12 * 60), "{local:?}");
+        assert_eq!(compaction_deadline_for("llamacpp"), COMPACTION_DEADLINE);
+        assert_eq!(compaction_deadline_for("openai"), COMPACTION_DEADLINE);
+    }
+
+    #[test]
+    fn a_window_too_small_for_the_typical_turn_still_gets_a_pool() {
+        let pool = summary_pool("tiny", 2_048, 5_000);
+        assert!(pool > 0);
+        assert!(pool <= summary_pool("tiny", 2_048, 0));
+    }
 }

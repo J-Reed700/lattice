@@ -91,6 +91,11 @@ impl BatchJobRepositoryPort for SqliteBatchJobRepository {
         Ok(job)
     }
 
+    async fn get_batch_job_status(&self, job_id: &str) -> Result<String, AppError> {
+        let mut conn = self.pool.acquire().await?;
+        ops::get_batch_job_status(&mut conn, job_id).await
+    }
+
     async fn get_pending_items(&self, job_id: &str) -> Result<Vec<BatchJobItem>, AppError> {
         let mut conn = self.pool.acquire().await?;
         ops::get_pending_items(&mut conn, job_id).await

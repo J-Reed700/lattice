@@ -394,6 +394,8 @@ fn build_attachment_source(
         page_number: None,
         chunk_excerpts: None,
         citation_id: None,
+
+        web_snapshot: None,
     }
 }
 
@@ -422,6 +424,8 @@ mod tests {
             page_number: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 

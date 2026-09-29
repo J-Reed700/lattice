@@ -109,15 +109,10 @@ impl AuditLogger {
             return Ok(());
         }
 
-        // Log to tracing for structured logging integration
-        info!(
-            event_id = %event.id,
-            action = ?event.action,
-            result = ?event.result,
-            user_id = ?event.user_id,
-            resource_id = ?event.resource_id,
-            "Audit event logged"
-        );
+        // Event fields may contain paths, URLs, provider errors, or user data.
+        // The durable sink applies its own allowlist; tracing records only the
+        // opaque event ID and never copies caller-controlled audit values.
+        info!(event_id = %event.id, "Audit event logged");
 
         let sinks = self.sinks.read().await;
 

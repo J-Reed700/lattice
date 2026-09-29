@@ -19,64 +19,15 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-/// Setup test database with schema
+/// A database on the real migrations, so the schema the search code queries
+/// is the one the app ships. A hand-written copy drifted the moment a
+/// migration added a column and failed every test here for a week.
 async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
         .await?;
-
-    // Create tables
-    sqlx::query(
-        "CREATE TABLE documents (
-            id TEXT PRIMARY KEY,
-            file_name TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_type TEXT,
-            mime_type TEXT,
-            size_bytes INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE text_chunks (
-            id TEXT PRIMARY KEY,
-            document_id TEXT NOT NULL,
-            content TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            start_char INTEGER,
-            end_char INTEGER,
-            FOREIGN KEY (document_id) REFERENCES documents(id)
-        )",
-    )
-    .execute(&pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE VIRTUAL TABLE chunks_fts USING fts5(
-            chunk_id UNINDEXED,
-            content,
-            tokenize='porter unicode61 remove_diacritics 2'
-        )",
-    )
-    .execute(&pool)
-    .await?;
-
-    // The CJK sibling index, as in the migration.
-    sqlx::query(
-        "CREATE VIRTUAL TABLE chunks_trigram USING fts5(
-            chunk_id UNINDEXED,
-            content,
-            tokenize='trigram'
-        )",
-    )
-    .execute(&pool)
-    .await?;
-
+    sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
 }
 
@@ -85,11 +36,15 @@ async fn insert_test_documents(pool: &SqlitePool) -> Result<(), Box<dyn std::err
     // Insert documents
     sqlx::query(
         "INSERT INTO documents (
-            id, file_name, file_path, file_type, mime_type, size_bytes, created_at, updated_at
+            id, file_name, file_path, file_type, mime_type, size_bytes, modified_at, checksum,
+            created_at, updated_at
          ) VALUES
-         ('doc1', 'rust.txt', '/docs/rust.txt', 'txt', 'text/plain', 1024, '2024-01-01', '2024-01-01'),
-         ('doc2', 'python.txt', '/docs/python.txt', 'txt', 'text/plain', 2048, '2024-01-02', '2024-01-02'),
-         ('doc3', 'ml.txt', '/docs/ml.txt', 'txt', 'text/plain', 3072, '2024-01-03', '2024-01-03')",
+         ('doc1', 'rust.txt', '/docs/rust.txt', 'txt', 'text/plain', 1024,
+          '2024-01-01T00:00:00Z', 'sum1', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z'),
+         ('doc2', 'python.txt', '/docs/python.txt', 'txt', 'text/plain', 2048,
+          '2024-01-02T00:00:00Z', 'sum2', '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z'),
+         ('doc3', 'ml.txt', '/docs/ml.txt', 'txt', 'text/plain', 3072,
+          '2024-01-03T00:00:00Z', 'sum3', '2024-01-03T00:00:00Z', '2024-01-03T00:00:00Z')",
     )
     .execute(pool)
     .await?;
@@ -104,14 +59,7 @@ async fn insert_test_documents(pool: &SqlitePool) -> Result<(), Box<dyn std::err
     .execute(pool)
     .await?;
 
-    // Insert into both FTS indexes
-    for table in ["chunks_fts", "chunks_trigram"] {
-        sqlx::query(&format!(
-            "INSERT INTO {table} (chunk_id, content) SELECT id, content FROM text_chunks"
-        ))
-        .execute(pool)
-        .await?;
-    }
+    // The migration's triggers fill both FTS indexes from `text_chunks`.
 
     Ok(())
 }

@@ -8,6 +8,7 @@ import { VaultAPI } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { TauriEventNames, EventSchemas, listenValidated } from '../types/events';
 
+import type { ApiResult } from '../types';
 import type { DownloadedModel } from '../types/downloadedModels';
 
 export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
@@ -143,6 +144,18 @@ export const useDownloadedModels = () => {
 };
 
 /** Own the model-completion listener at one app-level mount. */
+export function reportWarmupFailure(
+  result: ApiResult<void>,
+  modelName: string,
+  role: 'chat' | 'utility'
+): void {
+  if (result.ok) return;
+  console.warn(`[useDownloadedModels] post-download ${role} warmup failed:`, result.error);
+  toast.error(`${modelName} downloaded but couldn't start`, {
+    message: `The ${role} model failed to load: ${result.error}`,
+  });
+}
+
 export const useDownloadedModelsListener = () => {
   const { fetchDownloadedModels } = useDownloadedModels();
 
@@ -161,14 +174,16 @@ export const useDownloadedModelsListener = () => {
               const updated = await fetchDownloadedModels();
               toast.success(`${modelName} ready`);
               const completed = updated.find((model) => model.model_name === modelName);
+              // Warm-up answers with an ApiResult and never rejects, so the
+              // failure is in `ok`, not in a catch.
               if (completed?.is_active_for_chat) {
-                void VaultAPI.warmUpActiveChatModel().catch((error) =>
-                  console.warn('[useDownloadedModels] post-download chat warmup failed:', error)
+                void VaultAPI.warmUpActiveChatModel().then((result) =>
+                  reportWarmupFailure(result, modelName, 'chat')
                 );
               }
               if (completed?.is_active_for_utility) {
-                void VaultAPI.warmUpActiveUtilityModel().catch((error) =>
-                  console.warn('[useDownloadedModels] post-download utility warmup failed:', error)
+                void VaultAPI.warmUpActiveUtilityModel().then((result) =>
+                  reportWarmupFailure(result, modelName, 'utility')
                 );
               }
             } catch (error) {

@@ -1,9 +1,9 @@
 //! Plain text and markdown file extraction.
 
+use super::markup::decode_text_bytes;
 use super::types::{ContentMetadata, ExtractedContent};
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
-use tokio::io::{AsyncReadExt, BufReader};
 
 /// Extract content from plain text or markdown files.
 pub async fn extract_text_file(path: &Path, max_file_size: u64) -> Result<ExtractedContent> {
@@ -24,22 +24,11 @@ pub async fn extract_text_file(path: &Path, max_file_size: u64) -> Result<Extrac
         });
     }
 
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let mut reader = BufReader::new(file);
-    let mut text = String::new();
-    reader
-        .read_to_string(&mut text)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
+    let bytes = tokio::fs::read(path).await.map_err(|e| IndexingError::Io {
+        message: e.to_string(),
+        kind: format!("{:?}", e.kind()),
+    })?;
+    let text = decode_text_bytes(bytes, path);
 
     let metadata = ContentMetadata {
         page_count: None,
@@ -82,5 +71,14 @@ mod tests {
         assert!(content.text.contains("Test content"));
         assert!(content.text.contains("Second line"));
         assert_eq!(content.metadata.word_count, 4);
+    }
+
+    #[tokio::test]
+    async fn a_windows_1252_file_is_read_instead_of_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.txt");
+        std::fs::write(&path, b"R\xE9sum\xE9 \x96 2019\n").unwrap();
+        let content = extract_text_file(&path, 1 << 20).await.unwrap();
+        assert_eq!(content.text, "R\u{e9}sum\u{e9} \u{2013} 2019\n");
     }
 }

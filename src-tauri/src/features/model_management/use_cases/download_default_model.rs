@@ -303,10 +303,8 @@ mod tests {
             Ok(())
         }
 
-        fn subscribe_to_events(
-            &self,
-        ) -> Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>> {
-            let (_tx, rx) = mpsc::unbounded_channel();
+        fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>> {
+            let (_tx, rx) = mpsc::channel(128);
             Arc::new(RwLock::new(Some(rx)))
         }
     }

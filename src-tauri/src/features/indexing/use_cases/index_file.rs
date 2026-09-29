@@ -83,6 +83,45 @@ pub enum PrepareForIndexingOutcome {
     Duplicate { document_id: String },
 }
 
+/// One committed chunk ready for the live vector index.
+pub(crate) struct PublishedChunk {
+    pub chunk_id: String,
+    pub content: String,
+    pub embedding: Vec<f32>,
+}
+
+/// Put a committed document's chunks into the live vector index and drop
+/// cached query results, so the document is searchable now rather than after
+/// the next launch rebuilds the index from SQLite.
+///
+/// Shared by every importer that commits chunk rows itself (files, web URLs):
+/// a path that commits without publishing leaves dense search blind to the
+/// document and forces a full HNSW rebuild at the next start.
+pub(crate) async fn publish_chunks_to_live_index(
+    search: Arc<dyn VectorSearchPort>,
+    document_id: &str,
+    chunks: Vec<PublishedChunk>,
+) -> Result<()> {
+    let entries: Vec<_> = chunks
+        .into_iter()
+        .map(
+            |chunk| crate::application::ports::vector_search_port::VectorIndexEntry {
+                id: format!("emb_{}", chunk.chunk_id),
+                embedding: chunk.embedding,
+                content: chunk.content,
+                chunk_id: chunk.chunk_id,
+                document_id: document_id.to_owned(),
+            },
+        )
+        .collect();
+    // HNSW updates and disk serialization must not block async DB/chat work.
+    tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
+        .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
+        .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))?;
+    crate::features::cache::query_cache::invalidate_query_cache();
+    Ok(())
+}
+
 /// Index file use case.
 ///
 /// Coordinates indexing of a single file, including:
@@ -621,7 +660,7 @@ impl IndexFileUseCase {
         crate::features::cache::query_cache::invalidate_query_cache();
         // Summaries are a background tier: this returns before the model is
         // even consulted, and does nothing at all while the tier is off.
-        crate::features::summaries::notify_document_indexed(&document_id);
+        crate::features::summaries::notify_document_indexed(&document_id).await;
         Ok(document_id)
     }
 
@@ -682,7 +721,7 @@ impl IndexFileUseCase {
             .into_iter()
             .map(|(embedding, vector)| (embedding.chunk_id().to_string(), vector))
             .collect();
-        let entries: Result<Vec<_>> = document
+        let chunks: Result<Vec<_>> = document
             .chunks()
             .iter()
             .map(|chunk| {
@@ -692,22 +731,14 @@ impl IndexFileUseCase {
                         chunk.id()
                     ))
                 })?;
-                Ok(
-                    crate::application::ports::vector_search_port::VectorIndexEntry {
-                        id: format!("emb_{}", chunk.id()),
-                        embedding,
-                        content: chunk.content().to_owned(),
-                        chunk_id: chunk.id().to_string(),
-                        document_id: document.id().to_string(),
-                    },
-                )
+                Ok(PublishedChunk {
+                    chunk_id: chunk.id().to_string(),
+                    content: chunk.content().to_owned(),
+                    embedding,
+                })
             })
             .collect();
-        let entries = entries?;
-        // HNSW updates and disk serialization must not block async DB/chat work.
-        tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
-            .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
-            .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))
+        publish_chunks_to_live_index(search, &document.id().to_string(), chunks?).await
     }
 
     fn validate_supported_file(&self, path: &Path) -> Result<()> {

@@ -36,7 +36,7 @@ use std::sync::Arc;
 use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::features::search::dto::{SearchRequestDto, SearchResponseDto};
 use crate::features::search::mapper::SearchMapper;
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 
 /// Semantic search use case.
 ///
@@ -50,6 +50,7 @@ use crate::shared::error::Result;
 pub struct SemanticSearchUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     vector_search: Arc<dyn VectorSearchPort>,
+    chunk_repository: Option<Arc<dyn crate::application::ports::ChunkRepositoryPort>>,
 }
 
 impl SemanticSearchUseCase {
@@ -78,7 +79,17 @@ impl SemanticSearchUseCase {
         Self {
             embedding_service,
             vector_search,
+            chunk_repository: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_chunk_repository(
+        mut self,
+        repository: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
+    ) -> Self {
+        self.chunk_repository = Some(repository);
+        self
     }
 
     /// Execute semantic search.
@@ -137,12 +148,32 @@ impl SemanticSearchUseCase {
         let limit = request.limit.unwrap_or(10);
         let threshold = request.threshold.unwrap_or(0.5);
 
-        let port_dtos = self.vector_search.search_scoped(
-            &query_embedding,
-            limit,
-            threshold,
-            allowed_document_ids,
-        )?;
+        // The USearch query is synchronous and CPU-bound. Run inline, it stalls
+        // this runtime thread and the BM25 branch chat joins beside it, as
+        // `HybridSearchUseCase::vector_branch` explains. The allow-list is a
+        // set of document ids, cheap to copy next to the search itself.
+        let vector_search = Arc::clone(&self.vector_search);
+        let allowed = allowed_document_ids.cloned();
+        let mut port_dtos = tokio::task::spawn_blocking(move || {
+            vector_search.search_scoped(&query_embedding, limit, threshold, allowed.as_ref())
+        })
+        .await
+        .map_err(|error| {
+            AppError::InternalError(format!("Vector search task failed: {error}"))
+        })??;
+
+        if let Some(repository) = &self.chunk_repository {
+            let ids = port_dtos
+                .iter()
+                .map(|result| result.chunk_id.clone())
+                .collect::<Vec<_>>();
+            let content = repository.find_content_by_ids(&ids).await?;
+            for result in &mut port_dtos {
+                if let Some(text) = content.get(&result.chunk_id) {
+                    result.content.clone_from(text);
+                }
+            }
+        }
 
         // 3. Map port DTOs to domain entities
         let results = SearchMapper::port_dtos_to_domain(port_dtos);
@@ -237,8 +268,78 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    /// Records which thread ran the USearch call.
+    #[derive(Default)]
+    struct ThreadRecordingSearch {
+        thread: std::sync::Mutex<Option<std::thread::ThreadId>>,
+    }
 
+    impl VectorSearchPort for ThreadRecordingSearch {
+        fn search(
+            &self,
+            embedding: &[f32],
+            limit: usize,
+            threshold: f32,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            *self.thread.lock().unwrap() = Some(std::thread::current().id());
+            MockVectorSearch.search(embedding, limit, threshold)
+        }
+
+        fn search_scoped(
+            &self,
+            query_embedding: &[f32],
+            top_k: usize,
+            threshold: f32,
+            _allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            self.search(query_embedding, top_k, threshold)
+        }
+
+        fn add_embedding(&self, _id: String, _embedding: Vec<f32>) -> Result<()> {
+            Ok(())
+        }
+
+        fn remove_embedding(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn count(&self) -> usize {
+            10
+        }
+
+        fn dimension(&self) -> usize {
+            4
+        }
+    }
+
+    #[tokio::test]
+    async fn the_vector_search_runs_off_the_async_worker() {
+        let search = Arc::new(ThreadRecordingSearch::default());
+        let use_case = SemanticSearchUseCase::new(Arc::new(MockEmbedder), search.clone());
+        let scope: HashSet<String> = ["doc-0".to_string()].into_iter().collect();
+
+        use_case
+            .execute_scoped(
+                SearchRequestDto {
+                    query: "q".to_string(),
+                    limit: Some(3),
+                    threshold: Some(0.0),
+                    mode: SearchModeDto::Vector,
+                },
+                Some(&scope),
+            )
+            .await
+            .unwrap();
+
+        let ran_on = search.thread.lock().unwrap().expect("search ran");
+        assert_ne!(ran_on, std::thread::current().id());
+    }
+
+    #[tokio::test]
     async fn test_semantic_search_execution() {
         let use_case =
             SemanticSearchUseCase::new(Arc::new(MockEmbedder), Arc::new(MockVectorSearch));

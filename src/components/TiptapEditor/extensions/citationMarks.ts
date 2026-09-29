@@ -9,6 +9,8 @@ export const citationMarksKey = new PluginKey('citationMarks');
 export interface CitationMarksOptions {
   /** Decides, at draw time, whether `[n]` refers to a real source. */
   isCitation: (number: number) => boolean;
+  /** Called when an editable or read-only citation chip is activated. */
+  onCitationClick?: (number: number, occurrence: number) => void;
 }
 
 /**
@@ -25,15 +27,29 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
 
   addOptions() {
-    return { isCitation: () => false };
+    return { isCitation: () => false, onCitationClick: undefined };
   },
 
   addProseMirrorPlugins() {
-    const { isCitation } = this.options;
+    const { isCitation, onCitationClick } = this.options;
     return [
       new Plugin({
         key: citationMarksKey,
         props: {
+          handleDOMEvents: {
+            click(_view, event) {
+              if (!onCitationClick) return false;
+              const target = event.target as Element | null;
+              const chip = target?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
+                ?? target?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
+              if (!chip) return false;
+              const number = Number(chip.dataset.cite);
+              const occurrence = Number(chip.dataset.citeAt);
+              if (!Number.isInteger(number) || !Number.isInteger(occurrence)) return false;
+              onCitationClick(number, occurrence);
+              return true;
+            },
+          },
           decorations(state) {
             const decorations: Decoration[] = [];
             const seen = new Map<number, number>();

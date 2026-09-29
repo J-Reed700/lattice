@@ -56,6 +56,10 @@ export function useVaultFocusRescan(): void {
         const window = getCurrentWindow();
         const handle = await window.onFocusChanged(({ payload: focused }) => {
           if (!mounted || !focused) return;
+          // Native focus can restore a minimized webview without producing a
+          // DOM resize/visibility event. Consumers with measured layout state
+          // use this signal to refresh after the window is visible again.
+          globalThis.window.dispatchEvent(new Event('lattice:window-focused'));
           void triggerRescan();
         });
         if (!mounted) {

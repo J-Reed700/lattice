@@ -18,6 +18,7 @@ function table(overrides: Partial<CompareTableDto> = {}): CompareTableDto {
           { value: '412', citation: null },
         ],
         error: null,
+        degraded: null,
       },
       {
         documentId: 'doc_2',
@@ -28,6 +29,7 @@ function table(overrides: Partial<CompareTableDto> = {}): CompareTableDto {
           { value: null, citation: null },
         ],
         error: null,
+        degraded: null,
       },
     ],
     modelName: 'llama-3',

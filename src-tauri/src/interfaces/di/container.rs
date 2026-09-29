@@ -270,6 +270,7 @@ impl Container {
         let vault_writer = crate::features::vault::writeback::start_vault_writer(
             Arc::clone(system.get_settings_use_case()),
             vault_write_suppression.clone(),
+            core.db_pool().clone(),
         );
 
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
@@ -421,6 +422,23 @@ impl Container {
                 error = %e,
                 "could not read watch folders while recomputing allowed roots"
             ),
+        }
+
+        // The viewers load images and audio over `asset://`, whose static
+        // scope is only the app data and the library; the user's own folders
+        // are opened to it here, as to IPC. Tauri cannot take a directory back
+        // out of the scope, so a removed folder stays viewable until restart.
+        if let Some(handle) = &self.app_handle {
+            use tauri::Manager;
+            let scope = handle.asset_protocol_scope();
+            for root in &roots {
+                scope.allow_directory(root, true).map_err(|e| {
+                    crate::shared::error::AppError::InternalError(format!(
+                        "could not open {} to the asset protocol: {e}",
+                        root.display()
+                    ))
+                })?;
+            }
         }
 
         let count = roots.len();

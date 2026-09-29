@@ -34,6 +34,7 @@ use crate::shared::api_result::ApiError;
 pub use super::branching::{
     fork_conversation_impl, regenerate_response_impl, truncate_conversation_after_impl,
 };
+pub use super::handoff::continue_in_new_conversation_impl;
 pub use super::synthesis::synthesize_journal_entries_impl;
 pub use super::workspace_dto::*;
 

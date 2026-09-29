@@ -80,8 +80,8 @@ export function ChatTab() {
   const provider = llmSettings?.provider ?? "auto";
   const showOllamaSettings = provider === "ollama" || provider === "auto";
 
-  // Staged rollout switch. Default false, so a missing field reads as off
-  // rather than promising memory the backend is not running.
+  // New and legacy settings both default to enabled; an explicit saved false
+  // remains an opt-out.
   const boundedMemoryEnabled = llmSettings?.boundedConversationMemory ?? true;
 
   const handleBoundedMemoryToggle = async (enabled: boolean) => {

@@ -12,6 +12,7 @@
 //! - `pdf`: PDF document extraction with page tracking
 //! - `docx`: Word document extraction
 //! - `html`: HTML and code file extraction
+//! - `markup`: tag cursor, entity and byte decoding shared by the extractors
 //! - `csv`: CSV/TSV file extraction
 //! - `streaming`: Streaming text extraction
 //!
@@ -29,9 +30,11 @@
 //! # }
 //! ```
 
+mod archive_budget;
 mod csv;
 mod docx;
 mod html;
+mod markup;
 mod mime;
 mod odt;
 mod pdf;
@@ -43,6 +46,7 @@ mod text;
 mod types;
 mod xlsx;
 
+pub use mime::is_code_mime;
 pub use types::{ContentMetadata, ExtractedContent};
 
 pub use streaming::extract_text_streaming;

@@ -127,25 +127,43 @@ impl RescoreVectorStore {
     /// Deliberately infallible: a missing vector costs the query exact scoring
     /// for one candidate, not the query itself.
     pub fn get(&self, key: u64) -> Option<Vec<f32>> {
+        let mut vector = vec![0.0f32; self.dimension];
+        let mut bytes = vec![0u8; self.dimension * F32_BYTES];
+        self.get_into(key, &mut vector, &mut bytes)
+            .then_some(vector)
+    }
+
+    /// Read a full vector into reusable buffers, avoiding a fresh vector and
+    /// byte allocation for each candidate in scoped exact scoring.
+    pub fn get_into(&self, key: u64, vector: &mut [f32], bytes: &mut [u8]) -> bool {
+        if vector.len() != self.dimension || bytes.len() != self.dimension * F32_BYTES {
+            return false;
+        }
         match &self.backing {
-            Backing::Memory(map) => map.lock().get(&key).cloned(),
-            Backing::File { path, handle } => {
-                let mut buffer = vec![0u8; self.dimension * F32_BYTES];
-                self.read_slot(path, handle, key, &mut buffer).ok()?;
-                let vector: Vec<f32> = buffer
-                    .chunks_exact(F32_BYTES)
-                    .map(|chunk| {
-                        let mut raw = [0u8; F32_BYTES];
-                        raw.copy_from_slice(chunk);
-                        f32::from_le_bytes(raw)
-                    })
-                    .collect();
-                // An unwritten slot in a sparse file reads as zeros, which is
-                // not a vector any embedding model produces.
-                if vector.iter().all(|v| *v == 0.0) || vector.iter().any(|v| !v.is_finite()) {
-                    return None;
+            Backing::Memory(map) => {
+                let values = map.lock();
+                let Some(stored) = values.get(&key) else {
+                    return false;
+                };
+                if stored.len() != self.dimension
+                    || stored.iter().all(|v| *v == 0.0)
+                    || stored.iter().any(|v| !v.is_finite())
+                {
+                    return false;
                 }
-                Some(vector)
+                vector.copy_from_slice(stored);
+                true
+            }
+            Backing::File { path, handle } => {
+                if self.read_slot(path, handle, key, bytes).is_err() {
+                    return false;
+                }
+                for (value, chunk) in vector.iter_mut().zip(bytes.chunks_exact(F32_BYTES)) {
+                    let mut raw = [0u8; F32_BYTES];
+                    raw.copy_from_slice(chunk);
+                    *value = f32::from_le_bytes(raw);
+                }
+                !vector.iter().all(|v| *v == 0.0) && vector.iter().all(|v| v.is_finite())
             }
         }
     }
@@ -329,7 +347,7 @@ fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::i
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "rescore slot ends past the end of the file",
-                ))
+                ));
             }
             Ok(read) => {
                 let rest = std::mem::take(&mut remaining);
@@ -360,7 +378,7 @@ fn write_all_at(file: &std::fs::File, bytes: &[u8], offset: u64) -> std::io::Res
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "rescore vector store accepted no bytes",
-                ))
+                ));
             }
             Ok(written) => {
                 let written = written.min(remaining.len());

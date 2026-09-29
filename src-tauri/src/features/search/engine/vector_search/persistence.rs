@@ -45,7 +45,7 @@ const QUIET_PERIOD: Duration = Duration::from_secs(30);
 /// hour. Checkpoint periodically to reduce graph rebuilding after a crash;
 /// embeddings themselves are already committed to SQLite.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(300);
-/// Rows per page when refilling chunk text from SQLite.
+/// Rows per page when checking key membership against SQLite.
 const HYDRATE_PAGE: i64 = 512;
 
 /// Which way startup went, for the log and for tests that need to assert no
@@ -149,10 +149,89 @@ where
     })
 }
 
-/// Refill the chunk text the key map deliberately does not persist.
-///
-/// Paged rather than loaded whole: a large library's chunk text is hundreds of
-/// megabytes, and there is no reason for two copies of it to exist at once.
+/// The production startup path. Restore one keyset page at a time, decode it,
+/// then publish it into the runtime index before reading the next page.
+pub async fn open_or_rebuild_streaming<F, Fut>(
+    index: &Arc<USearchVectorIndex>,
+    pool: &SqlitePool,
+    index_path: &Path,
+    identity: &str,
+    generation: &str,
+    dimension: usize,
+    mut restore_page: F,
+) -> Result<StartupPath>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::features::embedding::generation::RestorePage>>,
+{
+    let started = Instant::now();
+    let stamp = read_source_stamp(pool, identity, dimension).await?;
+    let config = index.index_config();
+    let mut mismatch = match read_manifest(index_path) {
+        Some(manifest) => manifest.mismatch(generation, &config, index.count(), &stamp),
+        None => Some(ManifestMismatch::Missing),
+    };
+    if mismatch.is_none() {
+        let hydrated = hydrate_content(index, pool, identity, dimension).await?;
+        if hydrated == index.count() {
+            return Ok(StartupPath::Reused {
+                vectors: index.count(),
+                hydrated,
+            });
+        }
+        mismatch = Some(ManifestMismatch::SourceMembership);
+    }
+
+    let reason = mismatch.unwrap_or(ManifestMismatch::Missing);
+    index.begin_rebuild()?;
+    let mut cursor = String::new();
+    let mut added = 0usize;
+    loop {
+        let page = restore_page(cursor.clone()).await?;
+        if page.cursor.is_empty() {
+            break;
+        }
+        cursor = page.cursor;
+        let expected = page.entries.len();
+        let rebuild_index = Arc::clone(index);
+        let count =
+            tokio::task::spawn_blocking(move || rebuild_index.add_rebuild_batch(page.entries))
+                .await
+                .map_err(|e| {
+                    AppError::InternalError(format!("Vector index rebuild batch failed: {e}"))
+                })??;
+        if count != expected {
+            return Err(AppError::InvalidState(
+                "Incomplete vector index rebuild batch".into(),
+            ));
+        }
+        added += count;
+    }
+    let end_stamp = read_source_stamp(pool, identity, dimension).await?;
+    if end_stamp != stamp {
+        return Err(AppError::InvalidState(
+            "Vector sources changed during startup rebuild; retry startup to restore a consistent generation".into(),
+        ));
+    }
+    let finish_index = Arc::clone(index);
+    tokio::task::spawn_blocking(move || finish_index.finish_rebuild())
+        .await
+        .map_err(|e| {
+            AppError::InternalError(format!("Vector index finalize task failed: {e}"))
+        })??;
+    write_manifest(
+        index_path,
+        &IndexManifest::new(generation.to_string(), config, added, stamp),
+    )?;
+    tracing::info!(vectors = added, reason = %reason, took_ms = started.elapsed().as_millis(), "Vector index rebuilt from SQLite in bounded batches");
+    Ok(StartupPath::Rebuilt {
+        vectors: added,
+        reason,
+    })
+}
+
+/// Verify source membership without loading any chunk text. Candidate text is
+/// fetched in small batches after ranking at the search boundary.
 async fn hydrate_content(
     index: &Arc<USearchVectorIndex>,
     pool: &SqlitePool,
@@ -162,9 +241,9 @@ async fn hydrate_content(
     let mut cursor = String::new();
     let mut filled = 0;
     loop {
-        let rows: Vec<(String, String)> =
-            sqlx::query_as(
-                "SELECT tc.id, tc.content FROM text_chunks tc \
+        let rows: Vec<String> =
+            sqlx::query_scalar(
+                "SELECT tc.id FROM text_chunks tc \
                  WHERE tc.id > ? AND (\
                    EXISTS (SELECT 1 FROM text_embeddings te WHERE te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ?) \
                    OR EXISTS (SELECT 1 FROM embedding_generation_vectors eg WHERE eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ?)\
@@ -178,16 +257,14 @@ async fn hydrate_content(
                 .bind(HYDRATE_PAGE)
                 .fetch_all(pool)
                 .await?;
-        let Some((last, _)) = rows.last() else {
+        let Some(last) = rows.last() else {
             break;
         };
         cursor = last.clone();
-        filled += index.hydrate_content(rows.into_iter().map(|(id, content)| {
-            (
-                crate::features::embedding::encoding::vector_key(&id),
-                content,
-            )
-        }));
+        filled += index.hydrate_content(
+            rows.into_iter()
+                .map(|id| crate::features::embedding::encoding::vector_key(&id)),
+        );
     }
     Ok(filled)
 }
@@ -277,12 +354,21 @@ impl IndexPersistence {
     /// end in different places, and a quiet period recognises every one of
     /// them without a flush call in five other features.
     ///
-    /// Shutdown does not cancel this loop; it calls [`Self::flush_if_dirty`]
-    /// directly, before the database closes, so the last save is not racing a
-    /// worker-abort deadline.
+    /// Shutdown stops ticks, waits for any active save, then performs the
+    /// final flush before closing SQLite. Never cancel an active blocking save.
     pub async fn run(self: Arc<Self>) {
+        let cancel = crate::shared::background::cancellation_token();
         loop {
-            tokio::time::sleep(FLUSH_TICK).await;
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(FLUSH_TICK) => {}
+            }
+            // Standalone containers may have no installed application scope.
+            // The worker must not be the only owner keeping an index alive.
+            if Arc::strong_count(&self) == 1 {
+                break;
+            }
             if let Err(e) = self.flush_if_due().await {
                 tracing::warn!(error = %e, "Could not persist the vector index");
             }
@@ -380,6 +466,89 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn incomplete_streamed_batch_cannot_receive_a_valid_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("incomplete.usearch");
+        let pool = database().await;
+        add_chunk(&pool, 0).await;
+        let index = open(&path);
+        let result = open_or_rebuild_streaming(
+            &index,
+            &pool,
+            &path,
+            GENERATION,
+            GENERATION,
+            DIM,
+            |_| async {
+                Ok(crate::features::embedding::generation::RestorePage {
+                    entries: vec![(
+                        "emb_chunk0".into(),
+                        vec![1.0],
+                        String::new(),
+                        "chunk0".into(),
+                        "doc".into(),
+                    )],
+                    cursor: "chunk0".into(),
+                })
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(read_manifest(&path).is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_rebuild_streams_bounded_pages_and_keeps_text_out_of_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("streamed.usearch");
+        let pool = database().await;
+        for i in 0..5 {
+            add_chunk(&pool, i).await;
+        }
+        let index = open(&path);
+        let page_pool = pool.clone();
+        let restore = move |cursor: String| {
+            let pool = page_pool.clone();
+            async move {
+                let ids: Vec<String> = sqlx::query_scalar(
+                    "SELECT tc.id FROM text_chunks tc JOIN text_embeddings te ON te.chunk_id = tc.id \
+                     WHERE tc.id > ? ORDER BY tc.id LIMIT 2",
+                )
+                .bind(&cursor)
+                .fetch_all(&pool)
+                .await?;
+                let next = ids.last().cloned().unwrap_or_default();
+                let entries = ids
+                    .into_iter()
+                    .map(|id| {
+                        let i = id.trim_start_matches("chunk").parse::<usize>().unwrap();
+                        (
+                            format!("emb_{id}"),
+                            vector(i),
+                            String::new(),
+                            id,
+                            "doc".into(),
+                        )
+                    })
+                    .collect();
+                Ok(crate::features::embedding::generation::RestorePage {
+                    entries,
+                    cursor: next,
+                })
+            }
+        };
+        let outcome =
+            open_or_rebuild_streaming(&index, &pool, &path, GENERATION, GENERATION, DIM, restore)
+                .await
+                .unwrap();
+        assert!(outcome.rebuilt());
+        assert_eq!(index.count(), 5);
+        let hits = VectorSearchPort::search(index.as_ref(), &vector(2), 1, 0.0).unwrap();
+        assert_eq!(hits[0].content, "");
+        assert_eq!(hits[0].chunk_id, "chunk2");
+    }
+
     async fn start(pool: &SqlitePool, path: &Path) -> (Arc<USearchVectorIndex>, StartupPath) {
         let index = open(path);
         let outcome = open_or_rebuild(&index, pool, path, GENERATION, GENERATION, DIM, || {
@@ -436,8 +605,17 @@ mod tests {
         // Hydration, not the key map, is what puts the text back.
         let hits = VectorSearchPort::search(second.as_ref(), &vector(0), 1, 0.0).unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].content, "passage 0");
+        assert!(hits[0].content.is_empty(), "index metadata retains no text");
         assert_eq!(hits[0].doc_id, "doc");
+        let repository =
+            crate::infrastructure::persistence::repositories::ChunkRepository::new(pool.clone());
+        let text = crate::application::ports::ChunkRepositoryPort::find_content_by_ids(
+            &repository,
+            std::slice::from_ref(&hits[0].chunk_id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text.get("chunk0").map(String::as_str), Some("passage 0"));
     }
 
     #[tokio::test]

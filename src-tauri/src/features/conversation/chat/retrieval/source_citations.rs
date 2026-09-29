@@ -315,6 +315,8 @@ pub(super) async fn build_source_citations(
             chunk_index,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         });
     }
     sources
@@ -385,6 +387,8 @@ pub(super) fn build_web_source_citations(
             chunk_index: Some(idx + 1),
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         });
     }
 
@@ -445,6 +449,8 @@ mod merge_tool_sources_tests {
             chunk_index: Some(1),
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 
@@ -569,6 +575,8 @@ mod web_context_label_tests {
             chunk_index: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 

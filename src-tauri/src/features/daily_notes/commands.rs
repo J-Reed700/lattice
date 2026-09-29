@@ -1,4 +1,6 @@
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
+use crate::features::conversation::repository::ConversationRepository;
+use crate::features::qa::dto::SourceDto;
 use crate::features::vault::writeback;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -77,6 +79,9 @@ pub struct WorkspaceNoteDto {
     pub highlights: Vec<NoteHighlightDto>,
     pub sticky_notes: Vec<StickyItemDto>,
     pub conversation_snapshots: Vec<ConversationSnapshotDto>,
+    /// Source metadata backing inline citations in this note.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<SourceDto>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -171,7 +176,7 @@ where
     })
 }
 
-fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
+pub(super) fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
     Ok(WorkspaceNoteDto {
         id: row.id,
         title: row.title,
@@ -188,16 +193,23 @@ fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
             &row.conversation_snapshots_json,
             "conversation_snapshots_json",
         )?,
+        sources: from_json(&row.sources_json, "sources_json")?,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
 }
 
 async fn get_note_by_id(
+    container: &Container,
     repository: &DailyNotesRepository,
     note_id: &str,
 ) -> Result<WorkspaceNoteDto> {
-    row_to_dto(repository.get(note_id).await?)
+    hydrate_workspace_note(
+        repository,
+        &ConversationRepository::new(container.db_pool().clone()),
+        repository.get(note_id).await?,
+    )
+    .await
 }
 
 pub async fn list_workspace_notes_impl(
@@ -210,7 +222,12 @@ pub async fn list_workspace_notes_impl(
         None => repository.list().await?,
     };
 
-    rows.into_iter().map(row_to_dto).collect()
+    let conversations = ConversationRepository::new(container.db_pool().clone());
+    let mut notes = Vec::with_capacity(rows.len());
+    for row in rows {
+        notes.push(hydrate_workspace_note(&repository, &conversations, row).await?);
+    }
+    Ok(notes)
 }
 
 pub async fn create_workspace_note_impl(
@@ -239,31 +256,30 @@ pub async fn create_workspace_note_impl(
             highlights_json: "[]".to_string(),
             sticky_notes_json: "[]".to_string(),
             conversation_snapshots_json: "[]".to_string(),
+            sources_json: "[]".to_string(),
             created_at: now.clone(),
             updated_at: now,
         })
         .await?;
 
-    let note = get_note_by_id(&repository, &note_id).await?;
+    let note = get_note_by_id(container, &repository, &note_id).await?;
     // Vault writeback: fire-and-forget. Failures log but never block
     // the SQL commit; the database is still the canonical write.
-    writeback::spawn_sync_workspace_note(
-        container,
-        note.id.clone(),
-        note.title.clone(),
-        note.content.clone(),
-        note.created_at.clone(),
-        note.updated_at.clone(),
-        Vec::new(),
-    );
+    writeback::spawn_sync_workspace_note(container);
     Ok(note)
 }
 
 pub async fn update_workspace_note_impl(
     container: &Container,
-    note: WorkspaceNoteDto,
+    mut note: WorkspaceNoteDto,
 ) -> Result<WorkspaceNoteDto> {
     let note_id = note.id.clone();
+    enrich_sources_from_linked_conversations(
+        &ConversationRepository::new(container.db_pool().clone()),
+        &note.linked_conversation_ids,
+        &mut note.sources,
+    )
+    .await;
     let repository = DailyNotesRepository::new(container.db_pool().clone());
     repository
         .update(&WorkspaceNoteRecord {
@@ -278,22 +294,116 @@ pub async fn update_workspace_note_impl(
             highlights_json: to_json(&note.highlights)?,
             sticky_notes_json: to_json(&note.sticky_notes)?,
             conversation_snapshots_json: to_json(&note.conversation_snapshots)?,
+            sources_json: to_json(&note.sources)?,
             created_at: note.created_at,
             updated_at: now_db_timestamp(),
         })
         .await?;
 
-    let updated = get_note_by_id(&repository, &note_id).await?;
-    writeback::spawn_sync_workspace_note(
-        container,
-        updated.id.clone(),
-        updated.title.clone(),
-        updated.content.clone(),
-        updated.created_at.clone(),
-        updated.updated_at.clone(),
-        Vec::new(),
-    );
+    let updated = get_note_by_id(container, &repository, &note_id).await?;
+    writeback::spawn_sync_workspace_note(container);
     Ok(updated)
+}
+
+/// A journal page owns its copied sources. Fill older citation records from
+/// explicitly linked conversations while their archive is available, but do
+/// not guess if linked conversations saved different versions of the URL.
+async fn enrich_sources_from_linked_conversations(
+    repository: &ConversationRepository,
+    conversation_ids: &[String],
+    sources: &mut [SourceDto],
+) -> bool {
+    let mut changed = false;
+    for source in sources {
+        if source.web_snapshot.is_some() {
+            continue;
+        }
+        let url = source.file_path.trim();
+        if !(url
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+            || url
+                .get(..7)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("http://")))
+        {
+            continue;
+        }
+        if conversation_ids.is_empty() {
+            continue;
+        }
+        let mut snapshots = Vec::with_capacity(conversation_ids.len());
+        let mut every_link_has_snapshot = true;
+        for conversation_id in conversation_ids {
+            match repository
+                .conversation_web_source_snapshot(conversation_id.clone(), url.to_string())
+                .await
+            {
+                Ok(Some(snapshot)) => snapshots.push(snapshot),
+                // Without a snapshot in every linked chat, we cannot know
+                // which archived version this old citation came from.
+                Ok(None) | Err(_) => {
+                    every_link_has_snapshot = false;
+                    break;
+                }
+            }
+        }
+        if !every_link_has_snapshot {
+            continue;
+        }
+        let Some(first) = snapshots.first() else {
+            continue;
+        };
+        if snapshots.iter().skip(1).any(|other| {
+            other.content != first.content
+                || other.title != first.title
+                || other.truncated != first.truncated
+                || other.fetched_at != first.fetched_at
+        }) {
+            continue;
+        }
+        source.web_snapshot = Some(crate::features::qa::dto::WebSnapshotDto {
+            url: url.to_string(),
+            title: first.title.clone(),
+            text: first.content.clone(),
+            fetched_at: first.fetched_at.clone(),
+            truncated: first.truncated,
+        });
+        changed = true;
+    }
+    changed
+}
+
+pub(crate) async fn hydrate_workspace_note(
+    repository: &DailyNotesRepository,
+    conversations: &ConversationRepository,
+    mut row: WorkspaceNoteRecord,
+) -> Result<WorkspaceNoteDto> {
+    // Retry a few times if an edit races hydration. Each persistence attempt
+    // is compare-and-swap against both the source data and note revision; a
+    // retry starts from the winning row and never replaces its other fields.
+    for _ in 0..3 {
+        let mut note = row_to_dto(row.clone())?;
+        let mut sources = note.sources.clone();
+        if !enrich_sources_from_linked_conversations(
+            conversations,
+            &note.linked_conversation_ids,
+            &mut sources,
+        )
+        .await
+        {
+            return Ok(note);
+        }
+        let sources_json = to_json(&sources)?;
+        if repository
+            .update_sources_if_unchanged(&row.id, &row.sources_json, &row.updated_at, &sources_json)
+            .await?
+        {
+            note.sources = sources;
+            return Ok(note);
+        }
+        row = repository.get(&row.id).await?;
+    }
+    row_to_dto(row)
 }
 
 pub async fn delete_workspace_note_impl(
@@ -306,7 +416,7 @@ pub async fn delete_workspace_note_impl(
     // Remove the mirrored markdown too. Without this the file outlives its
     // row, and the next vault rescan sees a file with no matching row, treats
     // it as an external addition, and re-imports the note the user deleted.
-    writeback::spawn_delete_workspace_note(container, request.note_id.clone());
+    writeback::spawn_delete_workspace_note(container);
 
     Ok(())
 }
@@ -375,6 +485,91 @@ pub(super) fn appended_capture(existing: &str, snippet: &str) -> String {
     }
 }
 
+/// Remap citation IDs in an appended synthesis when they overlap IDs already
+/// used by the note. This keeps existing links stable while retaining all
+/// metadata from the incoming source objects.
+pub(super) fn append_sources_and_remap_citations(
+    existing_sources: &[SourceDto],
+    snippet: &str,
+    incoming_sources: Vec<SourceDto>,
+) -> (String, Vec<SourceDto>) {
+    let mut used: std::collections::HashSet<u32> = existing_sources
+        .iter()
+        .filter_map(|source| source.citation_id)
+        .collect();
+    // Keep every incoming ID reserved too, so assigning a replacement for a
+    // collision cannot steal an ID that another incoming source already uses.
+    used.extend(
+        incoming_sources
+            .iter()
+            .filter_map(|source| source.citation_id),
+    );
+    let mut next_id = used
+        .iter()
+        .copied()
+        .max()
+        .and_then(|id| id.checked_add(1))
+        .unwrap_or(1);
+    let mut remapped = std::collections::HashMap::new();
+    let existing_ids: std::collections::HashSet<u32> = existing_sources
+        .iter()
+        .filter_map(|source| source.citation_id)
+        .collect();
+
+    for source in &incoming_sources {
+        let Some(citation_id) = source.citation_id else {
+            continue;
+        };
+        if !existing_ids.contains(&citation_id) {
+            continue;
+        }
+        if remapped.contains_key(&citation_id) {
+            continue;
+        }
+        while used.contains(&next_id) {
+            next_id = next_id.checked_add(1).unwrap_or(1);
+        }
+        remapped.insert(citation_id, next_id);
+        used.insert(next_id);
+        next_id = next_id.checked_add(1).unwrap_or(1);
+    }
+
+    let content = if remapped.is_empty() {
+        snippet.to_string()
+    } else {
+        // A single pass prevents replacement chains such as [1] -> [3] then
+        // [3] -> [4] from changing the new citation a second time.
+        if let Ok(pattern) = regex::Regex::new(r"\[(\d+)\]") {
+            pattern
+                .replace_all(snippet, |captures: &regex::Captures<'_>| {
+                    captures[1]
+                        .parse::<u32>()
+                        .ok()
+                        .and_then(|id| remapped.get(&id).copied())
+                        .map(|id| format!("[{id}]"))
+                        .unwrap_or_else(|| captures[0].to_string())
+                })
+                .into_owned()
+        } else {
+            snippet.to_string()
+        }
+    };
+
+    let incoming_sources = incoming_sources
+        .into_iter()
+        .map(|source| {
+            let mut source = source;
+            if let Some(old_id) = source.citation_id {
+                if let Some(new_id) = remapped.get(&old_id) {
+                    source.citation_id = Some(*new_id);
+                }
+            }
+            source
+        })
+        .collect();
+    (content, incoming_sources)
+}
+
 /// Today's page in the journal captures belong to, created when it does not
 /// exist yet.
 ///
@@ -408,13 +603,30 @@ async fn resolve_capture_target(
 pub async fn quick_capture_impl(
     container: &Container,
     content: String,
+    sources: Option<Vec<SourceDto>>,
+    conversation_ids: Option<Vec<String>>,
 ) -> Result<QuickCaptureResultDto> {
     let snippet = capture_snippet(&content)?.to_string();
 
     let repository = DailyNotesRepository::new(container.db_pool().clone());
     let (mut note, created) = resolve_capture_target(container, &repository).await?;
 
+    let (snippet, incoming_sources) =
+        append_sources_and_remap_citations(&note.sources, &snippet, sources.unwrap_or_default());
+    note.sources.extend(incoming_sources);
     note.content = appended_capture(&note.content, &snippet);
+    for conversation_id in conversation_ids.unwrap_or_default() {
+        let conversation_id = conversation_id.trim();
+        if !conversation_id.is_empty()
+            && !note
+                .linked_conversation_ids
+                .iter()
+                .any(|id| id == conversation_id)
+        {
+            note.linked_conversation_ids
+                .push(conversation_id.to_string());
+        }
+    }
 
     let note_id = note.id.clone();
     let note_title = note.title.clone();
@@ -478,16 +690,6 @@ pub async fn update_daily_note_content_impl(
     // Daily notes share the same `daily_notes_workspace` table as
     // workspace notes — backend-side they're the same entity. Reuse the
     // workspace writeback path so vault export is consistent.
-    if let Ok(note) = get_note_by_id(&repository, &note_id).await {
-        writeback::spawn_sync_workspace_note(
-            container,
-            note.id.clone(),
-            note.title.clone(),
-            note.content.clone(),
-            note.created_at.clone(),
-            note.updated_at.clone(),
-            Vec::new(),
-        );
-    }
+    writeback::spawn_sync_workspace_note(container);
     Ok(())
 }

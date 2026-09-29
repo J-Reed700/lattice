@@ -1,9 +1,9 @@
 //! HTML and code file extraction.
 
+use super::markup::{decode_entities, decode_text_bytes, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
-use tokio::io::{AsyncReadExt, BufReader};
 
 /// Extract content from code files (including HTML).
 pub async fn extract_code_file(
@@ -28,22 +28,11 @@ pub async fn extract_code_file(
         });
     }
 
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let mut reader = BufReader::new(file);
-    let mut text = String::new();
-    reader
-        .read_to_string(&mut text)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
+    let bytes = tokio::fs::read(path).await.map_err(|e| IndexingError::Io {
+        message: e.to_string(),
+        kind: format!("{:?}", e.kind()),
+    })?;
+    let text = decode_text_bytes(bytes, path);
 
     let processed_text = if mime_type == "text/html" {
         strip_html_tags(&text)
@@ -67,51 +56,173 @@ pub async fn extract_code_file(
     })
 }
 
-/// Strip HTML tags from text, preserving content.
+/// Elements that start and end a line of their own.
+const BLOCK_TAGS: &[&str] = &[
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "body",
+    "caption",
+    "dd",
+    "details",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "head",
+    "header",
+    "hr",
+    "html",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "tfoot",
+    "thead",
+    "title",
+    "tr",
+    "ul",
+];
+
+/// Phrasing elements that sit inside a word as often as between words
+/// (`<b>W</b>ord`), so they add no separator.
+const INLINE_TAGS: &[&str] = &[
+    "a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "del", "dfn", "em", "font", "i", "ins",
+    "kbd", "label", "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u",
+    "var", "wbr",
+];
+
+/// Strip HTML to readable text: block elements become lines, table cells are
+/// tab-separated, `h1`–`h6` become markdown `#` headings so a saved page forms
+/// sections, whitespace collapses outside `<pre>`, and named and numeric
+/// character references are decoded.
 pub fn strip_html_tags(html: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-    let mut in_script_or_style = false;
-
-    // ASCII-only lowercasing keeps this string byte-for-byte aligned with
-    // `html`, which the offsets below index into. `str::to_lowercase` does not:
-    // 'İ' alone lowercases to two chars. Tag names are ASCII regardless.
-    let lowercase = html.to_ascii_lowercase();
-
-    for (i, ch) in html.char_indices() {
-        match ch {
-            '<' => {
-                in_tag = true;
-
-                if lowercase[i..].starts_with("<script") || lowercase[i..].starts_with("<style") {
-                    in_script_or_style = true;
+    let mut out = HtmlText::default();
+    let mut cursor = MarkupCursor::new(html);
+    while let Some(event) = cursor.next() {
+        match event {
+            Markup::Open { name, empty, .. } => {
+                let tag = name.to_ascii_lowercase();
+                match tag.as_str() {
+                    "script" | "style" | "noscript" | "template" | "svg" => {
+                        if !empty {
+                            cursor.skip_raw_text(&tag);
+                        }
+                    }
+                    "pre" => {
+                        out.block();
+                        out.pre += usize::from(!empty);
+                    }
+                    "br" => out.line_break(),
+                    "td" | "th" => out.cell(),
+                    t => match heading_level(t) {
+                        Some(level) => {
+                            out.block();
+                            out.raw(&"#".repeat(level));
+                            out.raw(" ");
+                        }
+                        None if BLOCK_TAGS.contains(&t) => out.block(),
+                        None if INLINE_TAGS.contains(&t) => {}
+                        None => out.space(),
+                    },
                 }
             }
-            '>' => {
-                in_tag = false;
+            Markup::Close { name } => {
+                let tag = name.to_ascii_lowercase();
+                match tag.as_str() {
+                    "pre" => {
+                        out.pre = out.pre.saturating_sub(1);
+                        out.block();
+                    }
+                    "td" | "th" => out.space(),
+                    t if heading_level(t).is_some() || BLOCK_TAGS.contains(&t) => out.block(),
+                    t if INLINE_TAGS.contains(&t) => {}
+                    _ => out.space(),
+                }
+            }
+            Markup::Text(text) => out.text(&decode_entities(text)),
+        }
+    }
+    tidy_lines(&out.text)
+}
 
-                if in_script_or_style
-                    && (lowercase[..i].ends_with("</script") || lowercase[..i].ends_with("</style"))
-                {
-                    in_script_or_style = false;
-                }
+fn heading_level(tag: &str) -> Option<usize> {
+    let level = tag.strip_prefix('h')?.parse::<usize>().ok()?;
+    (1..=6).contains(&level).then_some(level)
+}
+
+#[derive(Default)]
+struct HtmlText {
+    text: String,
+    pending_space: bool,
+    pre: usize,
+}
+
+impl HtmlText {
+    fn text(&mut self, s: &str) {
+        if self.pre > 0 {
+            self.pending_space = false;
+            self.text.push_str(s);
+            return;
+        }
+        for c in s.chars() {
+            if c.is_whitespace() {
+                self.pending_space = true;
+                continue;
             }
-            _ => {
-                if !in_tag && !in_script_or_style {
-                    result.push(ch);
-                }
+            if std::mem::take(&mut self.pending_space)
+                && !self.text.is_empty()
+                && !self.text.ends_with(['\n', '\t', ' '])
+            {
+                self.text.push(' ');
             }
+            self.text.push(c);
         }
     }
 
-    result
-        .replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
+    fn raw(&mut self, s: &str) {
+        self.pending_space = false;
+        self.text.push_str(s);
+    }
+
+    fn space(&mut self) {
+        self.pending_space = true;
+    }
+
+    fn trim_trailing_spaces(&mut self) {
+        let kept = self.text.trim_end_matches([' ', '\t']).len();
+        self.text.truncate(kept);
+        self.pending_space = false;
+    }
+
+    fn block(&mut self) {
+        self.trim_trailing_spaces();
+        if !self.text.is_empty() && !self.text.ends_with('\n') {
+            self.text.push('\n');
+        }
+    }
+
+    fn line_break(&mut self) {
+        self.trim_trailing_spaces();
+        self.text.push('\n');
+    }
+
+    fn cell(&mut self) {
+        self.trim_trailing_spaces();
+        if !self.text.is_empty() && !self.text.ends_with('\n') {
+            self.text.push('\t');
+        }
+    }
 }
 
 #[cfg(test)]
@@ -198,5 +309,41 @@ mod tests {
         // 'İ' lowercases to two chars under full Unicode rules; the tag after
         // it must still be found at the right offset.
         assert_eq!(strip_html_tags("İ<b>x</b>"), "İx");
+    }
+
+    #[test]
+    fn blocks_become_lines_and_headings_become_markdown() {
+        assert_eq!(strip_html_tags("<p>one</p><p>two</p>"), "one\ntwo");
+        assert_eq!(
+            strip_html_tags("<h2>Title</h2><p>Body</p>"),
+            "## Title\nBody"
+        );
+        assert_eq!(
+            strip_html_tags(
+                "<ul><li>a</li><li>b</li></ul><table><tr><td>x</td><td>y</td></tr></table>"
+            ),
+            "a\nb\nx\ty"
+        );
+        assert_eq!(
+            strip_html_tags("W<b>or</b>d<br>next  \n line"),
+            "Word\nnext line"
+        );
+        assert_eq!(
+            strip_html_tags(
+                "<pre>keep\n  indent</pre><!-- gone --><p>it&#8217;s &#x2019; &amp;lt;</p>"
+            ),
+            "keep\n  indent\nit\u{2019}s \u{2019} &lt;"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_windows_1252_file_is_read_instead_of_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("page.html");
+        std::fs::write(&path, b"<p>caf\xE9</p>").unwrap();
+        let content = extract_code_file(&path, "text/html", 1 << 20)
+            .await
+            .unwrap();
+        assert_eq!(content.text, "caf\u{e9}");
     }
 }

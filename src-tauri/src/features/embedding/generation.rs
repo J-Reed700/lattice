@@ -93,13 +93,45 @@ pub async fn restore(
     dimension: usize,
 ) -> Result<Vec<(String, Vec<f32>, String, String, String)>> {
     ensure_schema(pool).await?;
-    type RestoredRow = (String, Vec<u8>, String, String, Option<String>, String);
-    let rows: Vec<RestoredRow> = sqlx::query_as(
-        "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.content, tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE te.embedding IS NOT NULL OR eg.embedding IS NOT NULL")
-        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).fetch_all(pool).await?;
     let mut result = Vec::new();
-    for (id, bytes, content, doc_id, hash, source) in rows {
-        if hash.is_some_and(|h| h != content_hash(&source)) {
+    let mut cursor = String::new();
+    loop {
+        let page = restore_page(pool, identity, dimension, &cursor, 128).await?;
+        if page.cursor.is_empty() {
+            break;
+        }
+        cursor = page.cursor;
+        result.extend(page.entries);
+    }
+    Ok(result)
+}
+
+/// Read and decode one bounded keyset page. `chunk_id` is kept in each row so
+/// the caller can advance without offset scans or retaining all embeddings.
+pub struct RestorePage {
+    pub entries: Vec<(String, Vec<f32>, String, String, String)>,
+    pub cursor: String,
+}
+
+pub async fn restore_page(
+    pool: &SqlitePool,
+    identity: &str,
+    dimension: usize,
+    after_chunk_id: &str,
+    limit: i64,
+) -> Result<RestorePage> {
+    ensure_schema(pool).await?;
+    type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
+    let rows: Vec<RestoredRow> = sqlx::query_as(
+        "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE (te.embedding IS NOT NULL OR eg.embedding IS NOT NULL) AND tc.id > ? ORDER BY tc.id LIMIT ?")
+        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).await?;
+    let cursor = rows.last().map(|row| row.0.clone()).unwrap_or_default();
+    let mut result = Vec::with_capacity(rows.len());
+    for (id, bytes, doc_id, hash, source) in rows {
+        if hash
+            .as_ref()
+            .is_some_and(|expected| *expected != content_hash(&source))
+        {
             continue;
         }
         let vector = super::encoding::decode_embedding(&bytes)?;
@@ -109,12 +141,15 @@ pub async fn restore(
         result.push((
             super::encoding::vector_key(&id),
             vector,
-            content,
+            String::new(),
             id,
             doc_id,
         ));
     }
-    Ok(result)
+    Ok(RestorePage {
+        entries: result,
+        cursor,
+    })
 }
 
 #[cfg(test)]

@@ -203,7 +203,7 @@ impl StartBatchFileImportUseCase {
 
     fn spawn_job(&self, job_id: String) {
         let worker = self.clone();
-        tokio::spawn(async move {
+        let _ = crate::shared::background::spawn(async move {
             if let Err(error) = worker.process_job(&job_id).await {
                 tracing::error!(%job_id, %error, "Batch file import stopped");
                 // Surface orchestration failures instead of leaving a job running forever.
@@ -252,6 +252,7 @@ impl StartBatchFileImportUseCase {
     }
 
     async fn process_job(&self, job_id: &str) -> Result<()> {
+        let cancellation = crate::shared::background::cancellation_token();
         let job = self.batch_repo.get_batch_job(job_id).await?;
         if job.status == "cancelled" {
             return Ok(());
@@ -285,6 +286,12 @@ impl StartBatchFileImportUseCase {
             .filter(|item| item.status == "failed")
             .count() as i64;
         let total = job.total_items.max(items.len() as i64).max(1);
+        // What each item committed on an earlier attempt; see the owner stamp.
+        let committed_by_item: std::collections::HashMap<&str, Option<&str>> = job
+            .items
+            .iter()
+            .map(|item| (item.id.as_str(), item.document_id.as_deref()))
+            .collect();
         self.batch_repo
             .update_progress(
                 job_id,
@@ -294,7 +301,10 @@ impl StartBatchFileImportUseCase {
             )
             .await?;
         for item in items {
-            if self.batch_repo.get_batch_job(job_id).await?.status == "cancelled" {
+            if cancellation.is_cancelled() {
+                return Ok(());
+            }
+            if self.batch_repo.get_batch_job_status(job_id).await? == "cancelled" {
                 return Ok(());
             }
             self.batch_repo
@@ -337,7 +347,16 @@ impl StartBatchFileImportUseCase {
                 space_id: space_id.clone(),
             };
             let outcome = self.index_file_use_case.prepare_for_indexing(request).await;
-            if self.batch_repo.get_batch_job(job_id).await?.status == "cancelled" {
+            if cancellation.is_cancelled() {
+                if let Ok(PrepareForIndexingOutcome::Prepared(prepared)) = outcome {
+                    self.index_file_use_case.discard_prepared(*prepared).await;
+                    self.batch_repo
+                        .update_item_status(&item.id, BatchItemState::Pending, None, None)
+                        .await?;
+                }
+                return Ok(());
+            }
+            if self.batch_repo.get_batch_job_status(job_id).await? == "cancelled" {
                 // Preparation already copied the blob into the library for a
                 // document row that will never be written. Give it back now
                 // instead of leaving an orphan for the next startup sweep.
@@ -354,15 +373,38 @@ impl StartBatchFileImportUseCase {
                     .await?;
                 return Ok(());
             }
-            // Whether this item created the document or merely found it. Only a
-            // new one may be stamped as a conversation's attachment: a file the
-            // user already filed in the library stays filed, and attaching it to
-            // a chat must not quietly pull it out of the library.
-            let mut freshly_indexed = false;
+            // Whether this item may stamp the document as the conversation's
+            // attachment. A file the user already filed in the library stays
+            // filed: attaching it to a chat must not quietly pull it out of the
+            // library. A document can have one owning chat, so a file already
+            // attached to another chat moves to this one — the newest chat to
+            // attach it is the one that can see it — and a document this very
+            // item committed on an earlier attempt, before stamping it failed,
+            // is still this item's to stamp.
+            let mut stamp_owner = false;
             let result = match outcome {
-                Ok(PrepareForIndexingOutcome::Duplicate { document_id }) => Ok(document_id),
+                Ok(PrepareForIndexingOutcome::Duplicate { document_id }) => {
+                    match (
+                        owner_conversation_id.as_deref(),
+                        self.document_scope.as_ref(),
+                    ) {
+                        (Some(conversation), Some(scope)) => {
+                            scope.conversation_owner(&document_id).await.map(|owner| {
+                                stamp_owner = match owner {
+                                    Some(owner) => owner != conversation,
+                                    None => {
+                                        committed_by_item.get(item.id.as_str())
+                                            == Some(&Some(document_id.as_str()))
+                                    }
+                                };
+                                document_id
+                            })
+                        }
+                        _ => Ok(document_id),
+                    }
+                }
                 Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
-                    freshly_indexed = true;
+                    stamp_owner = true;
                     self.index_file_use_case
                         .commit_prepared(*prepared, self.uow_factory.as_ref())
                         .await
@@ -371,32 +413,42 @@ impl StartBatchFileImportUseCase {
             };
             // A chat's attachment is owned by that chat: out of the library, out
             // of every other conversation's retrieval, and deleted with it.
+            //
+            // A failure here comes after the commit. The committed id is kept on
+            // the failed item so the retry, which finds the document as a
+            // duplicate, knows this item made it and finishes the stamp.
             let result = match (
                 result,
-                owner_conversation_id.as_deref().filter(|_| freshly_indexed),
+                owner_conversation_id.as_deref().filter(|_| stamp_owner),
             ) {
                 (Ok(document_id), Some(conversation)) => match self.document_scope.as_ref() {
-                    Some(scope) => scope
+                    Some(scope) => match scope
                         .set_conversation_owner(
                             std::slice::from_ref(&document_id),
                             Some(conversation),
                         )
                         .await
-                        .map(|()| document_id),
-                    None => Err(AppError::ServiceNotAvailable(
-                        "Attachment scoping is unavailable".into(),
+                    {
+                        Ok(()) => Ok(document_id),
+                        Err(error) => Err((error, Some(document_id))),
+                    },
+                    None => Err((
+                        AppError::ServiceNotAvailable("Attachment scoping is unavailable".into()),
+                        Some(document_id),
                     )),
                 },
-                (result, _) => result,
+                (result, _) => result.map_err(|error| (error, None)),
             };
             let result = match (result, space_id.as_deref()) {
                 (Ok(document_id), Some(space)) => match self.document_scope.as_ref() {
                     Some(scope) => scope
                         .assign_documents(std::slice::from_ref(&document_id), space)
                         .await
-                        .map(|()| document_id),
-                    None => Err(AppError::ServiceNotAvailable(
-                        "Space assignment is unavailable".into(),
+                        .map(|()| document_id)
+                        .map_err(|error| (error, None)),
+                    None => Err((
+                        AppError::ServiceNotAvailable("Space assignment is unavailable".into()),
+                        None,
                     )),
                 },
                 (result, _) => result,
@@ -413,13 +465,13 @@ impl StartBatchFileImportUseCase {
                         .await?;
                     completed += 1;
                 }
-                Err(error) => {
+                Err((error, committed_document_id)) => {
                     tracing::warn!(%job_id, file = %item.url, %error, "File import failed");
                     self.batch_repo
                         .update_item_status(
                             &item.id,
                             BatchItemState::Failed,
-                            None,
+                            committed_document_id.as_deref(),
                             Some(&error.to_string()),
                         )
                         .await?;
@@ -437,7 +489,9 @@ impl StartBatchFileImportUseCase {
                 )
                 .await?;
         }
-        if self.batch_repo.get_batch_job(job_id).await?.status != "cancelled" {
+        if !cancellation.is_cancelled()
+            && self.batch_repo.get_batch_job_status(job_id).await? != "cancelled"
+        {
             self.batch_repo
                 .update_job_status(
                     job_id,

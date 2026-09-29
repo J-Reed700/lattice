@@ -54,14 +54,21 @@ const source: SourceWithMetadata = {
   fileSizeBytes: 0,
   modifiedAt: '2026-09-20T00:00:00.000Z',
   citationId: 6,
+  webSnapshot: {
+    url: URL,
+    title: 'Indoor vegetables',
+    text: PAGE,
+    fetchedAt: '2026-09-20T00:00:00.000Z',
+    truncated: false,
+  },
 };
 
-function renderReader(occurrence: number | null) {
+function renderReader(occurrence: number | null, sourceOverride = source) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const reader = (at: number | null) => (
     <QueryClientProvider client={client}>
       <TooltipProvider>
-        <WebArticleView url={URL} source={source} ownerKey="answer" occurrence={at} />
+        <WebArticleView url={URL} source={sourceOverride} ownerKey="answer" occurrence={at} />
       </TooltipProvider>
     </QueryClientProvider>
   );
@@ -75,18 +82,31 @@ const litPassage = async (): Promise<string> => {
 };
 
 beforeEach(() => {
-  mocks.readWebPage.mockResolvedValue({
-    ok: true,
-    data: { url: URL, title: 'Indoor vegetables', text: PAGE, wordCount: 60, fetchedAt: '2026-09-20T00:00:00.000Z', fromCache: true },
-  });
+  mocks.readWebPage.mockReset();
   setAnswer(ANSWER);
 });
 
 describe('a page the answer cites from more than one sentence', () => {
+  it('cross-references a journal citation without a loaded chat conversation', async () => {
+    conversations = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <WebArticleView url={URL} source={source} citationContent={ANSWER} occurrence={1} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(await litPassage()).toContain('eight hours of strong light');
+    expect(document.querySelectorAll('.source-reader-passage')).toHaveLength(2);
+    expect(await litPassage()).not.toContain('potatoes');
+  });
+
   it('opens on the passage for the mark that was clicked, not the first one', async () => {
     const first = renderReader(0);
     expect(await litPassage()).toContain('potatoes grown in deep fabric bags');
     expect(screen.getByText(/Potatoes grown in deep fabric bags give the most calories/)).toBeTruthy();
+    expect(mocks.readWebPage).not.toHaveBeenCalled();
     first.unmount();
 
     // The same [6], further down the answer: the same page, a different passage.
@@ -136,15 +156,15 @@ describe('a page the answer cites from more than one sentence', () => {
       'Herbs are forgiving and will grow on almost any windowsill.',
       'Dwarf tomato varieties set fruit indoors, but they need at least eight hours of strong light every day.',
     ].join('\n\n');
-    mocks.readWebPage.mockResolvedValue({
-      ok: true,
-      data: { url: URL, title: 'Indoor vegetables', text: page, wordCount: 70, fetchedAt: '2026-09-20T00:00:00.000Z', fromCache: true },
-    });
+    const pageSource: SourceWithMetadata = {
+      ...source,
+      webSnapshot: { ...source.webSnapshot!, text: page },
+    };
     setAnswer(
       `${ANSWER}\n\nHerbs grow on almost any windowsill, and dwarf tomato varieties set fruit indoors given at least eight hours of strong light [6].`
     );
 
-    const reader = renderReader(0);
+    const reader = renderReader(0, pageSource);
     await litPassage();
 
     // The potato passage, then the herb-and-tomato one twice: once per paragraph.
@@ -179,5 +199,51 @@ describe('a page the answer cites from more than one sentence', () => {
     // Another sentence's passage would answer a question nobody asked.
     expect(document.querySelector('.source-reader-passage.is-lit')).toBeNull();
     expect(screen.getByText(/No passage on this page closely matches that sentence/)).toBeTruthy();
+  });
+
+  it('never fetches a live page and clearly labels citations without a saved snapshot', async () => {
+    const legacySource: SourceWithMetadata = {
+      ...source,
+      webSnapshot: undefined,
+      content: 'A saved legacy citation excerpt.',
+    };
+    renderReader(null, legacySource);
+
+    expect(screen.getByText('A saved legacy citation excerpt.')).toBeTruthy();
+    expect(screen.getByText(/full page snapshot was not saved with this citation/i)).toBeTruthy();
+    expect(mocks.readWebPage).not.toHaveBeenCalled();
+  });
+
+  it('keeps snapshots separate when two citations share a URL', () => {
+    const secondSource: SourceWithMetadata = {
+      ...source,
+      webSnapshot: { ...source.webSnapshot!, text: 'A different immutable snapshot for another conversation.' },
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <div>
+            <WebArticleView url={URL} source={source} />
+            <WebArticleView url={URL} source={secondSource} />
+          </div>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Growing food indoors is mostly a question of light and containers.');
+    expect(text).toContain('A different immutable snapshot for another conversation.');
+    expect(mocks.readWebPage).not.toHaveBeenCalled();
+  });
+
+  it('discloses when the saved snapshot was truncated', () => {
+    const truncatedSource: SourceWithMetadata = {
+      ...source,
+      webSnapshot: { ...source.webSnapshot!, truncated: true },
+    };
+    renderReader(null, truncatedSource);
+
+    expect(screen.getByText(/snapshot was truncated when captured/i)).toBeTruthy();
+    expect(mocks.readWebPage).not.toHaveBeenCalled();
   });
 });

@@ -282,6 +282,18 @@ pub async fn get_batch_job(
     })
 }
 
+pub async fn get_batch_job_status(
+    conn: &mut SqliteConnection,
+    job_id: &str,
+) -> Result<String, AppError> {
+    sqlx::query_scalar("SELECT status FROM batch_jobs WHERE id = ?")
+        .bind(job_id)
+        .fetch_optional(conn)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to fetch batch job status: {e}")))?
+        .ok_or_else(|| AppError::NotFound(format!("Batch job not found: {job_id}")))
+}
+
 pub async fn get_pending_items(
     conn: &mut SqliteConnection,
     job_id: &str,

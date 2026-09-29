@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VaultAPI } from '@/lib/api';
 
-import { useCreateJournalMutation, useJournalsQuery, useSidebarBookmarksQuery } from '../workspaceQueries';
+import { useCreateJournalMutation, useJournalsQuery, useSidebarBookmarksQuery, useSynthesizeConversationMutation } from '../workspaceQueries';
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn() } }));
+vi.mock('@/lib/api', () => ({ VaultAPI: { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn(), synthesizeJournalEntries: vi.fn(), quickCapture: vi.fn() } }));
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -21,6 +21,43 @@ const request = { name: 'New journal', description: null, icon: null, accentColo
 beforeEach(() => vi.clearAllMocks());
 
 describe('sidebar repository queries', () => {
+  it('saves every synthesis source and conversation link with the generated text', async () => {
+    const sources = Array.from({ length: 25 }, (_, index) => ({
+      documentId: `document-${index}`, chunkId: `chunk-${index}`, content: `Evidence ${index}`,
+      score: 1, path: null, position: null, fileName: `Source ${index}`, filePath: `/sources/${index}.pdf`,
+      mimeType: 'application/pdf', category: 'Document', fileSizeBytes: 100, modifiedAt: '',
+      citationId: index + 1, pageNumber: index + 1,
+    }));
+    vi.mocked(VaultAPI.synthesizeJournalEntries).mockResolvedValue({ ok: true, data: {
+      synthesis: 'First claim [1]. Last claim [25].', scope: 'conversation', entryCount: 1,
+      chunkCount: 1, conversationIds: ['conversation-1'], citations: [], sources,
+    } });
+    vi.mocked(VaultAPI.quickCapture).mockResolvedValue({ ok: true, data: {
+      noteId: 'note-1', noteTitle: 'Today', created: false,
+    } });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSynthesizeConversationMutation(), { wrapper });
+    await act(async () => { await result.current.mutateAsync({ id: 'conversation-1', title: 'Research' }); });
+    expect(VaultAPI.quickCapture).toHaveBeenCalledWith(
+      expect.stringContaining('First claim [1]. Last claim [25].'), sources, ['conversation-1'],
+    );
+    await waitFor(() => expect(result.current.data?.noteId).toBe('note-1'));
+  });
+
+  it('reports a source capture failure instead of announcing a saved synthesis', async () => {
+    vi.mocked(VaultAPI.synthesizeJournalEntries).mockResolvedValue({ ok: true, data: {
+      synthesis: 'Summary', scope: 'conversation', entryCount: 1, chunkCount: 1,
+      conversationIds: ['conversation-1'],
+    } });
+    vi.mocked(VaultAPI.quickCapture).mockResolvedValue({ ok: false, error: 'Disk full' });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSynthesizeConversationMutation(), { wrapper });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'conversation-1', title: 'Research' })).rejects.toThrow('Disk full');
+    });
+    expect(result.current.data).toBeUndefined();
+  });
+
   it('refreshes all journal readers from the repository after creation', async () => {
     let persisted = [journal('one', 'First')];
     vi.spyOn(VaultAPI, 'listJournals').mockImplementation(async () => ({ ok: true, data: persisted }));

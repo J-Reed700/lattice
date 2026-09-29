@@ -530,6 +530,19 @@
 .source-reader--pane[data-state='closed'] { animation: reader-leave var(--duration-base) var(--ease-in); }
 .source-reader--focused { width: calc(100vw - 24px); }
 .source-reader--dialog { inset: 4vh 2vw; }
+/* The reading pane tucked away: a pill in the corner, the page fully readable
+   underneath. It keeps the sheet's shadow so it still reads as a sheet. */
+.source-reader--pill {
+  top: 12px;
+  right: 12px;
+  bottom: auto;
+  width: auto;
+  height: auto;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 4px;
+  border-radius: 10px;
+  box-shadow: var(--shadow-sheet);
+}
 
 /* The reader docked as the chat's third pane. Same material as the overlay,
    without the shadow and the rounded corners: it is part of the window now,
@@ -625,6 +638,8 @@
 @keyframes reader-leave { to { opacity: 0; transform: translateX(24px); } }
 @media (max-width: 760px) {
   .source-reader--pane { inset: 8px; width: auto; }
+  /* The pill stays a pill: the full-bleed sheet rule above must not stretch it. */
+  .source-reader--pill { bottom: auto; }
   /* No room to set anything beside anything. */
   .source-reader-body[data-rail='beside'] { flex-direction: column; }
   .source-reader-body[data-rail='beside'] > aside { width: auto; max-height: 180px; }

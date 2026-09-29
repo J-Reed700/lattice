@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SourceDto } from '@/lib/bindings';
 import type { SynthesisCitationDto } from '@/types/api/conversation';
+import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
-import { buildSynthesisBlock, weekPageTitle } from '../synthesisTargets';
+import { appendSynthesisContent, buildSynthesisBlock, weekPageTitle } from '../synthesisTargets';
 
 
 vi.mock('@/lib/api', () => ({
@@ -86,7 +88,7 @@ describe('buildSynthesisBlock', () => {
     expect(withSome).toContain('- Sep 4 — journal page');
   });
 
-  it('caps the source list and appends "…and N more"', () => {
+  it('preserves every source title in the provenance list', () => {
     const citations: SynthesisCitationDto[] = Array.from({ length: 23 }, (_v, i) => ({
       kind: 'conversation' as const,
       id: `c${i}`,
@@ -102,7 +104,36 @@ describe('buildSynthesisBlock', () => {
     const sourceLines = block
       .split('\n')
       .filter((line) => line.startsWith('- Conversation '));
-    expect(sourceLines).toHaveLength(20);
-    expect(block).toContain('- …and 3 more');
+    expect(sourceLines).toHaveLength(23);
+    expect(block).toContain('- Conversation 22 — conversation');
+  });
+});
+
+describe('appendSynthesisContent', () => {
+  const note = {
+    id: 'page', title: 'Notes', content: 'Earlier claim [1].', sources: [
+      { documentId: 'old', chunkId: 'old-chunk', fileName: 'Earlier.pdf', filePath: '/Earlier.pdf',
+        mimeType: 'application/pdf', category: 'PDF', content: 'Earlier evidence', score: 1,
+        fileSizeBytes: 0, modifiedAt: '', citationId: 1, path: null, position: null },
+    ],
+  } as unknown as WorkspaceNote;
+  const source = {
+    documentId: 'new', chunkId: 'new-chunk', fileName: 'New.pdf', filePath: '/New.pdf',
+    mimeType: 'application/pdf', category: 'PDF', content: 'New evidence', score: 1,
+    fileSizeBytes: 0, modifiedAt: '', citationId: 1, path: null, position: null,
+  } as SourceDto;
+
+  it('remaps conflicting source IDs and just the matching block citations', () => {
+    const updated = appendSynthesisContent(note, 'New claim [1], leave [8] alone.', [source]);
+    expect(updated.content).toBe('Earlier claim [1].\n\nNew claim [2], leave [8] alone.');
+    expect(updated.sources?.map((citation) => citation.citationId)).toEqual([1, 2]);
+    expect(updated.sources?.[1]?.chunkId).toBe('new-chunk');
+  });
+
+  it('keeps citation IDs stable when the page has no collision', () => {
+    const emptyNote = { ...note, content: '', sources: [] } as unknown as WorkspaceNote;
+    const updated = appendSynthesisContent(emptyNote, 'Claim [7].', [{ ...source, citationId: 7 }]);
+    expect(updated.content).toBe('Claim [7].');
+    expect(updated.sources?.[0]?.citationId).toBe(7);
   });
 });

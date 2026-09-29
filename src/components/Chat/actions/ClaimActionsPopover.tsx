@@ -49,6 +49,7 @@ const SPACE_FOR_ABOVE = 260;
 function verdictHeading(verdict: ClaimVerdict): string {
   if (verdict.verdict === 'supported') return 'This sentence is backed by its source';
   if (verdict.verdict === 'contradicted') return 'Your sources say otherwise';
+  if (verdict.verdict === 'unverified') return 'This sentence was not checked';
   return verdict.citationIds.length > 0
     ? 'Not found in the cited passage'
     : 'No source was cited for this';
@@ -175,6 +176,17 @@ export function ClaimActionsPopover({
       className={`fixed animate-in fade-in-0 duration-fast ${ACTION_SURFACE_CLASS}`}
     >
       <p className={ACTION_HEADING_CLASS}>{verdictHeading(verdict)}</p>
+      {verdict.reason && (
+        <p className="mb-2 px-3 text-xs leading-relaxed text-text-secondary">
+          {verdict.reason}
+        </p>
+      )}
+      {verdict.evidenceQuote && (
+        <p className="mb-2 border-l-2 border-accent/50 px-3 pl-2.5 text-xs leading-relaxed text-text-muted">
+          <span className="font-medium text-text-secondary">What the source says: </span>
+          &ldquo;{verdict.evidenceQuote}&rdquo;
+        </p>
+      )}
 
       <button type="button" onClick={() => void handleCopy()} className={ACTION_ROW_CLASS}>
         <span className="flex h-5 w-5 shrink-0 items-center justify-center text-text-tertiary">

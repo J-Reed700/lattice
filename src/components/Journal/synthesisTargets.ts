@@ -1,11 +1,9 @@
 import { format, startOfWeek } from 'date-fns';
 
 import VaultAPI from '@/lib/api';
+import type { SourceDto } from '@/lib/bindings';
 import type { SynthesisCitationDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
-
-/** How many source lines a synthesis block prints before it summarises. */
-const MAX_SOURCE_LINES = 20;
 
 const CITATION_KIND_LABELS: Record<SynthesisCitationDto['kind'], string> = {
   conversation: 'conversation',
@@ -52,17 +50,57 @@ export async function resolveWeekPage(title: string): Promise<WorkspaceNote> {
 export async function appendToNote(
   note: WorkspaceNote,
   block: string,
+  incomingSources: readonly SourceDto[] = [],
+  conversationIds: readonly string[] = [],
 ): Promise<WorkspaceNote> {
-  const current = note.content?.trim() ?? '';
-  const next: WorkspaceNote = {
-    ...note,
-    content: current ? `${current}\n\n${block}` : block,
-  };
+  const next = appendSynthesisContent(note, block, incomingSources, conversationIds);
   const saved = await VaultAPI.updateWorkspaceNote(next);
   if (!saved.ok) {
     throw new Error(saved.error);
   }
   return saved.data;
+}
+
+/** Merge a synthesis block and its sources while keeping page citation IDs unique. */
+export function appendSynthesisContent(
+  note: WorkspaceNote,
+  block: string,
+  incomingSources: readonly SourceDto[] = [],
+  conversationIds: readonly string[] = [],
+): WorkspaceNote {
+  const existingSources = note.sources ?? [];
+  const usedIds = new Set(
+    existingSources.flatMap((source) => source.citationId == null ? [] : [source.citationId]),
+  );
+  let nextId = Math.max(0, ...usedIds) + 1;
+  const remappedIds = new Map<number, number>();
+  const additions = incomingSources.map((source) => {
+    if (source.citationId == null) return source;
+    const oldId = source.citationId;
+    let newId = oldId;
+    if (usedIds.has(newId)) {
+      while (usedIds.has(nextId)) nextId += 1;
+      newId = nextId++;
+    }
+    usedIds.add(newId);
+    remappedIds.set(oldId, newId);
+    return { ...source, citationId: newId };
+  });
+  const rewrittenBlock = remappedIds.size === 0
+    ? block
+    : block.replace(/\[(\d+)\]/g, (mark, digits: string) => {
+        const mapped = remappedIds.get(Number(digits));
+        return mapped === undefined ? mark : `[${mapped}]`;
+      });
+  const current = note.content?.trim() ?? '';
+  return {
+    ...note,
+    content: current ? `${current}\n\n${rewrittenBlock}` : rewrittenBlock,
+    ...(conversationIds.length > 0
+      ? { linkedConversationIds: [...new Set([...note.linkedConversationIds, ...conversationIds])] }
+      : {}),
+    ...(additions.length > 0 ? { sources: [...existingSources, ...additions] } : {}),
+  };
 }
 
 export interface SynthesisBlockInput {
@@ -90,14 +128,11 @@ export function buildSynthesisBlock(input: SynthesisBlockInput): string {
 
   if (citations && citations.length > 0) {
     lines.push('### Sources');
-    for (const citation of citations.slice(0, MAX_SOURCE_LINES)) {
+    for (const citation of citations) {
       const label = CITATION_KIND_LABELS[citation.kind] ?? citation.kind;
       // An untitled conversation would otherwise print "- — conversation".
       const title = citation.title.trim() || UNTITLED_BY_KIND[citation.kind] || 'Untitled';
       lines.push(`- ${title} — ${label}`);
-    }
-    if (citations.length > MAX_SOURCE_LINES) {
-      lines.push(`- …and ${citations.length - MAX_SOURCE_LINES} more`);
     }
     lines.push('');
   }

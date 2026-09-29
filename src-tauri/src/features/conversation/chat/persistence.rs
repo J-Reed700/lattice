@@ -67,14 +67,21 @@ pub(super) async fn finalize_successful_turn(
     user_message: &str,
     assistant_response: String,
     context_len: usize,
-    sources: Vec<SourceDto>,
+    mut sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
     memory_usage: Option<serde_json::Value>,
     retrieval_trace: Option<RetrievalTraceDto>,
     turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
-) -> Result<ChatResponse> {
+) -> Result<(ChatResponse, String)> {
+    super::source_snapshots::attach_cited_web_snapshots(
+        container,
+        conversation_id,
+        &assistant_response,
+        &mut sources,
+    )
+    .await;
     let response_tokens = llm.count_tokens(&assistant_response);
 
     let mut metadata_payload = serde_json::Map::new();
@@ -105,15 +112,15 @@ pub(super) async fn finalize_successful_turn(
         serde_json::to_string(&serde_json::Value::Object(metadata_payload)).ok()
     };
 
-    let assistant_msg = conv_service
-        .complete_turn(
-            conversation_id,
-            user_message_id,
-            assistant_response.clone(),
-            response_tokens as i64,
-            metadata,
-        )
-        .await?;
+    let assistant_msg = commit_turn(
+        conv_service,
+        conversation_id,
+        user_message_id,
+        assistant_response.clone(),
+        response_tokens as i64,
+        metadata,
+    )
+    .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
     crate::features::conversation::compaction::consolidate_after_turn(
@@ -138,30 +145,20 @@ pub(super) async fn finalize_successful_turn(
         ],
     );
 
-    let aggregate = conv_service
-        .get_conversation(conversation_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Conversation {} not found", conversation_id)))?;
-
-    let messages: Vec<ConversationMessage> = aggregate
-        .messages()
-        .iter()
-        .map(|msg| ConversationMessage {
-            id: msg.id.clone(),
-            conversation_id: msg.conversation_id.as_str().to_string(),
-            tokens: msg.tokens,
-            role: match msg.role {
-                crate::domain::conversation::MessageRole::User => "user".to_string(),
-                crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
-                crate::domain::conversation::MessageRole::System => "system".to_string(),
-            },
-            content: msg.content.clone(),
-            status: msg.status.clone(),
-            created_at: msg.created_at.to_rfc3339(),
-            metadata: msg.metadata.clone(),
-        })
-        .collect();
-
+    let messages = turn_transcript(
+        conv_service
+            .get_conversation(conversation_id)
+            .await
+            .and_then(|aggregate| {
+                aggregate.ok_or_else(|| {
+                    AppError::NotFound(format!("Conversation {conversation_id} not found"))
+                })
+            }),
+        user_message_id,
+        user_message,
+        message_tokens,
+        &assistant_msg,
+    );
     let logger = crate::infrastructure::audit::get_audit_logger();
     crate::audit_success!(
         logger,
@@ -174,14 +171,92 @@ pub(super) async fn finalize_successful_turn(
     .await
     .ok();
 
-    Ok(ChatResponse {
-        conversation_id: conversation_id.to_string(),
-        message: assistant_response,
-        messages,
-        context_used: context_len,
-        sources,
-        timing_metrics: None,
-    })
+    Ok((
+        ChatResponse {
+            conversation_id: conversation_id.to_string(),
+            message: assistant_response,
+            messages,
+            context_used: context_len,
+            sources,
+            timing_metrics: None,
+        },
+        assistant_msg.id,
+    ))
+}
+
+/// Commit the answer and settle the question in one step, or mark the question
+/// failed.
+///
+/// A commit that fails (a busy database, or a turn truncated or deleted while
+/// it generated) would otherwise leave the question `pending` for good, and a
+/// pending question renders as still in flight.
+async fn commit_turn(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    user_message_id: &str,
+    content: String,
+    tokens: i64,
+    metadata: Option<String>,
+) -> Result<crate::domain::conversation::ConversationMessage> {
+    match conv_service
+        .complete_turn(conversation_id, user_message_id, content, tokens, metadata)
+        .await
+    {
+        Ok(message) => Ok(message),
+        Err(error) => {
+            mark_user_message_failed(conv_service, user_message_id).await;
+            Err(error)
+        }
+    }
+}
+
+fn message_dto(message: &crate::domain::conversation::ConversationMessage) -> ConversationMessage {
+    ConversationMessage {
+        id: message.id.clone(),
+        conversation_id: message.conversation_id.as_str().to_string(),
+        tokens: message.tokens,
+        role: match message.role {
+            crate::domain::conversation::MessageRole::User => "user".to_string(),
+            crate::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
+            crate::domain::conversation::MessageRole::System => "system".to_string(),
+        },
+        content: message.content.clone(),
+        status: message.status.clone(),
+        created_at: message.created_at.to_rfc3339(),
+        metadata: message.metadata.clone(),
+    }
+}
+
+/// The conversation as it stands after the commit.
+///
+/// The answer is saved by the time this is read, so a failed read is not a
+/// failed turn: reporting it as one would show an error for an answer the
+/// user will find on reload, and would skip the grounding check. What the turn
+/// itself wrote is known without the read, so that is returned instead.
+fn turn_transcript(
+    read: Result<crate::domain::conversation::ConversationAggregate>,
+    user_message_id: &str,
+    user_message: &str,
+    message_tokens: usize,
+    answer: &crate::domain::conversation::ConversationMessage,
+) -> Vec<ConversationMessage> {
+    match read {
+        Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
+        Err(error) => {
+            warn!(%error, "Answer saved but the conversation could not be re-read; returning this turn only");
+            let answer = message_dto(answer);
+            let question = ConversationMessage {
+                id: user_message_id.to_string(),
+                role: "user".to_string(),
+                content: user_message.to_string(),
+                tokens: message_tokens as i64,
+                status: "completed".to_string(),
+                metadata: None,
+                ..answer.clone()
+            };
+            vec![question, answer]
+        }
+    }
 }
 
 /// How many of a turn's web citations are kept as conversation context.
@@ -345,32 +420,22 @@ fn spawn_memory_indexing(
             let memory_id = uuid::Uuid::new_v4().to_string();
             let created_at = chrono::Utc::now().to_rfc3339();
 
-            let insert_result = sqlx::query(
-                r#"
-                INSERT INTO conversation_memory_vectors (
-                    id, conversation_id, message_id, role, content,
-                    embedding, dimension, embedding_model, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(message_id) DO UPDATE SET
-                    role = excluded.role,
-                    content = excluded.content,
-                    embedding = excluded.embedding,
-                    dimension = excluded.dimension,
-                    embedding_model = excluded.embedding_model,
-                    created_at = excluded.created_at
-                "#,
-            )
-            .bind(memory_id)
-            .bind(&conversation_id)
-            .bind(&memory.message_id)
-            .bind(&memory.role)
-            .bind(&memory.content)
-            .bind(embedding_blob)
-            .bind(dimension)
-            .bind(&embedding_model)
-            .bind(created_at)
-            .execute(container.db_pool())
-            .await;
+            let insert_result =
+                crate::features::conversation::repository::ConversationRepository::new(
+                    container.db_pool().clone(),
+                )
+                .persist_memory_vector(
+                    &conversation_id,
+                    &memory_id,
+                    &memory.message_id,
+                    &memory.role,
+                    &memory.content,
+                    embedding_blob,
+                    dimension,
+                    &embedding_model,
+                    &created_at,
+                )
+                .await;
 
             if let Err(e) = insert_result {
                 warn!(
@@ -517,6 +582,8 @@ mod cited_web_source_tests {
             page_number: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 
@@ -541,6 +608,8 @@ mod cited_web_source_tests {
             page_number: None,
             chunk_excerpts: None,
             citation_id: None,
+
+            web_snapshot: None,
         }
     }
 
@@ -627,4 +696,86 @@ pub(crate) fn index_memory_note(
             content,
         }],
     );
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod turn_commit_tests {
+    use super::*;
+    use crate::domain::conversation::MessageRole;
+    use crate::features::conversation::{
+        repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
+    };
+
+    async fn service_with_pending_question() -> (
+        Arc<dyn ConversationServiceTrait>,
+        sqlx::SqlitePool,
+        String,
+        String,
+    ) {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(
+            Arc::new(ConversationRepository::new(pool.clone())),
+        ));
+        let conversation = service
+            .create_conversation("Chat".into(), "model".into(), None)
+            .await
+            .unwrap();
+        let id = conversation.id.to_string();
+        let user = service
+            .add_message_with_status(
+                &id,
+                MessageRole::User,
+                "question".into(),
+                2,
+                "pending".into(),
+            )
+            .await
+            .unwrap();
+        (service, pool, id, user.id)
+    }
+
+    async fn status_of(pool: &sqlx::SqlitePool, id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM conversation_messages WHERE id=?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_fails_leaves_the_question_failed_not_pending() {
+        let (service, pool, id, user_id) = service_with_pending_question().await;
+        sqlx::query("CREATE TRIGGER fail_assistant BEFORE INSERT ON conversation_messages WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+            .execute(&pool).await.unwrap();
+
+        let result = commit_turn(&service, &id, &user_id, "answer".into(), 3, None).await;
+
+        assert!(result.is_err());
+        assert_eq!(status_of(&pool, &user_id).await, "failed");
+    }
+
+    #[tokio::test]
+    async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
+        let (service, pool, id, user_id) = service_with_pending_question().await;
+        let answer = commit_turn(&service, &id, &user_id, "answer".into(), 3, None)
+            .await
+            .unwrap();
+
+        let messages = turn_transcript(
+            Err(AppError::Database("database is locked".into())),
+            &user_id,
+            "question",
+            2,
+            &answer,
+        );
+
+        assert_eq!(status_of(&pool, &user_id).await, "completed");
+        let roles: Vec<_> = messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, ["user", "assistant"]);
+        assert_eq!(messages[1].id, answer.id);
+        assert_eq!(messages[1].content, "answer");
+        assert_eq!(messages[0].status, "completed");
+    }
 }

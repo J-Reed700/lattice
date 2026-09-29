@@ -47,4 +47,34 @@ describe('ClaimHoverCard', () => {
     expect(screen.getByText('Backed by the source')).toBeInTheDocument();
     expect(screen.getByText(/93% sure/)).toBeInTheDocument();
   });
+
+  it('explains a contradiction with the comparison and the source passage', () => {
+    renderCard({
+      sentence: 'The treatment improved cold tolerance.',
+      citationIds: [1],
+      verdict: 'contradicted',
+      method: 'judge',
+      confidence: 0.91,
+      reason: 'The claim says improved; the source says reduced.',
+      evidenceQuote: 'The treatment reduced cold tolerance by 12 percent.',
+    });
+    expect(screen.getByText('The claim says improved; the source says reduced.')).toBeInTheDocument();
+    expect(screen.getByText('What the source says')).toBeInTheDocument();
+    expect(screen.getByText(/reduced cold tolerance by 12 percent/)).toBeInTheDocument();
+  });
+
+  it('does not present a low-confidence check as a finding', () => {
+    renderCard({
+      sentence: 'The treatment improved cold tolerance.',
+      citationIds: [1],
+      verdict: 'unverified',
+      method: 'judge',
+      confidence: 0.46,
+      unverifiedReason: 'low_confidence',
+    });
+    expect(screen.getByText('Not checked')).toBeInTheDocument();
+    expect(screen.getByText(/not confident enough/)).toBeInTheDocument();
+    expect(screen.getByText(/46% sure/)).toBeInTheDocument();
+    expect(screen.queryByText('The source says otherwise')).not.toBeInTheDocument();
+  });
 });

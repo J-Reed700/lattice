@@ -2,14 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PanelRight } from 'lucide-react';
 
+import { FilePreviewModal } from '@/components/Chat/FilePreviewModal';
+import { SourceCitations } from '@/components/Chat/SourceCitations';
+import { locatorFromSource } from '@/components/Reading/passageLocator';
 import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
 import { IconButton } from '@/components/ui/IconButton';
+import { useChatReaderStore } from '@/stores/chatReaderStore';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
+import type { SourceWithMetadata } from '@/types/conversation';
 
 import { EntryActionRail } from './EntryActionRail';
 import { EntryFromConversation } from './EntryFromConversation';
 import { EntryHeader } from './EntryHeader';
 import { EntryHighlightsStrip, HIGHLIGHT_CHAR_LIMIT } from './EntryHighlightsStrip';
+import { journalCitationMap, toJournalCitationSource } from './journalCitationSources';
 import { JournalContextRail } from './JournalContextRail';
 
 import type { SynthesisScope, WeekCandidateCounts } from './SynthesizePopover';
@@ -117,6 +123,55 @@ export function EntryEditor({
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
+  const readerSession = useChatReaderStore((state) => state.session);
+  const openReader = useChatReaderStore((state) => state.open);
+  const setReaderIndex = useChatReaderStore((state) => state.setIndex);
+  const closeReader = useChatReaderStore((state) => state.close);
+  const noteSources = useMemo(
+    () => (activeNote?.sources ?? []).map(toJournalCitationSource),
+    [activeNote?.sources],
+  );
+  const citationMap = useMemo(() => journalCitationMap(noteSources), [noteSources]);
+
+  useEffect(() => {
+    if (readerSession?.ownerKey.startsWith('journal:') && readerSession.ownerKey !== `journal:${activeNote?.id ?? ''}`) {
+      closeReader();
+    }
+  }, [activeNote?.id, closeReader, readerSession?.ownerKey]);
+
+  useEffect(() => () => {
+    if (useChatReaderStore.getState().session?.ownerKey.startsWith('journal:')) closeReader();
+  }, [closeReader]);
+
+  const openJournalCitation = useCallback((number: number, occurrence: number | null = null) => {
+    const source = citationMap.get(number);
+    if (!source || !activeNote) return;
+    const citations = [...citationMap.entries()].sort(([a], [b]) => a - b).map(([, value]) => value);
+    const index = citations.findIndex((candidate) => candidate.citationId === number);
+    openReader(`journal:${activeNote.id}`, citations, index, occurrence);
+  }, [activeNote, citationMap, openReader]);
+  const openJournalSource = useCallback((clickedSource: SourceWithMetadata, _occurrence?: number | null, chunkId?: string) => {
+    if (!activeNote) return;
+    const source = noteSources.find((candidate) => candidate.citationId === clickedSource.citationId) ?? clickedSource;
+    if (!chunkId || chunkId === source.chunkId) {
+      openJournalCitation(source.citationId ?? 0);
+      return;
+    }
+    const excerpt = source.chunkExcerpts?.find((chunk) => chunk.chunkId === chunkId);
+    if (!excerpt) {
+      openJournalCitation(source.citationId ?? 0);
+      return;
+    }
+    const citations = [...citationMap.entries()].sort(([a], [b]) => a - b).map(([, value]) => value);
+    const index = citations.findIndex((candidate) => candidate.citationId === source.citationId);
+    // The shared reader resolves the selected passage from source metadata.
+    const selected = { ...source, chunkId: excerpt.chunkId, content: excerpt.excerpt,
+      excerpt: excerpt.excerpt, section: excerpt.section ?? source.section,
+      pageNumber: excerpt.pageNumber ?? source.pageNumber };
+    if (index < 0) return;
+    citations[index] = selected;
+    openReader(`journal:${activeNote.id}`, citations, index, null);
+  }, [activeNote, citationMap, noteSources, openJournalCitation, openReader]);
 
   useEffect(() => {
     const compact = window.matchMedia('(max-width: 1023px)');
@@ -214,6 +269,8 @@ export function EntryEditor({
                   onChange={onUpdateNoteContent}
                   placeholder="A thought, a question, a place to begin…"
                   selectionActions={selectionActions}
+                  citationNumbers={[...citationMap.keys()]}
+                  onCitationClick={openJournalCitation}
                 />
               </div>
             </>
@@ -225,6 +282,7 @@ export function EntryEditor({
         <JournalContextRail
           selectedEntryId={selectedEntry?.id ?? null}
           highlightCount={activeNote.highlights.length}
+          sourceCount={noteSources.length}
           onClose={toggleRail}
           conversation={
             <EntryFromConversation
@@ -251,6 +309,27 @@ export function EntryEditor({
               showFloatingToolbar={false}
             />
           }
+          sources={
+            noteSources.length === 0 ? (
+              <div className="px-1 py-10 text-center">
+                <p className="text-ui font-medium text-text-secondary">No sources saved yet</p>
+                <p className="mx-auto mt-1 max-w-[230px] text-xs leading-relaxed text-text-muted">
+                  Sources attached to journal syntheses will appear here.
+                </p>
+              </div>
+            ) : (
+              <section aria-label="Saved sources">
+                <h3 className="mb-3 font-serif text-[17px] font-medium text-text-primary">Sources & citations</h3>
+                <p className="mb-4 text-xs leading-relaxed text-text-muted">
+                  Select a source here or a citation in the page text to open its passage.
+                </p>
+                <SourceCitations
+                  sources={noteSources}
+                  onViewSource={openJournalSource}
+                />
+              </section>
+            )
+          }
           footer={
             <EntryActionRail
               selectedEntryId={selectedEntry?.id ?? null}
@@ -261,6 +340,23 @@ export function EntryEditor({
               weekCandidates={weekCandidates}
             />
           }
+        />
+      ) : null}
+      {readerSession?.ownerKey === `journal:${activeNote?.id ?? ''}` ? (
+        <FilePreviewModal
+          isOpen
+          presentation="reading-pane"
+          onClose={closeReader}
+          source={readerSession.citations[readerSession.index] ?? null}
+          initialLocator={readerSession.citations[readerSession.index]
+            ? locatorFromSource(readerSession.citations[readerSession.index]!, readerSession.citations[readerSession.index]!.chunkId)
+            : null}
+          citations={readerSession.citations}
+          citationIndex={readerSession.index}
+          onCitationIndexChange={setReaderIndex}
+          ownerKey={readerSession.ownerKey}
+          occurrence={readerSession.occurrence}
+          citationContent={activeNote?.content ?? ''}
         />
       ) : null}
     </main>

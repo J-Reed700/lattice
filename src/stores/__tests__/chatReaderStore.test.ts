@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  MAX_RESOLVED_LOCATIONS,
   READER_DEFAULT_WIDTH,
   READER_MAX_WIDTH,
   READER_MIN_WIDTH,
@@ -94,6 +95,22 @@ describe('the chat reader width', () => {
 });
 
 describe('locations a viewer resolved', () => {
+  it('bounds retained labels and can resolve an evicted citation again', () => {
+    const remember = useChatReaderStore.getState().rememberResolvedLocation;
+    for (let i = 0; i < MAX_RESOLVED_LOCATIONS; i += 1) {
+      remember(`chunk-${i}`, `p. ${i}`);
+    }
+    remember('chunk-0', 'p. corrected');
+    remember('new-chunk', 'p. new');
+    const locations = useChatReaderStore.getState().resolvedLocations;
+    expect(locations.size).toBe(MAX_RESOLVED_LOCATIONS);
+    expect(locations.get('chunk-0')).toBe('p. corrected');
+    expect(locations.has('chunk-1')).toBe(false);
+    remember('chunk-1', 'p. 1');
+    expect(useChatReaderStore.getState().resolvedLocations.get('chunk-1')).toBe('p. 1');
+    expect(useChatReaderStore.getState().resolvedLocations.size).toBe(MAX_RESOLVED_LOCATIONS);
+  });
+
   it('are kept per chunk, so every answer citing it says the page', () => {
     useChatReaderStore.getState().rememberResolvedLocation('chunk-1', 'p. 12');
     expect(useChatReaderStore.getState().resolvedLocations.get('chunk-1')).toBe('p. 12');

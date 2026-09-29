@@ -24,6 +24,7 @@ const table: CompareTableDto = {
       filePath: '/vault/trial.pdf',
       cells: [{ value: 'randomised controlled trial', citation: null }],
       error: null,
+      degraded: null,
     },
   ],
   modelName: 'llama-3',

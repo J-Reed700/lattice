@@ -18,17 +18,19 @@ use tokenizers::Tokenizer;
 use crate::shared::error::{AppError, Result, ResultExt};
 use crate::shared::utils::with_autorelease_pool;
 
-use super::reranker::{best_reranker_device, resolve_model_dir, RerankResult, Reranker};
+use super::reranker::{
+    best_reranker_device, resolve_model_dir, run_admitted, RerankResult, Reranker,
+};
 
 const DEFAULT_MAX_LENGTH: usize = 2048;
-const DEFAULT_RETRIEVAL_INSTRUCTION: &str =
-    "Given a search query, retrieve relevant passages from the user's knowledge base that best answer or satisfy the query";
+const DEFAULT_RETRIEVAL_INSTRUCTION: &str = "Given a search query, retrieve relevant passages from the user's knowledge base that best answer or satisfy the query";
 const PROMPT_PREFIX: &str = "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n";
 const PROMPT_SUFFIX: &str = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
 
 /// Local Qwen3 reranker using the publisher's `yes` versus `no` scoring rule.
 pub struct Qwen3RerankerService {
     inner: Arc<Mutex<Qwen3Inner>>,
+    inference_admission: Arc<tokio::sync::Semaphore>,
     tokenizer: Arc<Tokenizer>,
     prefix_tokens: Arc<[u32]>,
     suffix_tokens: Arc<[u32]>,
@@ -168,6 +170,7 @@ impl Qwen3RerankerService {
 
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
+            inference_admission: Arc::new(tokio::sync::Semaphore::new(1)),
             tokenizer: Arc::new(tokenizer),
             prefix_tokens: prefix_tokens.into(),
             suffix_tokens: suffix_tokens.into(),
@@ -219,7 +222,7 @@ impl Qwen3RerankerService {
         let query = query.to_string();
         let max_length = self.max_length;
 
-        tokio::task::spawn_blocking(move || {
+        run_admitted(Arc::clone(&self.inference_admission), move || {
             with_autorelease_pool(move || {
                 let prompt_tokens = encode_prompts(
                     &tokenizer,
@@ -255,7 +258,6 @@ impl Qwen3RerankerService {
             })
         })
         .await
-        .map_err(|error| AppError::Other(format!("Qwen3 reranking task failed: {error}")))?
     }
 }
 

@@ -1,6 +1,7 @@
 //! Conversation Plugin - Thin Tauri wrappers over conversation command implementations.
 
 use crate::features::conversation::branching_dto::{
+    ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
     ForkConversationRequestDto, ForkConversationResponseDto, TruncateConversationAfterRequestDto,
     TruncateConversationAfterResponseDto,
 };
@@ -550,6 +551,18 @@ pub async fn fork_conversation(
     conversation_impl::fork_conversation_impl(request, container.inner()).await
 }
 
+/// Summarize a conversation and open a new one in the same space that starts
+/// from the summary. Takes minutes on a local model: it is one or more full
+/// generations.
+#[tauri::command]
+#[specta::specta]
+pub async fn continue_in_new_conversation(
+    request: ContinueInNewConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<ContinueInNewConversationResponseDto, ApiError> {
+    conversation_impl::continue_in_new_conversation_impl(request, container.inner()).await
+}
+
 /// Re-run the last user message, streaming over `llm-stream` exactly like a
 /// normal send. The user message is not duplicated.
 ///
@@ -656,6 +669,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             synthesize_journal_entries,
             truncate_conversation_after,
             fork_conversation,
+            continue_in_new_conversation,
             regenerate_response,
             compact_conversation,
             get_conversation_memory,

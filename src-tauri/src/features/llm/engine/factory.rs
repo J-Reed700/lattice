@@ -218,6 +218,7 @@ async fn create_local_llm_sidecar(
     use crate::features::llm::engine::sidecar_client::SidecarLLMClient;
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
+    use tauri::Manager;
 
     info!(
         "Creating local LLM (sidecar) from: {}",
@@ -246,9 +247,14 @@ async fn create_local_llm_sidecar(
         capabilities.summary()
     );
 
-    let mut config = SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities);
+    // Leave room for servers other roles already hold on the GPU.
+    let resident_bytes = app
+        .try_state::<crate::features::llm::engine::sidecar_manager::SidecarRegistry>()
+        .map_or(0, |registry| registry.resident_gpu_bytes(model_path));
+    let mut config =
+        SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes);
     if let Some(requested) = context_window {
-        config = config.with_context_override(requested, &capabilities);
+        config = config.with_context_override(requested, &capabilities, resident_bytes);
     }
 
     if n_gpu_layers >= 0 {
@@ -362,6 +368,12 @@ impl LLMPort for SidecarPortAdapter {
     /// picked as the utility model thought its way through every query rewrite.
     fn supports_typed_completions(&self) -> bool {
         true
+    }
+
+    /// A crashed llama-server leaves this adapter cached with a dead port;
+    /// saying so lets the role cache drop it and start a fresh server.
+    fn is_alive(&self) -> bool {
+        self.client.is_alive()
     }
 
     async fn complete(

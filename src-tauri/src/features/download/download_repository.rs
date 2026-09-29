@@ -34,6 +34,57 @@ struct DownloadSessionRow {
     model_file_name: Option<String>,
 }
 
+const TERMINAL_RECONCILIATION_QUERY: &str = r#"
+    SELECT ds.*
+    FROM download_sessions AS ds
+    JOIN model_files AS mf
+      ON mf.model_id = ds.model_id
+     AND mf.file_name = ds.model_file_name
+    JOIN models AS m ON m.model_id = ds.model_id
+    WHERE ds.model_id IS NOT NULL
+      AND ds.model_file_name IS NOT NULL
+      AND ds.state IN ('completed', 'failed', 'cancelled')
+      AND (
+          (ds.state = 'completed' AND (
+              mf.status NOT IN ('completed', 'verified')
+              OR (
+                  m.status NOT IN ('completed', 'verified')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM model_files AS incomplete
+                      WHERE incomplete.model_id = ds.model_id
+                        AND incomplete.status NOT IN ('completed', 'verified')
+                  )
+              )
+              OR (
+                  m.status = 'completed'
+                  AND m.storage_kind != 'remote_ollama'
+                  AND m.storage_path IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM model_files AS incomplete
+                      WHERE incomplete.model_id = ds.model_id
+                        AND incomplete.status NOT IN ('completed', 'verified')
+                  )
+              )
+          ))
+          OR
+          (ds.state IN ('failed', 'cancelled') AND (
+              mf.status NOT IN ('failed', 'completed', 'verified')
+              OR (mf.status = 'failed' AND m.status != 'failed')
+          ))
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM download_sessions AS newer
+          WHERE newer.model_id = ds.model_id
+            AND newer.model_file_name = ds.model_file_name
+            AND (newer.created_at > ds.created_at
+                 OR (newer.created_at = ds.created_at AND newer.id > ds.id))
+      )
+      AND (? IS NULL OR ds.id > ?)
+    ORDER BY ds.id
+    LIMIT ?
+    "#;
+
 impl TryFrom<DownloadSessionRow> for DownloadSession {
     type Error = DownloadError;
 
@@ -47,7 +98,7 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
                         return Err(DownloadError::InvalidUrl(format!(
                             "Invalid checksum algorithm: {}",
                             algo
-                        )))
+                        )));
                     }
                 };
                 Some(Checksum::new(algorithm, value)?)
@@ -87,7 +138,7 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
                 return Err(DownloadError::InvalidUrl(format!(
                     "Invalid state: {}",
                     row.state
-                )))
+                )));
             }
         };
 
@@ -147,6 +198,15 @@ pub trait DownloadRepository: Send + Sync {
     async fn list_by_state(
         &self,
         state: &DownloadState,
+    ) -> Result<Vec<DownloadSession>, DownloadError>;
+    /// Return a bounded keyset page of latest terminal model-file sessions
+    /// whose `model_files` row has not yet reached the terminal status implied
+    /// by the session. The event bridge re-publishes these until the saga's
+    /// database transaction makes the mismatch disappear.
+    async fn list_terminal_sessions_needing_reconciliation(
+        &self,
+        after_id: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<DownloadSession>, DownloadError>;
     async fn list_active(&self) -> Result<Vec<DownloadSession>, DownloadError>;
     /// Delete all pending downloads for a specific model
@@ -421,6 +481,28 @@ impl DownloadRepository for SqliteDownloadRepository {
         rows.into_iter().map(|row| row.try_into()).collect()
     }
 
+    async fn list_terminal_sessions_needing_reconciliation(
+        &self,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DownloadSession>, DownloadError> {
+        let limit = limit.clamp(1, 64) as i64;
+        let rows = sqlx::query_as::<_, DownloadSessionRow>(TERMINAL_RECONCILIATION_QUERY)
+            .bind(after_id)
+            .bind(after_id)
+            .bind(limit)
+            .fetch_all(self.db_conn.pool())
+            .await
+            .map_err(|e| {
+                DownloadError::IoError(format!(
+                    "Failed to reconcile terminal download sessions: {}",
+                    e
+                ))
+            })?;
+
+        rows.into_iter().map(|row| row.try_into()).collect()
+    }
+
     async fn list_active(&self) -> Result<Vec<DownloadSession>, DownloadError> {
         let rows = sqlx::query_as::<_, DownloadSessionRow>(
             r#"
@@ -474,13 +556,27 @@ pub mod mock {
 
     pub struct MockDownloadRepository {
         sessions: Arc<Mutex<HashMap<String, DownloadSession>>>,
+        progress_delay: std::time::Duration,
+        progress_writes: std::sync::atomic::AtomicUsize,
     }
 
     impl MockDownloadRepository {
         pub fn new() -> Self {
             Self {
                 sessions: Arc::new(Mutex::new(HashMap::new())),
+                progress_delay: std::time::Duration::ZERO,
+                progress_writes: std::sync::atomic::AtomicUsize::new(0),
             }
+        }
+
+        pub fn with_progress_delay(mut self, delay: std::time::Duration) -> Self {
+            self.progress_delay = delay;
+            self
+        }
+
+        pub fn progress_write_count(&self) -> usize {
+            self.progress_writes
+                .load(std::sync::atomic::Ordering::SeqCst)
         }
 
         pub fn with_session(self, session: DownloadSession) -> Self {
@@ -532,6 +628,9 @@ pub mod mock {
             bytes_downloaded: u64,
             bytes_per_second: f64,
         ) -> Result<(), DownloadError> {
+            self.progress_writes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(self.progress_delay).await;
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(session) = sessions.get_mut(id) {
                 // Mirror the SQL guard: only a downloading session takes ticks.
@@ -565,6 +664,27 @@ pub mod mock {
                 .collect())
         }
 
+        async fn list_terminal_sessions_needing_reconciliation(
+            &self,
+            after_id: Option<&str>,
+            limit: usize,
+        ) -> Result<Vec<DownloadSession>, DownloadError> {
+            let mut sessions: Vec<_> = self
+                .sessions
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|session| {
+                    session.state().is_terminal()
+                        && after_id.is_none_or(|after| session.id() > after)
+                })
+                .cloned()
+                .collect();
+            sessions.sort_by(|left, right| left.id().cmp(right.id()));
+            sessions.truncate(limit.clamp(1, 64));
+            Ok(sessions)
+        }
+
         async fn list_active(&self) -> Result<Vec<DownloadSession>, DownloadError> {
             let sessions = self.sessions.lock().unwrap();
             Ok(sessions
@@ -589,5 +709,185 @@ pub mod mock {
 
             Ok(count)
         }
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+    use crate::infrastructure::persistence::database::connection::DatabaseConnection;
+
+    async fn insert_model(pool: &sqlx::SqlitePool, model_id: &str) {
+        sqlx::query(
+            "INSERT INTO models (id, model_name, model_id, model_type, architecture) \
+             VALUES (?, ?, ?, 'embedding', 'test')",
+        )
+        .bind(format!("row-{model_id}"))
+        .bind(model_id)
+        .bind(model_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_model_file(pool: &sqlx::SqlitePool, model_id: &str, status: &str) {
+        sqlx::query(
+            "INSERT INTO model_files \
+             (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status) \
+             VALUES (?, ?, 'weights.bin', '/tmp/weights.bin', 'weights.bin', 1, \
+                     'https://example.com/weights.bin', ?)",
+        )
+        .bind(format!("file-{model_id}"))
+        .bind(model_id)
+        .bind(status)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_session(
+        repository: &SqliteDownloadRepository,
+        session_id: &str,
+        model_id: &str,
+        state: DownloadState,
+    ) {
+        let mut session = DownloadSession::new(
+            session_id.to_string(),
+            "https://example.com/weights.bin".to_string(),
+            std::path::PathBuf::from(format!("/tmp/{session_id}.bin")),
+            Some(1),
+            None,
+        )
+        .unwrap()
+        .with_model_metadata(model_id.to_string(), model_id.to_string())
+        .with_model_file_name("weights.bin".to_string());
+        session.start().unwrap();
+        match state {
+            DownloadState::Completed => session.complete().unwrap(),
+            DownloadState::Failed => session.fail("test failure".to_string()).unwrap(),
+            other => panic!("unsupported fixture state: {other:?}"),
+        }
+        repository.create(&session).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconciliation_query_returns_only_latest_durable_mismatches() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = Arc::new(
+            DatabaseConnection::new(dir.path().join("downloads.db"))
+                .await
+                .unwrap(),
+        );
+        sqlx::migrate!("./migrations")
+            .run(connection.pool())
+            .await
+            .unwrap();
+        let repository = SqliteDownloadRepository::new(connection.clone());
+
+        insert_model(connection.pool(), "failed-mismatch").await;
+        insert_model_file(connection.pool(), "failed-mismatch", "downloading").await;
+        insert_session(
+            &repository,
+            "failed-session",
+            "failed-mismatch",
+            DownloadState::Failed,
+        )
+        .await;
+
+        insert_model(connection.pool(), "completed-model-mismatch").await;
+        insert_model_file(connection.pool(), "completed-model-mismatch", "completed").await;
+        insert_session(
+            &repository,
+            "completed-session",
+            "completed-model-mismatch",
+            DownloadState::Completed,
+        )
+        .await;
+
+        insert_model(connection.pool(), "already-consistent").await;
+        sqlx::query(
+            "UPDATE models SET status = 'completed', storage_path = '/tmp/already-complete' \
+             WHERE model_id = ?",
+        )
+        .bind("already-consistent")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+        insert_model_file(connection.pool(), "already-consistent", "completed").await;
+        insert_session(
+            &repository,
+            "consistent-session",
+            "already-consistent",
+            DownloadState::Completed,
+        )
+        .await;
+
+        insert_model(connection.pool(), "registry-missing").await;
+        sqlx::query("UPDATE models SET status = 'completed' WHERE model_id = ?")
+            .bind("registry-missing")
+            .execute(connection.pool())
+            .await
+            .unwrap();
+        insert_model_file(connection.pool(), "registry-missing", "completed").await;
+        insert_session(
+            &repository,
+            "registry-missing-session",
+            "registry-missing",
+            DownloadState::Completed,
+        )
+        .await;
+
+        let candidates = repository
+            .list_terminal_sessions_needing_reconciliation(None, 64)
+            .await
+            .unwrap();
+        let ids: Vec<_> = candidates
+            .iter()
+            .map(|session| session.id().to_string())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "completed-session".to_string(),
+                "failed-session".to_string(),
+                "registry-missing-session".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_query_uses_terminal_candidate_and_covering_status_indexes() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = DatabaseConnection::new(dir.path().join("downloads.db"))
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations")
+            .run(connection.pool())
+            .await
+            .unwrap();
+
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&format!(
+            "EXPLAIN QUERY PLAN {TERMINAL_RECONCILIATION_QUERY}"
+        ))
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(64_i64)
+        .fetch_all(connection.pool())
+        .await
+        .unwrap();
+        let details: Vec<_> = plan.iter().map(|row| row.3.as_str()).collect();
+
+        assert!(
+            details
+                .iter()
+                .any(|detail| { detail.contains("idx_download_sessions_terminal_reconciliation") }),
+            "terminal candidates should use their partial index: {details:?}"
+        );
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_model_files_model_status") && detail.contains("COVERING INDEX")
+            }),
+            "incomplete-file checks should read status from a covering index: {details:?}"
+        );
     }
 }

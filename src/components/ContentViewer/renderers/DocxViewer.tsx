@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 
 import DOMPurify from 'dompurify';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import * as mammoth from 'mammoth';
 
 import { useEffectiveTheme } from '../../../hooks/useApplyTheme';
 import VaultAPI from '../../../lib/api';
@@ -33,6 +32,7 @@ export function DocxViewer({ filePath, title }: DocxViewerProps) {
 
         const bytes = fileResult.data;
         const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const mammoth = await import('mammoth');
         const result = await mammoth.convertToHtml({ arrayBuffer });
         const sanitized = DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } });
 

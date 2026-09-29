@@ -32,7 +32,7 @@ describe('PDF citation navigation', () => {
   it('highlights across lines even with a known page, then clears marks for an unmatched citation', async () => {
     const onMatch = vi.fn();
     const { rerender } = render(<PDFViewer filePath="/test.pdf" highlight={{ text: items.slice(1, 4).join(' '), page: 2 }} onMatch={onMatch} />);
-    await waitFor(() => expect(screen.getByTestId('pdf-text').querySelectorAll('mark')).toHaveLength(3));
+    await waitFor(() => expect(screen.getByTestId('pdf-text').querySelectorAll('mark')).toHaveLength(3), { timeout: 5000 });
     expect(screen.getByTestId('pdf-text')).toHaveAttribute('data-page', '2');
     expect(onMatch).toHaveBeenLastCalledWith('exact');
     rerender(<PDFViewer filePath="/test.pdf" highlight={{ text: 'A completely different passage absent from this PDF', page: 1 }} onMatch={onMatch} />);

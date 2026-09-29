@@ -39,6 +39,9 @@ use tokio::sync::{oneshot, Semaphore};
 use tracing::{debug, info, warn};
 use url::{Host, Url};
 
+use super::web::is_blocked_ip;
+use std::net::IpAddr;
+
 /// The reserved address the page reports back through. `.invalid` can never
 /// resolve (RFC 2606), so a report that somehow escaped would go nowhere.
 const REPORT_HOST: &str = "lattice-page-reader.invalid";
@@ -81,9 +84,12 @@ pub struct BrowserPage {
     pub text: String,
 }
 
+/// What the page's script posts back. It carries text only: the page writes
+/// it, so anything it says about *where* it is could be a lie. A page that
+/// claimed another URL here would have its text cached under that URL and
+/// served as that site's in later citations.
 #[derive(Deserialize)]
 struct Report {
-    url: String,
     title: String,
     text: String,
     /// The page was still behind its check when the script gave up: one that
@@ -168,6 +174,10 @@ pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
         }
     };
     let outcome = tokio::time::timeout(timeout, poll).await;
+    // Where the page is, from the browser rather than from the page. The
+    // report navigation was cancelled, so the window still shows the page
+    // that sent it; history.pushState can move within its origin only.
+    let landed = window.url().ok();
     if let Err(error) = window.destroy() {
         warn!(%error, label, "Page reader window could not be destroyed");
     }
@@ -183,17 +193,30 @@ pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
             ))
         }
     };
+    let page = page_from_report(report, landed)?;
+    info!(
+        url,
+        final_url = page.final_url.as_str(),
+        chars = page.text.len(),
+        "Page read through the browser"
+    );
+    Ok(page)
+}
+
+/// The page read, located at `landed`, the webview's own URL. No page is
+/// returned when the browser cannot say where it is or it is somewhere the
+/// reader may not go.
+fn page_from_report(report: Report, landed: Option<Url>) -> Result<BrowserPage, String> {
     if report.blocked {
         return Err("the page is behind a check that asks a person to click".into());
     }
-    info!(
-        url,
-        final_url = report.url.as_str(),
-        chars = report.text.len(),
-        "Page read through the browser"
-    );
+    let landed =
+        landed.ok_or_else(|| "the browser could not say where the page ended up".to_string())?;
+    if !matches!(landed.scheme(), "http" | "https") || !navigation_allowed(&landed) {
+        return Err(format!("the page ended up somewhere not allowed: {landed}"));
+    }
     Ok(BrowserPage {
-        final_url: report.url,
+        final_url: landed.to_string(),
         title: Some(report.title.trim().to_string()).filter(|t| !t.is_empty()),
         text: report.text,
     })
@@ -219,23 +242,9 @@ pub(crate) fn navigation_allowed(url: &Url) -> bool {
         _ => return false,
     }
     match url.host() {
-        Some(Host::Ipv4(ip)) => {
-            !(ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_broadcast()
-                || ip.is_documentation())
-        }
-        Some(Host::Ipv6(ip)) => {
-            let segments = ip.segments();
-            !(ip.is_loopback()
-                || ip.is_unspecified()
-                // Unique local (fc00::/7) and link-local (fe80::/10).
-                || (segments[0] & 0xfe00) == 0xfc00
-                || (segments[0] & 0xffc0) == 0xfe80
-                || ip.to_ipv4_mapped().is_some())
-        }
+        // The same ranges the HTTP client refuses.
+        Some(Host::Ipv4(ip)) => !is_blocked_ip(IpAddr::V4(ip)),
+        Some(Host::Ipv6(ip)) => !(ip.to_ipv4_mapped().is_some() || is_blocked_ip(IpAddr::V6(ip))),
         Some(Host::Domain(domain)) => {
             let domain = domain.trim_end_matches('.').to_ascii_lowercase();
             let local = domain == "localhost"
@@ -281,7 +290,7 @@ const CHECK_SCRIPT: &str = r#"
 
   const report = (blocked, text) => {
     state.sent = true;
-    const payload = JSON.stringify({ url: location.href, title: document.title || '', text, blocked });
+    const payload = JSON.stringify({ title: document.title || '', text, blocked });
     location.href = 'https://lattice-page-reader.invalid/#' + encodeURIComponent(payload);
   };
 
@@ -346,6 +355,8 @@ mod tests {
             "http://[::1]/",
             "http://[fd00::1]/",
             "http://[::ffff:127.0.0.1]/",
+            "http://100.64.0.1/",
+            "http://0.0.0.0/",
             "http://printer.local/",
             "http://router/",
         ] {
@@ -353,10 +364,54 @@ mod tests {
         }
     }
 
+    fn report(text: &str) -> Report {
+        Report {
+            title: "Title".to_string(),
+            text: text.to_string(),
+            blocked: false,
+        }
+    }
+
+    #[test]
+    fn a_page_is_located_by_the_browser_not_by_its_report() {
+        // The page's script claims to be Wikipedia; the webview says otherwise.
+        let payload = serde_json::json!({
+            "url": "https://en.wikipedia.org/wiki/Rust",
+            "title": "Rust",
+            "text": "forged"
+        })
+        .to_string();
+        let posted = Url::parse(&format!(
+            "https://{REPORT_HOST}/#{}",
+            urlencoding::encode(&payload)
+        ))
+        .unwrap();
+        let forged = decode_report(&posted).expect("decodes");
+        let landed = Url::parse("https://attacker.example/page").unwrap();
+
+        let page = page_from_report(forged, Some(landed)).unwrap();
+        assert_eq!(page.final_url, "https://attacker.example/page");
+        assert_eq!(page.text, "forged");
+    }
+
+    #[test]
+    fn a_page_the_browser_cannot_place_is_not_returned() {
+        assert!(page_from_report(report("text"), None).is_err());
+        for landed in ["about:blank", "data:text/html,hi", "http://192.168.1.1/"] {
+            let landed = Url::parse(landed).unwrap();
+            assert!(page_from_report(report("text"), Some(landed)).is_err());
+        }
+        let blocked = Report {
+            blocked: true,
+            ..report("text")
+        };
+        let landed = Url::parse("https://example.com/").unwrap();
+        assert!(page_from_report(blocked, Some(landed)).is_err());
+    }
+
     #[test]
     fn a_report_is_decoded_from_the_fragment() {
         let payload = serde_json::json!({
-            "url": "https://example.com/a",
             "title": "A — page",
             "text": "First paragraph.\n\nSecond, with #hash & ünïcode."
         })
@@ -367,7 +422,6 @@ mod tests {
         ))
         .unwrap();
         let report = decode_report(&url).expect("decodes");
-        assert_eq!(report.url, "https://example.com/a");
         assert_eq!(report.title, "A — page");
         assert!(report.text.contains("ünïcode"));
     }

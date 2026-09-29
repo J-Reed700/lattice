@@ -147,6 +147,11 @@ export interface ConversationsState {
     _upToMessageId?: string
   ) => Promise<string | null>;
   /**
+   * Summarize a conversation into a new one in the same space and open it.
+   * Resolves with the new id; throws on failure so the caller can say so.
+   */
+  continueInNewConversation: (_conversationId: string) => Promise<string>;
+  /**
    * Fold the conversation's oldest messages into an LLM summary so the context
    * window carries the distilled past. Resolves with the applied compaction
    * record, or `null` on failure (surfaced via the store's `error`).

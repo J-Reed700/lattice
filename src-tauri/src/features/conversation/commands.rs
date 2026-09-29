@@ -590,7 +590,17 @@ pub async fn get_conversation_messages_impl(
         })?;
 
     // 3. Return messages from aggregate
-    Ok(aggregate.messages().to_vec())
+    let mut messages = aggregate.messages().to_vec();
+    for message in &mut messages {
+        message.metadata =
+            crate::features::conversation::chat::source_snapshots::hydrate_message_metadata(
+                container,
+                &conversation_id,
+                message.metadata.take(),
+            )
+            .await;
+    }
+    Ok(messages)
 }
 
 /// Tauri command wrapper
@@ -880,6 +890,11 @@ pub async fn delete_conversation_impl(
         .check_rate_limit("delete_conversation")
         .await
         .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
+
+    // A turn already generating for this conversation should not continue
+    // producing work after the user deletes it. Vector indexing is a separate
+    // detached task; its final write checks the source rows atomically.
+    crate::features::conversation::chat::cancel_generation_for_conversation(&conversation_id, None);
 
     // 2. Take the conversation's attachments with it.
     //

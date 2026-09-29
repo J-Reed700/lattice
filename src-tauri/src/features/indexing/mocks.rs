@@ -247,6 +247,13 @@ impl IndexStorageTrait for MockIndexStorage {
         Ok(doc_ids)
     }
 
+    async fn chunk_ids_in_order(
+        &self,
+        _document_id: &str,
+    ) -> crate::shared::error::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     async fn store_document_with_context(
         &self,
         path: &Path,

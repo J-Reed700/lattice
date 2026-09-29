@@ -66,7 +66,11 @@ impl LLMPort for ScriptedLlm {
         _images: Option<Vec<String>>,
     ) -> Result<String> {
         self.calls.lock().push(prompt.to_owned());
-        Ok(self.responses.lock().pop().unwrap_or_default())
+        let response = self.responses.lock().pop().unwrap_or_default();
+        if response == "__stall__" {
+            return std::future::pending().await;
+        }
+        Ok(response)
     }
 
     async fn generate_streaming(
@@ -350,7 +354,10 @@ async fn deleting_a_document_returns_the_ids_whose_vectors_must_go() {
         .await
         .unwrap();
     assert_eq!(
-        repository.delete_for_document("doc-1").await.unwrap(),
+        repository
+            .delete_for_document("doc-1", IDENTITY)
+            .await
+            .unwrap(),
         vec![written[0].id.clone()]
     );
 }
@@ -368,6 +375,7 @@ fn use_case(
     let prompts = llm.prompts();
     let use_case = GenerateDocumentSummariesUseCase::new(
         enabled,
+        IDENTITY,
         Arc::new(FixtureSource { source }),
         Arc::new(SqliteSummaryRepository::new(pool.clone())),
         index,
@@ -504,7 +512,7 @@ async fn unparseable_responses_are_skipped_not_stored() {
 }
 
 #[tokio::test]
-async fn a_document_with_no_text_and_a_missing_model_produce_nothing() {
+async fn empty_source_is_complete_but_missing_model_is_retryable() {
     let pool = pool_with_document().await;
     let index = memory_index();
     let (empty, _) = use_case(
@@ -524,6 +532,7 @@ async fn a_document_with_no_text_and_a_missing_model_produce_nothing() {
 
     let no_model = GenerateDocumentSummariesUseCase::new(
         true,
+        IDENTITY,
         Arc::new(FixtureSource {
             source: Some(source_with_sections(4)),
         }),
@@ -531,8 +540,90 @@ async fn a_document_with_no_text_and_a_missing_model_produce_nothing() {
         Arc::clone(&index),
         Arc::new(StubRuntime { llm: None }),
     );
-    assert_eq!(no_model.execute("doc-1").await.unwrap(), 0);
+    assert!(no_model.execute("doc-1").await.is_err());
     assert_eq!(index.count(), 0);
+}
+
+#[tokio::test]
+async fn entirely_invalid_model_output_is_retryable() {
+    let pool = pool_with_document().await;
+    let index = memory_index();
+    let (use_case, _) = use_case(
+        true,
+        Some(source_with_sections(0)),
+        &["{}"],
+        &pool,
+        Arc::clone(&index),
+    );
+    assert!(use_case.execute("doc-1").await.is_err());
+    assert_eq!(index.count(), 0);
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_an_active_summary_model_call() {
+    let pool = pool_with_document().await;
+    let index = memory_index();
+    let (generator, prompts) = use_case(
+        true,
+        Some(source_with_sections(0)),
+        &["__stall__"],
+        &pool,
+        Arc::clone(&index),
+    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let worker_cancel = cancel.clone();
+    let worker =
+        tokio::spawn(async move { generator.execute_cancellable("doc-1", &worker_cancel).await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while prompts.lock().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    cancel.cancel();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(index.count(), 0);
+}
+
+#[tokio::test]
+async fn cancelled_summary_keeps_existing_rows_and_vectors() {
+    let pool = pool_with_document().await;
+    let index = memory_index();
+    let (first, _) = use_case(
+        true,
+        Some(source_with_sections(0)),
+        &[r#"{"summary":"Keep this."}"#],
+        &pool,
+        Arc::clone(&index),
+    );
+    assert_eq!(first.execute("doc-1").await.unwrap(), 1);
+    let (second, prompts) = use_case(
+        true,
+        Some(source_with_sections(0)),
+        &[r#"{"summary":"Replace this."}"#],
+        &pool,
+        Arc::clone(&index),
+    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    assert!(second.execute_cancellable("doc-1", &cancel).await.is_err());
+    assert!(prompts.lock().is_empty());
+    assert_eq!(index.count(), 1);
+    let saved = SqliteSummaryRepository::new(pool)
+        .list_for_documents(&HashSet::from(["doc-1".to_owned()]), IDENTITY)
+        .await
+        .unwrap();
+    assert_eq!(
+        document_level_text(&saved).get("doc-1").map(String::as_str),
+        Some("Keep this.")
+    );
 }
 
 #[tokio::test]

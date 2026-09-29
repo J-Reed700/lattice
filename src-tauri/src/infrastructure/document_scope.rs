@@ -67,6 +67,16 @@ impl DocumentScopePort for SqliteDocumentScope {
         Ok(())
     }
 
+    async fn conversation_owner(&self, document_id: &str) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT owner_conversation_id FROM documents WHERE id = ?",
+        )
+        .bind(document_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten())
+    }
+
     async fn documents_owned_by_conversation(&self, conversation_id: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar::<_, String>(
             "SELECT id FROM documents WHERE owner_conversation_id = ? ORDER BY rowid",

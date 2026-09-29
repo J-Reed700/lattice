@@ -11,6 +11,7 @@ use crate::features::daily_notes::commands::{
     ListWorkspaceNotesRequestDto, ListWorkspaceNotesResponseDto, QuickCaptureResultDto,
     UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
 };
+use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
@@ -78,9 +79,11 @@ pub async fn get_today_note(
 #[specta::specta]
 pub async fn quick_capture(
     content: String,
+    sources: Option<Vec<SourceDto>>,
+    conversation_ids: Option<Vec<String>>,
     container: State<'_, Container>,
 ) -> Result<QuickCaptureResultDto, ApiError> {
-    quick_capture_impl(container.inner(), content)
+    quick_capture_impl(container.inner(), content, sources, conversation_ids)
         .await
         .map_err(ApiError::from)
 }

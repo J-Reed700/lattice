@@ -985,22 +985,6 @@ async getFunctionStats() : Promise<Result<RegistryStats, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async askQuestionWrapper(request: QARequestDto) : Promise<Result<QAResponseDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("ask_question_wrapper", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async askQuestionStreamWrapper(request: QARequestDto) : Promise<Result<QAResponseDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("ask_question_stream_wrapper", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_llm_health_wrapper") };
@@ -1062,6 +1046,19 @@ async truncateConversationAfter(request: TruncateConversationAfterRequestDto) : 
 async forkConversation(request: ForkConversationRequestDto) : Promise<Result<ForkConversationResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("fork_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Summarize a conversation and open a new one in the same space that starts
+ * from the summary. Takes minutes on a local model: it is one or more full
+ * generations.
+ */
+async continueInNewConversation(request: ContinueInNewConversationRequestDto) : Promise<Result<ContinueInNewConversationResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("continue_in_new_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2694,9 +2691,9 @@ async getTodayNote() : Promise<Result<DailyNoteCompatDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async quickCapture(content: string) : Promise<Result<QuickCaptureResultDto, ApiError>> {
+async quickCapture(content: string, sources: SourceDto[] | null, conversationIds: string[] | null) : Promise<Result<QuickCaptureResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("quick_capture", { content }) };
+    return { status: "ok", data: await TAURI_INVOKE("quick_capture", { content, sources, conversationIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3943,7 +3940,13 @@ cells: CompareCellDto[];
  * Set when this document could not be processed (timeout, no chunks, LLM
  * unavailable). Cells are all-null in that case. Rendered as a muted row note.
  */
-error: string | null }
+error: string | null;
+/**
+ * Set when this row's values were read from the document's opening
+ * passages because semantic search failed for it. The cells are filled
+ * but may not reflect the parts of the document the columns ask about.
+ */
+degraded: string | null }
 export type CompareTableDto = { columns: string[]; rows: CompareRowDto[]; modelName: string; generatedAt: string }
 /**
  * Compatibility level DTO for frontend.
@@ -4011,6 +4014,12 @@ export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto
  * Optional second unlock path. At least 8 characters when present.
  */
 passphrase?: string | null }
+export type ContinueInNewConversationRequestDto = { conversationId: string }
+export type ContinueInNewConversationResponseDto = {
+/**
+ * The new conversation, in the same space, opening with the summary.
+ */
+conversation: ConversationDto }
 /**
  * Conversation representation.
  *
@@ -5620,84 +5629,6 @@ telemetryEnabled: boolean;
  */
 crashReporting: boolean }
 /**
- * Metadata about Q&A response generation.
- *
- * Contains statistics and configuration used for generation.
- */
-export type QAMetadataDto = {
-/**
- * Model used for generation
- */
-model: string;
-/**
- * Number of tokens in the prompt
- */
-prompt_tokens: number | null;
-/**
- * Number of tokens in the response
- */
-completion_tokens: number | null;
-/**
- * Total tokens used
- */
-total_tokens: number | null;
-/**
- * Time taken to generate response (milliseconds)
- */
-generation_time_ms: number | null }
-/**
- * Request for question-answering.
- *
- * Contains the question and optional parameters for context retrieval.
- */
-export type QARequestDto = {
-/**
- * The question to answer
- */
-question: string;
-/**
- * Maximum number of context chunks to retrieve
- */
-context_limit: number | null;
-/**
- * LLM model to use (optional, uses default if not specified)
- */
-model: string | null;
-/**
- * Optional temperature for LLM generation (0.0 to 1.0)
- */
-temperature: number | null;
-/**
- * Optional maximum tokens in response
- */
-max_tokens: number | null;
-/**
- * Optional list of base64-encoded images for multimodal models
- */
-images: string[] | null }
-/**
- * Response from question-answering.
- *
- * Contains the generated answer and source citations.
- */
-export type QAResponseDto = {
-/**
- * The generated answer
- */
-answer: string;
-/**
- * Source documents used for context
- */
-sources: SourceDto[];
-/**
- * Optional confidence score (0.0 to 1.0)
- */
-confidence: number | null;
-/**
- * Optional metadata about the response
- */
-metadata: QAMetadataDto | null }
-/**
  * Where a quick capture landed, so the UI can name the destination
  * instead of saying "saved" and leaving the user to guess.
  */
@@ -6414,7 +6345,12 @@ chunkExcerpts?: SourceChunkExcerptDto[] | null;
  * more than one chunk — or produced after budget-trimming dropped
  * chunks — therefore rendered footnotes that opened the wrong document.
  */
-citationId?: number | null }
+citationId?: number | null;
+/**
+ * Durable copy of a cited web page as it was read. The short `content`
+ * and `excerpt` fields keep their existing meanings for prompts/UI.
+ */
+webSnapshot?: WebSnapshotDto | null }
 export type SourceGroup = { id: string; title: string; edition: string | null; description: string | null; ordered: boolean; structure?: StructureMode }
 /**
  * One document a chat in this space is allowed to read.
@@ -6535,7 +6471,12 @@ syncOnStartup: boolean }
  */
 export type SynthesisCitationDto = { kind: string; id: string; title: string }
 export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
-export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[] }
+export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
+/**
+ * Source passages from the conversations and journal notes, numbered to
+ * match the `[n]` citations in `synthesis`.
+ */
+sources: SourceDto[] }
 /**
  * System capabilities response.
  */
@@ -7045,6 +6986,10 @@ fetchedAt: string;
  * True when this came out of the page cache rather than off the network.
  */
 fromCache: boolean }
+/**
+ * Page evidence captured for a web citation, independent of the live site.
+ */
+export type WebSnapshotDto = { url: string; title: string | null; text: string; fetchedAt: string | null; truncated: boolean }
 export type WikiLinkDto = { target: string; displayText: string | null; header: string | null; lineNumber: number }
 /**
  * One "word 7 was ___" answer.
@@ -7054,7 +6999,11 @@ export type WorkspaceNoteDto = { id: string; title: string;
 /**
  * Owning journal, or `None` for an unfiled page.
  */
-journalId: string | null; content: string; linkedDocumentIds: string[]; linkedConversationIds: string[]; highlights: NoteHighlightDto[]; stickyNotes: StickyItemDto[]; conversationSnapshots: ConversationSnapshotDto[]; createdAt: string; updatedAt: string }
+journalId: string | null; content: string; linkedDocumentIds: string[]; linkedConversationIds: string[]; highlights: NoteHighlightDto[]; stickyNotes: StickyItemDto[]; conversationSnapshots: ConversationSnapshotDto[];
+/**
+ * Source metadata backing inline citations in this note.
+ */
+sources: SourceDto[]; createdAt: string; updatedAt: string }
 
 /** tauri-specta globals **/
 

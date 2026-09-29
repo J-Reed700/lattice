@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { createElement, type ReactNode } from 'react';
 
-import { applyDownloadSnapshot, fileNameWithinModel } from './useDownloads';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { listen } from '@tauri-apps/api/event';
+import { renderHook, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { VaultAPI } from '@/lib/api';
+import { useDownloadStore } from '@/stores/downloadStore';
+
+import { applyDownloadSnapshot, fileNameWithinModel, useDownloadsListener } from './useDownloads';
 
 import type { DownloadStatus } from '../types/downloads';
 import type { TauriEvents } from '../types/events';
@@ -56,6 +64,44 @@ describe('applyDownloadSnapshot', () => {
       state: 'Completed',
       model_id: 'Qwen/Qwen3-Embedding-0.6B',
     });
+  });
+});
+
+describe('applyDownloadSnapshot after a row finished', () => {
+  it('ignores a late progress tick for a completed row', () => {
+    const done: DownloadStatus = { ...queuedDownload('s-1', 'model.gguf'), state: 'Completed', percentage: 100 };
+    const current = new Map<string, DownloadStatus>([[done.id, done]]);
+    const late: TauriEvents.Downloads.Single = {
+      kind: 'single',
+      id: 's-1',
+      filename: 'model.gguf',
+      bytesDownloaded: 90,
+      totalBytes: 100,
+      bytesPerSecond: 10,
+      percentage: 90,
+      etaSeconds: 1,
+      status: 'downloading',
+    };
+
+    expect(applyDownloadSnapshot(current, late).get('s-1')).toMatchObject({ state: 'Completed', percentage: 100 });
+  });
+});
+
+describe('useDownloadsListener', () => {
+  it('still listens for progress when the initial download list fails', async () => {
+    const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    api.listDownloads = vi.fn().mockResolvedValue({ ok: false, error: 'database is locked' });
+    vi.mocked(listen).mockClear();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    renderHook(() => useDownloadsListener(), { wrapper });
+
+    await waitFor(() => expect(useDownloadStore.getState().listenerError).toBe('database is locked'));
+    const events = vi.mocked(listen).mock.calls.map(([name]) => name);
+    expect(events).toEqual(expect.arrayContaining(['download:progress']));
+    expect(events).toHaveLength(2);
   });
 });
 

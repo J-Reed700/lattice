@@ -373,6 +373,13 @@ pub struct OllamaChatRequest {
     /// Tool definitions for function calling
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OllamaTool>>,
+    /// JSON or JSON Schema constrained output (`format` in Ollama's API).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<serde_json::Value>,
+    /// Per-request thinking control. `false` disables reasoning on supported
+    /// models; omitted leaves the model default unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub think: Option<serde_json::Value>,
 }
 
 /// Chat API response (non-streaming)
@@ -386,6 +393,9 @@ pub struct OllamaChatResponse {
     pub message: OllamaChatMessage,
     /// Whether generation is complete
     pub done: bool,
+    /// Why generation stopped, when supplied by the API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_reason: Option<String>,
     /// Total duration in nanoseconds
     #[serde(default)]
     pub total_duration: Option<u64>,
@@ -411,6 +421,14 @@ pub struct OllamaChatStreamResponse {
     pub message: OllamaChatMessage,
     /// Whether generation is complete
     pub done: bool,
+    /// Reason generation stopped, sent with the final chunk by some versions.
+    #[serde(default)]
+    pub done_reason: Option<String>,
+    /// Token counts sent with the final chunk.
+    #[serde(default)]
+    pub prompt_eval_count: Option<u32>,
+    #[serde(default)]
+    pub eval_count: Option<u32>,
 }
 
 #[cfg(test)]

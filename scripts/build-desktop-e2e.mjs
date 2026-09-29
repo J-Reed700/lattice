@@ -20,6 +20,9 @@ if (platform === 'win32') config.productName = `Lattice Compatibility café ${ca
 const configPath = path.join(output, 'config.json');
 await writeFile(configPath, JSON.stringify(config, null, 2));
 const env = { ...process.env };
+// Never replace the ordinary development executable with a test-identity
+// binary. A caller may explicitly select a dedicated target directory.
+env.CARGO_TARGET_DIR = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target/desktop-e2e');
 const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
 env[pathKey] = `${path.join(root, 'node_modules', '.bin')}${path.delimiter}${env[pathKey] || ''}`;
 // Limit local debug build disk use; CI can select the normal release profile.
@@ -67,7 +70,7 @@ const bundle = { darwin: 'app', linux: 'deb', win32: 'nsis' }[platform];
 run(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), 'build',
   ...(!release ? ['--debug'] : []), '--ci', '--features', 'desktop-e2e', '--config', configPath,
   '--bundles', bundle]);
-const target = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target');
+const target = env.CARGO_TARGET_DIR;
 const bundles = path.join(target, release ? 'release' : 'debug', 'bundle');
 // Keep each installed candidate separate, including spaces and Unicode in its path.
 let installed = path.join(output, `Installed apps café ${candidateToken}`);

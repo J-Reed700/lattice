@@ -42,6 +42,7 @@ const table: CompareTableDto = {
       filePath: '/vault/trial.pdf',
       cells: [{ value: 'randomised controlled trial', citation: null }],
       error: null,
+      degraded: null,
     },
     {
       documentId: 'doc_2',
@@ -49,6 +50,7 @@ const table: CompareTableDto = {
       filePath: '/vault/review.pdf',
       cells: [{ value: null, citation: null }],
       error: null,
+      degraded: null,
     },
   ],
   modelName: 'llama-3',

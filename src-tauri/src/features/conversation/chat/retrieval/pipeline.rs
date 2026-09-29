@@ -517,11 +517,17 @@ impl ExternalLookup<'_> {
                             hyde_context.as_deref(),
                         )
                         .await
+                        .inspect_err(|error| {
+                            tracing::warn!(%error, "Query expansion failed; searching with the message as written")
+                        })
                         .ok();
                 }
                 hyde_service
                     .classify_query_with_context(self.validated_message, hyde_context.as_deref())
                     .await
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "Query classification failed; using the base interpretation")
+                    })
                     .ok()
                     .map(|query_type| {
                         HyDEInterpretation::raw_only(self.validated_message, query_type)
@@ -840,9 +846,10 @@ impl ExternalLookup<'_> {
             None => {
                 let outcome = self.fetch_one_page_inner(url.clone()).await;
                 if let Ok(page) = &outcome {
-                    super::super::source_snapshots::archive_page(
+                    super::super::source_snapshots::archive_page_for_url(
                         self.container,
                         self.conversation_id,
+                        &url,
                         page,
                     )
                     .await;

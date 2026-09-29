@@ -46,21 +46,23 @@ use crate::shared::utils::stealth;
 use async_trait::async_trait;
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
+use encoding_rs::{Encoding, UTF_8};
 use futures::future::join_all;
 use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tokio::time::sleep;
 
 use super::browser_reader;
 use tracing::{debug, info, warn};
-use url::{form_urlencoded, Url};
+use url::{form_urlencoded, Host, Url};
 
 /// Extracted text shorter than this is a shell — a title, a menu, a cookie
 /// notice — and the page is worth reading in the browser. Matches the chat
@@ -86,6 +88,16 @@ const MAX_TRACKED_SITES: usize = 64;
 /// Most of an article's text sits well inside this; past it a page is a
 /// dump, and the prompt has better uses for the room.
 const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
+/// Maximum decoded bytes accepted from a page before HTML parsing.
+const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
+/// Maximum decoded bytes accepted from a search provider response.
+const MAX_SEARCH_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum decoded bytes accepted from the Wikipedia JSON endpoint.
+const MAX_WIKIPEDIA_BODY_BYTES: usize = 1024 * 1024;
+/// Number of HTML parses admitted at once across requests.
+const MAX_HTML_PARSERS: usize = 2;
+const RESPONSE_BODY_TIMEOUT: Duration = Duration::from_secs(30);
+const HTML_PARSE_TIMEOUT: Duration = Duration::from_secs(15);
 /// The page cache's folder inside the app data directory.
 const PAGE_CACHE_DIR_NAME: &str = "web-cache";
 /// How long a search's results are reused. Long enough to cover a regenerate
@@ -113,6 +125,116 @@ fn cap_page_text(content: String, max_chars: usize) -> (String, bool) {
         crate::shared::text_utils::safe_truncate(&content, max_chars),
         true,
     )
+}
+
+/// Parse one bounded HTML document and derive both the title and readable
+/// body from the same tree.
+fn extract_page_parts(html: &str) -> (Option<String>, String) {
+    let document = Html::parse_document(html);
+    let title = Selector::parse("title")
+        .ok()
+        .and_then(|selector| document.select(&selector).next())
+        .map(|element| element.text().collect::<String>().trim().to_string());
+
+    let (Ok(article_selector), Ok(p_selector)) = (
+        Selector::parse("article"),
+        Selector::parse("p, h1, h2, h3, h4, h5, h6"),
+    ) else {
+        return (title, String::new());
+    };
+    let blocks = |root: scraper::ElementRef<'_>| -> Vec<String> {
+        root.select(&p_selector)
+            .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect()
+    };
+    let article_parts: Vec<String> = document
+        .select(&article_selector)
+        .flat_map(&blocks)
+        .collect();
+    let page_parts = blocks(document.root_element());
+    let chars = |parts: &[String]| parts.iter().map(String::len).sum::<usize>();
+    let parts = if !article_parts.is_empty()
+        && chars(&article_parts) * ARTICLE_SHARE_DENOMINATOR >= chars(&page_parts)
+    {
+        article_parts
+    } else {
+        page_parts
+    };
+    (title, parts.join("\n\n"))
+}
+
+/// Read a transparently decoded response body under a byte and wall-clock
+/// budget. Content-Length is only an early rejection hint; the stream limit
+/// also covers chunked and compressed bodies.
+async fn read_bounded_body(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> std::result::Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(format!("response declares more than {max_bytes} bytes"));
+    }
+    tokio::time::timeout(RESPONSE_BODY_TIMEOUT, async move {
+        let mut response = response;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            if body.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(format!("response exceeded {max_bytes} decoded bytes"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    })
+    .await
+    .map_err(|_| {
+        format!(
+            "response body exceeded {:?} deadline",
+            RESPONSE_BODY_TIMEOUT
+        )
+    })?
+}
+
+fn decode_response_text(body: Vec<u8>, content_type: Option<&str>) -> String {
+    let header_encoding = content_type
+        .and_then(|value| {
+            value.split(';').find_map(|parameter| {
+                let (name, value) = parameter.trim().split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then_some(value.trim().trim_matches(|ch| ch == '"' || ch == '\''))
+            })
+        })
+        .and_then(|label| Encoding::for_label(label.as_bytes()))
+        .unwrap_or(UTF_8);
+    let (encoding, bom_len) = Encoding::for_bom(&body).unwrap_or((header_encoding, 0));
+    encoding
+        .decode(body.get(bom_len..).unwrap_or_default())
+        .0
+        .into_owned()
+}
+
+async fn run_html_parser<T, F>(parsers: Arc<Semaphore>, operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::time::timeout(HTML_PARSE_TIMEOUT, async move {
+        let permit = parsers
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::InternalError("HTML parser admission is closed".into()))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            operation()
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("HTML parser task failed: {error}")))
+    })
+    .await
+    .map_err(|_| AppError::Network("HTML parsing exceeded its time budget".into()))?
 }
 
 /// Paces requests per site.
@@ -331,6 +453,9 @@ pub struct WebService {
     page_cache: PageCache,
     /// The last few searches, so a regenerate does not re-issue them.
     search_cache: SearchCache,
+    /// Blocking HTML parsers admitted at once. The permit lives in the
+    /// blocking closure, including when its async caller is cancelled.
+    html_parsers: Arc<Semaphore>,
 }
 
 /// A page read for display, which is a fetch plus the one thing the tool
@@ -354,6 +479,8 @@ impl WebService {
     pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
         let client = stealth::stealth_client_builder()
             .timeout(timeout)
+            .redirect(redirect_policy())
+            .dns_resolver(Arc::new(PublicOnlyResolver::new(stealth::proxy_hosts())))
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -362,6 +489,7 @@ impl WebService {
             pacer: SitePacer::default(),
             page_cache: PageCache::new(data_dir.join(PAGE_CACHE_DIR_NAME)),
             search_cache: SearchCache::default(),
+            html_parsers: Arc::new(Semaphore::new(MAX_HTML_PARSERS)),
         })
     }
 
@@ -404,8 +532,10 @@ impl WebService {
             None => {}
         }
 
-        // Validate URL for security
-        self.validate_url(url)?;
+        // Validate URL for security. The client's resolver and redirect
+        // policy hold every later hop to the same rule; this first check is
+        // here for the clearer error.
+        validate_url_resolved(url).await?;
 
         // Paced per site, like the searches: repeat requests to one host are
         // spaced and never overlap, and a host this process has not contacted
@@ -452,13 +582,11 @@ impl WebService {
             )));
         }
 
-        // Get final URL (after redirects)
+        // Every hop to here was cleared by the redirect policy and the
+        // resolver before it was requested.
         let final_url = response.url().to_string();
-
-        // Re-validate final URL after redirects (prevents redirect-based SSRF)
         if final_url != url {
             debug!("URL redirected to: {}", final_url);
-            self.validate_url(&final_url)?;
         }
 
         let content_type = response
@@ -467,13 +595,12 @@ impl WebService {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let html = response
-            .text()
+        let html = read_bounded_body(response, MAX_PAGE_BODY_BYTES)
             .await
-            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
+        let html = decode_response_text(html, content_type.as_deref());
 
-        let title = self.extract_title(&html);
-        let content = self.extract_article_text(&html);
+        let (title, content) = self.parse_page(html).await?;
 
         // A page whose text is written by its scripts arrives as a shell: a
         // title and a menu. The browser runs the scripts; its text is kept
@@ -497,7 +624,7 @@ impl WebService {
         match browser_reader::read(url, browser_reader::DEFAULT_READ_TIMEOUT).await {
             Ok(page) if !page.text.trim().is_empty() => {
                 // The browser follows redirects the HTTP client never saw.
-                if page.final_url != url && self.validate_url(&page.final_url).is_err() {
+                if page.final_url != url && validate_url_resolved(&page.final_url).await.is_err() {
                     warn!(
                         url,
                         final_url = page.final_url.as_str(),
@@ -585,55 +712,30 @@ impl WebService {
     /// 1. Finding <article> elements
     /// 2. Extracting text from <p>, <h1>-<h6> tags
     /// 3. Cleaning whitespace
+    #[cfg(test)]
     fn extract_article_text(&self, html: &str) -> String {
-        let document = Html::parse_document(html);
-
-        let (Ok(article_selector), Ok(p_selector)) = (
-            Selector::parse("article"),
-            Selector::parse("p, h1, h2, h3, h4, h5, h6"),
-        ) else {
-            return String::new();
-        };
-
-        let blocks = |root: scraper::ElementRef<'_>| -> Vec<String> {
-            root.select(&p_selector)
-                .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
-                .filter(|text| !text.is_empty())
-                .collect()
-        };
-
-        let article_parts: Vec<String> = document
-            .select(&article_selector)
-            .flat_map(&blocks)
-            .collect();
-        let page_parts = blocks(document.root_element());
-
-        // An `<article>` is not always the article. Journal and news pages use
-        // it for "related" cards and leave the body outside any `<article>`:
-        // Frontiers yielded 48 words of card blurbs from a full paper, and the
-        // page was reported unreadable. The article set is trusted only when
-        // it holds a real share of the page's text.
-        let chars = |parts: &[String]| parts.iter().map(String::len).sum::<usize>();
-        let parts = if !article_parts.is_empty()
-            && chars(&article_parts) * ARTICLE_SHARE_DENOMINATOR >= chars(&page_parts)
-        {
-            article_parts
-        } else {
-            page_parts
-        };
-
-        parts.join("\n\n")
+        extract_page_parts(html).1
     }
 
-    /// Extract title from HTML
-    fn extract_title(&self, html: &str) -> Option<String> {
-        let document = Html::parse_document(html);
-        let title_selector = Selector::parse("title").ok()?;
+    async fn parse_page(&self, html: String) -> Result<(Option<String>, String)> {
+        run_html_parser(self.html_parsers.clone(), move || extract_page_parts(&html)).await
+    }
 
-        document
-            .select(&title_selector)
-            .next()
-            .map(|element| element.text().collect::<String>().trim().to_string())
+    async fn parse_search_results_bounded(
+        &self,
+        html: String,
+        max_results: usize,
+    ) -> Result<Vec<WebSearchResult>> {
+        run_html_parser(self.html_parsers.clone(), move || {
+            Self::parse_search_results(&html, max_results)
+        })
+        .await
+    }
+
+    /// Extract title from HTML. Kept for the focused parser tests.
+    #[cfg(test)]
+    fn extract_title(&self, html: &str) -> Option<String> {
+        extract_page_parts(html).0
     }
 
     /// Normalize an extracted search-result href into the URL of the page it
@@ -646,7 +748,7 @@ impl WebService {
     /// first and was returned as the result, redirect and all. Every fetch of
     /// one of those comes back as an empty page, so the model is handed a
     /// result it can never read and goes looking for the same page again.
-    fn normalize_search_url(&self, raw: &str) -> Option<String> {
+    fn normalize_search_url(raw: &str) -> Option<String> {
         let absolute = Self::absolutize_search_url(raw.trim())?;
         Some(Self::unwrap_redirect_url(&absolute).unwrap_or(absolute))
     }
@@ -723,7 +825,7 @@ impl WebService {
             || (lower.contains("403 - forbidden") && lower.contains("automated queries"))
     }
 
-    fn is_search_result_candidate_url(&self, url: &str) -> bool {
+    fn is_search_result_candidate_url(url: &str) -> bool {
         let Ok(parsed) = Url::parse(url) else {
             return false;
         };
@@ -765,7 +867,7 @@ impl WebService {
             )
     }
 
-    fn canonicalize_url_for_dedup(&self, raw: &str) -> String {
+    fn canonicalize_url_for_dedup(raw: &str) -> String {
         let trimmed = raw.trim();
         let Ok(mut parsed) = Url::parse(trimmed) else {
             return trimmed.to_ascii_lowercase();
@@ -861,7 +963,7 @@ impl WebService {
         domain_first
     }
 
-    fn parse_search_results(&self, html: &str, max_results: usize) -> Vec<WebSearchResult> {
+    fn parse_search_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
         let document = Html::parse_document(html);
         let container_selector =
             Selector::parse(".result, .results_links, article, .b_algo, li.b_algo").ok();
@@ -889,10 +991,10 @@ impl WebService {
                 let Some(href) = link.value().attr("href") else {
                     continue;
                 };
-                let Some(url) = self.normalize_search_url(href) else {
+                let Some(url) = Self::normalize_search_url(href) else {
                     continue;
                 };
-                let canonical = self.canonicalize_url_for_dedup(&url);
+                let canonical = Self::canonicalize_url_for_dedup(&url);
                 if !seen.insert(canonical) {
                     continue;
                 }
@@ -946,10 +1048,10 @@ impl WebService {
                 let Some(href) = link.value().attr("href") else {
                     continue;
                 };
-                let Some(url) = self.normalize_search_url(href) else {
+                let Some(url) = Self::normalize_search_url(href) else {
                     continue;
                 };
-                let canonical = self.canonicalize_url_for_dedup(&url);
+                let canonical = Self::canonicalize_url_for_dedup(&url);
                 if !seen.insert(canonical) {
                     continue;
                 }
@@ -986,11 +1088,11 @@ impl WebService {
                 let Some(href) = link.value().attr("href") else {
                     continue;
                 };
-                let Some(url) = self.normalize_search_url(href) else {
+                let Some(url) = Self::normalize_search_url(href) else {
                     continue;
                 };
-                let canonical = self.canonicalize_url_for_dedup(&url);
-                if !self.is_search_result_candidate_url(&url) || !seen.insert(canonical) {
+                let canonical = Self::canonicalize_url_for_dedup(&url);
+                if !Self::is_search_result_candidate_url(&url) || !seen.insert(canonical) {
                     continue;
                 }
 
@@ -1186,7 +1288,7 @@ impl WebService {
     /// pages win URL dedup; the latest error overwrites earlier ones.
     fn absorb_provider_page(&self, merged: &mut QueryResults, provider: &str, page: ProviderPage) {
         for result in page.results {
-            let canonical = self.canonicalize_url_for_dedup(&result.url);
+            let canonical = Self::canonicalize_url_for_dedup(&result.url);
             if merged.seen_urls.insert(canonical) {
                 merged.results.push(result);
             }
@@ -1280,8 +1382,23 @@ impl WebService {
                         info!("Attempting FlareSolverr bypass for {}", search_url);
                         match solver.solve(search_url).await {
                             Ok(solved_html) => {
-                                let mut results =
-                                    self.parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
+                                if solved_html.len() > MAX_SEARCH_BODY_BYTES {
+                                    warn!("FlareSolverr response exceeded the search body limit");
+                                    page.last_error = Some(
+                                        "FlareSolverr response exceeded its byte limit".into(),
+                                    );
+                                    break;
+                                }
+                                let mut results = match self
+                                    .parse_search_results_bounded(solved_html, PROVIDER_PAGE_SIZE)
+                                    .await
+                                {
+                                    Ok(results) => results,
+                                    Err(error) => {
+                                        page.last_error = Some(error.to_string());
+                                        break;
+                                    }
+                                };
                                 for result in &mut results {
                                     result.source = Some(provider.to_string());
                                 }
@@ -1304,7 +1421,16 @@ impl WebService {
                     break;
                 }
 
-                let mut results = self.parse_search_results(&html, PROVIDER_PAGE_SIZE);
+                let mut results = match self
+                    .parse_search_results_bounded(html, PROVIDER_PAGE_SIZE)
+                    .await
+                {
+                    Ok(results) => results,
+                    Err(error) => {
+                        page.last_error = Some(error.to_string());
+                        break;
+                    }
+                };
                 for result in &mut results {
                     result.source = Some(provider.to_string());
                 }
@@ -1356,8 +1482,13 @@ impl WebService {
             return SearchPage::Status(status);
         }
 
-        match response.text().await {
-            Ok(body) => SearchPage::Html(body),
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        match read_bounded_body(response, MAX_SEARCH_BODY_BYTES).await {
+            Ok(body) => SearchPage::Html(decode_response_text(body, content_type.as_deref())),
             Err(e) => {
                 warn!(
                     "Failed to read search response from {} on attempt {}: {}",
@@ -1390,14 +1521,20 @@ impl WebService {
 
         match response {
             Ok(resp) if resp.status().is_success() => {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(payload) => {
-                        page.results = self.parse_wikipedia_results(&payload, wiki_limit);
-                        page.used = true;
-                    }
+                match read_bounded_body(resp, MAX_WIKIPEDIA_BODY_BYTES).await {
+                    Ok(body) => match serde_json::from_slice::<serde_json::Value>(&body) {
+                        Ok(payload) => {
+                            page.results = self.parse_wikipedia_results(&payload, wiki_limit);
+                            page.used = true;
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse Wikipedia search response: {}", e);
+                            page.last_error = Some(format!("Wikipedia parse failed: {}", e));
+                        }
+                    },
                     Err(e) => {
-                        warn!("Failed to parse Wikipedia search response: {}", e);
-                        page.last_error = Some(format!("Wikipedia parse failed: {}", e));
+                        warn!("Failed to read bounded Wikipedia response: {}", e);
+                        page.last_error = Some(format!("Wikipedia body failed: {}", e));
                     }
                 }
             }
@@ -1420,105 +1557,6 @@ impl WebService {
         let referer = stealth::search_referer_for_url(url);
         let headers = stealth::search_headers(profile, referer);
         self.client.get(url).headers(headers)
-    }
-
-    /// Check if IP is private or reserved (comprehensive check)
-    fn is_private_ip(&self, ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                ipv4.is_private()
-                    || ipv4.is_loopback()
-                    || ipv4.is_link_local()
-                    || ipv4.is_broadcast()
-                    || ipv4.is_documentation()
-                    || ipv4.is_unspecified()
-                    || ipv4 == Ipv4Addr::new(169, 254, 169, 254) // AWS metadata
-            }
-            IpAddr::V6(ipv6) => {
-                ipv6.is_loopback()
-                    || ipv6.is_multicast()
-                    || ipv6.is_unspecified()
-                    || ipv6.segments()[0] & 0xfe00 == 0xfc00 // fc00::/7 (Unique Local Addresses)
-                    || ipv6.segments()[0] & 0xffc0 == 0xfe80 // fe80::/10 (Link-Local)
-                    // AWS IPv6 metadata
-                    || ipv6.segments() == [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254]
-            }
-        }
-    }
-
-    /// Resolve hostname to IPs and validate (prevents DNS rebinding - CWE-918)
-    ///
-    /// This prevents DNS rebinding attacks by:
-    /// 1. Resolving DNS before making HTTP request
-    /// 2. Validating all resolved IP addresses
-    /// 3. Blocking if any IP is private/reserved
-    ///
-    /// # Arguments
-    /// * `hostname` - Hostname to resolve and validate
-    /// * `port` - Port number for socket address resolution
-    ///
-    /// # Errors
-    /// Returns error if hostname resolves to blocked IP or DNS resolution fails
-    fn resolve_and_validate_host(&self, hostname: &str, port: u16) -> Result<()> {
-        // Block localhost variants immediately
-        let lowercase_host = hostname.to_lowercase();
-        if lowercase_host == "localhost" || lowercase_host == "0.0.0.0" || lowercase_host == "[::]"
-        {
-            return Err(AppError::InvalidUrl(format!(
-                "Access to localhost blocked: {}",
-                hostname
-            )));
-        }
-
-        // Try to parse as IP address first
-        if let Ok(ip) = hostname.parse::<IpAddr>() {
-            if self.is_private_ip(ip) {
-                return Err(AppError::InvalidUrl(format!(
-                    "Access to private/reserved IP blocked: {}",
-                    hostname
-                )));
-            }
-            return Ok(());
-        }
-
-        // Resolve hostname to IP addresses
-        let socket_addr = format!("{}:{}", hostname, port);
-        let resolved: Vec<IpAddr> = match socket_addr.to_socket_addrs() {
-            Ok(addrs) => addrs.map(|addr| addr.ip()).collect(),
-            Err(e) => {
-                return Err(AppError::InvalidUrl(format!(
-                    "Failed to resolve hostname {}: {}",
-                    hostname, e
-                )));
-            }
-        };
-
-        if resolved.is_empty() {
-            return Err(AppError::InvalidUrl(format!(
-                "No IP addresses resolved for hostname: {}",
-                hostname
-            )));
-        }
-
-        let blocked_ips: Vec<String> = resolved
-            .iter()
-            .filter(|ip| self.is_private_ip(**ip))
-            .map(|ip| ip.to_string())
-            .collect();
-
-        if !blocked_ips.is_empty() {
-            return Err(AppError::InvalidUrl(format!(
-                "Hostname {} resolves to blocked IP(s): {}. Access to private networks is not allowed.",
-                hostname,
-                blocked_ips.join(", ")
-            )));
-        }
-
-        debug!(
-            "DNS validation passed for {}: resolved to {:?}",
-            hostname, resolved
-        );
-        Ok(())
     }
 }
 
@@ -1626,7 +1664,7 @@ impl WebServiceTrait for WebService {
                     providers_used.insert(provider);
                 }
                 for result in &results {
-                    let canonical_url = self.canonicalize_url_for_dedup(&result.url);
+                    let canonical_url = Self::canonicalize_url_for_dedup(&result.url);
                     if seen_urls.insert(canonical_url) {
                         if let Some(domain) = self.normalized_domain_key(&result.url) {
                             seen_domains.insert(domain);
@@ -1700,28 +1738,255 @@ impl WebServiceTrait for WebService {
         self.read_page(url).await.map(|read| read.output)
     }
 
+    /// The synchronous check the tool executors run before a request on their
+    /// own clients. It resolves with the blocking resolver because the trait
+    /// method is synchronous; this service's own fetches use
+    /// [`validate_url_resolved`] and a resolver that pins what it checked.
     fn validate_url(&self, url: &str) -> Result<()> {
         let parsed = parse_fetchable_url(url)?;
+        let Some(domain) = check_url_host(&parsed)? else {
+            return Ok(());
+        };
+        let port = parsed.port_or_known_default().unwrap_or(443);
+        let resolved: Vec<SocketAddr> = (domain.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|e| AppError::InvalidUrl(format!("Failed to resolve hostname {domain}: {e}")))?
+            .collect();
+        refuse_blocked_addresses(&domain, &resolved)
+    }
+}
 
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
+// ─── Private-address guard ──────────────────────────────────────────────────
+//
+// A page read must never reach this machine or the user's network (CWE-918).
+// Three places enforce it: the URL check before the first request, the
+// redirect policy for every hop (so a public page's 302 to a router is refused
+// before the GET), and the client's resolver, which refuses a name that
+// resolves privately and hands the connector exactly the addresses it checked,
+// so a second lookup cannot rebind to a private one.
 
-        let port = parsed
-            .port()
-            .unwrap_or_else(|| if parsed.scheme() == "https" { 443 } else { 80 });
+/// Redirect hops followed before giving up, as reqwest's default does.
+const MAX_REDIRECTS: usize = 10;
 
-        // Resolve DNS and validate IPs (prevents DNS rebinding - CWE-918)
-        self.resolve_and_validate_host(host, port)?;
+/// Whether `ip` is loopback, private, link-local, shared, reserved or
+/// otherwise not on the public internet.
+pub(crate) fn is_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_blocked_ipv4(v4),
+        IpAddr::V6(v6) => is_blocked_ipv6(v6),
+    }
+}
 
-        debug!("URL validation passed: {}", url);
-        Ok(())
+fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local() // 169.254/16, cloud metadata included
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.is_multicast()
+        || a == 0 // 0.0.0.0/8: "this network", which reaches localhost on some stacks
+        || (a == 100 && (b & 0xc0) == 64) // 100.64/10: carrier-grade NAT, Tailscale
+}
+
+fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
+    // `::ffff:192.168.1.1` is the IPv4 address wearing an IPv6 costume, and
+    // the NAT64 prefix `64:ff9b::/96` is translated to its embedded IPv4.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_blocked_ipv4(v4);
+    }
+    let s = ip.segments();
+    if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        let v4 = Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
+        return is_blocked_ipv4(v4);
+    }
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || s[0] & 0xfe00 == 0xfc00 // fc00::/7, unique local (cloud metadata fd00:ec2::254 included)
+        || s[0] & 0xffc0 == 0xfe80 // fe80::/10, link-local
+}
+
+/// Refuse what the URL alone shows to be local: the localhost names and a
+/// literal address in a blocked range. Returns the domain still to be
+/// resolved, or `None` when the host was a literal and is already cleared.
+fn check_url_host(url: &Url) -> Result<Option<String>> {
+    match url.host() {
+        None => Err(AppError::InvalidUrl("URL must have a host".to_string())),
+        Some(Host::Ipv4(ip)) => refuse_ip(IpAddr::V4(ip)).map(|()| None),
+        Some(Host::Ipv6(ip)) => refuse_ip(IpAddr::V6(ip)).map(|()| None),
+        Some(Host::Domain(domain)) => {
+            let name = domain.trim_end_matches('.').to_ascii_lowercase();
+            if name == "localhost" || name.ends_with(".localhost") {
+                return Err(AppError::InvalidUrl(format!(
+                    "Access to localhost blocked: {domain}"
+                )));
+            }
+            Ok(Some(name))
+        }
+    }
+}
+
+fn refuse_ip(ip: IpAddr) -> Result<()> {
+    if is_blocked_ip(ip) {
+        return Err(AppError::InvalidUrl(format!(
+            "Access to private/reserved IP blocked: {ip}"
+        )));
+    }
+    Ok(())
+}
+
+fn refuse_blocked_addresses(host: &str, resolved: &[SocketAddr]) -> Result<()> {
+    if resolved.is_empty() {
+        return Err(AppError::InvalidUrl(format!(
+            "No IP addresses resolved for hostname: {host}"
+        )));
+    }
+    let blocked: Vec<String> = resolved
+        .iter()
+        .filter(|addr| is_blocked_ip(addr.ip()))
+        .map(|addr| addr.ip().to_string())
+        .collect();
+    if !blocked.is_empty() {
+        return Err(AppError::InvalidUrl(format!(
+            "Hostname {host} resolves to blocked IP(s): {}. Access to private networks is not allowed.",
+            blocked.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve `host` without blocking the runtime and refuse it if any address
+/// it resolves to is blocked. Any, not all: a name that answers with one
+/// public and one private address can be steered to the private one.
+async fn resolve_public(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| AppError::InvalidUrl(format!("Failed to resolve hostname {host}: {e}")))?
+        .collect();
+    refuse_blocked_addresses(host, &resolved)?;
+    Ok(resolved)
+}
+
+/// The full check for a URL this service is about to request: scheme, host
+/// and every address the host resolves to.
+async fn validate_url_resolved(url: &str) -> Result<()> {
+    let parsed = parse_fetchable_url(url)?;
+    if let Some(domain) = check_url_host(&parsed)? {
+        let port = parsed.port_or_known_default().unwrap_or(443);
+        resolve_public(&domain, port).await?;
+    }
+    debug!("URL validation passed: {}", url);
+    Ok(())
+}
+
+/// Follow a redirect only to an http(s) URL whose host is not local. A hop
+/// to a name is resolved, and refused if private, by [`PublicOnlyResolver`]
+/// before anything connects.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error(format!("too many redirects (over {MAX_REDIRECTS})"));
+        }
+        let checked =
+            parse_fetchable_url(attempt.url().as_str()).and_then(|url| check_url_host(&url));
+        match checked {
+            Ok(_) => attempt.follow(),
+            Err(e) => {
+                warn!(target_url = %attempt.url(), error = %e, "Redirect refused");
+                attempt.error(e.to_string())
+            }
+        }
+    })
+}
+
+/// The web client's DNS resolver: an address in a blocked range fails the
+/// lookup, so neither the first request nor any redirect hop can connect to
+/// one, and the connector uses exactly the addresses checked here.
+struct PublicOnlyResolver {
+    /// Configured proxies, which may legitimately live on this machine.
+    exempt_hosts: HashSet<String>,
+}
+
+impl PublicOnlyResolver {
+    fn new(exempt_hosts: Vec<String>) -> Self {
+        Self {
+            exempt_hosts: exempt_hosts.into_iter().collect(),
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
+        let exempt = self.exempt_hosts.contains(&host);
+        Box::pin(async move {
+            // The connector sets the port itself; 0 is a placeholder.
+            let addrs: Vec<SocketAddr> = if exempt {
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect()
+            } else {
+                if host == "localhost" || host.ends_with(".localhost") {
+                    return Err(format!("Access to localhost blocked: {host}").into());
+                }
+                resolve_public(&host, 0).await.map_err(|e| e.to_string())?
+            };
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_text_decode_honors_declared_charset_and_bom() {
+        assert_eq!(
+            decode_response_text(
+                vec![0x93, b'h', b'i', 0x94],
+                Some("text/html; charset=windows-1252")
+            ),
+            "“hi”"
+        );
+        assert_eq!(
+            decode_response_text(
+                b"\xef\xbb\xbfhello".to_vec(),
+                Some("text/html; charset=windows-1252")
+            ),
+            "hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_body_rejects_oversized_chunked_response_without_length() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            socket
+                .write_all(b"a\r\n0123456789\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        let error = read_bounded_body(response, 8).await.unwrap_err();
+        assert!(error.contains("exceeded 8 decoded bytes"), "{error}");
+    }
 
     /// A service for the tests that never leave the process. The cache folder
     /// is named but never created: nothing here stores a page.
@@ -1755,26 +2020,143 @@ mod tests {
     }
 
     #[test]
-    fn test_is_private_ip() {
+    fn blocked_ranges_cover_every_private_and_reserved_block() {
+        let blocked = [
+            "192.168.1.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "169.254.169.254",
+            "100.64.0.1",      // CGNAT low end
+            "100.127.255.254", // CGNAT high end
+            "0.0.0.0",
+            "0.1.2.3", // 0.0.0.0/8
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.1.1",
+            "::ffff:169.254.169.254",
+            "64:ff9b::a00:1", // NAT64 of 10.0.0.1
+            "fc00::1",
+            "fd00:ec2::254",
+            "fe80::1",
+            "febf::1",
+            "ff02::1",
+        ];
+        for ip in blocked {
+            assert!(is_blocked_ip(ip.parse().unwrap()), "{ip} must be blocked");
+        }
+
+        let public = [
+            "8.8.8.8",
+            "1.1.1.1",
+            "100.63.255.255", // just below CGNAT
+            "100.128.0.1",    // just above CGNAT
+            "::ffff:8.8.8.8",
+            "2606:4700:4700::1111",
+            "fec0::1", // just past fe80::/10
+        ];
+        for ip in public {
+            assert!(!is_blocked_ip(ip.parse().unwrap()), "{ip} must be allowed");
+        }
+    }
+
+    #[test]
+    fn literal_hosts_in_blocked_ranges_are_refused_from_the_url() {
         let service = test_service();
+        for url in [
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:c0a8:101]/",
+            "http://100.64.1.1/",
+            "http://0.0.0.0:8080/",
+            "http://[fe80::1]/",
+            "http://api.localhost/",
+            "http://LOCALHOST./",
+        ] {
+            assert!(service.validate_url(url).is_err(), "{url} must be refused");
+        }
+    }
 
-        // Private IPs (should be blocked)
-        assert!(service.is_private_ip("192.168.1.1".parse().unwrap()));
-        assert!(service.is_private_ip("10.0.0.1".parse().unwrap()));
-        assert!(service.is_private_ip("172.16.0.1".parse().unwrap()));
+    #[tokio::test]
+    async fn resolver_refuses_names_that_resolve_privately() {
+        use reqwest::dns::Resolve;
+        let resolver = PublicOnlyResolver::new(Vec::new());
+        let name: reqwest::dns::Name = "localhost".parse().unwrap();
+        assert!(resolver.resolve(name).await.is_err());
 
-        // Loopback
-        assert!(service.is_private_ip("127.0.0.1".parse().unwrap()));
+        // A configured proxy on this machine is still reachable by name.
+        let resolver = PublicOnlyResolver::new(vec!["localhost".to_string()]);
+        let name: reqwest::dns::Name = "localhost".parse().unwrap();
+        assert!(resolver.resolve(name).await.is_ok());
+    }
 
-        // Link-local
-        assert!(service.is_private_ip("169.254.1.1".parse().unwrap()));
+    #[tokio::test]
+    async fn redirect_to_a_lan_address_is_refused_before_it_is_requested() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
 
-        // AWS metadata
-        assert!(service.is_private_ip("169.254.169.254".parse().unwrap()));
+        // The redirect target: a "LAN device" that records whether it was hit.
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_port = target.local_addr().unwrap().port();
+        let hit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hit_flag = hit.clone();
+        tokio::spawn(async move {
+            if target.accept().await.is_ok() {
+                hit_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
 
-        // Public IPs (should be allowed)
-        assert!(!service.is_private_ip("8.8.8.8".parse().unwrap()));
-        assert!(!service.is_private_ip("1.1.1.1".parse().unwrap()));
+        // The "public" page that answers with a 302 to it. Reached directly by
+        // a client with the policy alone, since the resolver would refuse the
+        // loopback test server itself.
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_port = origin.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = origin.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target_port}/admin\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirect_policy())
+            .build()
+            .unwrap();
+        let result = client
+            .get(format!("http://127.0.0.1:{origin_port}/"))
+            .send()
+            .await;
+
+        let err = result.expect_err("the redirect must be refused");
+        assert!(err.is_redirect(), "{err}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !hit.load(std::sync::atomic::Ordering::SeqCst),
+            "the LAN address was contacted"
+        );
+
+        // Same refusal for the other literal forms a redirect can use.
+        for location in [
+            "http://192.168.1.1/",
+            "http://[::ffff:10.0.0.1]/",
+            "file:///etc/passwd",
+        ] {
+            let url = Url::parse(location).unwrap();
+            assert!(
+                parse_fetchable_url(url.as_str())
+                    .and_then(|u| check_url_host(&u))
+                    .is_err(),
+                "{location}"
+            );
+        }
     }
 
     #[test]
@@ -1847,9 +2229,8 @@ mod tests {
 
     #[test]
     fn test_normalize_search_url_accepts_bing_redirect_links() {
-        let service = test_service();
         let raw = "/ck/a?!&&p=abc123";
-        let normalized = service.normalize_search_url(raw);
+        let normalized = WebService::normalize_search_url(raw);
         assert_eq!(
             normalized.as_deref(),
             Some("https://www.bing.com/ck/a?!&&p=abc123")
@@ -1861,20 +2242,18 @@ mod tests {
     /// and returned without ever being unwrapped.
     #[test]
     fn a_protocol_relative_duckduckgo_redirect_resolves_to_its_destination() {
-        let service = test_service();
         let raw = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.thereviewgeek.com%2Fsilo%2Ds1e2review%2F&rut=c99505e363ada8be";
         assert_eq!(
-            service.normalize_search_url(raw).as_deref(),
+            WebService::normalize_search_url(raw).as_deref(),
             Some("https://www.thereviewgeek.com/silo-s1e2review/")
         );
     }
 
     #[test]
     fn an_absolute_duckduckgo_redirect_resolves_to_its_destination() {
-        let service = test_service();
         let raw = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%2Fb&rut=deadbeef";
         assert_eq!(
-            service.normalize_search_url(raw).as_deref(),
+            WebService::normalize_search_url(raw).as_deref(),
             Some("https://example.com/a/b")
         );
     }
@@ -1884,10 +2263,9 @@ mod tests {
     /// back a page with no article text in it.
     #[test]
     fn a_bing_redirect_with_a_payload_resolves_to_its_destination() {
-        let service = test_service();
         let raw = "https://www.bing.com/ck/a?!&&p=fc5438df02&ptn=3&fclid=398e7e7c&u=a1aHR0cHM6Ly9lbi5tLndpa2lwZWRpYS5vcmcvd2lraS9TaWxvXyhUVl9zZXJpZXMp&ntb=1";
         assert_eq!(
-            service.normalize_search_url(raw).as_deref(),
+            WebService::normalize_search_url(raw).as_deref(),
             Some("https://en.m.wikipedia.org/wiki/Silo_(TV_series)")
         );
     }
@@ -1896,21 +2274,19 @@ mod tests {
     /// fetch may follow it server-side. Only a decodable payload is replaced.
     #[test]
     fn a_redirect_without_a_readable_destination_is_left_alone() {
-        let service = test_service();
         for raw in [
             "https://www.bing.com/ck/a?!&&p=abc123",
             "https://duckduckgo.com/l/?rut=deadbeef",
             "https://www.bing.com/ck/a?u=a1bm90LWEtdXJs",
         ] {
-            assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
+            assert_eq!(WebService::normalize_search_url(raw).as_deref(), Some(raw));
         }
     }
 
     #[test]
     fn an_ordinary_result_url_passes_through_untouched() {
-        let service = test_service();
         let raw = "https://example.com/silo/recap?season=1";
-        assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
+        assert_eq!(WebService::normalize_search_url(raw).as_deref(), Some(raw));
     }
 
     #[test]
@@ -1926,7 +2302,6 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_generic_anchor_fallback() {
-        let service = test_service();
         let html = r#"
             <html>
                 <body>
@@ -1937,7 +2312,7 @@ mod tests {
             </html>
         "#;
 
-        let results = service.parse_search_results(html, 5);
+        let results = WebService::parse_search_results(html, 5);
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].url,
@@ -1947,7 +2322,6 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_generic_fallback_skips_search_hosts() {
-        let service = test_service();
         let html = r#"
             <html>
                 <body>
@@ -1957,7 +2331,7 @@ mod tests {
             </html>
         "#;
 
-        let results = service.parse_search_results(html, 5);
+        let results = WebService::parse_search_results(html, 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://www.bing.com/ck/a?!&&p=abc123");
     }

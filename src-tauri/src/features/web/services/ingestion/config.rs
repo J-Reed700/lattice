@@ -66,6 +66,7 @@ pub struct WebIngestionServiceBuilder {
     embedding_service: Option<Arc<dyn EmbeddingServiceTrait>>,
     index_storage: Option<Arc<dyn IndexStorageTrait>>,
     tokenizer: Option<Arc<Tokenizer>>,
+    vector_search: Option<Arc<dyn crate::application::ports::VectorSearchPort>>,
     config: WebIngestionConfig,
 }
 
@@ -77,6 +78,7 @@ impl WebIngestionServiceBuilder {
             embedding_service: None,
             index_storage: None,
             tokenizer: None,
+            vector_search: None,
             config: WebIngestionConfig::default(),
         }
     }
@@ -103,6 +105,16 @@ impl WebIngestionServiceBuilder {
 
     pub fn tokenizer(mut self, value: Arc<Tokenizer>) -> Self {
         self.tokenizer = Some(value);
+        self
+    }
+
+    /// The live vector index that imported articles are published to, the
+    /// same instance search reads. Without it an article is only in SQLite.
+    pub fn vector_search(
+        mut self,
+        value: Arc<dyn crate::application::ports::VectorSearchPort>,
+    ) -> Self {
+        self.vector_search = Some(value);
         self
     }
 
@@ -203,6 +215,7 @@ impl WebIngestionServiceBuilder {
             tokenizer,
             self.config,
         )
+        .map(|service| service.with_vector_search(self.vector_search))
     }
 }
 

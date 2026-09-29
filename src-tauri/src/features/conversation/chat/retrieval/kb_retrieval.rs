@@ -243,7 +243,10 @@ pub(super) async fn run_kb_retrieval(
         Err(error) => {
             warn!(%error, "Document retrieval failed");
             search_step.failed(Some(error.to_string()));
-            (super::empty_search_response(), Some(error.to_string()))
+            (
+                super::empty_search_response(),
+                Some(unavailable_reason(&error.to_string())),
+            )
         }
     };
     // Rerank focused searches only. Ordered document reading is intentional
@@ -432,6 +435,17 @@ pub(super) async fn run_kb_retrieval(
 
 /// What a search pass came back with, counted the way the trace counts it:
 /// passages, and the documents they came from.
+/// The retrieval trace carries at most this many characters of the search
+/// failure; the frontend schema caps `unavailableReason` at the same length.
+const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
+
+/// Clip a search failure for the retrieval trace. A longer reason would fail
+/// the frontend's trace schema and drop the "search unavailable" notice on
+/// exactly the turn that needs it.
+fn unavailable_reason(error: &str) -> String {
+    crate::shared::text_utils::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
+}
+
 fn passage_count_line(results: &[SearchResultDto]) -> String {
     if results.is_empty() {
         return "nothing".to_string();
@@ -642,5 +656,18 @@ async fn summary_tier(
     SummaryTier {
         summaries,
         openings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_reason_is_clipped_to_the_trace_limit() {
+        let long = "é".repeat(UNAVAILABLE_REASON_MAX_CHARS * 3);
+        let reason = unavailable_reason(&long);
+        assert_eq!(reason.chars().count(), UNAVAILABLE_REASON_MAX_CHARS);
+        assert_eq!(unavailable_reason("index offline"), "index offline");
     }
 }

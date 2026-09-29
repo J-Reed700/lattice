@@ -37,11 +37,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/**",
           "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$APPCACHE/**",
-          "/Volumes/**"
+          "$HOME/.lattice/files/**"
         ]
       }
     }

@@ -20,7 +20,6 @@ import type {
   DocumentSpaceMembershipDto,
 } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
-import { ChatStreamStatus } from '@/types/events';
 import type {
   CompactionRecord,
   Conversation,
@@ -42,8 +41,10 @@ import {
   TurnRecordSchema,
   TurnStepSchema,
 } from '@/types/conversation';
+import { ChatStreamStatus } from '@/types/events';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
+import { createFrameBatcher } from '@/utils/frameBatcher';
 
 import { conversationKeys, type ConversationListParams } from './queries/conversationKeys';
 
@@ -139,6 +140,10 @@ const fetchWebSources = async (id: string): Promise<ConversationWebSourceDto[]> 
 const fetchMemberships = async (documentId: string): Promise<DocumentSpaceMembershipDto[]> =>
   unwrap(await VaultAPI.listDocumentSpaceMemberships(documentId));
 
+/** How many recent conversations keep linked-document and web-source observers. */
+export const MAX_OBSERVED_CONVERSATIONS = 20;
+export const MAX_OBSERVED_MEMBERSHIPS = 100;
+
 const addRequestedId = (
   field:
     | 'requestedLinkedConversationIds'
@@ -148,8 +153,30 @@ const addRequestedId = (
 ): void => {
   conversationUiStore.setState(state => {
     const next = new Set(state[field]);
+    // Re-inserting moves the id to the newest end, so the set is an LRU.
+    next.delete(id);
     next.add(id);
+    // Membership panels also outlive the documents that requested them unless
+    // evicted. Removing the observer lets React Query reclaim inactive data.
+    const capacity = field === 'requestedMembershipDocumentIds'
+      ? MAX_OBSERVED_MEMBERSHIPS
+      : MAX_OBSERVED_CONVERSATIONS;
+    for (const oldest of next) {
+      if (next.size <= capacity) break;
+      next.delete(oldest);
+    }
     return { [field]: next };
+  });
+};
+
+/** Stop observing a conversation's per-conversation queries (it was deleted). */
+const forgetRequestedConversation = (id: string): void => {
+  conversationUiStore.setState(state => {
+    const linked = new Set(state.requestedLinkedConversationIds);
+    const web = new Set(state.requestedWebSourceConversationIds);
+    linked.delete(id);
+    web.delete(id);
+    return { requestedLinkedConversationIds: linked, requestedWebSourceConversationIds: web };
   });
 };
 
@@ -204,6 +231,7 @@ const normalizeSource = (raw: unknown): Record<string, unknown> | null => {
     fileSizeBytes: value.fileSizeBytes ?? value.file_size_bytes ?? 0,
     modifiedAt: value.modifiedAt ?? value.modified_at ?? '',
     citationId: value.citationId ?? value.citation_id ?? undefined,
+    webSnapshot: value.webSnapshot ?? value.web_snapshot ?? undefined,
   };
 };
 
@@ -495,9 +523,22 @@ export function useConversationsController(): ConversationsState {
     }
   }, [queryClient]);
 
+  // Switching to another space leaves the open chat behind: it belongs to the
+  // space it was filed in, so keeping it on screen would show a conversation
+  // the sidebar no longer lists. "All spaces" lists every chat and keeps it.
+  const activeChatAfterSpaceChange = useCallback((spaceId: string | null): string | null => {
+    const activeId = conversationUiStore.getState().activeConversationId;
+    if (!activeId || !spaceId) return activeId;
+    const detail = queryClient.getQueryData<Conversation | null>(conversationKeys.detail(activeId));
+    return (detail?.spaceId ?? 'space_general') === spaceId ? activeId : null;
+  }, [queryClient]);
+
   const setSelectedSpace = useCallback((spaceId: string | null) => {
-    conversationUiStore.setState({ selectedSpaceId: spaceId });
-  }, []);
+    conversationUiStore.setState({
+      selectedSpaceId: spaceId,
+      activeConversationId: activeChatAfterSpaceChange(spaceId),
+    });
+  }, [activeChatAfterSpaceChange]);
   const setFilterMode = useCallback((filterMode: ConversationsState['filterMode']) => {
     conversationUiStore.setState({ filterMode });
   }, []);
@@ -517,6 +558,9 @@ export function useConversationsController(): ConversationsState {
       filterMode: params.filterMode,
       searchQuery: params.searchQuery,
       error: null,
+      ...(params.spaceId !== current.selectedSpaceId
+        ? { activeConversationId: activeChatAfterSpaceChange(params.spaceId) }
+        : {}),
     });
     try {
       await queryClient.fetchQuery({
@@ -527,7 +571,7 @@ export function useConversationsController(): ConversationsState {
     } catch (error) {
       setUiError(error);
     }
-  }, [queryClient]);
+  }, [queryClient, activeChatAfterSpaceChange]);
 
   const loadMessageBookmarks = useCallback(async (overrides?: LoadMessageBookmarksOverrides) => {
     const id = overrides?.conversationId ?? conversationUiStore.getState().activeConversationId;
@@ -683,8 +727,13 @@ export function useConversationsController(): ConversationsState {
 
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {
     const result = await VaultAPI.moveConversationToSpace({ conversationId: id, spaceId });
-    if (!result.ok) setUiError(result.error);
-    else await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
+    if (!result.ok) {
+      setUiError(result.error);
+      return;
+    }
+    queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
+      current ? { ...current, spaceId } : current);
+    await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
   }, [invalidateLists, queryClient]);
 
   const loadConversationLinkedDocuments = useCallback(async (conversationId: string) => {
@@ -890,6 +939,23 @@ export function useConversationsController(): ConversationsState {
     };
 
     let unlisten: (() => void) | undefined;
+    let pendingStreamContent = '';
+    const flushStreamContent = () => {
+      const content = pendingStreamContent;
+      pendingStreamContent = '';
+      if (!content) return;
+      conversationUiStore.setState(current => {
+        const optimisticMessages = new Map(current.optimisticMessages);
+        const existing = optimisticMessages.get(assistantTempId);
+        if (!existing) return current;
+        optimisticMessages.set(assistantTempId, {
+          ...existing,
+          content: existing.content + content,
+        });
+        return { optimisticMessages };
+      });
+    };
+    const streamBatcher = createFrameBatcher(flushStreamContent);
     // The answer returns before its grounding check finishes; the check
     // arrives on this same channel afterwards. The listener stays up for it
     // after the turn settles, and only for it.
@@ -958,20 +1024,13 @@ export function useConversationsController(): ConversationsState {
         // overwrite the bubble, so a turn that recovered showed the retry
         // notice where its answer should have been.
         if (!payload.content) return;
-        conversationUiStore.setState(current => {
-          const optimisticMessages = new Map(current.optimisticMessages);
-          const existing = optimisticMessages.get(assistantTempId);
-          if (existing) {
-            optimisticMessages.set(assistantTempId, {
-              ...existing,
-              content: existing.content + payload.content,
-            });
-          }
-          return { optimisticMessages };
-        });
+        pendingStreamContent += payload.content;
+        streamBatcher.schedule();
       });
 
       const result = await invoke(requestId);
+      // Do not let a fast terminal response drop the final few queued tokens.
+      streamBatcher.flush();
       if (!result.ok) {
         if (isUserInitiatedCancellation(requestId, result.details?.code)) {
           const refreshed = await fetchMessages(requestConversationId);
@@ -1047,9 +1106,12 @@ export function useConversationsController(): ConversationsState {
       ]);
       return 'answered';
     } catch (error) {
+      streamBatcher.flush();
       settleOptimisticMessages(error instanceof Error ? error.message : String(error));
       return 'failed';
     } finally {
+      streamBatcher.cancel();
+      streamBatcher.flush();
       if (awaitingVerification && unlisten) {
         // A check that never reports must not leave the badge on "Checking…"
         // until the conversation is reopened: mark it interrupted and stop.
@@ -1176,6 +1238,15 @@ export function useConversationsController(): ConversationsState {
     return newId;
   }, [invalidateLists, selectConversation]);
 
+  const continueInNewConversation = useCallback(async (conversationId: string): Promise<string> => {
+    const result = await VaultAPI.continueInNewConversation(conversationId);
+    if (!result.ok) throw new Error(result.error);
+    const newId = result.data.conversation.id;
+    await invalidateLists();
+    await selectConversation(newId);
+    return newId;
+  }, [invalidateLists, selectConversation]);
+
   /**
    * Fold the conversation's oldest messages into an LLM summary.
    *
@@ -1238,12 +1309,9 @@ export function useConversationsController(): ConversationsState {
   }, [invalidateLists, queryClient]);
 
   const deleteConversation = useCallback(async (id: string) => {
+    // No list pre-check: the open conversation can be one the current filter
+    // or search hides, and the backend is the authority on whether it exists.
     const snapshots = queryClient.getQueriesData<Conversation[]>({ queryKey: conversationKeys.lists });
-    const exists = snapshots.some(([, list]) => list?.some(item => item.id === id));
-    if (!exists) {
-      setUiError(`Conversation not found: ${id}`);
-      return;
-    }
     queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current =>
       current?.filter(item => item.id !== id)
     );
@@ -1256,6 +1324,9 @@ export function useConversationsController(): ConversationsState {
       setUiError(result.error);
       return;
     }
+    // Drop the observers before the caches, or they re-create the queries and
+    // refetch a conversation that no longer exists.
+    forgetRequestedConversation(id);
     queryClient.removeQueries({ queryKey: conversationKeys.detail(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.messages(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(id) });
@@ -1324,6 +1395,7 @@ export function useConversationsController(): ConversationsState {
     regenerateResponse,
     truncateAfter,
     forkConversation,
+    continueInNewConversation,
     compactConversation,
     setComposerDraft,
     cancelGeneration,
@@ -1332,7 +1404,7 @@ export function useConversationsController(): ConversationsState {
     clearError,
   }), [
     addConversationWebSource, bookmarkMessage, bookmarksQuery.isLoading, cancelGeneration,
-    clearError, compactConversation, conversations, conversationsQuery.isLoading,
+    clearError, compactConversation, continueInNewConversation, conversations, conversationsQuery.isLoading,
     createConversation, deleteConversation,
     deleteMessage, documentSpaceMembershipsByDocumentId, linkedDocumentsByConversationId,
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,

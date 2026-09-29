@@ -160,6 +160,8 @@ export interface SynthesizeJournalEntriesResponse {
   conversationIds: string[];
   /** Sources the synthesis drew on. Optional: older backends omit it. */
   citations?: SynthesisCitationDto[];
+  /** Full source snapshots, with citation IDs used by the synthesis text. */
+  sources?: import('../../lib/bindings').SourceDto[];
 }
 
 /**

@@ -274,10 +274,7 @@ impl HybridSearchResult {
 pub struct HybridSearchService {
     vector_search: Arc<dyn crate::features::search::SearchServiceTrait>,
     bm25_search: Arc<dyn crate::features::search::BM25SearchTrait>,
-    // reason: retained from the public `new`/`with_rrf_k` signature used by DI and
-    // tests/hybrid_search_integration_test.rs; all SQL now runs through the sub-services.
-    #[allow(dead_code)]
-    pool: SqlitePool,
+    chunk_repository: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
     enrichment: Arc<dyn crate::infrastructure::services::traits::SearchEnrichmentServiceTrait>,
     config: SearchConfig,
     rrf_k: f32,
@@ -308,7 +305,9 @@ impl HybridSearchService {
         Self {
             vector_search,
             bm25_search,
-            pool,
+            chunk_repository: Arc::new(
+                crate::infrastructure::persistence::repositories::chunk_repository::ChunkRepository::new(pool),
+            ),
             enrichment,
             config,
             rrf_k: crate::shared::constants::DEFAULT_RRF_K,
@@ -328,13 +327,24 @@ impl HybridSearchService {
         Self {
             vector_search,
             bm25_search,
-            pool,
+            chunk_repository: Arc::new(
+                crate::infrastructure::persistence::repositories::chunk_repository::ChunkRepository::new(pool),
+            ),
             enrichment,
             config: SearchConfig::default(),
             rrf_k,
             reranker: None,
             sparse_search: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_chunk_repository(
+        mut self,
+        repository: Arc<dyn crate::application::ports::ChunkRepositoryPort>,
+    ) -> Self {
+        self.chunk_repository = repository;
+        self
     }
 
     /// Override the reciprocal-rank-fusion constant after construction.
@@ -477,21 +487,43 @@ impl HybridSearchService {
     /// inside `try_join!` blocks the runtime thread, so the BM25 branch it was
     /// supposed to run beside cannot make progress until it returns — the two
     /// branches were concurrent on paper only.
+    ///
+    /// Chunks of files attached to a chat are left out before the cut to
+    /// `top_k`, as the BM25 statements do: this service only answers
+    /// vault-wide searches, and an attachment dropped after the cut costs the
+    /// caller a result. The index knows nothing of owners, so the branch asks
+    /// for that many more neighbours and removes them itself.
     async fn vector_branch(
         &self,
         query_embedding: &[f32],
         top_k: usize,
     ) -> Result<Vec<crate::features::search::engine::service::SearchResult>> {
+        let excluded = self.attachment_chunk_ids().await?;
         let vector_search = Arc::clone(&self.vector_search);
         let embedding = query_embedding.to_vec();
         let min_score = self.config.min_score;
-        tokio::task::spawn_blocking(move || {
+        let fetch = top_k.saturating_add(excluded.len());
+        let mut results = tokio::task::spawn_blocking(move || {
             // A cosine-similarity floor, on the same scale the index scores —
             // never a fused RRF score, which tops out near 0.09.
-            vector_search.search_with_threshold(&embedding, top_k, min_score)
+            vector_search.search_with_threshold(&embedding, fetch, min_score)
         })
         .await
-        .map_err(|error| AppError::InternalError(format!("Vector search task failed: {error}")))?
+        .map_err(|error| {
+            AppError::InternalError(format!("Vector search task failed: {error}"))
+        })??;
+        results.retain(|result| !excluded.contains(&result.id));
+        results.truncate(top_k);
+        Ok(results)
+    }
+
+    /// Chunk ids of every file attached to a chat. Small: attachments only.
+    async fn attachment_chunk_ids(&self) -> Result<std::collections::HashSet<String>> {
+        let ids = self
+            .chunk_repository
+            .find_conversation_attached_chunk_ids()
+            .await?;
+        Ok(ids.into_iter().collect())
     }
 
     /// Perform hybrid search (legacy method for backward compatibility)
@@ -948,4 +980,42 @@ fn parse_sqlite_datetime(value: &str) -> Option<DateTime<Utc>> {
         .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f"))
         .ok()
         .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::search::mocks::{MockBM25Search, MockSearchService};
+
+    #[tokio::test]
+    async fn a_chat_attachment_does_not_take_a_vector_result_slot() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE documents (id TEXT PRIMARY KEY, owner_conversation_id TEXT);
+             CREATE TABLE text_chunks (id TEXT PRIMARY KEY, document_id TEXT);
+             INSERT INTO documents VALUES ('library', NULL), ('attached', 'some-chat');
+             INSERT INTO text_chunks VALUES ('library-chunk', 'library'), ('attached-chunk', 'attached');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut vectors = MockSearchService::new();
+        // The attachment is the nearer neighbour.
+        vectors.add_embedding("attached-chunk".into(), vec![1.0, 0.0]);
+        vectors.add_embedding("library-chunk".into(), vec![0.9, 0.1]);
+        let service = HybridSearchService::new(
+            Arc::new(vectors),
+            Arc::new(MockBM25Search::new()),
+            pool.clone(),
+            Arc::new(
+                crate::features::search::enrichment_service::SearchEnrichmentService::new(pool),
+            ),
+            SearchConfig::default(),
+        );
+
+        let results = service.vector_branch(&[1.0, 0.0], 1).await.unwrap();
+
+        let ids: Vec<_> = results.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["library-chunk"]);
+    }
 }

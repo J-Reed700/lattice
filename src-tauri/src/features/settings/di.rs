@@ -145,12 +145,10 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                             vault_root = %vault_root.display(),
                             "Vault enabled — enqueueing one-shot backfill"
                         );
-                        self.vault_writer.submit(
-                            crate::features::vault::writeback::VaultWriteJob::Backfill {
-                                pool: self.db_pool.clone(),
-                                vault_root,
-                            },
-                        );
+                        if let Err(error) = self.vault_writer.enqueue_backfill(&self.db_pool).await
+                        {
+                            tracing::warn!(%error, "Could not persist vault backfill intent");
+                        }
                     } else {
                         tracing::warn!(
                             "Vault enabled but vault root could not be resolved — skipping backfill"

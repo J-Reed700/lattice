@@ -856,7 +856,7 @@ impl RecallAvailability {
     pub fn note(self) -> &'static str {
         match self {
             Self::Selected => {
-                "Older passages below are exact text from this conversation, with ids and roles."
+                "Automatic retrieval found older passages in this conversation. Any passages included below are exact original text, with ids and roles."
             }
             Self::NotFoundByRetrieval => {
                 "A search of this conversation's older messages found nothing for this turn. \
