@@ -31,9 +31,30 @@ Rust scaffold for Recall's sync backend.
 cp .env.example .env
 ```
 
-2. Ensure Postgres is running and `DATABASE_URL` points to it.
+2. Generate and set a private bearer token, and configure the tenant identity
+   that this one token represents:
 
-3. Start service:
+```bash
+openssl rand -hex 32
+```
+
+Put the output in `API_BEARER_TOKEN` and set `API_USER_ID` to the existing
+server-side tenant/user ID. The API rejects startup if the token is absent or
+shorter than 32 bytes, or if the user ID is not positive. Sync requests must
+send `Authorization: Bearer <token>`. The service derives the tenant from this
+server configuration and ignores `x-user-id`; do not share the token with
+untrusted clients. This scaffold configures one principal and is not a
+multi-tenant identity provider.
+
+3. Ensure Postgres is running and `DATABASE_URL` points to it.
+
+`HOST` defaults to `127.0.0.1`. Set `CORS_ALLOWED_ORIGINS` to a comma-separated
+list of exact application origins when needed; wildcard origins are rejected.
+The example lists the local development and Tauri origins. Binding to a
+non-loopback address is an explicit deployment choice and should be paired
+with TLS termination and network controls.
+
+4. Start service:
 
 ```bash
 cargo run
@@ -41,7 +62,9 @@ cargo run
 
 ## Current limitations (intentional for scaffold)
 
-- Auth is placeholder (`x-user-id` header).
+- The configured opaque bearer token maps to one server-configured tenant.
+  Use an established identity provider and verified tenant claims before
+  serving multiple independent users.
 - Conflict detection is currently base-version mismatch only.
 - Conflict resolution does not yet merge document content into `document_heads`.
 - Outbox publisher worker is not implemented yet (rows are only written).
@@ -52,7 +75,8 @@ cargo run
 1. Extend PostgreSQL contract coverage as conflict and delivery semantics grow.
 2. Implement full conflict resolution semantics and merged head writes.
 3. Add background outbox dispatcher and delivery retries.
-4. Add JWT auth middleware and tenant/user claims extraction.
+4. Replace the single configured principal with verified identity-provider
+   tokens and tenant claims before multi-tenant deployment.
 5. Add metrics/tracing spans per sync request and DB transaction.
 
 ## Verification
