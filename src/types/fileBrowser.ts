@@ -4,6 +4,8 @@
  * Comprehensive type system for the file browser feature
  */
 
+import type { CustomCollectionDto } from '../lib/bindings';
+
 export type ViewMode = 'tree' | 'list' | 'grid';
 export type SortField = 'name' | 'size' | 'modified' | 'type';
 export type SortOrder = 'asc' | 'desc';
@@ -40,15 +42,7 @@ export interface DocumentMetadata {
   wordCount: number;
 }
 
-export interface CustomCollection {
-  id: string;
-  name: string;
-  kind: 'manual' | 'snapshot';
-  parentId: string | null;
-  documentIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
+export type CustomCollection = CustomCollectionDto;
 
 export type SourceProvider =
   | 'local_folder'
@@ -88,7 +82,6 @@ export interface FileBrowserState {
   isContentSearchLoading: boolean;
 
   // Data
-  customCollections: CustomCollection[];
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
   sourceConnections: SourceConnection[];
@@ -146,20 +139,6 @@ export interface FileBrowserActions {
   duplicateSavedSearch: (_searchId: string) => string | null;
   deleteSavedSearch: (_searchId: string) => void;
   clearActiveSavedSearch: () => void;
-  createCustomCollection: (_name: string, _parentCollectionId?: string | null) => string | null;
-  createSnapshotCollection: (
-    _name: string,
-    _documentIds: string[],
-    _parentCollectionId?: string | null
-  ) => string | null;
-  renameCustomCollection: (_collectionId: string, _name: string) => void;
-  updateCustomCollection: (
-    _collectionId: string,
-    _updates: Partial<Pick<CustomCollection, 'name' | 'parentId'>>
-  ) => boolean;
-  deleteCustomCollection: (_collectionId: string) => void;
-  addDocumentsToCustomCollection: (_collectionId: string, _documentIds: string[]) => void;
-  removeDocumentsFromCustomCollection: (_collectionId: string, _documentIds: string[]) => void;
   createSourceConnection: (_connection: Omit<SourceConnection, 'id' | 'createdAt' | 'updatedAt'>) => string;
   updateSourceConnection: (_sourceId: string, _updates: Partial<SourceConnection>) => void;
   deleteSourceConnection: (_sourceId: string) => void;

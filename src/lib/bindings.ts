@@ -3044,6 +3044,70 @@ async listConversationsCitingDocument(documentId: string, limit: number | null) 
     else return { status: "error", error: e  as any };
 }
 },
+async listCustomCollections() : Promise<Result<CustomCollectionDto[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_custom_collections") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async importLegacyCustomCollections(collections: CustomCollectionDto[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_legacy_custom_collections", { collections }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createCustomCollection(request: CreateCustomCollectionRequest) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_custom_collection", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameCustomCollection(collectionId: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_custom_collection", { collectionId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveCustomCollection(collectionId: string, parentId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_custom_collection", { collectionId, parentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteCustomCollection(collectionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_custom_collection", { collectionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addDocumentsToCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_documents_to_custom_collection", { collectionId, documentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeDocumentsFromCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_documents_from_custom_collection", { collectionId, documentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async clusterVaultDebug() : Promise<Result<string, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cluster_vault_debug") };
@@ -4233,12 +4297,15 @@ conversation: ConversationDto;
  */
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
 export type CreateWorkspaceNoteRequestDto = { title: string | null;
 /**
  * The journal this page belongs to. Omitted for an unfiled page.
  */
 journalId: string | null }
+export type CustomCollectionDto = { id: string; name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[]; createdAt: string; updatedAt: string }
+export type CustomCollectionKind = "manual" | "snapshot"
 /**
  * User-defined tool configuration.
  *

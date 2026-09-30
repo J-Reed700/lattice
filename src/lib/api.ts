@@ -188,6 +188,14 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   read_file_bytes: { domain: 'file', command: 'read_file_bytes' },
   show_in_folder: { domain: 'file', command: 'show_in_folder' },
   get_indexed_folders: { domain: 'file', command: 'get_indexed_folders' },
+  list_custom_collections: { domain: 'file', command: 'list_custom_collections' },
+  import_legacy_custom_collections: { domain: 'file', command: 'import_legacy_custom_collections' },
+  create_custom_collection: { domain: 'file', command: 'create_custom_collection' },
+  rename_custom_collection: { domain: 'file', command: 'rename_custom_collection' },
+  move_custom_collection: { domain: 'file', command: 'move_custom_collection' },
+  delete_custom_collection: { domain: 'file', command: 'delete_custom_collection' },
+  add_documents_to_custom_collection: { domain: 'file', command: 'add_documents_to_custom_collection' },
+  remove_documents_from_custom_collection: { domain: 'file', command: 'remove_documents_from_custom_collection' },
   get_indexing_activities: { domain: 'file', command: 'get_indexing_activities' },
 
   // Health domain
@@ -1046,6 +1054,23 @@ const VaultAPI = {
   /** Absolute paths of indexed files, newest first. */
   listIndexedFiles: async (limit?: number): Promise<ApiResult<string[]>> =>
     apiCall<string[]>('list_indexed_files', { limit }),
+
+  listCustomCollections: async (): Promise<ApiResult<Wire.CustomCollectionDto[]>> =>
+    apiCall<Wire.CustomCollectionDto[]>('list_custom_collections'),
+  importLegacyCustomCollections: async (collections: Wire.CustomCollectionDto[]): Promise<ApiResult<void>> =>
+    apiCall<void>('import_legacy_custom_collections', { collections }),
+  createCustomCollection: async (request: Wire.CreateCustomCollectionRequest): Promise<ApiResult<string>> =>
+    apiCall<string>('create_custom_collection', { request }),
+  renameCustomCollection: async (collectionId: string, name: string): Promise<ApiResult<void>> =>
+    apiCall<void>('rename_custom_collection', { collectionId, name }),
+  moveCustomCollection: async (collectionId: string, parentId: string | null): Promise<ApiResult<void>> =>
+    apiCall<void>('move_custom_collection', { collectionId, parentId }),
+  deleteCustomCollection: async (collectionId: string): Promise<ApiResult<void>> =>
+    apiCall<void>('delete_custom_collection', { collectionId }),
+  addDocumentsToCustomCollection: async (collectionId: string, documentIds: string[]): Promise<ApiResult<void>> =>
+    apiCall<void>('add_documents_to_custom_collection', { collectionId, documentIds }),
+  removeDocumentsFromCustomCollection: async (collectionId: string, documentIds: string[]): Promise<ApiResult<void>> =>
+    apiCall<void>('remove_documents_from_custom_collection', { collectionId, documentIds }),
 
 
   /**

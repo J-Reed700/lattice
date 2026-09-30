@@ -4,7 +4,7 @@ import { FolderPlus, Search } from 'lucide-react';
 
 import { metaLine } from './docMeta';
 import { FileIcon } from './FileIcon';
-import { useFileBrowserStore } from '../../stores/fileBrowserStore';
+import { useCustomCollectionsQuery, useCustomCollectionActions } from '../../hooks/queries/useCustomCollectionsQuery';
 import { toast } from '../../stores/toastStore';
 import { type CustomCollection, type DocumentMetadata } from '../../types/fileBrowser';
 import { Button } from '../ui/button';
@@ -18,9 +18,8 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
   documentIds: string[];
   onClose: () => void;
 }) {
-  const collections = useFileBrowserStore(state => state.customCollections);
-  const addDocuments = useFileBrowserStore(state => state.addDocumentsToCustomCollection);
-  const createCollection = useFileBrowserStore(state => state.createCustomCollection);
+  const collections = useCustomCollectionsQuery().data ?? [];
+  const actions = useCustomCollectionActions();
   const [query, setQuery] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -29,14 +28,17 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
     .filter(collection => collection.name.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const add = (collectionId: string, collectionName: string) => {
-    addDocuments(collectionId, documentIds);
+  const add = async (collectionId: string, collectionName: string) => {
+    try { await actions.addDocuments(collectionId, documentIds); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return; }
     toast.success(`Added to ${collectionName}`);
     onClose();
   };
 
-  const create = () => {
-    const id = createCollection(name);
+  const create = async () => {
+    let id: string | null;
+    try { id = await actions.create(name); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return; }
     if (!id) {
       setError('Enter a unique collection name.');
       return;
@@ -66,7 +68,7 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
                     key={collection.id}
                     type="button"
                     disabled={allIncluded}
-                    onClick={() => add(collection.id, collection.name)}
+                    onClick={() => { void add(collection.id, collection.name); }}
                     className="flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-sm text-text-primary hover:bg-surface disabled:opacity-50"
                   >
                     <FolderPlus className="h-4 w-4 shrink-0 text-text-muted" />
@@ -81,7 +83,7 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
             </div>
           </>
         ) : <p className="text-sm text-text-secondary">Create your first collection for these documents.</p>}
-        <form onSubmit={event => { event.preventDefault(); create(); }} className="space-y-3 border-t border-border-subtle pt-4">
+        <form onSubmit={event => { event.preventDefault(); void create(); }} className="space-y-3 border-t border-border-subtle pt-4">
           <label htmlFor="new-collection-name" className="text-sm text-text-secondary">New collection</label>
           <Input id="new-collection-name" placeholder="Collection name" maxLength={120} value={name} onChange={event => { setName(event.target.value); setError(''); }} />
           {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
@@ -100,7 +102,7 @@ export function CollectionDocumentsDialog({ collection, documents, onClose }: {
   documents: DocumentMetadata[];
   onClose: () => void;
 }) {
-  const addDocuments = useFileBrowserStore(state => state.addDocumentsToCustomCollection);
+  const actions = useCustomCollectionActions();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const available = useMemo(() => {
@@ -110,10 +112,11 @@ export function CollectionDocumentsDialog({ collection, documents, onClose }: {
   const matches = available.filter(doc => doc.fileName.toLowerCase().includes(query.trim().toLowerCase()));
   const allSelected = matches.length > 0 && matches.every(doc => selected.has(doc.id));
 
-  const submit = () => {
+  const submit = async () => {
     const ids = available.filter(doc => selected.has(doc.id)).map(doc => doc.id);
     if (ids.length === 0) return;
-    addDocuments(collection.id, ids);
+    try { await actions.addDocuments(collection.id, ids); }
+    catch (cause) { toast.error('Documents could not be added to the collection', { message: cause instanceof Error ? cause.message : String(cause) }); return; }
     toast.success(`Added ${ids.length} ${ids.length === 1 ? 'document' : 'documents'} to ${collection.name}`);
     onClose();
   };
@@ -159,7 +162,7 @@ export function CollectionDocumentsDialog({ collection, documents, onClose }: {
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="button" disabled={selected.size === 0} onClick={submit}>Add {selected.size || ''} {selected.size === 1 ? 'document' : 'documents'}</Button>
+          <Button type="button" disabled={selected.size === 0} onClick={() => { void submit(); }}>Add {selected.size || ''} {selected.size === 1 ? 'document' : 'documents'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -167,7 +170,7 @@ export function CollectionDocumentsDialog({ collection, documents, onClose }: {
 }
 
 export function RenameCollectionDialog({ collection, onClose }: { collection: CustomCollection; onClose: () => void }) {
-  const update = useFileBrowserStore(state => state.updateCustomCollection);
+  const actions = useCustomCollectionActions();
   const [name, setName] = useState(collection.name);
   const [error, setError] = useState('');
   return (
@@ -179,8 +182,10 @@ export function RenameCollectionDialog({ collection, onClose }: { collection: Cu
         </DialogHeader>
         <form className="space-y-4" onSubmit={event => {
           event.preventDefault();
-          if (!update(collection.id, { name })) { setError('Enter a unique collection name.'); return; }
-          onClose();
+          void actions.rename(collection.id, name).then((updated) => {
+            if (!updated) { setError('Enter a unique collection name.'); return; }
+            onClose();
+          }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
         }}>
           <Input aria-label="Collection name" value={name} maxLength={120} onChange={event => { setName(event.target.value); setError(''); }} />
           {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}

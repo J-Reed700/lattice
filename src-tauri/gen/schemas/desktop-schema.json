@@ -3951,6 +3951,12 @@
           "markdownDescription": "Denies the remove_favorite command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_documents_to_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-add-documents-to-custom-collection",
+          "markdownDescription": "Enables the add_documents_to_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_indexing command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-cancel-indexing",
@@ -3961,6 +3967,18 @@
           "type": "string",
           "const": "file:allow-clear-indexing-failure",
           "markdownDescription": "Enables the clear_indexing_failure command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-create-custom-collection",
+          "markdownDescription": "Enables the create_custom_collection command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-delete-custom-collection",
+          "markdownDescription": "Enables the delete_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the delete_document command without any pre-configured scope.",
@@ -4041,6 +4059,12 @@
           "markdownDescription": "Enables the get_recent_documents command without any pre-configured scope."
         },
         {
+          "description": "Enables the import_legacy_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-import-legacy-custom-collections",
+          "markdownDescription": "Enables the import_legacy_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Enables the index_directory command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-index-directory",
@@ -4065,10 +4089,22 @@
           "markdownDescription": "Enables the list_conversations_citing_document command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-list-custom-collections",
+          "markdownDescription": "Enables the list_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_indexed_files command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-list-indexed-files",
           "markdownDescription": "Enables the list_indexed_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the move_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-move-custom-collection",
+          "markdownDescription": "Enables the move_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the open_file command without any pre-configured scope.",
@@ -4107,10 +4143,22 @@
           "markdownDescription": "Enables the reindex_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_documents_from_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-remove-documents-from-custom-collection",
+          "markdownDescription": "Enables the remove_documents_from_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_indexed_file command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-remove-indexed-file",
           "markdownDescription": "Enables the remove_indexed_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rename_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-rename-custom-collection",
+          "markdownDescription": "Enables the rename_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the rename_document command without any pre-configured scope.",
@@ -4143,6 +4191,12 @@
           "markdownDescription": "Enables the validate_file_path command without any pre-configured scope."
         },
         {
+          "description": "Denies the add_documents_to_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-add-documents-to-custom-collection",
+          "markdownDescription": "Denies the add_documents_to_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_indexing command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-cancel-indexing",
@@ -4153,6 +4207,18 @@
           "type": "string",
           "const": "file:deny-clear-indexing-failure",
           "markdownDescription": "Denies the clear_indexing_failure command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-create-custom-collection",
+          "markdownDescription": "Denies the create_custom_collection command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-delete-custom-collection",
+          "markdownDescription": "Denies the delete_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the delete_document command without any pre-configured scope.",
@@ -4233,6 +4299,12 @@
           "markdownDescription": "Denies the get_recent_documents command without any pre-configured scope."
         },
         {
+          "description": "Denies the import_legacy_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-import-legacy-custom-collections",
+          "markdownDescription": "Denies the import_legacy_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Denies the index_directory command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-index-directory",
@@ -4257,10 +4329,22 @@
           "markdownDescription": "Denies the list_conversations_citing_document command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-list-custom-collections",
+          "markdownDescription": "Denies the list_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_indexed_files command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-list-indexed-files",
           "markdownDescription": "Denies the list_indexed_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the move_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-move-custom-collection",
+          "markdownDescription": "Denies the move_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the open_file command without any pre-configured scope.",
@@ -4299,10 +4383,22 @@
           "markdownDescription": "Denies the reindex_file command without any pre-configured scope."
         },
         {
+          "description": "Denies the remove_documents_from_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-remove-documents-from-custom-collection",
+          "markdownDescription": "Denies the remove_documents_from_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_indexed_file command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-remove-indexed-file",
           "markdownDescription": "Denies the remove_indexed_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rename_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-rename-custom-collection",
+          "markdownDescription": "Denies the rename_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the rename_document command without any pre-configured scope.",
@@ -4947,6 +5043,18 @@
           "markdownDescription": "Denies the warm_up_active_utility_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the ask_question_stream_wrapper command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:allow-ask-question-stream-wrapper",
+          "markdownDescription": "Enables the ask_question_stream_wrapper command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ask_question_wrapper command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:allow-ask-question-wrapper",
+          "markdownDescription": "Enables the ask_question_wrapper command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_llm_health_wrapper command without any pre-configured scope.",
           "type": "string",
           "const": "qa:allow-check-llm-health-wrapper",
@@ -4963,6 +5071,18 @@
           "type": "string",
           "const": "qa:allow-get-qa-model-wrapper",
           "markdownDescription": "Enables the get_qa_model_wrapper command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ask_question_stream_wrapper command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:deny-ask-question-stream-wrapper",
+          "markdownDescription": "Denies the ask_question_stream_wrapper command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ask_question_wrapper command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:deny-ask-question-wrapper",
+          "markdownDescription": "Denies the ask_question_wrapper command without any pre-configured scope."
         },
         {
           "description": "Denies the check_llm_health_wrapper command without any pre-configured scope.",

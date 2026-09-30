@@ -334,6 +334,8 @@ export interface StreamChunk {
  * Replaced by real ConversationMessage when backend responds.
  */
 export interface OptimisticMessage {
+  /** Identifies this turn when reconciling a persisted failed question. */
+  requestId?: string;
   /** Temporary ID (crypto.randomUUID()) */
   tempId: string;
   /** Conversation ID this message belongs to */
@@ -348,6 +350,12 @@ export interface OptimisticMessage {
   createdAt: string;
   /** Error message if status='failed' */
   error?: string;
+  /** Original send options, retained when the unsaved question needs retrying. */
+  retryContext?: {
+    toolPreferences?: ToolPreferences;
+    attachmentNames?: string[];
+    attachmentDocumentIds?: string[];
+  };
 }
 
 /**

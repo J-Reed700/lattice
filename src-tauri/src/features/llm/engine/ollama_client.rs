@@ -377,18 +377,6 @@ impl OllamaClient {
         };
         use futures::StreamExt;
 
-        fn trim_ascii(bytes: &[u8]) -> &[u8] {
-            let start = bytes
-                .iter()
-                .position(|byte| !byte.is_ascii_whitespace())
-                .unwrap_or(bytes.len());
-            let end = bytes
-                .iter()
-                .rposition(|byte| !byte.is_ascii_whitespace())
-                .map_or(start, |index| index + 1);
-            &bytes[start..end]
-        }
-
         let mut body = self.typed_chat_request(request)?;
         body.stream = true;
         let budget = request.effective_time_budget();
@@ -426,7 +414,7 @@ impl OllamaClient {
             let mut content = String::new();
             let mut model = String::new();
             let mut created_at = String::new();
-            let mut tool_calls: Vec<Option<OllamaToolCall>> = Vec::new();
+            let mut tool_calls = std::collections::BTreeMap::<usize, OllamaToolCall>::new();
             let mut done_reason = None;
             let mut prompt_eval_count = None;
             let mut eval_count = None;
@@ -441,12 +429,12 @@ impl OllamaClient {
                     if line.last() == Some(&b'\r') {
                         line.pop();
                     }
-                    let line = trim_ascii(&line);
+                    let line = line.trim_ascii();
                     if line.is_empty() {
                         continue;
                     }
                     let line = if let Some(data) = line.strip_prefix(b"data:") {
-                        trim_ascii(data)
+                        data.trim_ascii()
                     } else {
                         line
                     };
@@ -473,10 +461,7 @@ impl OllamaClient {
                     if let Some(calls) = parsed.message.tool_calls {
                         for (position, call) in calls.into_iter().enumerate() {
                             let index = call.function.index.unwrap_or(position);
-                            if tool_calls.len() <= index {
-                                tool_calls.resize_with(index + 1, || None);
-                            }
-                            tool_calls[index] = Some(call);
+                            tool_calls.insert(index, call);
                         }
                     }
                     if parsed.done {
@@ -491,11 +476,11 @@ impl OllamaClient {
                 }
             }
 
-            let remaining = trim_ascii(&buffer);
+            let remaining = buffer.trim_ascii();
             if !done && !remaining.is_empty() {
                 let line = remaining
                     .strip_prefix(b"data:")
-                    .map(trim_ascii)
+                    .map(<[u8]>::trim_ascii)
                     .unwrap_or(remaining);
                 let parsed =
                     serde_json::from_slice::<OllamaChatStreamResponse>(line).map_err(|_| {
@@ -512,10 +497,7 @@ impl OllamaClient {
                 if let Some(calls) = parsed.message.tool_calls {
                     for (position, call) in calls.into_iter().enumerate() {
                         let index = call.function.index.unwrap_or(position);
-                        if tool_calls.len() <= index {
-                            tool_calls.resize_with(index + 1, || None);
-                        }
-                        tool_calls[index] = Some(call);
+                        tool_calls.insert(index, call);
                     }
                 }
                 done = parsed.done;
@@ -529,7 +511,7 @@ impl OllamaClient {
                 ));
             }
 
-            let tool_calls: Vec<_> = tool_calls.into_iter().flatten().collect();
+            let tool_calls: Vec<_> = tool_calls.into_values().collect();
             let completion_tool_calls = tool_calls
                 .iter()
                 .enumerate()
@@ -2416,6 +2398,58 @@ mod tests {
             sent["tools"][0]["function"]["name"],
             "search_saved_knowledge"
         );
+    }
+
+    #[tokio::test]
+    async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
+        use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        // Exercise both newline-delimited chunks and the final unterminated line.
+        for suffix in ["\n", ""] {
+            let server = MockServer::start().await;
+            let body = serde_json::json!({
+                "model": "utility", "created_at": "2026-09-30T00:00:00Z",
+                "message": {"role": "assistant", "content": "", "tool_calls": [
+                    {"function": {"name": "later", "arguments": {}, "index": usize::MAX}},
+                    {"function": {"name": "replaced", "arguments": {}, "index": 0}},
+                    {"function": {"name": "first", "arguments": {}, "index": 0}}
+                ]}, "done": true
+            });
+            Mock::given(method("POST"))
+                .and(path("/api/chat"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(format!("  {body}  {suffix}")),
+                )
+                .mount(&server)
+                .await;
+            let client = OllamaClient::with_model_and_timeouts(
+                server.uri(),
+                "utility",
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            let response = LLMPort::complete_with_progress(
+                &client,
+                &CompletionRequest::default(),
+                &|_| Ok(()),
+            )
+            .await
+            .unwrap();
+            let names: Vec<_> = response
+                .tool_calls
+                .iter()
+                .filter_map(|call| match call {
+                    CompletionInput::ToolCall { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(names, ["first", "later"]);
+        }
     }
 
     #[test]

@@ -38,6 +38,13 @@ use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Lazily resolves an optional model without exposing the application's container.
+pub type OptionalLlmLoader = std::sync::Arc<
+    dyn Fn() -> futures::future::BoxFuture<'static, Result<Option<std::sync::Arc<dyn LLMPort>>>>
+        + Send
+        + Sync,
+>;
+
 /// Wall-clock allowance for one completion, across retries, when the caller sets none.
 pub const DEFAULT_COMPLETION_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
 

@@ -741,23 +741,23 @@ impl SpawnedChild {
             let mut total = 0usize;
             while let Some(event) = rx.recv().await {
                 match event {
-                    CommandEvent::Stdout(bytes) => {
-                        if !append_probe_line(&mut stdout, &bytes, &mut total) {
-                            tracing::debug!(
-                                max_bytes = PROBE_OUTPUT_MAX_BYTES,
-                                "sidecar probe output exceeded limit"
-                            );
-                            return None;
-                        }
+                    CommandEvent::Stdout(bytes)
+                        if !append_probe_line(&mut stdout, &bytes, &mut total) =>
+                    {
+                        tracing::debug!(
+                            max_bytes = PROBE_OUTPUT_MAX_BYTES,
+                            "sidecar probe output exceeded limit"
+                        );
+                        return None;
                     }
-                    CommandEvent::Stderr(bytes) => {
-                        if !append_probe_line(&mut stderr, &bytes, &mut total) {
-                            tracing::debug!(
-                                max_bytes = PROBE_OUTPUT_MAX_BYTES,
-                                "sidecar probe output exceeded limit"
-                            );
-                            return None;
-                        }
+                    CommandEvent::Stderr(bytes)
+                        if !append_probe_line(&mut stderr, &bytes, &mut total) =>
+                    {
+                        tracing::debug!(
+                            max_bytes = PROBE_OUTPUT_MAX_BYTES,
+                            "sidecar probe output exceeded limit"
+                        );
+                        return None;
                     }
                     CommandEvent::Terminated(_) => child.mark_exited(),
                     _ => {}

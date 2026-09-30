@@ -971,6 +971,24 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
+        // User-created collections live in ordinary SQLite tables. Include both
+        // collection metadata and normalized memberships in this database copy
+        // round trip so backup coverage protects the feature's persisted state.
+        sqlx::query("CREATE TABLE custom_collections (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE custom_collection_documents (collection_id TEXT NOT NULL, document_id TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(collection_id, document_id))")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO custom_collections (id, name) VALUES ('collection-1', 'Research')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO custom_collection_documents (collection_id, document_id, ordinal) VALUES ('collection-1', 'doc-1', 0)")
+            .execute(&pool).await.unwrap();
+
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(backup_path);
 
@@ -987,6 +1005,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 2);
+        sqlx::query("DELETE FROM custom_collection_documents WHERE collection_id = 'collection-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // Restore from backup (closes pool internally)
         let result = adapter.restore_backup(backup_pathbuf).await;
@@ -1006,6 +1028,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(restored_count.0, 1);
+        let collection_name: String =
+            sqlx::query_scalar("SELECT name FROM custom_collections WHERE id = 'collection-1'")
+                .fetch_one(&new_pool)
+                .await
+                .unwrap();
+        let membership_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM custom_collection_documents WHERE collection_id = 'collection-1' AND document_id = 'doc-1'")
+            .fetch_one(&new_pool).await.unwrap();
+        assert_eq!(collection_name, "Research");
+        assert_eq!(membership_count, 1);
 
         new_pool.close().await;
     }

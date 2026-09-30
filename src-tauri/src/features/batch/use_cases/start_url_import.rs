@@ -167,8 +167,24 @@ impl StartBatchUrlImportUseCase {
         let batch_repo = Arc::clone(&self.batch_repo);
         let ingest_url_use_case = Arc::clone(&self.ingest_url_use_case);
         let job_id_clone = job_id.clone();
+        let job_id_for_worker = job_id_clone.clone();
 
-        tokio::spawn(async move {
+        let cancel = crate::shared::background::cancellation_token();
+        let worker = crate::shared::background::spawn(async move {
+            let job_id_clone = job_id_for_worker;
+            let cancellation = cancel.clone();
+            if cancellation.is_cancelled() {
+                let _ = batch_repo.cancel_pending_items(&job_id_clone).await;
+                let _ = batch_repo
+                    .update_job_status(
+                        &job_id_clone,
+                        "cancelled",
+                        None,
+                        Some(chrono::Utc::now().to_rfc3339()),
+                    )
+                    .await;
+                return;
+            }
             if let Ok(status) = batch_repo.get_batch_job(&job_id_clone).await {
                 if status.status == "cancelled" {
                     return;
@@ -206,6 +222,21 @@ impl StartBatchUrlImportUseCase {
             let total = pending_items.len() as i64;
 
             for item in pending_items {
+                if cancellation.is_cancelled() {
+                    let _ = batch_repo
+                        .update_item_status(&item.id, BatchItemState::Cancelled, None, None)
+                        .await;
+                    let _ = batch_repo.cancel_pending_items(&job_id_clone).await;
+                    let _ = batch_repo
+                        .update_job_status(
+                            &job_id_clone,
+                            "cancelled",
+                            None,
+                            Some(chrono::Utc::now().to_rfc3339()),
+                        )
+                        .await;
+                    return;
+                }
                 let job_status = batch_repo.get_batch_job(&job_id_clone).await;
                 if let Ok(status) = job_status {
                     if status.status == "cancelled" {
@@ -241,7 +272,27 @@ impl StartBatchUrlImportUseCase {
                     url: item.url.clone(),
                 };
 
-                match ingest_url_use_case.execute(ingest_request).await {
+                let ingest = ingest_url_use_case.execute(ingest_request);
+                let ingest_result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        let _ = batch_repo
+                            .update_item_status(&item.id, BatchItemState::Cancelled, None, None)
+                            .await;
+                        let _ = batch_repo.cancel_pending_items(&job_id_clone).await;
+                        let _ = batch_repo
+                            .update_job_status(
+                                &job_id_clone,
+                                "cancelled",
+                                None,
+                                Some(chrono::Utc::now().to_rfc3339()),
+                            )
+                            .await;
+                        return;
+                    }
+                    result = ingest => result,
+                };
+                match ingest_result {
                     Ok(response) => {
                         // Mark item as completed
                         let _ = batch_repo
@@ -301,6 +352,18 @@ impl StartBatchUrlImportUseCase {
                 )
                 .await;
         });
+        if worker.is_none() {
+            let _ = self.batch_repo.cancel_pending_items(&job_id_clone).await;
+            let _ = self
+                .batch_repo
+                .update_job_status(
+                    &job_id_clone,
+                    "cancelled",
+                    None,
+                    Some(chrono::Utc::now().to_rfc3339()),
+                )
+                .await;
+        }
 
         // 8. Return job ID
         Ok(StartBatchUrlImportResponseDto { job_id })

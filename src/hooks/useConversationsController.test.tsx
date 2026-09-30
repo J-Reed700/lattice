@@ -6,6 +6,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useSidebarBookmarksQuery } from '@/components/Chat/sidebar/workspaceQueries';
+import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS } from '@/hooks/useConversationsController';
 import { VaultAPI } from '@/lib/api';
 import { ConversationsProvider, useConversationsStore } from '@/stores/conversationsStore';
@@ -21,22 +22,18 @@ const conversation = {
   updatedAt: '2026-08-02T00:00:00.000Z',
 };
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
+const createWrapper = (queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
-  });
-
-  return function Wrapper({ children }: { children: ReactNode }) {
+  })) => function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
         <ConversationsProvider>{children}</ConversationsProvider>
       </QueryClientProvider>
     );
   };
-};
 
 describe('useConversationsController optimistic cleanup', () => {
   beforeEach(() => {
@@ -182,6 +179,47 @@ describe('useConversationsController optimistic cleanup', () => {
     expect([...result.current.optimisticMessages.values()]).toEqual([
       expect.objectContaining({ content: 'Help me learn the MPEP', role: 'user', status: 'failed', error: 'llama.cpp request timed out' }),
     ]);
+  });
+
+  it('does not reconcile a failed prompt against an older persisted question with the same text', async () => {
+    api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'provider failed' });
+    api.getConversationMessages = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { messages: [{
+        id: 'old-question', conversationId: 'conversation-1', role: 'user', content: 'Same question',
+        tokens: 2, status: 'completed', createdAt: '2026-09-01T00:00:00.000Z',
+        metadata: JSON.stringify({ requestId: 'older-request' }),
+      }], total: 1 },
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+
+    await act(async () => { await result.current.sendMessage('Same question', 'conversation-1'); });
+
+    expect([...result.current.optimisticMessages.values()]).toEqual([
+      expect.objectContaining({ content: 'Same question', status: 'failed' }),
+    ]);
+  });
+
+  it('reconciles a failure only when its exact request ID was persisted', async () => {
+    let persistedRequestId = '';
+    api.chatWithConversation = vi.fn().mockImplementation(async (...args: unknown[]) => {
+      persistedRequestId = args[3] as string;
+      return { ok: false, error: 'provider failed after saving the question' };
+    });
+    api.getConversationMessages = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      data: { messages: [{
+        id: 'saved-question', conversationId: 'conversation-1', role: 'user', content: 'Same question',
+        tokens: 2, status: 'completed', createdAt: '2026-09-30T00:00:00.000Z',
+        metadata: JSON.stringify({ requestId: persistedRequestId }),
+      }], total: 1 },
+    }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+
+    await act(async () => { await result.current.sendMessage('Same question', 'conversation-1'); });
+
+    expect(persistedRequestId).not.toBe('');
+    expect(result.current.optimisticMessages.size).toBe(0);
   });
 
   /**
@@ -400,6 +438,153 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(api.chatWithConversation).toHaveBeenCalledWith(
       'conversation-1', 'Read these', undefined, expect.any(String), ['a.pdf'], ['doc-1']
     );
+  });
+
+  it('retains attachment names, document IDs and tool preferences on a failed-message retry', async () => {
+    api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture failure' });
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const preferences = { knowledgeBase: false, webSearch: true, turnMode: 'query' as const, enabledTools: ['web'] };
+    await act(async () => {
+      await result.current.sendMessage('Use the selected manual', 'conversation-1', preferences, ['Manual.pdf'], ['doc-manual']);
+    });
+    const failed = [...result.current.optimisticMessages.values()].find(message => message.role === 'user');
+    expect(failed?.retryContext).toEqual({
+      toolPreferences: preferences,
+      attachmentNames: ['Manual.pdf'],
+      attachmentDocumentIds: ['doc-manual'],
+    });
+
+    api.chatWithConversation.mockClear();
+    await act(async () => { await result.current.retryFailedMessage(failed!.tempId); });
+
+    expect(api.chatWithConversation).toHaveBeenCalledWith(
+      'conversation-1', 'Use the selected manual', preferences, expect.any(String),
+      ['Manual.pdf'], ['doc-manual']
+    );
+  });
+
+  it('dismisses only the selected failed user prompt', async () => {
+    api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture failure' });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await act(async () => { await result.current.sendMessage('Keep until dismissed', 'conversation-1'); });
+    const failed = [...result.current.optimisticMessages.values()].find(message => message.role === 'user');
+    expect(failed).toBeDefined();
+
+    act(() => result.current.dismissFailedMessage(failed!.tempId));
+
+    expect(result.current.optimisticMessages.size).toBe(0);
+  });
+
+  it('deleting a conversation releases a pending turn and prevents its late response repopulating caches', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    conversationUiStore.setState({ activeConversationId: conversation.id });
+    let resolveChat: ((value: unknown) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async () => unlisten);
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.sendMessage('Must not return after deletion', conversation.id); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+    await waitFor(() => expect(listen).toHaveBeenCalled());
+
+    await act(async () => { await result.current.deleteConversation(conversation.id); });
+    expect(unlisten).toHaveBeenCalled();
+    expect(result.current.inFlightGenerations.has(conversation.id)).toBe(false);
+    expect(result.current.optimisticMessages.size).toBe(0);
+
+    await act(async () => {
+      resolveChat?.({
+        ok: true,
+        data: { conversationId: conversation.id, message: 'late answer', messages: [], contextUsed: 0, sources: [] },
+      });
+      await sending;
+    });
+
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
+    expect(result.current.conversations.some(item => item.id === conversation.id)).toBe(false);
+  });
+
+  it('keeps a pending turn intact when the backend refuses conversation deletion', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    conversationUiStore.setState({ activeConversationId: conversation.id });
+    let resolveChat: ((value: unknown) => void) | undefined;
+    let resolveDelete: ((value: unknown) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async () => unlisten);
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.deleteConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveDelete = resolve; }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.sendMessage('Keep this turn', conversation.id); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    let deleting!: Promise<void>;
+    act(() => { deleting = result.current.deleteConversation(conversation.id); });
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalled());
+    expect(result.current.activeConversationId).toBeNull();
+    expect(result.current.inFlightGenerations.has(conversation.id)).toBe(true);
+    expect([...result.current.optimisticMessages.values()]).toEqual([
+      expect.objectContaining({ content: 'Keep this turn', status: 'pending' }),
+      expect.objectContaining({ role: 'assistant', status: 'pending' }),
+    ]);
+    expect(unlisten).not.toHaveBeenCalled();
+
+    const answer = {
+      id: 'answer-after-delete-race', conversationId: conversation.id, role: 'assistant',
+      content: 'The answer survived.', tokens: 4, status: 'completed', createdAt: '2026-09-30T00:00:00.000Z',
+    };
+    await act(async () => {
+      resolveChat?.({ ok: true, data: {
+        conversationId: conversation.id, message: answer.content, messages: [answer], contextUsed: 0, sources: [],
+      } });
+      await sending;
+    });
+    await act(async () => {
+      resolveDelete?.({ ok: false, error: 'delete failed' });
+      await deleting;
+    });
+    expect(result.current.activeConversationId).toBe(conversation.id);
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toEqual([answer]);
+  });
+
+  it('settles an unmounted send as a retryable prompt when its request returns', async () => {
+    let resolveChat: ((value: unknown) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async () => unlisten);
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    const { result, unmount } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    const preferences = { knowledgeBase: false, webSearch: true, turnMode: 'query' as const };
+    let sending!: Promise<void>;
+    act(() => {
+      sending = result.current.sendMessage('Keep this unsaved prompt', conversation.id, preferences, ['Guide.pdf'], ['doc-guide']);
+    });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    unmount();
+    expect(unlisten).toHaveBeenCalled();
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'request finished after provider unmount' });
+      await sending;
+    });
+
+    const ui = conversationUiStore.getState();
+    expect(ui.inFlightGenerations.has(conversation.id)).toBe(false);
+    expect([...ui.optimisticMessages.values()]).toEqual([
+      expect.objectContaining({
+        role: 'user', content: 'Keep this unsaved prompt', status: 'failed',
+        retryContext: {
+          toolPreferences: preferences,
+          attachmentNames: ['Guide.pdf'],
+          attachmentDocumentIds: ['doc-guide'],
+        },
+      }),
+    ]);
   });
 
   it('refreshes the sidebar bookmark query when a message is bookmarked', async () => {

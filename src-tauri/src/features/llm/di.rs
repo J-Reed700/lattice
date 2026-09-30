@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::application::ports::llm_port::OptionalLlmLoader;
 use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
     CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
@@ -223,89 +224,98 @@ impl Container {
 
     /// Get the utility LLM if one is configured.
     pub async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
-        let generation = self.utility_llm_cache.generation();
-        let active = match self
-            .ai
-            .downloaded_model_repo()
-            .get_active_utility_model()
-            .await
-        {
-            Ok(Some(m)) => m,
-            Ok(None) => return Ok(None),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to query active utility model — falling back to chat LLM"
-                );
-                return Ok(None);
-            }
-        };
+        (self.utility_llm_loader())().await
+    }
 
-        let settings = self
-            .system
-            .get_settings_use_case()
-            .execute()
-            .await
-            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
+    /// Bind only the dependencies needed by lazy utility-model consumers.
+    pub(crate) fn utility_llm_loader(&self) -> OptionalLlmLoader {
+        let models = Arc::clone(self.ai.downloaded_model_repo());
+        let settings_use_case = Arc::clone(self.system.get_settings_use_case());
+        let cache = Arc::clone(&self.utility_llm_cache);
+        let model_loader = Arc::new(self.model_loader());
+        Arc::new(move || {
+            let models = Arc::clone(&models);
+            let settings_use_case = Arc::clone(&settings_use_case);
+            let cache = Arc::clone(&cache);
+            let model_loader = Arc::clone(&model_loader);
+            Box::pin(async move {
+                let generation = cache.generation();
+                let active = match models.get_active_utility_model().await {
+                    Ok(Some(m)) => m,
+                    Ok(None) => return Ok(None),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to query active utility model — falling back to chat LLM"
+                        );
+                        return Ok(None);
+                    }
+                };
 
-        let generation_config = crate::features::llm::engine::GenerationConfig {
-            temperature: settings.llm.temperature,
-            top_p: settings.llm.top_p,
-            top_k: settings.llm.top_k,
-            // A ceiling, not an allowance: each caller sends the cap its own
-            // work needs and `max_output_tokens` only ever tightens this one.
-            // It was 512, which was below what several callers were already
-            // asking for — memory extraction requests 8192 — so their JSON was
-            // cut off mid-array and read back as malformed.
-            max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
-            repeat_penalty: settings.llm.repeat_penalty,
-        };
+                let settings = settings_use_case.execute().await.map_err(|e| {
+                    AppError::InvalidConfig(format!("Failed to load settings: {}", e))
+                })?;
 
-        let ollama_utility_tag = {
-            let utility = settings.llm.ollama_utility_model.trim();
-            if utility.is_empty() {
-                settings.llm.model.clone()
-            } else {
-                utility.to_string()
-            }
-        };
+                let generation_config = crate::features::llm::engine::GenerationConfig {
+                    temperature: settings.llm.temperature,
+                    top_p: settings.llm.top_p,
+                    top_k: settings.llm.top_k,
+                    // A ceiling, not an allowance: each caller sends the cap its own
+                    // work needs and `max_output_tokens` only ever tightens this one.
+                    // It was 512, which was below what several callers were already
+                    // asking for — memory extraction requests 8192 — so their JSON was
+                    // cut off mid-array and read back as malformed.
+                    max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
+                    repeat_penalty: settings.llm.repeat_penalty,
+                };
 
-        let cache_key = if active.location().is_local() {
-            active.model_id().to_string()
-        } else {
-            format!("{}::{}", active.model_id(), ollama_utility_tag)
-        };
+                let ollama_utility_tag = {
+                    let utility = settings.llm.ollama_utility_model.trim();
+                    if utility.is_empty() {
+                        settings.llm.model.clone()
+                    } else {
+                        utility.to_string()
+                    }
+                };
 
-        self.utility_llm_cache
-            .get_or_load(cache_key, generation, || async {
-                if active.location().is_local() {
-                    self.model_loader()
-                        .load_utility_local(
-                            &active,
-                            generation_config,
-                            settings.llm.local_context_window,
-                        )
-                        .await
+                let cache_key = if active.location().is_local() {
+                    active.model_id().to_string()
                 } else {
-                    self.model_loader()
-                        .load_utility_remote(
-                            &settings.llm,
-                            &ollama_utility_tag,
-                            generation_config,
-                        )
-                        .await
-                        .or_else(|e| {
-                            tracing::warn!(
-                                model_id = %active.model_id(),
-                                utility_model = %ollama_utility_tag,
-                                error = %e,
-                                "Failed to reach the remote utility model — falling back to chat LLM"
-                            );
-                            Ok(None)
-                        })
-                }
+                    format!("{}::{}", active.model_id(), ollama_utility_tag)
+                };
+
+                cache
+                    .get_or_load(cache_key, generation, || async {
+                        if active.location().is_local() {
+                            model_loader
+                                .load_utility_local(
+                                    &active,
+                                    generation_config,
+                                    settings.llm.local_context_window,
+                                )
+                                .await
+                        } else {
+                            model_loader
+                                .load_utility_remote(
+                                    &settings.llm,
+                                    &ollama_utility_tag,
+                                    generation_config,
+                                )
+                                .await
+                                .or_else(|e| {
+                                    tracing::warn!(
+                                        model_id = %active.model_id(),
+                                        utility_model = %ollama_utility_tag,
+                                        error = %e,
+                                        "Failed to reach the remote utility model — falling back to chat LLM"
+                                    );
+                                    Ok(None)
+                                })
+                        }
+                    })
+                    .await
             })
-            .await
+        })
     }
 
     /// Invalidate the LLM cache

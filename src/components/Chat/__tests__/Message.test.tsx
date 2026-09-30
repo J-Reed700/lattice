@@ -16,6 +16,9 @@ const DEFAULT_SUMMARY: MessageVerificationSummary = {
 
 let verificationSummary: MessageVerificationSummary = DEFAULT_SUMMARY;
 const regenerateResponse = vi.fn().mockResolvedValue('answered');
+const sendMessage = vi.fn().mockResolvedValue(undefined);
+const retryFailedMessage = vi.fn().mockResolvedValue(undefined);
+const dismissFailedMessage = vi.fn();
 
 vi.mock('../../../stores/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
@@ -23,6 +26,9 @@ vi.mock('../../../stores/conversationsStore', () => ({
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
     liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [],
     regenerateResponse,
+    sendMessage,
+    retryFailedMessage,
+    dismissFailedMessage,
   }),
 }));
 vi.mock('react-router', async () => {
@@ -277,6 +283,26 @@ describe('a question that failed to send', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     expect(regenerateResponse).toHaveBeenCalledWith('conversation');
+  });
+
+  it('resends the unsaved text with its original attachments and tool preferences', () => {
+    const retryContext = {
+      toolPreferences: { knowledgeBase: false, webSearch: true, turnMode: 'query' as const },
+      attachmentNames: ['Manual.pdf'],
+      attachmentDocumentIds: ['doc-manual'],
+    };
+    retryFailedMessage.mockClear();
+    regenerateResponse.mockClear();
+    render(<Message message={{
+      tempId: 'failed-temp', conversationId: 'conversation', role: 'user',
+      content: 'Search this manual', status: 'failed', createdAt: new Date().toISOString(),
+      retryContext,
+    }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(retryFailedMessage).toHaveBeenCalledWith('failed-temp');
+    expect(regenerateResponse).not.toHaveBeenCalled();
   });
 
   it('does not offer it further up the thread, where asking again would re-ask a different question', () => {

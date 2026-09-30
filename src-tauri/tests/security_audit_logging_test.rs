@@ -5,9 +5,9 @@
 use lattice::features::credentials::commands;
 use lattice::infrastructure::audit::sinks::{memory::MemoryAuditSink, sqlite::SqliteAuditSink};
 use lattice::infrastructure::audit::{
-    AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink, get_audit_logger,
+    get_audit_logger, AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink,
 };
-use lattice::infrastructure::persistence::database::{DatabaseConnection, initialize_database};
+use lattice::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use lattice::interfaces::di::Container;
 use std::{collections::HashSet, sync::Arc};
 

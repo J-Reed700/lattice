@@ -2,7 +2,7 @@ use crate::domain::download_snapshot::{BatchSnapshot, DownloadStateSnapshot, Sin
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 
 const RECONCILIATION_BATCH_SIZE: usize = 64;
 const RECONCILIATION_ACTIVE_POLL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -974,13 +974,13 @@ fn model_file_name_for_session(session: &crate::domain::download::DownloadSessio
 #[cfg(test)]
 mod tests {
     use super::{
-        RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE, RECONCILIATION_IDLE_POLL,
         is_terminal_manager_event, model_file_name_for_session, process_queue_after_terminal,
-        reconciliation_poll_delay,
+        reconciliation_poll_delay, RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE,
+        RECONCILIATION_IDLE_POLL,
     };
     use crate::domain::download::DownloadSession;
-    use crate::features::download::download_repository::DownloadRepository;
     use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use crate::features::download::download_repository::DownloadRepository;
     use crate::features::download::manager::{
         DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
     };

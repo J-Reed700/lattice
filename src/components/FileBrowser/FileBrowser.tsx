@@ -34,6 +34,7 @@ import {
   useRebuildProgress,
   useRebuildThemes,
 } from '../../hooks/queries/useClustersQuery';
+import { useCustomCollectionActions } from '../../hooks/queries/useCustomCollectionsQuery';
 import { useIndexedFoldersQuery } from '../../hooks/queries/useIndexedFoldersQuery';
 import {
   LIBRARY_DOCUMENTS_QUERY_KEY,
@@ -104,7 +105,8 @@ const plural = (count: number, noun: string): string =>
   `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
 
 export function FileBrowser() {
-  const { documents, filteredDocuments, refreshFiles } = useLibraryDocumentsQuery();
+  const { documents, filteredDocuments, refreshFiles, collections: customCollections, collectionsError, refreshCollections } = useLibraryDocumentsQuery();
+  const collectionActions = useCustomCollectionActions();
   const indexedFoldersQuery = useIndexedFoldersQuery();
   const viewMode = useFileBrowserStore(state => state.viewMode);
   const setViewMode = useFileBrowserStore(state => state.setViewMode);
@@ -113,12 +115,6 @@ export function FileBrowser() {
   const clearSelection = useFileBrowserStore(state => state.clearSelection);
   const scope = useFileBrowserStore(state => state.scope);
   const setScope = useFileBrowserStore(state => state.setScope);
-  const customCollections = useFileBrowserStore(state => state.customCollections);
-  const createCustomCollection = useFileBrowserStore(state => state.createCustomCollection);
-  const addDocumentsToCollection = useFileBrowserStore(state => state.addDocumentsToCustomCollection);
-  const removeDocumentsFromCollection = useFileBrowserStore(state => state.removeDocumentsFromCustomCollection);
-  const deleteCollection = useFileBrowserStore(state => state.deleteCustomCollection);
-  const createSnapshotCollection = useFileBrowserStore(state => state.createSnapshotCollection);
   const sourceConnections = useFileBrowserStore(state => state.sourceConnections);
   const searchQuery = useFileBrowserStore(state => state.searchQuery);
   const setSearchQuery = useFileBrowserStore(state => state.setSearchQuery);
@@ -593,36 +589,44 @@ export function FileBrowser() {
     navigate('/ingest');
   }, [navigate]);
 
-  const handleCreateCollection = useCallback((name: string) => {
-    const collectionId = createCustomCollection(name);
+  const handleCreateCollection = useCallback(async (name: string) => {
+    let collectionId: string | null;
+    try { collectionId = await collectionActions.create(name); }
+    catch (error) { toast.error('Collection could not be saved', { message: error instanceof Error ? error.message : String(error) }); return; }
     if (!collectionId) {
       toast.warning('Collection not created', { message: 'That name is already in use.' });
       return;
     }
     const ids = Array.from(selectedDocumentIds);
-    if (ids.length > 0) addDocumentsToCollection(collectionId, ids);
+    if (ids.length > 0) {
+      try { await collectionActions.addDocuments(collectionId, ids); }
+      catch (error) { toast.error('Documents could not be added to the collection', { message: error instanceof Error ? error.message : String(error) }); }
+    }
     else setAddDocumentsCollectionId(collectionId);
     setSearchQuery('');
     setFilterByType(null);
     setFilterBySource('all');
     setScope({ kind: 'collection', id: collectionId });
-  }, [addDocumentsToCollection, createCustomCollection, selectedDocumentIds, setFilterBySource, setFilterByType, setScope, setSearchQuery]);
+  }, [collectionActions, selectedDocumentIds, setFilterBySource, setFilterByType, setScope, setSearchQuery]);
 
-  const handleRemoveFromCollection = useCallback((ids: string[]) => {
+  const handleRemoveFromCollection = useCallback(async (ids: string[]) => {
     if (activeCollection?.kind !== 'manual') return;
-    removeDocumentsFromCollection(activeCollection.id, ids);
+    try { await collectionActions.removeDocuments(activeCollection.id, ids); }
+    catch (error) { toast.error('Documents could not be removed from the collection', { message: error instanceof Error ? error.message : String(error) }); return; }
     clearSelection();
     toast.success(`Removed from ${activeCollection.name}`, { message: 'Documents are still in your Library.' });
-  }, [activeCollection, clearSelection, removeDocumentsFromCollection]);
+  }, [activeCollection, clearSelection, collectionActions]);
 
-  const handleSnapshotSelection = useCallback(() => {
+  const handleSnapshotSelection = useCallback(async () => {
     const docIds = Array.from(selectedDocumentIds);
     if (docIds.length === 0) {
       return;
     }
 
     const label = searchQuery.trim() || new Date().toLocaleDateString();
-    const collectionId = createSnapshotCollection(`Snapshot: ${label}`, docIds);
+    let collectionId: string | null;
+    try { collectionId = await collectionActions.create(`Snapshot: ${label}`, null, docIds); }
+    catch (error) { toast.error('Snapshot could not be saved', { message: error instanceof Error ? error.message : String(error) }); return; }
     if (!collectionId) {
       toast.warning('Snapshot not created', { message: 'That name is already in use.' });
       return;
@@ -630,7 +634,7 @@ export function FileBrowser() {
 
     toast.success(`${plural(docIds.length, 'document')} captured`);
     clearSelection();
-  }, [clearSelection, createSnapshotCollection, searchQuery, selectedDocumentIds]);
+  }, [clearSelection, collectionActions, searchQuery, selectedDocumentIds]);
 
   const handleSortChange = useCallback((field: SortField, order: SortOrder) => {
     setSortField(field);
@@ -864,6 +868,13 @@ export function FileBrowser() {
           onToggleGroupByDate={toggleGroupByDate}
         />
 
+        {collectionsError ? (
+          <div role="alert" className="mt-3 flex items-center justify-between rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
+            <span>Your collections could not be loaded: {collectionsError}</span>
+            <button type="button" className="underline" onClick={() => { void refreshCollections(); }}>Retry</button>
+          </div>
+        ) : null}
+
         <div className="flex min-h-0 flex-1 gap-6">
           {isRailOpen ? (
             <LibraryRail
@@ -1008,7 +1019,11 @@ export function FileBrowser() {
         message={`Delete “${pendingDeleteCollection?.name ?? ''}” and any collections inside it? Your documents will remain in the Library.`}
         confirmLabel="Delete collection"
         variant="danger"
-        onConfirm={() => { if (pendingDeleteCollection) deleteCollection(pendingDeleteCollection.id); }}
+        onConfirm={async () => {
+          if (!pendingDeleteCollection) return;
+          try { await collectionActions.deleteCollection(pendingDeleteCollection.id); setPendingDeleteCollection(null); }
+          catch (error) { toast.error('Collection could not be deleted', { message: error instanceof Error ? error.message : String(error) }); }
+        }}
         onCancel={() => setPendingDeleteCollection(null)}
       />
 

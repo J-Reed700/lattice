@@ -160,6 +160,10 @@ describe('ListView', () => {
         isLoading: useFileBrowserStore((state: any) => state.isLoading) ?? false,
         error: useFileBrowserStore((state: any) => state.error) ?? null,
         refreshFiles: vi.fn(),
+        collections: [],
+        collectionsError: null,
+        collectionsLoading: false,
+        refreshCollections: vi.fn(),
       };
     });
   });

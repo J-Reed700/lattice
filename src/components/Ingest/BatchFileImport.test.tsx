@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
   cancelBatchImport: vi.fn(),
   getOperation: vi.fn(),
   operations: new Map(),
-  fileBrowser: { customCollections: [], addDocumentsToCustomCollection: vi.fn() },
+  addDocumentsToCustomCollection: vi.fn(),
+  collectionActions: { addDocuments: vi.fn() },
+  collectionsQuery: { data: [], error: null as Error | null, refetch: vi.fn() },
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -27,8 +29,9 @@ vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: { error: vi.fn(),
 vi.mock('@/stores/conversationsStore', () => ({
   useConversationsStore: (select: (state: { selectedSpaceId: null }) => unknown) => select({ selectedSpaceId: null }),
 }));
-vi.mock('@/stores/fileBrowserStore', () => ({
-  useFileBrowserStore: (select: (state: typeof mocks.fileBrowser) => unknown) => select(mocks.fileBrowser),
+vi.mock('@/hooks/queries/useCustomCollectionsQuery', () => ({
+  useCustomCollectionsQuery: () => mocks.collectionsQuery,
+  useCustomCollectionActions: () => mocks.collectionActions,
 }));
 vi.mock('@/lib/api', () => ({
   default: {
@@ -41,6 +44,8 @@ vi.mock('@/lib/api', () => ({
 describe('BatchFileImport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.collectionsQuery.data = [];
+    mocks.collectionsQuery.error = null;
     mocks.operations.clear();
     mocks.getOperation.mockReset();
     mocks.startBatchImport.mockResolvedValue({ ok: false, error: 'Embedding model files are missing. Download MiniLM again.' });
@@ -61,6 +66,14 @@ describe('BatchFileImport', () => {
     await user.click(screen.getByRole('button', { name: 'Retry 2 files' }));
     await waitFor(() => expect(mocks.startBatchImport).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/Failed —/)).not.toBeInTheDocument();
+  });
+
+  it('shows collection migration errors with a retry in the collection selector', async () => {
+    mocks.collectionsQuery.error = new Error('Legacy collections are not valid JSON; the original data was kept.');
+    render(<TooltipProvider><BatchFileImport /></TooltipProvider>);
+    expect(screen.getByRole('alert')).toHaveTextContent('Legacy collections are not valid JSON');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mocks.collectionsQuery.refetch).toHaveBeenCalledOnce();
   });
 
   it('uses durable jobs even for a single PDF', async () => {

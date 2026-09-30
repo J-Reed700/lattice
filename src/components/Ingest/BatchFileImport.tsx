@@ -6,6 +6,7 @@ import { X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
+import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/hooks/queries/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/hooks/useIndexing';
 import { useToast } from '@/hooks/useToast';
 import VaultAPI from '@/lib/api';
@@ -13,7 +14,6 @@ import type { SourceGroup } from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { cn } from '@/lib/utils';
 import { useConversationsStore } from '@/stores/conversationsStore';
-import { useFileBrowserStore } from '@/stores/fileBrowserStore';
 import type { CustomCollection } from '@/types/fileBrowser';
 import {
   filterIndexablePaths,
@@ -42,6 +42,7 @@ interface BatchFileImportProps {
 
 const isRetryableStatus = (status: FileItem['status']): boolean =>
   status === 'pending' || status === 'error';
+const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 
 export const BatchFileImport: FC<BatchFileImportProps> = ({
   onImportComplete,
@@ -55,10 +56,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const selectedConversationSpaceId = useConversationsStore((state) => state.selectedSpaceId);
-  const customCollections = useFileBrowserStore((state) => state.customCollections);
-  const addDocumentsToCustomCollection = useFileBrowserStore(
-    (state) => state.addDocumentsToCustomCollection
-  );
+  const collectionsQuery = useCustomCollectionsQuery();
+  const customCollections = collectionsQuery.data ?? EMPTY_CUSTOM_COLLECTIONS;
+  const collectionActions = useCustomCollectionActions();
   const [sourceGroup, setSourceGroup] = useState<SourceGroup | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isImporting, setIsImporting] = useState(false);
@@ -447,7 +447,13 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     if (['completed', 'error'].includes(operation.status) && selectedCollectionId) {
       const documentIds = operation.items?.filter(item => item.status === 'completed' && item.documentId)
         .map(item => item.documentId as string) ?? [];
-      if (documentIds.length) addDocumentsToCustomCollection(selectedCollectionId, documentIds);
+      if (documentIds.length) {
+        void collectionActions.addDocuments(selectedCollectionId, documentIds).catch((error) => {
+          toastRef.current.error('Imported documents could not be added to the collection', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     }
 
     if (operation.status === 'completed') {
@@ -494,7 +500,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         failed: operation.failedFiles,
       });
     }
-  }, [currentJobId, getOperation, onImportComplete, selectedCollectionId, addDocumentsToCustomCollection]);
+  }, [currentJobId, getOperation, onImportComplete, selectedCollectionId, collectionActions]);
 
   return (
     <div>
@@ -550,7 +556,12 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           htmlFor={manualCollections.length > 0 ? 'batch-file-collection-select' : undefined}
         >
           {manualCollections.length === 0 ? (
-            <span className="text-xs text-text-muted">No collections yet</span>
+            collectionsQuery.error ? (
+              <span role="alert" className="text-xs text-danger">
+                Collections unavailable: {collectionsQuery.error.message}{' '}
+                <button type="button" className="underline" onClick={() => { void collectionsQuery.refetch(); }}>Retry</button>
+              </span>
+            ) : <span className="text-xs text-text-muted">No collections yet</span>
           ) : (
             <select
               id="batch-file-collection-select"

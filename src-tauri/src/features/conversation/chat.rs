@@ -1009,6 +1009,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let (user_message_id, message_tokens) = persist_user_message_pending(
         &conv_service,
         &conv_id,
+        &turn_id,
         &validated_message,
         &attachment_names,
         &attachment_ids,
@@ -1292,8 +1293,15 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             if let Some((response, sources, turn)) = background_verification {
                 let message_id = answer_id;
                 let window = window.clone();
+                let load_utility_llm = container.utility_llm_loader();
                 BackgroundVerification {
-                    container: container.clone(),
+                    conversation_repository: Arc::new(
+                        crate::features::conversation::repository::ConversationRepository::new(
+                            container.db_pool().clone(),
+                        ),
+                    ),
+                    conversation_service: Arc::clone(&conv_service),
+                    load_utility_llm,
                     conversation_id: conv_id.clone(),
                     request_id: turn_id.clone(),
                     message_id,
@@ -1303,13 +1311,14 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     chat_llm: Arc::clone(&llm),
                     turn: Some(turn),
                     started: verification_start,
-                    emit: Box::new(move |payload| {
+                    emit: Arc::new(move |payload| {
                         if let Err(error) = window.emit("llm-stream", payload) {
                             warn!(%error, "Failed to emit a finished grounding check");
                         }
                     }),
                 }
-                .spawn();
+                .spawn()
+                .await;
             }
             flow_metrics.total_ms = elapsed_ms(flow_start);
             let retrieval_sub = retrieval_subtimings_or_default(&flow_metrics);

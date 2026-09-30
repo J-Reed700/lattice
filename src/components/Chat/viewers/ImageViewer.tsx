@@ -11,40 +11,54 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   const [safeSrc, setSafeSrc] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   const isSVG = filePath.toLowerCase().endsWith('.svg');
 
   useEffect(() => {
+    const abortController = new AbortController();
+    let active = true;
+    let ownedObjectUrl: string | null = null;
+
+    setError(null);
+
     if (!isSVG) {
       // Non-SVG images are safe to load directly
       const src = convertFileSrc(filePath);
       setSafeSrc(src);
       setIsLoading(false);
-      return;
+    } else {
+      // SVG requires sanitization
+      setIsLoading(true);
+      setSafeSrc('');
+      sanitizeSVG(filePath, abortController.signal)
+        .then(url => {
+          if (!active) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+
+          ownedObjectUrl = url;
+          setSafeSrc(url);
+          setIsLoading(false);
+        })
+        .catch(err => {
+          if (!active) return;
+
+          console.error('[ImageViewer] SVG sanitization failed:', err);
+          setError('Failed to load SVG');
+          setIsLoading(false);
+        });
     }
 
-    // SVG requires sanitization
-    setIsLoading(true);
-    sanitizeSVG(filePath)
-      .then(url => {
-        setSafeSrc(url);
-        setIsLoading(false);
-      })
-      .catch(err => {
-        console.error('[ImageViewer] SVG sanitization failed:', err);
-        setError('Failed to load SVG');
-        setIsLoading(false);
-      });
-
     return () => {
-      if (safeSrc?.startsWith('blob:')) {
-        URL.revokeObjectURL(safeSrc);
-      }
+      active = false;
+      abortController.abort();
+      if (ownedObjectUrl) URL.revokeObjectURL(ownedObjectUrl);
     };
-  }, [filePath, isSVG, safeSrc]);
+  }, [filePath, isSVG]);
 
-  async function sanitizeSVG(path: string): Promise<string> {
-    const response = await fetch(convertFileSrc(path));
+  async function sanitizeSVG(path: string, signal: AbortSignal): Promise<string> {
+    const response = await fetch(convertFileSrc(path), { signal });
     const svgText = await response.text();
 
     // Sanitize with DOMPurify

@@ -223,6 +223,14 @@ fn main() {
                     "get_document",
                     "get_corpus_shape",
                     "list_conversations_citing_document",
+                    "list_custom_collections",
+                    "import_legacy_custom_collections",
+                    "create_custom_collection",
+                    "rename_custom_collection",
+                    "move_custom_collection",
+                    "delete_custom_collection",
+                    "add_documents_to_custom_collection",
+                    "remove_documents_from_custom_collection",
                 ]),
             )
             .plugin(
