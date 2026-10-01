@@ -765,7 +765,12 @@ impl ConversationRepository {
         let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
         let now = Utc::now().to_rfc3339();
 
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        // This path reads the idempotency row and revision preconditions
+        // before it writes. Acquire the SQLite writer reservation up front so
+        // concurrent commits serialize and the loser can observe the winner
+        // (or return a typed revision conflict) instead of failing with
+        // SQLITE_BUSY_SNAPSHOT after upgrading a stale read transaction.
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
 
         // --- idempotency -------------------------------------------------
         // Checked first: a crash between commit and response leaves the caller

@@ -23,6 +23,36 @@ const setUiError = (error: unknown): void => {
   conversationUiStore.setState({ error: error instanceof Error ? error.message : String(error) });
 };
 
+function restoreMissingItem<T extends { id: string }>(current: T[] | undefined, previous: T[], id: string): T[] | undefined {
+  const targetIndex = previous.findIndex(item => item.id === id);
+  const target = previous[targetIndex];
+  if (!target || current?.some(item => item.id === id)) return current;
+
+  const restored = [...(current ?? [])];
+  let insertionIndex = -1;
+  // Use surviving history as anchors so concurrent deletions do not move the
+  // restored item past messages that followed it in the original sequence.
+  for (let index = targetIndex + 1; index < previous.length; index += 1) {
+    const successorIndex = restored.findIndex(item => item.id === previous[index].id);
+    if (successorIndex >= 0) {
+      insertionIndex = successorIndex;
+      break;
+    }
+  }
+  if (insertionIndex < 0) {
+    for (let index = targetIndex - 1; index >= 0; index -= 1) {
+      const predecessorIndex = restored.findIndex(item => item.id === previous[index].id);
+      if (predecessorIndex >= 0) {
+        insertionIndex = predecessorIndex + 1;
+        break;
+      }
+    }
+  }
+  if (insertionIndex < 0) insertionIndex = Math.min(targetIndex, restored.length);
+  restored.splice(insertionIndex, 0, target);
+  return restored;
+}
+
 const forgetRequestedConversation = (id: string): void => {
   conversationUiStore.setState(state => {
     const linked = new Set(state.requestedLinkedConversationIds);
@@ -392,41 +422,39 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
         await loadConversations({ spaceId });
       }
     } catch (error) {
-      setUiError(error);
+      // A slower read for the previous selection must not replace the error
+      // state of the conversation the reader has since opened.
+      if (conversationUiStore.getState().activeConversationId === id) setUiError(error);
     }
   }, [addRequestedId, queryClient, loadConversations]);
 
-  /**
-   * One generation turn, shared by `sendMessage` and `regenerateResponse`.
-   *
-   * The only difference between the two is whether a user bubble is pushed:
-   * regenerate re-runs a question that is already on screen and about to be
-   * re-persisted server-side, so pushing one would show it twice. Everything
-   * else — the `llm-stream` listener, the retrieval trace, the optimistic
-   * assistant bubble, the settle path — is identical, and both refetch from
-   * the server on success so the backend stays the single source of truth.
-   *
-   * Returns how the turn ended. `onFailure` fires only on a real failure, so it
-   * is not a complete signal on its own: the busy guard and a user-initiated
-   * cancellation both end the turn without it.
-   */
+  /** Truncate persisted history after a message and refresh the conversation list. */
   const truncateAfter = useCallback(async (
     conversationId: string,
     messageId: string,
     inclusive = false
   ): Promise<boolean> => {
-    const result = await VaultAPI.truncateConversationAfter(conversationId, messageId, inclusive);
-    if (!result.ok) {
-      setUiError(result.error);
-      return false;
+    let cancelled = false;
+    const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
+    try {
+      const result = await VaultAPI.truncateConversationAfter(conversationId, messageId, inclusive);
+      // A truncate request can outlive a concurrent conversation deletion.
+      // Never recreate its just-removed messages cache with a late response.
+      if (cancelled) return false;
+      if (!result.ok) {
+        setUiError(result.error);
+        return false;
+      }
+      queryClient.setQueryData(
+        conversationKeys.messages(conversationId),
+        result.data.messages.map(toConversationMessage)
+      );
+      await invalidateLists();
+      return true;
+    } finally {
+      unregisterLifecycle();
     }
-    queryClient.setQueryData(
-      conversationKeys.messages(conversationId),
-      result.data.messages.map(toConversationMessage)
-    );
-    await invalidateLists();
-    return true;
-  }, [invalidateLists, queryClient]);
+  }, [invalidateLists, lifecycle, queryClient]);
 
   /** Branch the conversation, select the branch, and return its id. */
   const forkConversation = useCallback(async (
@@ -487,22 +515,34 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       setUiError('Message not found in the selected conversation.');
       return;
     }
+    let cancelled = false;
+    const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
     queryClient.setQueryData(key, previous.filter(message => message.id !== messageId));
-    const result = await VaultAPI.deleteConversationMessage({ conversationId, messageId });
-    if (!result.ok) {
-      queryClient.setQueryData(key, previous);
-      setUiError(result.error);
-      return;
+    try {
+      const result = await VaultAPI.deleteConversationMessage({ conversationId, messageId });
+      if (cancelled) return;
+      if (!result.ok) {
+        queryClient.setQueryData<ConversationMessage[]>(key, current =>
+          restoreMissingItem(current, previous, messageId));
+        setUiError(result.error);
+        return;
+      }
+      await Promise.all([
+        invalidateLists(),
+        queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks }),
+      ]);
+    } finally {
+      unregisterLifecycle();
     }
-    await Promise.all([
-      invalidateLists(),
-      queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks }),
-    ]);
-  }, [invalidateLists, queryClient]);
+  }, [invalidateLists, lifecycle, queryClient]);
 
   const deleteConversation = useCallback(async (id: string) => {
     // No list pre-check: the open conversation can be one the current filter
     // or search hides, and the backend is the authority on whether it exists.
+    // Stop a request started before the delete from writing its stale result
+    // over the optimistic removal. A successful delete then refetches every
+    // active list using the backend's post-delete state.
+    await queryClient.cancelQueries({ queryKey: conversationKeys.lists });
     const snapshots = queryClient.getQueriesData<Conversation[]>({ queryKey: conversationKeys.lists });
     queryClient.setQueriesData<Conversation[]>({ queryKey: conversationKeys.lists }, current =>
       current?.filter(item => item.id !== id)
@@ -511,7 +551,10 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     if (wasActive) conversationUiStore.setState({ activeConversationId: null });
     const result = await VaultAPI.deleteConversation(id);
     if (!result.ok) {
-      for (const [key, data] of snapshots) queryClient.setQueryData(key, data);
+      for (const [key, snapshot] of snapshots) {
+        if (!snapshot) continue;
+        queryClient.setQueryData<Conversation[]>(key, current => restoreMissingItem(current, snapshot, id));
+      }
       if (wasActive && conversationUiStore.getState().activeConversationId === null) {
         conversationUiStore.setState({ activeConversationId: id });
       }
@@ -525,8 +568,8 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(id) });
     queryClient.removeQueries({ queryKey: conversationKeys.linkedDocuments(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.webSources(id), exact: true });
-    await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
-  }, [lifecycle, queryClient]);
+    await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
+  }, [invalidateLists, lifecycle, queryClient]);
 
   const dismissFailedMessage = useCallback((tempId: string) => {
     conversationUiStore.setState(current => {

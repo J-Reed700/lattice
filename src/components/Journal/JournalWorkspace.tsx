@@ -143,10 +143,39 @@ export function JournalWorkspace() {
   const [journalLoadAttempt, setJournalLoadAttempt] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [isCreatingJournal, setIsCreatingJournal] = useState(false);
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
     new Set(),
   );
   const appliedInitialJournalRef = useRef(false);
+  const journalCreationRef = useRef<ReturnType<typeof VaultAPI.createJournal> | null>(null);
+
+  const createJournalOnce = useCallback(() => {
+    if (journalCreationRef.current) return journalCreationRef.current;
+    const request = (async () => {
+      try {
+        const journals = await VaultAPI.listJournals();
+        if (!journals.ok) return { ok: false as const, error: `Failed to load journals: ${journals.error}` };
+        return VaultAPI.createJournal({
+          name: nextJournalName(journals.data),
+          description: null,
+          icon: DEFAULT_JOURNAL_ICON,
+          accentColor: DEFAULT_JOURNAL_ACCENT,
+          spacePrompt: null,
+          defaultModelName: null,
+          toolPreferencesJson: null,
+        });
+      } catch (error) {
+        return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+      }
+    })();
+    journalCreationRef.current = request;
+    void request.then(
+      () => { if (journalCreationRef.current === request) journalCreationRef.current = null; },
+      () => { if (journalCreationRef.current === request) journalCreationRef.current = null; },
+    );
+    return request;
+  }, []);
 
   const entriesState = useJournalEntries({
     journalSpaceId: requestedJournalSpaceId,
@@ -299,16 +328,7 @@ export function JournalWorkspace() {
       appliedInitialJournalRef.current = true;
 
       if (active.length === 0 && fetched.length === 0) {
-        const initialName = nextJournalName(fetched);
-        const created = await VaultAPI.createJournal({
-          name: initialName,
-          description: null,
-          icon: DEFAULT_JOURNAL_ICON,
-          accentColor: DEFAULT_JOURNAL_ACCENT,
-          spacePrompt: null,
-          defaultModelName: null,
-          toolPreferencesJson: null,
-        });
+        const created = await createJournalOnce();
         if (cancelled) return;
         if (!created.ok) {
           setTopLevelError(`Failed to create initial journal: ${created.error}`);
@@ -343,7 +363,7 @@ export function JournalWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [requestedJournalSpaceId, navigate, searchParams, journalLoadAttempt]);
+  }, [createJournalOnce, requestedJournalSpaceId, navigate, searchParams, journalLoadAttempt]);
 
   const notify = useCallback(
     (tone: ActionTone, message: string, action?: Notice['action']) => {
@@ -363,27 +383,28 @@ export function JournalWorkspace() {
   );
 
   const handleCreateJournal = useCallback(async () => {
-    const name = nextJournalName(allJournals);
-    const created = await VaultAPI.createJournal({
-      name,
-      description: null,
-      icon: DEFAULT_JOURNAL_ICON,
-      accentColor: DEFAULT_JOURNAL_ACCENT,
-      spacePrompt: null,
-      defaultModelName: null,
-      toolPreferencesJson: null,
-    });
-    if (!created.ok) {
-      notify('error', `Failed to create journal: ${created.error}`);
-      return;
+    if (isCreatingJournal) return;
+    setIsCreatingJournal(true);
+    try {
+      const created = await createJournalOnce();
+      if (!created.ok) {
+        notify('error', `Failed to create journal: ${created.error}`);
+        return;
+      }
+      setAllJournals((prev) => prev.some(journal => journal.id === created.data.id)
+        ? prev
+        : [...prev, created.data]);
+      const params = new URLSearchParams(searchParams);
+      params.set('journalSpaceId', created.data.id);
+      params.delete('entryId');
+      navigate(`/journals?${params.toString()}`);
+      notify('success', `Created "${created.data.name}".`);
+    } catch (error) {
+      notify('error', `Failed to create journal: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsCreatingJournal(false);
     }
-    setAllJournals((prev) => [...prev, created.data]);
-    const params = new URLSearchParams(searchParams);
-    params.set('journalSpaceId', created.data.id);
-    params.delete('entryId');
-    navigate(`/journals?${params.toString()}`);
-    notify('success', `Created "${name}".`);
-  }, [allJournals, navigate, notify, searchParams]);
+  }, [createJournalOnce, isCreatingJournal, navigate, notify, searchParams]);
 
   const handleRenameJournal = useCallback(
     async (nextName: string) => {
@@ -920,11 +941,17 @@ export function JournalWorkspace() {
           <button
             type="button"
             onClick={() => void handleCreateJournal()}
+            disabled={isCreatingJournal}
             className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-            New journal
+            {isCreatingJournal ? 'Creating journal…' : 'New journal'}
           </button>
+          {notice?.tone === 'error' && (
+            <p role="alert" className="max-w-sm text-sm text-[hsl(var(--danger-fg))]">
+              {notice.message}
+            </p>
+          )}
         </div>
       </div>
     );

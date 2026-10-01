@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import net from 'node:net';
@@ -21,6 +21,7 @@ let browser;
 let launches = 0;
 const expectedTitle = 'Compatibility café 7319';
 const expectedBody = 'Cedar compatibility café 7319. This must survive closing immediately.';
+let collectionId;
 
 async function invoke(command, args = {}) {
   const response = await browser.executeAsync((command, args, done) => {
@@ -34,6 +35,13 @@ async function invoke(command, args = {}) {
 
 async function launch() {
   assert.ok(!app, 'The previous app process must be closed before relaunch');
+  if (process.platform === 'darwin') {
+    const session = execFileSync('/usr/sbin/ioreg', ['-n', 'Root', '-d1', '-l'], {
+      encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(/"CGSSessionScreenIsLocked"\s*=\s*Yes/.test(session), false,
+      'Native UI checks require an unlocked macOS desktop; locked WebKit views pause their animation clocks');
+  }
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port;
@@ -71,11 +79,16 @@ async function launch() {
   await browser.waitUntil(async () => browser.execute(() => Boolean(window.__TAURI__?.core)), { timeout: 30_000 });
   assert.equal(await invoke('plugin:app|identifier'), manifest.identifier);
   const titled = await browser.executeAsync(done => {
-    window.__TAURI__.window.getCurrentWindow()
-      .setTitle('Lattice Compatibility Test — isolated test library')
-      .then(() => done(true)).catch(() => done(false));
+    const candidate = window.__TAURI__.window.getCurrentWindow();
+    candidate.setTitle('Lattice Compatibility Test — isolated test library')
+      .then(() => candidate.show())
+      .then(() => candidate.setFocus())
+      .then(() => done(true)).catch(error => done(String(error)));
   });
-  assert.equal(titled, true, 'The isolated test window must identify itself');
+  assert.equal(titled, true, 'The isolated test window must identify itself and receive focus');
+  await browser.waitUntil(async () => browser.execute(() => document.visibilityState === 'visible'), {
+    timeout: 10_000, timeoutMsg: 'The native candidate webview must be visible before UI interaction',
+  });
 }
 
 async function closeNormally() {
@@ -171,6 +184,9 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       results.checks.push('minimum-window-journal');
     });
     await step('quit flushes pending body edits and the still-focused title', async () => {
+      collectionId = await invoke('plugin:file|create_custom_collection', { request: {
+        name: 'Compatibility collection', kind: 'manual', parentId: null, documentIds: [],
+      } });
       const editor = await browser.$('.ProseMirror[contenteditable="true"]');
       await editor.click();
       await editor.addValue(expectedBody);
@@ -183,6 +199,15 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
     await step('reopening preserves settings and the exact saved journal content', async () => {
       await launch();
       assert.equal((await invoke('plugin:settings|get_settings')).onboarding.firstRunDismissed, true);
+      const collections = await invoke('plugin:file|list_custom_collections');
+      assert.equal(collections.find(collection => collection.id === collectionId)?.name, 'Compatibility collection',
+        'Custom collections must survive a complete native restart');
+      await invoke('plugin:file|rename_custom_collection', { collectionId, name: 'Updated compatibility collection' });
+      assert.equal((await invoke('plugin:file|list_custom_collections')).find(collection => collection.id === collectionId)?.name,
+        'Updated compatibility collection');
+      await invoke('plugin:file|delete_custom_collection', { collectionId });
+      assert.ok(!(await invoke('plugin:file|list_custom_collections')).some(collection => collection.id === collectionId));
+      results.checks.push('collection-persistence');
       const { notes } = await invoke('plugin:dailynotes|list_workspace_notes', { request: { journalId: null } });
       const note = notes.find(note => note.title === expectedTitle);
       assert.ok(note, 'Focused page title was not saved during shutdown');
@@ -192,6 +217,11 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       await title.waitForDisplayed({ timeout: 30_000 });
       assert.equal(await title.getValue(), expectedTitle);
       await browser.saveScreenshot(path.join(reports, 'journal-after-restart.png'));
+      if (process.env.LATTICE_NATIVE_LEAK_SCAN === '1') {
+        results.nativeLeaksBaseline = await scanNativeLeaks(app.pid);
+        await writeFile(path.join(reports, 'native-leaks-baseline.txt'),
+          results.nativeLeaksBaseline.output ?? results.nativeLeaksBaseline.reason);
+      }
       const samples = [];
       for (let cycle = 0; cycle < 25; cycle++) {
         await (await browser.$('button[aria-label="Show conversation and highlights"]')).click();
@@ -227,10 +257,17 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       results.checks.push('restart-persistence');
       await closeNormally();
     });
-    results.passed = results.checks.length === 6;
+    results.passed = results.checks.length === 7;
     assert.equal(results.passed, true);
   } catch (error) {
     if (browser) {
+      results.failureContext = await browser.execute(() => ({
+        focused: document.hasFocus(),
+        visibility: document.visibilityState,
+        animations: document.getAnimations().map(animation => ({
+          playState: animation.playState, currentTime: animation.currentTime,
+        })),
+      })).catch(() => null);
       await browser.saveScreenshot(path.join(reports, 'failure.png')).catch(() => {});
       await writeFile(path.join(reports, 'failure.html'), await browser.getPageSource().catch(() => '')).catch(() => {});
     }

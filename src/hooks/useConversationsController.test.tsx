@@ -479,11 +479,19 @@ describe('useConversationsController optimistic cleanup', () => {
   it('deleting a conversation releases a pending turn and prevents its late response repopulating caches', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     conversationUiStore.setState({ activeConversationId: conversation.id });
+    let deleted = false;
+    api.listConversationsExplorer = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+    }));
     let resolveChat: ((value: unknown) => void) | undefined;
     const unlisten = vi.fn();
     vi.mocked(listen).mockImplementationOnce(async () => unlisten);
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    api.deleteConversation = vi.fn().mockImplementation(async () => {
+      deleted = true;
+      return { ok: true, data: undefined };
+    });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending!: Promise<void>;
@@ -506,6 +514,181 @@ describe('useConversationsController optimistic cleanup', () => {
 
     expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
     expect(result.current.conversations.some(item => item.id === conversation.id)).toBe(false);
+  });
+
+  it('keeps a deleted conversation out of lists when an older list read was pending', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let deleted = false;
+    let resolveOldList: ((value: unknown) => void) | undefined;
+    let listCalls = 0;
+    api.listConversationsExplorer = vi.fn().mockImplementation(() => {
+      listCalls += 1;
+      if (listCalls === 2) {
+        return new Promise(resolve => { resolveOldList = resolve; });
+      }
+      return Promise.resolve({
+        ok: true,
+        data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+      });
+    });
+    api.deleteConversation = vi.fn().mockImplementation(async () => {
+      deleted = true;
+      return { ok: true, data: undefined };
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    const oldRead = queryClient.refetchQueries({ queryKey: conversationKeys.lists, type: 'active' });
+    await waitFor(() => expect(listCalls).toBe(2));
+    await act(async () => { await result.current.deleteConversation(conversation.id); });
+    resolveOldList?.({ ok: true, data: { conversations: [conversation], total: 1 } });
+    await oldRead;
+
+    await waitFor(() => expect(result.current.conversations).toEqual([]));
+    expect(queryClient.getQueryData(conversationKeys.list({ spaceId: null, filterMode: 'all', searchQuery: '' })))
+      .toEqual([]);
+  });
+
+  it('restores only its own list row when a failed deletion overlaps another successful deletion', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const other = { id: 'conversation-2', title: 'Other chat', updatedAt: conversation.updatedAt };
+    const deleted = new Set<string>();
+    let resolveFirstDelete: ((value: unknown) => void) | undefined;
+    api.listConversationsExplorer = vi.fn().mockImplementation(async () => {
+      const conversations = [conversation, other].filter(item => !deleted.has(item.id));
+      return { ok: true, data: { conversations, total: conversations.length } };
+    });
+    api.deleteConversation = vi.fn().mockImplementation((id: string) => {
+      if (id === conversation.id) return new Promise(resolve => { resolveFirstDelete = resolve; });
+      deleted.add(id);
+      return Promise.resolve({ ok: true, data: undefined });
+    });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+
+    let deletingFirst!: Promise<void>;
+    act(() => { deletingFirst = result.current.deleteConversation(conversation.id); });
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith(conversation.id));
+    await act(async () => { await result.current.deleteConversation(other.id); });
+    await act(async () => {
+      resolveFirstDelete?.({ ok: false, error: 'first delete failed' });
+      await deletingFirst;
+    });
+
+    expect(result.current.conversations.map(item => item.id)).toEqual([conversation.id]);
+  });
+
+  it('does not let a pending truncate recreate messages after the conversation is deleted', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const original = {
+      id: 'message-before-truncate', conversationId: conversation.id, role: 'user',
+      content: 'Keep this history', tokens: 3, status: 'completed', createdAt: '2026-09-30T00:00:00.000Z',
+    } as const;
+    queryClient.setQueryData(conversationKeys.messages(conversation.id), [original]);
+    let resolveTruncate: ((value: unknown) => void) | undefined;
+    api.truncateConversationAfter = vi.fn().mockImplementation(() => new Promise(resolve => { resolveTruncate = resolve; }));
+    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+
+    let truncating!: Promise<boolean>;
+    act(() => { truncating = result.current.truncateAfter(conversation.id, original.id); });
+    await waitFor(() => expect(api.truncateConversationAfter).toHaveBeenCalled());
+    await act(async () => { await result.current.deleteConversation(conversation.id); });
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
+
+    await act(async () => {
+      resolveTruncate?.({ ok: true, data: { messages: [original] } });
+      await expect(truncating).resolves.toBe(false);
+    });
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
+  });
+
+  it('does not restore a failed message deletion after its conversation is deleted', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const savedMessage = {
+      id: 'message-being-deleted', conversationId: conversation.id, role: 'user',
+      content: 'This conversation will be removed', tokens: 5, status: 'completed',
+      createdAt: '2026-09-30T00:00:00.000Z',
+    } as const;
+    queryClient.setQueryData(conversationKeys.messages(conversation.id), [savedMessage]);
+    let resolveMessageDelete: ((value: unknown) => void) | undefined;
+    api.deleteConversationMessage = vi.fn().mockImplementation(() => new Promise(resolve => { resolveMessageDelete = resolve; }));
+    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+
+    let deletingMessage!: Promise<void>;
+    act(() => { deletingMessage = result.current.deleteMessage(conversation.id, savedMessage.id); });
+    await waitFor(() => expect(api.deleteConversationMessage).toHaveBeenCalled());
+    await act(async () => { await result.current.deleteConversation(conversation.id); });
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
+
+    await act(async () => {
+      resolveMessageDelete?.({ ok: false, error: 'message deletion failed too late' });
+      await deletingMessage;
+    });
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toBeUndefined();
+    expect(result.current.error).toBeNull();
+  });
+
+  it('restores only the failed message while preserving messages added during deletion', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const precedingMessage = {
+      id: 'preceding-message', conversationId: conversation.id, role: 'user',
+      content: 'An earlier message', tokens: 3, status: 'completed', createdAt: '2026-09-30T00:00:00.000Z',
+    } as const;
+    const savedMessage = {
+      id: 'message-being-deleted', conversationId: conversation.id, role: 'user',
+      content: 'Keep this message', tokens: 4, status: 'completed', createdAt: '2026-09-30T00:00:01.000Z',
+    } as const;
+    const followingMessage = {
+      id: 'following-message', conversationId: conversation.id, role: 'assistant',
+      content: 'A later saved answer', tokens: 4, status: 'completed', createdAt: '2026-09-30T00:00:02.000Z',
+    } as const;
+    const nextMessage = {
+      id: 'message-arrived-later', conversationId: conversation.id, role: 'assistant',
+      content: 'Concurrent response', tokens: 3, status: 'completed', createdAt: '2026-09-30T00:00:03.000Z',
+    } as const;
+    queryClient.setQueryData(conversationKeys.messages(conversation.id), [precedingMessage, savedMessage, followingMessage]);
+    let resolveMessageDelete: ((value: unknown) => void) | undefined;
+    api.deleteConversationMessage = vi.fn().mockImplementation(() => new Promise(resolve => { resolveMessageDelete = resolve; }));
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+
+    let deletingMessage!: Promise<void>;
+    act(() => { deletingMessage = result.current.deleteMessage(conversation.id, savedMessage.id); });
+    await waitFor(() => expect(api.deleteConversationMessage).toHaveBeenCalled());
+    // The preceding message was concurrently removed, while later messages
+    // and a newly appended answer should keep their order around the rollback.
+    queryClient.setQueryData(conversationKeys.messages(conversation.id), [followingMessage, nextMessage]);
+    await act(async () => {
+      resolveMessageDelete?.({ ok: false, error: 'message deletion failed' });
+      await deletingMessage;
+    });
+
+    expect(queryClient.getQueryData(conversationKeys.messages(conversation.id))).toEqual([savedMessage, followingMessage, nextMessage]);
+  });
+
+  it('does not surface a failed read from a conversation opened before the current one', async () => {
+    let rejectOlderRead: ((value: unknown) => void) | undefined;
+    api.getConversationMessages = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { rejectOlderRead = resolve; }))
+      .mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
+    api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation } });
+    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+    api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
+    api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
+    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+
+    let openingOlder!: Promise<void>;
+    act(() => { openingOlder = result.current.selectConversation('older-chat'); });
+    await waitFor(() => expect(api.getConversationMessages).toHaveBeenCalledTimes(1));
+    await act(async () => { await result.current.selectConversation('current-chat'); });
+    await act(async () => {
+      rejectOlderRead?.({ ok: false, error: 'older chat is unavailable' });
+      await openingOlder;
+    });
+
+    expect(result.current.activeConversationId).toBe('current-chat');
+    expect(result.current.error).toBeNull();
   });
 
   it('keeps a pending turn intact when the backend refuses conversation deletion', async () => {

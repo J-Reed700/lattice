@@ -346,7 +346,11 @@ impl Container {
         crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(&app_handle);
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
-            tokio::spawn(async move {
+            let cancel = crate::shared::background::cancellation_token();
+            let _ = crate::shared::background::spawn(async move {
+                if cancel.is_cancelled() {
+                    return;
+                }
                 let container = match handle.try_state::<Container>() {
                     Some(c) => c,
                     None => {
@@ -356,22 +360,35 @@ impl Container {
                 };
                 emit_warmup(&handle, role, "started", None);
                 let started = std::time::Instant::now();
-                let outcome = match role {
-                    "chat" => match container.get_or_load_llm().await {
-                        Ok(_) => Outcome::Ready,
-                        Err(e) => classify_load_error(e),
-                    },
-                    "utility" => match container.get_or_load_utility_llm().await {
-                        Ok(Some(_)) => Outcome::Ready,
-                        Ok(None) => Outcome::Skipped,
-                        Err(e) => classify_load_error(e),
-                    },
-                    "embedding" => match container.get_or_load_embedding().await {
-                        Ok(_) => Outcome::Ready,
-                        Err(e) => classify_load_error(e),
-                    },
-                    _ => unreachable!(),
+                // Cancellation stops the prewarm waiter. Any sidecar whose
+                // startup already crossed the process boundary is still
+                // registered with SidecarRegistry, whose closed admission
+                // kills late registrations during shutdown.
+                let Some(outcome) = finish_or_cancel(&cancel, async {
+                    match role {
+                        "chat" => match container.get_or_load_llm().await {
+                            Ok(_) => Outcome::Ready,
+                            Err(e) => classify_load_error(e),
+                        },
+                        "utility" => match container.get_or_load_utility_llm().await {
+                            Ok(Some(_)) => Outcome::Ready,
+                            Ok(None) => Outcome::Skipped,
+                            Err(e) => classify_load_error(e),
+                        },
+                        "embedding" => match container.get_or_load_embedding().await {
+                            Ok(_) => Outcome::Ready,
+                            Err(e) => classify_load_error(e),
+                        },
+                        _ => unreachable!(),
+                    }
+                })
+                .await
+                else {
+                    return;
                 };
+                if cancel.is_cancelled() {
+                    return;
+                }
                 let elapsed_ms = started.elapsed().as_millis() as u64;
                 match &outcome {
                     Outcome::Ready => tracing::info!(role, elapsed_ms, "prewarm: ready"),
@@ -427,6 +444,17 @@ enum Outcome {
     Failed(String),
 }
 
+async fn finish_or_cancel<F: std::future::Future>(
+    cancel: &tokio_util::sync::CancellationToken,
+    work: F,
+) -> Option<F::Output> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        result = work => Some(result),
+    }
+}
+
 /// First-run state (`AiModelsNotInstalled`) and router opt-out
 /// (`InvalidConfig("...not configured...")`) are Skipped, not Failed —
 /// the chat input mask shouldn't treat them as load errors.
@@ -453,5 +481,50 @@ fn emit_warmup(app: &tauri::AppHandle, role: &str, phase: &str, error: Option<St
     });
     if let Err(e) = app.emit("model:warmup-status", payload) {
         tracing::warn!(role, phase, error = %e, "Failed to emit warmup status event");
+    }
+}
+
+#[cfg(test)]
+mod prewarm_tests {
+    use super::finish_or_cancel;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    struct DropSignal(Arc<AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_an_in_flight_prewarm_loader() {
+        let cancel = CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let worker_dropped = dropped.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+
+        let worker = tokio::spawn(async move {
+            finish_or_cancel(&worker_cancel, async move {
+                let _drop_signal = DropSignal(worker_dropped);
+                let _ = started_tx.send(());
+                std::future::pending::<()>().await;
+            })
+            .await
+        });
+
+        started_rx.await.expect("loader should begin");
+        cancel.cancel();
+
+        assert_eq!(worker.await.expect("prewarm worker should join"), None);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "cancel drops the loader future"
+        );
     }
 }

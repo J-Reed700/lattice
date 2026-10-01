@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
+import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
 test.beforeEach(async ({ page }) => {
+  await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.addInitScript(() => {
@@ -35,6 +37,15 @@ test.beforeEach(async ({ page }) => {
           callbacks.delete(id);
         },
         async invoke(command: string, args?: { event?: string; handler?: number; payload?: unknown }) {
+          if ([
+            'plugin:file|list_custom_collections', 'plugin:file|create_custom_collection',
+            'plugin:file|rename_custom_collection', 'plugin:file|delete_custom_collection',
+            'plugin:file|add_documents_to_custom_collection', 'plugin:file|remove_documents_from_custom_collection',
+          ].includes(command)) {
+            return (window as unknown as {
+              __LATTICE_TEST_COLLECTIONS__: (command: string, args?: unknown) => Promise<unknown>;
+            }).__LATTICE_TEST_COLLECTIONS__(command, args);
+          }
           if (command === 'plugin:event|emit') {
             if (args?.event === 'lattice:shutdown-response') document.documentElement.dataset.shutdownResponse = JSON.stringify(args.payload);
             return undefined;
