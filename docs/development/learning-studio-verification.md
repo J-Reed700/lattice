@@ -5,7 +5,59 @@ that a learner has mastered a subject, is ready for employment, or will retain
 material. A release result is valid only for the exact commit, platform, model,
 and optional runtime named in its retained artifacts.
 
-## Current candidate evidence — 2026-10-01–02
+## Studio usability and draft safety review — 2026-10-02
+
+The local working tree based on `c25d7fb55062e459ba2692783085583215b2fd9f`
+completed the following follow-up checks on macOS Apple Silicon. These results
+cover the durable lab editor and Studio navigation changes, with additional
+visual checks after the final theme-color adjustment.
+
+| Boundary | Result |
+|---|---|
+| Full frontend Vitest with enforced coverage | 174 files, 1,331 tests passed |
+| Learning Studio renderer coverage | 80.40% statements, 70.60% branches, 79.73% functions, 88.65% lines |
+| Whole-renderer coverage | 54.06% statements, 48.95% branches, 49.12% functions, 54.95% lines |
+| Complete renderer Playwright | 80 checks passed across Chromium and WebKit, with no retries or skipped checks |
+| Final layout and theme verification | 4 additional browser checks passed after the last color adjustment |
+| Rust Learning Studio library | 108 passed; 5 optional container checks were not rerun |
+| Rust draft persistence | Revision, replay, private-file rejection, and file-backed SQLite close/reopen checks passed |
+| TypeScript, E2E TypeScript, ESLint | Passed |
+| Rust formatting and strict library Clippy | Passed with warnings denied |
+| Generated bindings and command/SQL/IPC contracts | Passed; 353 registered commands and 27 migrations checked |
+
+Lab edits now save in SQLite independently of execution. Tests exercise edits
+during loading and saving, operation replay after a lost response, stale-revision
+conflicts, both conflict recovery actions, undo back to saved content, activity
+isolation, and reopening the database. Pending saves gate activity creation,
+activity switching, program navigation, and route exits. Failed saves preserve
+the editor and provide a retry path. No draft save is counted as a code run.
+
+The editor provides local C#, Rust, Python, JavaScript, TypeScript, JSX/TSX,
+and JSON syntax support, line numbers, indentation, search, undo, and a Run
+shortcut. Browser journeys use the real CodeMirror editor and verify an escape
+from its Tab-indentation behavior. Runnable lab creation requires an explicit
+execution environment; review-only projects remain available. The activity
+dialog traps focus, closes with Escape, and restores focus to its opener or the
+requested environment setup panel.
+
+Five primary navigation tabs group the full workspace, with practice activities
+in a secondary row and Plan, Canvas, and Import & export under More. Module and
+lesson selectors wait for saves before changing context. Canvas and all prior
+workflows remain covered by the browser suite. Final visual review covered
+1280×800, 800×600, and 390×844 in both browsers; the first lesson card starts at
+410 pixels at the two desktop sizes. Tests inspect inner scroll containers as
+well as the page, so a clipped app shell cannot hide horizontal overflow.
+Search controls and primary buttons are checked for at least 4.5:1 text contrast
+in light and dark themes.
+
+Logs, the complete browser result, coverage totals, and reviewed screenshots are
+retained under `e2e-results/studio-polish-2026-10-02/`. Browser journeys use a
+deterministic stateful IPC fixture; the separate Rust tests exercise real SQLite
+and migrations. This follow-up did not rerun the packaged native, live-model,
+or real-container checks. Their earlier evidence and remaining platform limits
+are recorded below.
+
+## Earlier runtime integration evidence — 2026-10-01–02
 
 The integrated local working-tree candidate completed these deterministic checks
 on macOS Apple Silicon:

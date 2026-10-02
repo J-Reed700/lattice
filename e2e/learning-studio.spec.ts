@@ -14,6 +14,18 @@ const answerSentinel =
 const excerptSentinel =
   "SOURCE_EXCERPT_SENTINEL: A careful comparison records the chosen measure, the observation period, and the limits of the sample.";
 
+function buttonContrast(buttons: Element[]) {
+  const luminance = (color: string) => (color.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).reduce((sum, channel, index) => {
+    const value = channel / 255;
+    return sum + [0.2126, 0.7152, 0.0722][index] * (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  }, 0);
+  return buttons.map((button) => {
+    const style = getComputedStyle(button);
+    const [low, high] = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => a - b);
+    return { label: button.textContent, ratio: (high + 0.05) / (low + 0.05) };
+  });
+}
+
 async function openProgram(page: Page) {
   await page.goto("/studio");
   await expect(
@@ -2224,12 +2236,65 @@ test("code editing provides syntax, line numbers, indentation, search, undo, and
   await page.getByRole("button", { name: /Find in/ }).click();
   const search = page.locator(".cm-search input").first();
   await expect(search).toBeVisible();
-  await search.fill("value");
+  await search.pressSequentially("value");
   await expect.poll(() => page.locator(".cm-searchMatch").count()).toBeGreaterThan(0);
   await search.press("Escape");
   await editor.focus();
   await editor.press("Escape");
   await editor.press("Tab");
   await expect.poll(() => editor.evaluate((element) => element.contains(document.activeElement))).toBe(false);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("C# files remain readable at 390px and search controls have contrast in both themes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { practicalWorkspace: { activities: Array<{ files: Array<{ path: string; content: string }> }> } } }).__LATTICE_LEARNING_STATE__;
+    state.practicalWorkspace.activities[0].files[0] = {
+      ...state.practicalWorkspace.activities[0].files[0], path: "Program.cs",
+      content: "using System;\n\nstatic int Add(int left, int right)\n{\n    return left + right;\n}\n\nConsole.WriteLine(Add(3, 4));",
+    };
+  });
+  await openStudioSection(page, "Code & simulations");
+  const editor = page.getByRole("textbox", { name: "Edit Program.cs", exact: true });
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await expect.poll(() => editor.locator(".cm-line span").count()).toBeGreaterThan(0);
+  await editor.scrollIntoViewIfNeeded();
+  // The app shell clips its own overflow; document width alone misses a broken
+  // inner grid. Inspect every editor ancestor through the actual scroll pane.
+  const overflows = await editor.evaluate((element) => {
+    const result: Array<{ element: string; overflow: number }> = [];
+    for (let current: Element | null = element; current; current = current.parentElement) {
+      result.push({ element: current.className, overflow: current.scrollWidth - current.clientWidth });
+    }
+    return result.filter((item) => item.overflow > 1);
+  });
+  expect(overflows).toEqual([]);
+  await page.getByRole("button", { name: /Find in/ }).click();
+  const search = page.locator(".cm-search input").first();
+  await search.pressSequentially("return");
+  for (const theme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const controls = page.locator(".cm-search button:not([name='close'])");
+    await expect(controls.first()).toHaveCSS("background-image", "none");
+    const contrast = await controls.evaluateAll(buttonContrast);
+    for (const button of contrast) expect(button.ratio, `${theme} ${button.label}`).toBeGreaterThanOrEqual(4.5);
+    await page.screenshot({ path: test.info().outputPath(`studio-csharp-search-${theme}-390px.png`), animations: "disabled" });
+  }
+  await search.press("Escape");
+  await page.getByRole("button", { name: "New activity", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Practice in context" });
+  await dialog.getByLabel("Execution environment").selectOption("builtin:python");
+  await dialog.getByLabel("Your focus for this activity").fill("Work through a short example.");
+  for (const theme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const contrast = await page.locator("button.bg-accent:not(:disabled)").evaluateAll(buttonContrast);
+    for (const button of contrast) expect(button.ratio, `${theme} ${button.label}`).toBeGreaterThanOrEqual(4.5);
+    await page.screenshot({ path: test.info().outputPath(`studio-activity-dialog-${theme}-390px.png`), animations: "disabled" });
+  }
   await expectNoUnsupportedIpc(page);
 });

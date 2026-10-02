@@ -81,6 +81,81 @@
   visibility: visible;
 }
 
+.learning-code-editor .cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.learning-code-editor .cm-search br {
+  display: none;
+}
+
+.learning-code-editor .cm-search .cm-textfield {
+  box-sizing: border-box;
+  width: auto;
+  min-width: min(100%, 176px);
+  min-height: 34px;
+  flex: 1 1 176px;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 7px;
+  padding: 6px 9px;
+  font: inherit;
+}
+
+.learning-code-editor .cm-search button {
+  min-height: 34px;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 7px;
+  padding: 5px 10px;
+  font: inherit;
+  color: var(--code-fg) !important;
+  background-color: var(--code-control) !important;
+  background-image: none !important;
+  cursor: pointer;
+}
+
+.learning-code-editor .cm-search button:hover {
+  border-color: hsl(var(--accent) / 0.5);
+  color: var(--code-fg) !important;
+  background-color: hsl(var(--accent) / 0.12) !important;
+  background-image: none !important;
+}
+
+.learning-code-editor .cm-search input:focus-visible,
+.learning-code-editor .cm-search button:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+}
+
+.learning-code-editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  color: hsl(var(--text-secondary));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.learning-code-editor .cm-search input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: hsl(var(--accent));
+}
+
+.learning-code-editor .cm-search [name='close'] {
+  min-width: 34px;
+  padding: 4px;
+  font-size: 18px;
+  line-height: 1;
+}
+
 @media (max-width: 640px) {
   .learning-code-editor .cm-line {
     overflow-wrap: anywhere;

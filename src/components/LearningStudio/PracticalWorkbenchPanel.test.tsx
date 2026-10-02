@@ -546,4 +546,24 @@ describe("Learning Studio Labs & simulations", () => {
     expect(screen.getByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(screen.getByRole("alert")).getByRole("button", { name: "Retry saving draft" })).toBeVisible();
   });
+
+  it("keeps the current draft and generation brief when saving fails before creating another activity", async () => {
+    const user = userEvent.setup();
+    mocks.saveDraft.mockResolvedValue(fail("Disk full"));
+    renderPractical();
+    const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
+    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+    await user.clear(editor);
+    await user.type(editor, "important existing work");
+    await user.click(screen.getByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Execution environment"), "builtin:python");
+    await user.type(within(dialog).getByLabelText("Your focus for this activity"), "A new exercise");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Save the current activity's edits");
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(within(dialog).getByLabelText("Your focus for this activity")).toHaveValue("A new exercise");
+    await user.keyboard("{Escape}");
+    expect(editor).toHaveValue("important existing work");
+  });
 });

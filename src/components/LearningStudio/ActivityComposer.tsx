@@ -70,7 +70,7 @@ export const modeCopy: Record<LearningPracticeMode, string> = {
   practice:
     "Choose the help you want available while you practice.",
   demonstrate:
-    "Try independently. Your result will record that no help was used.",
+    "Try independently, without in-app hints or source assistance.",
 };
 function uuid() { return crypto.randomUUID(); }
 function errorText(error: unknown) { return error instanceof Error ? error.message : "The activity could not be prepared."; }
@@ -291,7 +291,7 @@ export function ActivityComposer({
                 type="button"
                 aria-pressed={mode === option}
                 onClick={() => setMode(option)}
-                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-white" : "border-border text-text-secondary"}`}
+                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-accent-fg" : "border-border text-text-secondary"}`}
               >
                 {option}
               </button>
@@ -333,7 +333,7 @@ export function ActivityComposer({
             disabled={!lesson || !brief.trim() || submitting || (needsExecution && !runtimeSelection)}
             aria-busy={submitting}
             onClick={() => void submit()}
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
           >
             {submitting ? (
               <LoaderCircle size={14} className="animate-spin" />

@@ -31,6 +31,8 @@ export interface LearningCodeEditorProps {
   ariaLabel?: string;
   /** Minimum editor height in pixels or CSS units. */
   minHeight?: number | string;
+  /** Hides the component path label when a parent file tab already identifies the file. */
+  showPath?: boolean;
   /** Runs when the learner presses Mod-Enter (Cmd-Enter on macOS). */
   onRunShortcut?: () => void;
 }
@@ -101,7 +103,7 @@ const editorTheme = EditorView.theme({
   '.cm-tooltip': { color: 'var(--code-fg)', backgroundColor: 'var(--code-panel)', borderColor: 'var(--code-divider)' },
   '&.cm-focused': { outline: 'none' },
   '&.cm-focused .cm-content': { outline: 'none' },
-}, { dark: false });
+});
 
 function buildExtensions(mode: LanguageMode, readOnly: boolean, onChange: (value: string) => void, ariaLabel: string, onRunShortcut?: () => void) {
   return [
@@ -144,6 +146,7 @@ export function LearningCodeEditor({
   readOnly = false,
   ariaLabel,
   minHeight = 300,
+  showPath = true,
   onRunShortcut,
 }: LearningCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -246,16 +249,16 @@ export function LearningCodeEditor({
 
   return (
     <section className="learning-code-editor min-w-0 overflow-hidden rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] shadow-sm" aria-label={`${path} editor`}>
-      <header className="learning-code-editor__toolbar flex min-h-10 items-center justify-between gap-3 border-b border-[hsl(var(--border-subtle))] px-3 sm:px-4">
+      <header className="learning-code-editor__toolbar flex min-h-11 items-center justify-between gap-3 border-b border-[hsl(var(--border-subtle))] px-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="learning-code-editor__dot" aria-hidden="true" />
-          <span className="truncate font-mono text-[11px] text-[hsl(var(--text-secondary))]" title={path}>{path || 'Untitled'}</span>
-          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[.12em]">{activeMode.label}</span>
-          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-[9px] font-semibold uppercase tracking-[.12em]">Read only</span>}
+          {showPath && <span className="truncate font-mono text-xs text-[hsl(var(--text-secondary))]" title={path}>{path || 'Untitled'}</span>}
+          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[.12em]">{activeMode.label}</span>
+          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-[11px] font-semibold uppercase tracking-[.12em]">Read only</span>}
         </div>
         <button
           type="button"
-          className="learning-code-editor__find inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[10px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="learning-code-editor__find inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-label="Find in code"
           title="Find in code (⌘/Ctrl+F)"
           onClick={() => {
@@ -266,7 +269,7 @@ export function LearningCodeEditor({
         >
           <Search size={13} aria-hidden="true" />
           <span className="hidden sm:inline">Find</span>
-          <kbd className="hidden rounded border px-1 py-0.5 font-mono text-[9px] sm:inline">⌘F</kbd>
+          <kbd className="hidden rounded border px-1 py-0.5 font-mono text-[11px] sm:inline">⌘F</kbd>
         </button>
       </header>
       <div
@@ -276,7 +279,7 @@ export function LearningCodeEditor({
       >
         <div ref={hostRef} />
       </div>
-      <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-1.5 text-[9px] text-[hsl(var(--text-muted))] sm:px-4">
+      <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-2 text-[11px] text-[hsl(var(--text-muted))] sm:px-4">
         <span>{readOnly ? 'Read-only file' : 'Tab indents · ⌘/Ctrl+Z undo · ⌘/Ctrl+F find'}</span>
         {!readOnly && <span>Press Esc, then Tab to move focus</span>}
       </footer>
