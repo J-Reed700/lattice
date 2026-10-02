@@ -321,7 +321,7 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await page.goto("/studio");
     const external = watchExternalHttpRequests(page, new URL(page.url()).origin);
@@ -331,7 +331,15 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
     await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
     await expect(page.getByRole("heading", { name: "Reasoning from field observations", exact: true })).toBeVisible();
     const workspace = page.getByRole("navigation", { name: "Module workspace" });
-    await expect(page.getByText("Module journey", { exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Module", exact: true })).toBeVisible();
+    const primary = page.getByRole("tablist", { name: "Program workspace" });
+    expect(await primary.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    if (viewport.width >= 800) {
+      const lessonCard = page.locator("main article").first();
+      const bounds = await lessonCard.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.y).toBeLessThan(viewport.height - 140);
+    }
     await page.screenshot({ path: test.info().outputPath(`studio-active-workspace-${viewport.width}px.png`), fullPage: true });
     const lessonsTab = workspace.getByRole("tab", { name: "Lessons", exact: true });
     await lessonsTab.focus();
@@ -2102,5 +2110,126 @@ test("built-in practice remains available without Docker and C# setup becomes re
   await install.click();
   await expect(setup.getByText("Ready", { exact: true }).last()).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __LATTICE_LEARNING_STATE__: { practicalWorkspace: { runtimeProfiles: Array<{ name: string }> } } }).__LATTICE_LEARNING_STATE__.practicalWorkspace.runtimeProfiles.filter((profile) => profile.name === "C#").length)).toBe(1);
+  await expectNoUnsupportedIpc(page);
+});
+
+async function openLab(page: Page) {
+  await openStudioSection(page, "Code & simulations");
+  const editor = page.getByRole("textbox", { name: "Edit analysis.txt", exact: true });
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  return editor;
+}
+
+test("lab drafts survive immediate program navigation and renderer restart without a run", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  const editor = await openLab(page);
+  const lines = ["measure = 'mean response time'", "period = 'one quarter'", "print(measure, period)"];
+  await editor.fill(lines.join("\n"));
+  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
+  await expect((await openLab(page)).locator(".cm-line")).toHaveText(lines);
+  await page.reload();
+  await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
+  await expect((await openLab(page)).locator(".cm-line")).toHaveText(lines);
+  const saved = await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { labDrafts: Map<string, { draftRevision: number; files: Array<{ content: string }> }>; practicalWorkspace: { runs: unknown[] } } }).__LATTICE_LEARNING_STATE__;
+    return { drafts: [...state.labDrafts.values()], runs: state.practicalWorkspace.runs.length };
+  });
+  expect(saved.drafts[0]).toMatchObject({ draftRevision: 1, files: [{ content: lines.join("\n") }] });
+  expect(saved.runs).toBe(0);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("failed lab saves block leaving and retry lost acknowledgements without duplicating a draft", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  const editor = await openLab(page);
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_LEARNING_STATE__: { labDraftFailuresBeforeSave: number } }).__LATTICE_LEARNING_STATE__.labDraftFailuresBeforeSave = 20;
+  });
+  await editor.fill("important_work = True");
+  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("The draft could not be saved");
+  await expect(editor).toContainText("important_work = True");
+  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_LEARNING_STATE__: { labDraftFailuresBeforeSave: number } }).__LATTICE_LEARNING_STATE__.labDraftFailuresBeforeSave = 0;
+  });
+  await page.getByRole("button", { name: "Retry saving draft", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved on this device" })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_LEARNING_STATE__: { labDraftLostResponses: number } }).__LATTICE_LEARNING_STATE__.labDraftLostResponses = 1;
+  });
+  await editor.fill("important_work = 'second version'");
+  await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Draft save response was lost");
+  await page.getByRole("button", { name: "Retry saving draft", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved on this device" })).toBeVisible();
+  const saved = await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { labDrafts: Map<string, { draftRevision: number }>; labDraftSaveCalls: Array<{ operationId: string }>; labDraftOperations: Map<string, unknown> } }).__LATTICE_LEARNING_STATE__;
+    return { revision: [...state.labDrafts.values()][0].draftRevision, lastCalls: state.labDraftSaveCalls.slice(-2), operations: state.labDraftOperations.size };
+  });
+  expect(saved.revision).toBe(2);
+  expect(saved.operations).toBe(2);
+  expect(saved.lastCalls[0]).toEqual(saved.lastCalls[1]);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("activity setup traps focus, supports Escape, and requires a language for runnable labs", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await openLab(page);
+  const opener = page.getByRole("button", { name: "New activity", exact: true });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Practice in context" });
+  await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await dialog.getByLabel("Your focus for this activity").fill("Work through a short example.");
+  await expect(dialog.getByRole("button", { name: "Generate activity", exact: true })).toBeDisabled();
+  await dialog.getByLabel("Execution environment").selectOption("builtin:python");
+  await expect(dialog.getByRole("button", { name: "Generate activity", exact: true })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await opener.click();
+  await dialog.getByRole("button", { name: "Set up C#, Rust, or React & TypeScript", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Execution environments/ })).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: /Execution environments/ })).toBeFocused();
+  await expectNoUnsupportedIpc(page);
+});
+
+test("code editing provides syntax, line numbers, indentation, search, undo, and a keyboard exit", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { practicalWorkspace: { activities: Array<{ files: Array<{ path: string; content: string }> }> } } }).__LATTICE_LEARNING_STATE__;
+    state.practicalWorkspace.activities[0].files[0] = { ...state.practicalWorkspace.activities[0].files[0], path: "solution.py", content: "value = 42\nprint(value)" };
+  });
+  await openStudioSection(page, "Code & simulations");
+  const editor = page.getByRole("textbox", { name: "Edit solution.py", exact: true });
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await editor.scrollIntoViewIfNeeded();
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await expect.poll(() => editor.locator(".cm-line span").count()).toBeGreaterThan(0);
+  await editor.click();
+  await editor.press("ControlOrMeta+Home");
+  await editor.press("Tab");
+  await expect(editor.locator(".cm-line").first()).toHaveText("  value = 42", { useInnerText: true });
+  await editor.press("ControlOrMeta+z");
+  await expect(editor.locator(".cm-line").first()).toHaveText("value = 42");
+  await page.getByRole("button", { name: /Find in/ }).click();
+  const search = page.locator(".cm-search input").first();
+  await expect(search).toBeVisible();
+  await search.fill("value");
+  await expect.poll(() => page.locator(".cm-searchMatch").count()).toBeGreaterThan(0);
+  await search.press("Escape");
+  await editor.focus();
+  await editor.press("Escape");
+  await editor.press("Tab");
+  await expect.poll(() => editor.evaluate((element) => element.contains(document.activeElement))).toBe(false);
   await expectNoUnsupportedIpc(page);
 });

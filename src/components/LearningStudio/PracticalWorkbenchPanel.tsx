@@ -21,6 +21,7 @@ import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningLabFile,
   LearningPracticalActivityDto,
+  LearningPracticalActivityKind,
   LearningPracticalWorkspaceDto,
   LearningSimulationSessionDto,
   LearningPracticalRunStatus,

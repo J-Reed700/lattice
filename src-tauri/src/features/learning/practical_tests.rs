@@ -48,8 +48,7 @@ fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
 }
 
-async fn fixture() -> Result<(SqlitePool, String, String, String)> {
-    let pool = super::tests::pool().await?;
+async fn fixture_on_pool(pool: SqlitePool) -> Result<(SqlitePool, String, String, String)> {
     let program = super::tests::fixture();
     let program_id = program.summary.id.clone();
     let module_id = program.modules[0].id.clone();
@@ -75,6 +74,10 @@ async fn fixture() -> Result<(SqlitePool, String, String, String)> {
         .await
         .map_err(db)?;
     Ok((pool, program_id, lesson_id, outcome_id))
+}
+
+async fn fixture() -> Result<(SqlitePool, String, String, String)> {
+    fixture_on_pool(super::tests::pool().await?).await
 }
 
 fn generated() -> GeneratedPracticalActivity {
@@ -355,47 +358,146 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
     let repository = LearningPracticalRepository::new(pool.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let scope = GetLearningPracticalDraftRequestDto {
-        program_id: program_id.clone(), activity_id: activity_id.clone(), activity_revision: 0,
+        program_id: program_id.clone(),
+        activity_id: activity_id.clone(),
+        activity_revision: 0,
     };
     let initial = repository.get_draft(&scope).await?;
     assert_eq!(initial.draft_revision, 0);
-    assert_eq!(initial.files, vec![LearningLabFile { path: "work/answer.txt".into(), content: "Write your answer here.\n".into() }]);
+    assert_eq!(
+        initial.files,
+        vec![LearningLabFile {
+            path: "work/answer.txt".into(),
+            content: "Write your answer here.\n".into()
+        }]
+    );
 
     let request = SaveLearningPracticalDraftRequestDto {
-        operation_id: id(), program_id: program_id.clone(), activity_id: activity_id.clone(), activity_revision: 0,
-        expected_draft_revision: 0, files: vec![LearningLabFile { path: "work/answer.txt".into(), content: "Learner's durable answer".into() }],
+        operation_id: id(),
+        program_id: program_id.clone(),
+        activity_id: activity_id.clone(),
+        activity_revision: 0,
+        expected_draft_revision: 0,
+        files: vec![LearningLabFile {
+            path: "work/answer.txt".into(),
+            content: "Learner's durable answer".into(),
+        }],
     };
     let saved = repository.save_draft(&request, "draft-payload-one").await?;
     assert_eq!(saved.draft_revision, 1);
     let replay = repository.save_draft(&request, "draft-payload-one").await?;
     assert_eq!(replay, saved);
-    assert!(repository.save_draft(&request, "changed-payload").await.is_err());
-    assert_eq!(repository.get_draft(&scope).await?.files[0].content, "Learner's durable answer");
+    assert!(repository
+        .save_draft(&request, "changed-payload")
+        .await
+        .is_err());
+    assert_eq!(
+        repository.get_draft(&scope).await?.files[0].content,
+        "Learner's durable answer"
+    );
 
     let mut stale = request.clone();
     stale.operation_id = id();
     stale.expected_draft_revision = 0;
-    assert!(repository.save_draft(&stale, "stale-operation").await.is_err());
+    assert!(repository
+        .save_draft(&stale, "stale-operation")
+        .await
+        .is_err());
 
     let mut hidden = request.clone();
     hidden.operation_id = id();
     hidden.expected_draft_revision = 1;
-    hidden.files.push(LearningLabFile { path: "checks/evaluate.txt".into(), content: "private evaluator fixture".into() });
+    hidden.files.push(LearningLabFile {
+        path: "checks/evaluate.txt".into(),
+        content: "private evaluator fixture".into(),
+    });
     assert!(repository.save_draft(&hidden, "hidden-file").await.is_err());
     let mut traversal = request.clone();
     traversal.operation_id = id();
     traversal.expected_draft_revision = 1;
     traversal.files[0].path = "../answer.txt".into();
-    assert!(repository.save_draft(&traversal, "path-traversal").await.is_err());
+    assert!(repository
+        .save_draft(&traversal, "path-traversal")
+        .await
+        .is_err());
 
-    let other_scope = GetLearningPracticalDraftRequestDto { program_id: id(), ..scope.clone() };
+    let other_scope = GetLearningPracticalDraftRequestDto {
+        program_id: id(),
+        ..scope.clone()
+    };
     assert!(repository.get_draft(&other_scope).await.is_err());
     sqlx::query("UPDATE learning_practical_activities SET revision=1 WHERE id=?")
-        .bind(&activity_id).execute(&pool).await.map_err(db)?;
+        .bind(&activity_id)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
     assert!(repository.get_draft(&scope).await.is_err());
-    let next_revision = repository.get_draft(&GetLearningPracticalDraftRequestDto { activity_revision: 1, ..scope }).await?;
+    let next_revision = repository
+        .get_draft(&GetLearningPracticalDraftRequestDto {
+            activity_revision: 1,
+            ..scope
+        })
+        .await?;
     assert_eq!(next_revision.draft_revision, 0);
     assert_eq!(next_revision.files[0].content, "Write your answer here.\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn practical_draft_survives_closing_and_reopening_file_backed_database() -> Result<()> {
+    use super::lab_runtime::LearningLabFile;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    let directory = tempfile::tempdir().map_err(|error| AppError::Database(error.to_string()))?;
+    let database_path = directory.path().join("learning-studio.sqlite");
+    let options = || {
+        SqliteConnectOptions::from_str(&format!("sqlite:{}", database_path.display()))
+            .map(|options| options.create_if_missing(true).foreign_keys(true))
+            .map_err(|error| AppError::Database(error.to_string()))
+    };
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options()?)
+        .await
+        .map_err(db)?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(db)?;
+    let (pool, program_id, lesson_id, _) = fixture_on_pool(pool).await?;
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let programs = LearningRepository::new(pool.clone());
+    let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
+    let request = SaveLearningPracticalDraftRequestDto {
+        operation_id: id(),
+        program_id: program_id.clone(),
+        activity_id: activity_id.clone(),
+        activity_revision: 0,
+        expected_draft_revision: 0,
+        files: vec![LearningLabFile {
+            path: "work/answer.txt".into(),
+            content: "restored after application restart".into(),
+        }],
+    };
+    let saved = repository.save_draft(&request, "restart-payload").await?;
+    pool.close().await;
+
+    let reopened = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options()?)
+        .await
+        .map_err(db)?;
+    let restored = LearningPracticalRepository::new(reopened.clone())
+        .get_draft(&GetLearningPracticalDraftRequestDto {
+            program_id,
+            activity_id,
+            activity_revision: 0,
+        })
+        .await?;
+    assert_eq!(restored.draft_revision, saved.draft_revision);
+    assert_eq!(restored.files, saved.files);
+    reopened.close().await;
     Ok(())
 }
 

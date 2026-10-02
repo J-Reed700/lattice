@@ -26,7 +26,7 @@ type DraftContext = {
   loadToken: number;
   operation: StableOperation | null;
   inFlight: Promise<boolean> | null;
-  timer: ReturnType<typeof window.setTimeout> | null;
+  timer: number | null;
 };
 
 function makeId() {
@@ -82,7 +82,8 @@ export function useLearningLabDraft({
     const existing = contexts.current.get(key);
     if (existing) {
       const known = new Set(existing.files.map((file) => file.path));
-      for (const file of initial) if (!known.has(file.path)) existing.files.push({ ...file });
+      const missing = initial.filter((file) => !known.has(file.path));
+      if (missing.length) existing.files = [...existing.files, ...cloneFiles(missing)];
       return existing;
     }
     const context: DraftContext = {
@@ -100,7 +101,8 @@ export function useLearningLabDraft({
     if (context.loadState === 'ready' && !force) return Promise.resolve();
     const token = ++context.loadToken;
     context.loadState = 'loading'; context.error = null; refresh();
-    const promise = (async () => {
+    let promise!: Promise<void>;
+    promise = (async () => {
       try {
         const draft = unwrap(await VaultAPI.getLearningPracticalDraft({
           programId: context.programId, activityId: context.activityId, activityRevision: context.activityRevision,
@@ -151,6 +153,10 @@ export function useLearningLabDraft({
         context.saveState = 'saving'; context.error = null; refresh();
         try {
           const saved: LearningPracticalDraftDto = unwrap(await VaultAPI.saveLearningPracticalDraft(operation.request));
+          if (saved.programId !== context.programId || saved.activityId !== context.activityId || saved.activityRevision !== context.activityRevision) {
+            context.saveState = 'error'; context.error = 'The saved lab draft reply belongs to a different activity revision.';
+            refresh(); return false;
+          }
           if (saved.draftRevision !== operation.request.expectedDraftRevision + 1) {
             context.operation = null;
             context.saveState = 'conflict'; context.error = 'This lab draft advanced to a newer revision. Reload it before saving again.';

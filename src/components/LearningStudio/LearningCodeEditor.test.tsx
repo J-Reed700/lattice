@@ -26,9 +26,9 @@ beforeAll(() => {
 
 afterAll(() => {
   if (rangeGeometry.getClientRects) Object.defineProperty(Range.prototype, 'getClientRects', rangeGeometry.getClientRects);
-  else delete (Range.prototype as Range & { getClientRects?: () => DOMRectList }).getClientRects;
+  else Reflect.deleteProperty(Range.prototype, 'getClientRects');
   if (rangeGeometry.getBoundingClientRect) Object.defineProperty(Range.prototype, 'getBoundingClientRect', rangeGeometry.getBoundingClientRect);
-  else delete (Range.prototype as Range & { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect;
+  else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
 });
 
 describe('LearningCodeEditor', () => {
