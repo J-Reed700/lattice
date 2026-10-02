@@ -259,12 +259,13 @@ impl LearningPracticalRepository {
         if request.activity_revision < 0 {
             return Err(invalid("Invalid practical activity revision."));
         }
+        let mut tx = self.pool.begin().await.map_err(db)?;
         let activity = sqlx::query(
             "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
         )
         .bind(&request.program_id)
         .bind(&request.activity_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
@@ -274,17 +275,19 @@ impl LearningPracticalRepository {
         }
         if let Some(row) = sqlx::query("SELECT draft_revision,files_json,updated_at FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .fetch_optional(&self.pool).await.map_err(db)?
+            .fetch_optional(&mut *tx).await.map_err(db)?
         {
-            return Ok(LearningPracticalDraftDto {
+            let draft = LearningPracticalDraftDto {
                 program_id: request.program_id.clone(), activity_id: request.activity_id.clone(),
                 activity_revision: request.activity_revision, draft_revision: row.get("draft_revision"),
                 files: decode(&row.get::<String, _>("files_json"))?, updated_at: Some(row.get("updated_at")),
-            });
+            };
+            tx.commit().await.map_err(db)?;
+            return Ok(draft);
         }
         let rows = sqlx::query("SELECT path,content FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
-            .bind(&request.activity_id).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(LearningPracticalDraftDto {
+            .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
+        let draft = LearningPracticalDraftDto {
             program_id: request.program_id.clone(),
             activity_id: request.activity_id.clone(),
             activity_revision: request.activity_revision,
@@ -297,7 +300,9 @@ impl LearningPracticalRepository {
                 })
                 .collect(),
             updated_at: None,
-        })
+        };
+        tx.commit().await.map_err(db)?;
+        Ok(draft)
     }
 
     pub async fn save_draft(
@@ -349,7 +354,7 @@ impl LearningPracticalRepository {
 
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,activity_id,activity_revision,payload_hash FROM learning_practical_draft_operations WHERE operation_id=?")
+        if let Some(row) = sqlx::query("SELECT program_id,activity_id,activity_revision,payload_hash,result_revision,created_at FROM learning_practical_draft_operations WHERE operation_id=?")
             .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
         {
             if row.get::<String, _>("program_id") == request.program_id
@@ -357,10 +362,16 @@ impl LearningPracticalRepository {
                 && row.get::<i64, _>("activity_revision") == request.activity_revision
                 && row.get::<String, _>("payload_hash") == payload_hash
             {
+                let replay = LearningPracticalDraftDto {
+                    program_id: request.program_id.clone(),
+                    activity_id: request.activity_id.clone(),
+                    activity_revision: request.activity_revision,
+                    draft_revision: row.get("result_revision"),
+                    files: request.files.clone(),
+                    updated_at: Some(row.get("created_at")),
+                };
                 tx.commit().await.map_err(db)?;
-                return self.get_draft(&GetLearningPracticalDraftRequestDto {
-                    program_id: request.program_id.clone(), activity_id: request.activity_id.clone(), activity_revision: request.activity_revision,
-                }).await;
+                return Ok(replay);
             }
             return Err(invalid("Operation ID was reused with different practical draft data."));
         }

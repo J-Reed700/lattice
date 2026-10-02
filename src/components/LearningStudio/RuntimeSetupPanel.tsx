@@ -466,7 +466,7 @@ export function RuntimeSetupPanel({
                             !availableEngines.length || prepare.isPending
                           }
                           onClick={() => void setupPreset(preset)}
-                          className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-45"
+                          className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-fg disabled:opacity-45"
                         >
                           {busy && (
                             <LoaderCircle size={12} className="animate-spin" />

@@ -674,6 +674,22 @@ async getLearningPracticalWorkspace(programId: string) : Promise<Result<Learning
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningPracticalDraft(request: GetLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticalDraft(request: SaveLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_practical_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningRuntimeCatalog() : Promise<LearningRuntimePresetDto[]> {
     return await TAURI_INVOKE("get_learning_runtime_catalog");
 },
@@ -5677,6 +5693,7 @@ export type GetConversationResponseDto = {
  * The conversation (if found)
  */
 conversation: ConversationDto | null }
+export type GetLearningPracticalDraftRequestDto = { programId: string; activityId: string; activityRevision: number }
 export type GetLearningSourceVersionRequestDto = { programId: string; sourceId: string; versionId: string }
 export type GetMentionsForDocumentResultDto = { documentId: string; mentions: MentionWithContextDto[]; count: number }
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
@@ -6087,6 +6104,10 @@ export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_rev
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
 export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
+/**
+ * Learner-owned starter files for one immutable practical activity revision.
+ */
+export type LearningPracticalDraftDto = { programId: string; activityId: string; activityRevision: number; draftRevision: number; files: LearningLabFile[]; updatedAt: number | null }
 export type LearningPracticalFileDto = { path: string; role: LearningPracticalPublicFileRole; content: string; contentSha256: string; editable: boolean }
 export type LearningPracticalPublicFileRole = "starter" | "reference"
 export type LearningPracticalRunDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; status: LearningPracticalRunStatus; builtinRuntime?: LearningBuiltinRuntime | null; engine: LearningContainerEngine | null; imageId: string | null; learnerFiles: LearningLabFile[]; stdout: string; stderr: string; outputTruncated: boolean; exitCode: number | null; durationMs: number | null; checks: LearningPracticalCheckResultDto[]; createdAt: number; completedAt: number | null }
@@ -6950,6 +6971,7 @@ clarifyPromptTemplate: string }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
+export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }

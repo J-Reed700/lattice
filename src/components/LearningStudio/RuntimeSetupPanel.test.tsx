@@ -256,4 +256,18 @@ describe("Learning Studio runtime setup", () => {
     await waitFor(() => expect(onWorkspace).toHaveBeenCalledWith(refreshed));
     expect(mocks.workspace).toHaveBeenCalledWith("program-1");
   });
+
+  it("identifies a prepared language by its engine and command, not a similar profile name", async () => {
+    const user = userEvent.setup();
+    const first = renderSetup(workspace({ runtimeProfiles: [profile] }));
+    await user.click(screen.getByRole("button", { name: /Execution environments/ }));
+    // A custom C# profile with another command does not satisfy the catalog.
+    expect(await screen.findByRole("button", { name: "Set up C#" })).toBeEnabled();
+    first.unmount();
+
+    renderSetup(workspace({ runtimeProfiles: [{ ...profile, name: "My renamed environment", command: ["dotnet"] }] }));
+    await user.click(screen.getByRole("button", { name: /Execution environments/ }));
+    expect(await screen.findByText("Environment ready", { exact: true })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Set up C#" })).not.toBeInTheDocument();
+  });
 });

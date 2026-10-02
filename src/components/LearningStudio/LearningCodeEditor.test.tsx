@@ -84,6 +84,29 @@ describe('LearningCodeEditor', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it('selects JavaScript, JSX, TSX, and plain text modes from the active file path', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<LearningCodeEditor path="app.js" value="const value = 1;" onChange={onChange} />);
+    expect(screen.getByText('JavaScript')).toBeInTheDocument();
+
+    for (const [path, language] of [['view.jsx', 'JSX'], ['view.tsx', 'TSX'], ['notes.md', 'Plain text']] as const) {
+      rerender(<LearningCodeEditor path={path} value="const value = 1;" onChange={onChange} />);
+      expect(screen.getByText(language)).toBeInTheDocument();
+    }
+  });
+
+  it('indents with Tab and documents the Escape then Tab focus exit', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<><LearningCodeEditor path="main.js" value="run();" onChange={onChange} /><button type="button">Continue</button></>);
+    const editor = editorElement();
+    editor?.focus();
+
+    await user.keyboard('{Tab}');
+    expect(onChange).toHaveBeenLastCalledWith('  run();');
+    expect(screen.getByText('Press Esc, then Tab to move focus')).toBeInTheDocument();
+  });
+
   it('keeps read-only contents non-editable and labels the editing surface accessibly', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

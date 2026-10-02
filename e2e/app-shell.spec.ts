@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
+import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
 test.beforeEach(async ({ page }) => {
@@ -1088,6 +1089,8 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces'].includes(command)) return [];
       if (command === 'plugin:learning|list_learning_programs') return [program.summary];
       if (command === 'plugin:learning|get_learning_program') return program;
+      if (command === 'plugin:learning|get_learning_memory') return { programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, schedulerVersion: 'fixture' };
+      if (command === 'plugin:learning|get_learning_practice_workspace') return { programId: program.summary.id, sessions: [] };
       throw new Error(`Unsupported Learning Studio fixture command: ${command}`);
     };
   }, makeAppSettings());
@@ -1098,19 +1101,19 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
   await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: /Production reasoning after an AI-heavy year/ }).click();
   await expect(page.getByRole('heading', { name: 'Production reasoning after an AI-heavy year' })).toBeVisible();
-  await expect(page.getByText('Module journey', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Module', { exact: true })).toHaveValue('module-1');
   const moduleWorkspace = page.getByRole('navigation', { name: 'Module workspace' });
   await expect(moduleWorkspace).toBeVisible();
-  await expect(moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(moduleWorkspace.getByRole('tab', { name: 'Lessons', exact: true })).toHaveAttribute('aria-selected', 'true');
 
-  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  await openStudioSection(page, 'Quick checks');
   const quickCheckType = page.getByRole('group', { name: 'Quick check type' });
   await expect(quickCheckType.getByRole('button', { name: 'practice', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('radio', { name: 'Use a stable operation identifier' }).click();
   await quickCheckType.getByRole('button', { name: 'quiz', exact: true }).click();
   await quickCheckType.getByRole('button', { name: 'practice', exact: true }).click();
-  await moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true }).click();
-  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  await openStudioSection(page, 'Lessons');
+  await openStudioSection(page, 'Quick checks');
   await expect(page.getByRole('radio', { name: 'Use a stable operation identifier' })).toBeChecked();
 
   await quickCheckType.getByRole('button', { name: 'History (1)', exact: true }).click();

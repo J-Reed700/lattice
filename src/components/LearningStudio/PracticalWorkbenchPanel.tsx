@@ -258,7 +258,7 @@ function SimulationPanel({
               start.isPending || !learnerRole.trim() || !counterpartRole.trim()
             }
             onClick={() => void begin()}
-            className="inline-flex w-fit items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-45"
+            className="inline-flex w-fit items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
           >
             <Play size={13} /> Start simulation
           </button>
@@ -346,7 +346,7 @@ function SimulationPanel({
                 aria-label="Send simulation turn"
                 disabled={turn.isPending || !message.trim()}
                 onClick={() => void send()}
-                className="self-end rounded-full bg-accent p-3 text-white disabled:opacity-40"
+                className="self-end rounded-full bg-accent p-3 text-accent-fg disabled:opacity-40"
               >
                 <Send size={15} />
               </button>
@@ -525,28 +525,28 @@ export function PracticalWorkbenchPanel({
     setRunError(null);
     const filesAtStart: LearningLabFile[] = editorFiles.map((file) => ({ ...file }));
     try {
-    if (!await draft.flush()) return;
-    const fingerprint = JSON.stringify({
-      activityId: activeActivity.id,
-      revision: activeActivity.revision,
-      editorFiles: filesAtStart,
-    });
-    let request =
-      runRequestRef.current?.fingerprint === fingerprint
-        ? runRequestRef.current.request
-        : null;
-    if (!request) {
-      request = {
-        operationId: uuid(),
-        runId: uuid(),
-        programId,
+      if (!await draft.flush()) return;
+      const fingerprint = JSON.stringify({
         activityId: activeActivity.id,
-        expectedActivityRevision: activeActivity.revision,
-        practiceSessionId: null,
-        learnerFiles: filesAtStart,
-      };
-      runRequestRef.current = { fingerprint, request };
-    }
+        revision: activeActivity.revision,
+        editorFiles: filesAtStart,
+      });
+      let request =
+        runRequestRef.current?.fingerprint === fingerprint
+          ? runRequestRef.current.request
+          : null;
+      if (!request) {
+        request = {
+          operationId: uuid(),
+          runId: uuid(),
+          programId,
+          activityId: activeActivity.id,
+          expectedActivityRevision: activeActivity.revision,
+          practiceSessionId: null,
+          learnerFiles: filesAtStart,
+        };
+        runRequestRef.current = { fingerprint, request };
+      }
       await runMutation.mutateAsync(request);
       runRequestRef.current = null;
     } catch (cause) {
@@ -578,7 +578,7 @@ export function PracticalWorkbenchPanel({
             type="button"
             disabled={lesson?.preparation !== "ready" || generate.isPending}
             onClick={() => setComposerOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-45"
+            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
           >
             <Plus size={14} /> New activity
           </button>
@@ -591,7 +591,7 @@ export function PracticalWorkbenchPanel({
         openRequest={runtimeSetupRequest}
       />
 
-      <div className="grid min-w-0 gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="min-w-0 space-y-4">
           <section className="rounded-2xl border border-border bg-surface p-4">
             <div className="flex items-center justify-between gap-2">
@@ -621,7 +621,7 @@ export function PracticalWorkbenchPanel({
                 </p>
                 <button
                   type="button"
-                  disabled={lesson?.preparation !== "ready"}
+                  disabled={lesson?.preparation !== "ready" || generate.isPending}
                   onClick={() => setComposerOpen(true)}
                   className="mt-3 text-xs font-semibold text-accent disabled:opacity-40"
                 >
@@ -786,7 +786,7 @@ export function PracticalWorkbenchPanel({
                           Boolean(activeRun)
                         }
                         onClick={() => void beginRun()}
-                        className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"
+                        className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
                       >
                         {startingRun || runMutation.isPending || activeRun ? (
                           <LoaderCircle size={13} className="animate-spin" />
@@ -828,7 +828,7 @@ export function PracticalWorkbenchPanel({
                         className={`max-w-full break-all rounded-lg px-3 py-2 font-mono text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${file.path === selectedFile?.path ? "bg-surface text-accent shadow-sm" : "text-text-secondary hover:bg-surface"}`}>{file.path}</button>)}
                     </div>}
                     {editorFiles.map((file, index) => <div key={`${activeActivity.id}:${activeActivity.revision}:${file.path}`} id={`lab-file-panel-${activeActivity.id}-${index}`} role="tabpanel" aria-labelledby={`lab-file-tab-${activeActivity.id}-${index}`} hidden={selectedFile?.path !== file.path}>
-                      <LearningCodeEditor path={file.path} value={file.content} ariaLabel={`Edit ${file.path}`} readOnly={draft.loadState !== "ready"} onChange={(content) => draft.setFileContent(file.path, content)} onRunShortcut={() => void beginRun()} />
+                      <LearningCodeEditor path={file.path} showPath={false} value={file.content} ariaLabel={`Edit ${file.path}`} readOnly={draft.loadState !== "ready"} onChange={(content) => draft.setFileContent(file.path, content)} onRunShortcut={() => void beginRun()} />
                     </div>)}
                     {editorFiles.length === 0 && <p className="bg-background p-4 text-sm text-text-muted">This activity has no editable starter files.</p>}
                   </div>
@@ -1091,6 +1091,9 @@ export function PracticalWorkbenchPanel({
             setRuntimeSetupRequest((request) => request + 1);
           }}
           onCreated={async (request) => {
+            if (!await draft.flush()) {
+              throw new Error("Save the current activity's edits before creating another activity. Close this dialog to retry saving.");
+            }
             await generate.mutateAsync(request);
             setSelectedId(request.activityId);
             setSelectedRunId(null);
