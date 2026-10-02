@@ -59,6 +59,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         { keys: [cmd, '4'], description: 'Chat' },
         { keys: [cmd, '5'], description: 'References' },
         { keys: [cmd, '6'], description: 'Study' },
+        { keys: [cmd, '7'], description: 'Studio' },
         { keys: [cmd, 'I'], description: 'Import' },
       ],
     },

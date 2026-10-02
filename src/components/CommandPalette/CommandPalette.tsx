@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Command } from 'cmdk'
 import {
   Bookmark,
+  BookOpen,
   GraduationCap,
   Clock,
   FilePlus,
@@ -391,6 +392,7 @@ export function CommandPalette() {
 
                 {showCommands && (
                   <Command.Group heading="New" className="command-group">
+                    <CommandItem icon={BookOpen} label="New learning program" onSelect={goTo('/studio?new=1')} />
                     <CommandItem icon={MessageSquarePlus} label="New conversation" shortcut={`${cmd}N`} onSelect={goTo('/chat?new=1')} />
                     <CommandItem icon={NotebookPen} label="New journal entry" onSelect={goTo('/journals?new=1')} />
                     <CommandItem icon={FilePlus} label="Add files" onSelect={handleAsyncEvent(handleAddFiles)} />
@@ -408,6 +410,7 @@ export function CommandPalette() {
                     <CommandItem icon={MessageCircle} label="Chat" shortcut={`${cmd}4`} onSelect={goTo('/chat')} />
                     <CommandItem icon={Bookmark} label="References" shortcut={`${cmd}5`} onSelect={goTo('/references')} />
                     <CommandItem icon={GraduationCap} label="Study" shortcut={`${cmd}6`} onSelect={goTo('/study')} />
+                    <CommandItem icon={BookOpen} label="Studio" shortcut={`${cmd}7`} onSelect={goTo('/studio')} />
                     <CommandItem icon={Plus} label="Import" shortcut={`${cmd}I`} onSelect={goToImport('files')} />
                     <CommandItem icon={SettingsIcon} label="Settings" shortcut={`${cmd},`} onSelect={goTo('/settings')} />
                   </Command.Group>

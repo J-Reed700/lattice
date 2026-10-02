@@ -20,6 +20,7 @@ export {
   SettingsSectionErrorBoundary,
   DailySectionErrorBoundary,
 } from './SectionErrorBoundary';
+export { StudioSectionErrorBoundary } from './StudioSectionErrorBoundary';
 
 // Fallback UI components
 export { FullPageError } from './FullPageError';

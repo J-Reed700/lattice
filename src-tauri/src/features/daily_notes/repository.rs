@@ -263,6 +263,37 @@ impl DailyNotesRepository {
         .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))
     }
 
+    /// Insert a canonical workspace note inside a caller-owned transaction.
+    /// Learning Studio uses this to commit a lesson-note link and page together.
+    pub async fn insert_in_transaction(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        note: &WorkspaceNoteRecord,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO daily_notes_workspace (
+                id,title,journal_id,content,linked_document_ids,linked_conversation_ids,
+                highlights_json,sticky_notes_json,conversation_snapshots_json,
+                sources_json,created_at,updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"#,
+        )
+        .bind(&note.id)
+        .bind(&note.title)
+        .bind(&note.journal_id)
+        .bind(&note.content)
+        .bind(&note.linked_document_ids)
+        .bind(&note.linked_conversation_ids)
+        .bind(&note.highlights_json)
+        .bind(&note.sticky_notes_json)
+        .bind(&note.conversation_snapshots_json)
+        .bind(&note.sources_json)
+        .bind(&note.created_at)
+        .bind(&note.updated_at)
+        .execute(&mut **tx)
+        .await
+        .map(|_| ())
+        .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))
+    }
+
     pub async fn update(&self, note: &WorkspaceNoteRecord) -> Result<()> {
         let result = sqlx::query(
             r#"

@@ -1024,3 +1024,98 @@ test('cancels a 43-document deletion after the pending document completes', asyn
   await expect(page.getByRole('checkbox', { name: 'Select Delete 0.pdf', exact: true })).toHaveCount(0);
   await expect(page.getByRole('checkbox', { name: 'Select Delete 1.pdf', exact: true })).toBeVisible();
 });
+
+test('Learning Studio integrates with the app shell and preserves quick-check work across tabs', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.addInitScript(settings => {
+    const source = {
+      id: 'studio-source',
+      title: 'Distributed systems field guide',
+      url: 'https://example.org/field-guide',
+      excerpt: 'Retries are safe only when an operation has a stable identity and repeated delivery preserves the original effect.',
+      acquiredAt: 1_790_000_000_000,
+    };
+    const question = (id: string, kind: 'practice' | 'quiz' | 'test', prompt: string) => ({
+      id, kind, prompt, options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], sourceIds: [source.id],
+    });
+    const lesson = (id: string, title: string, suffix: string) => ({
+      id, title, objective: `Explain ${title.toLowerCase()} and apply it to a production decision.`, estimatedMinutes: 30,
+      preparation: 'ready', completed: false,
+      blocks: [
+        { kind: 'explanation', title: 'Build the mental model', body: 'Start from the observable failure, then identify which state transition must remain stable when a request is delivered more than once.', sourceIds: [source.id] },
+        { kind: 'worked_example', title: 'Trace a duplicate request', body: 'Follow one request through a timeout, retry, and replay. The stable identifier lets the service return the stored result without repeating the effect.', sourceIds: [source.id] },
+        { kind: 'reflection', title: 'Name the boundary', body: 'Write down where identity is created, where the result is stored, and which side effects still need their own protection.', sourceIds: [source.id] },
+      ],
+      questions: [
+        question(`practice-${suffix}-1`, 'practice', 'A client retries after losing the response. Which design preserves the original effect?'),
+        question(`practice-${suffix}-2`, 'practice', 'Where should the service compare a retry with prior work?'),
+        question(`quiz-${suffix}-1`, 'quiz', 'What property makes a repeated request safe?'),
+        question(`quiz-${suffix}-2`, 'quiz', 'Which failure requires an idempotency record?'),
+        question(`test-${suffix}-1`, 'test', 'Which production change prevents a duplicated charge?'),
+        question(`test-${suffix}-2`, 'test', 'Which observation best demonstrates safe replay?'),
+      ],
+    });
+    const first = lesson('lesson-1', 'Reason about retries', 'a');
+    const second = lesson('lesson-2', 'Design an idempotent boundary', 'b');
+    const program = {
+      summary: {
+        id: 'program-1', title: 'Production reasoning after an AI-heavy year',
+        goal: 'Rebuild the ability to reason independently about service behavior, tradeoffs, and failure modes.',
+        status: 'active', revision: 4, moduleCount: 2, lessonCount: 4, completedLessons: 1,
+        currentLessonId: first.id, createdAt: 1_790_000_000_000,
+      },
+      priorKnowledge: 'Senior engineering experience with C#, Python, AWS, and AI services.',
+      minutesPerSession: 35, modelName: 'Local learning model', sources: [source],
+      modules: [
+        { id: 'module-1', title: 'Reliable service thinking', summary: 'Recover the habit of tracing state, failure, and ownership before reaching for implementation.', outcomes: ['Trace a request across failure', 'Defend an idempotency boundary'], lessons: [first, second] },
+        { id: 'module-2', title: 'Independent implementation', summary: 'Move from a justified design into code, tests, and review without surrendering the reasoning step.', outcomes: ['Implement from a written model', 'Explain a tradeoff without assistance'], lessons: [
+          { ...lesson('lesson-3', 'Implement from first principles', 'c'), completed: true },
+          lesson('lesson-4', 'Review and defend the design', 'd'),
+        ] },
+      ],
+      attempts: [{
+        id: 'attempt-1', moduleId: 'module-1', lessonId: first.id, kind: 'quiz', correct: 1, total: 2,
+        submittedAt: 1_790_000_600_000,
+        results: [
+          { questionId: 'quiz-a-1', prompt: 'What property makes a repeated request safe?', options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], selectedIndex: 0, correctIndex: 0, explanation: 'The saved identifier connects a retry to the original result.', sourceIds: [source.id] },
+          { questionId: 'quiz-a-2', prompt: 'Which failure requires an idempotency record?', options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], selectedIndex: 1, correctIndex: 0, explanation: 'A response can be lost after the effect commits, so the next delivery must find the earlier result.', sourceIds: [source.id] },
+        ],
+      }],
+    };
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async command => {
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:health|initialize_database') return undefined;
+      if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces'].includes(command)) return [];
+      if (command === 'plugin:learning|list_learning_programs') return [program.summary];
+      if (command === 'plugin:learning|get_learning_program') return program;
+      throw new Error(`Unsupported Learning Studio fixture command: ${command}`);
+    };
+  }, makeAppSettings());
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+
+  await page.goto('/studio');
+  await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('button', { name: /Production reasoning after an AI-heavy year/ }).click();
+  await expect(page.getByRole('heading', { name: 'Production reasoning after an AI-heavy year' })).toBeVisible();
+  await expect(page.getByText('Module journey', { exact: true })).toBeVisible();
+  const moduleWorkspace = page.getByRole('navigation', { name: 'Module workspace' });
+  await expect(moduleWorkspace).toBeVisible();
+  await expect(moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  const quickCheckType = page.getByRole('group', { name: 'Quick check type' });
+  await expect(quickCheckType.getByRole('button', { name: 'practice', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('radio', { name: 'Use a stable operation identifier' }).click();
+  await quickCheckType.getByRole('button', { name: 'quiz', exact: true }).click();
+  await quickCheckType.getByRole('button', { name: 'practice', exact: true }).click();
+  await moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true }).click();
+  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Use a stable operation identifier' })).toBeChecked();
+
+  await quickCheckType.getByRole('button', { name: 'History (1)', exact: true }).click();
+  await expect(page.getByText('Model-authored answer key', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 correct of 2', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '/tmp/lattice-learning-studio.png', fullPage: true, animations: 'disabled' });
+  expect(errors).toEqual([]);
+});

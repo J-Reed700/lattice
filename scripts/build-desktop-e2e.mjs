@@ -67,6 +67,7 @@ if (!bindingsTarget?.['required-features']?.includes('bindings-export')
   throw new Error('export_bindings must require the non-default bindings-export feature');
 }
 const bundle = { darwin: 'app', linux: 'deb', win32: 'nsis' }[platform];
+run(process.execPath, [path.join(root, 'scripts/verify-learning-python.mjs')]);
 run(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), 'build',
   ...(!release ? ['--debug'] : []), '--ci', '--features', 'desktop-e2e', '--config', configPath,
   '--bundles', bundle]);
@@ -109,9 +110,29 @@ const bindingsBinary = path.join(path.dirname(binary), platform === 'win32'
 await access(binary);
 await access(sidecar);
 await assertMissing(bindingsBinary);
+const pythonManifests = (await readdir(installed, { recursive: true }))
+  .filter(file => file.split(path.sep).join('/').endsWith('resources/learning-python/runtime-manifest.json'));
+if (pythonManifests.length !== 1) throw new Error(`Expected one bundled Python runtime, found ${pythonManifests.length}`);
+const pythonRuntime = path.dirname(path.join(installed, pythonManifests[0]));
+run(process.execPath, [path.join(root, 'scripts/verify-learning-python.mjs'), pythonRuntime]);
+// Unit test executables are unsigned. This probe runs the actual installed,
+// signed application so macOS executable-memory policy and packaged paths
+// cannot go untested behind a green source-build test.
+const runtimeProbe = spawnSync(binary, ['--learning-runtime-self-test', pythonRuntime], {
+  cwd: installed, env, encoding: 'utf8', timeout: 180_000,
+});
+if (runtimeProbe.error) throw runtimeProbe.error;
+if (runtimeProbe.status !== 0) throw new Error(`Installed runtime probe failed: ${runtimeProbe.stderr || runtimeProbe.stdout}`);
+const runtimeProof = JSON.parse(runtimeProbe.stdout.trim());
+if (runtimeProof.status !== 'passed') throw new Error('Installed runtime probe did not pass');
+await mkdir(path.join(output, 'reports'), { recursive: true });
+await writeFile(path.join(output, 'reports', 'embedded-runtime.json'), `${JSON.stringify({
+  ...runtimeProof, identifier: config.identifier, binary, pythonRuntime,
+  platform, arch: process.arch, profile: release ? 'release' : 'debug',
+}, null, 2)}\n`);
 await writeFile(fixture, '# Compatibility fixture\n\nThe Cedar observatory opens at 08:40 on Tuesday. CEDAR-7319.\n');
 await writeFile(path.join(output, 'manifest.json'), JSON.stringify({
-  identifier: config.identifier, binary, sidecar, fixture, platform, arch: process.arch,
+  identifier: config.identifier, binary, sidecar, pythonRuntime, fixture, platform, arch: process.arch,
   profile: release ? 'release' : 'debug', installed,
 }, null, 2));
 console.log(`Desktop candidate ready: ${binary}`);

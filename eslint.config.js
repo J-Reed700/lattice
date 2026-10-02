@@ -359,6 +359,55 @@ export default [
     },
   },
 
+  // Playwright renderer tests run in Node while their init scripts execute in
+  // the browser. Keep them in a dedicated type-aware project so test harnesses
+  // cannot silently drift outside the main frontend lint/typecheck boundary.
+  {
+    files: ['e2e/**/*.{ts,tsx}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        project: './tsconfig.e2e.json',
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.es2021,
+        ...globals.node,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin,
+    },
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      'no-redeclare': 'off',
+      'no-var': 'error',
+      'prefer-const': 'error',
+      'eqeqeq': ['error', 'always', { null: 'ignore' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      'import/no-duplicates': 'error',
+    },
+  },
+
+  {
+    files: ['e2e/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.es2021,
+        ...globals.node,
+      },
+    },
+  },
+
   // Storybook files configuration
   {
     files: ['src/**/*.stories.{ts,tsx}'],

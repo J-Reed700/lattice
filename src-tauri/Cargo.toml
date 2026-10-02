@@ -64,6 +64,7 @@ serde_json = "1.0"
 semver = "1.0"
 jsonschema = { version = "0.17", default-features = false }
 tokio = { version = "1.35", features = ["full"] }
+tempfile = "3.8"
 notify = "6.1"
 # Sibling of `notify` (same maintainers) that handles the editor-temp-file-
 # swap insanity natively. Without it we'd hand-roll a sweep loop that
@@ -105,6 +106,11 @@ async-stream = "0.3"
 # back over HTTP/1.1, unlike any browser. Native roots keep user-installed CAs.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "charset", "macos-system-configuration", "stream", "json", "cookies", "gzip", "deflate", "brotli"] }
 hex = "0.4"
+# Learner execution: restricted JavaScript and CPython/WASI guests. Native
+# compiler projects use the optional container provider.
+rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"] }
+wasmtime = { version = "=48.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "=48.0.3", default-features = false, features = ["p1"] }
 lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 encoding_rs = "0.8"
@@ -152,6 +158,7 @@ derive_more = { version = "1.0", features = ["from", "into", "display", "deref"]
 parking_lot = "0.12"
 fs4 = "0.8"
 rand = "0.8"
+fsrs = "=6.6.2"
 
 # LLM and web ingestion dependencies
 sysinfo = "0.30"
@@ -160,7 +167,9 @@ url = "2.5"
 html5ever = "0.26"
 ego-tree = "0.6"
 select = "0.6"
-readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extraction
+# Keep the reader and learner engine on one native QuickJS ABI. The vendored
+# upstream wrapper is unchanged except for its rquickjs dependency; see README.
+readability-js = { path = "vendor/readability-js" }
 
 # Audio ingest. Symphonia decodes the container and codec; Rubato
 # resamples to the 16 kHz mono f32 whisper expects. default-features = false
@@ -223,7 +232,6 @@ winreg = "0.52"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3.8"
 proptest = "1.5"
 insta = { version = "1.45", features = ["json", "redactions"] }
 mockall = "0.13"

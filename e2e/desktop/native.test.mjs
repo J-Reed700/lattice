@@ -121,7 +121,7 @@ async function closeNormally() {
   browser = undefined;
 }
 
-test('packaged desktop: onboarding, native file access, editing, close and persistence', { timeout: 480_000 }, async t => {
+test('packaged desktop: onboarding, registered learning reads, file access, journal edits and restart persistence', { timeout: 480_000 }, async t => {
   // Re-running a candidate starts with an empty test library. Preserve the old
   // directory for debugging; the strict identity check excludes real user data.
   const dataRoot = process.platform === 'darwin' ? path.join(os.homedir(), 'Library/Application Support')
@@ -147,6 +147,37 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       await skip.click();
       await browser.waitUntil(async () => (await invoke('plugin:settings|get_settings')).onboarding.firstRunDismissed, { timeout: 15_000 });
       results.checks.push('onboarding');
+    });
+    await step('Learning Studio commands are registered against the real migrated database', async () => {
+      const programs = await invoke('plugin:learning|list_learning_programs');
+      assert.deepEqual(programs, [], 'The isolated Learning Studio database should start empty');
+      await assert.rejects(
+        () => invoke('plugin:learning|get_learning_program', { id: '00000000-0000-4000-8000-000000000404' }),
+        /not found|NotFound|learning program/i,
+      );
+      assert.deepEqual(await invoke('plugin:learning|list_learning_programs'), [],
+        'A rejected Learning Studio read must not poison the native command surface');
+      const missingProgram = '00000000-0000-4000-8000-000000000404';
+      for (const [command, args] of [
+        ['plugin:learning|get_learning_assessment_workspace', { id: missingProgram }],
+        ['plugin:learning|get_learning_plan', { id: missingProgram }],
+        ['plugin:learning|get_learning_practical_workspace', { programId: missingProgram }],
+        ['plugin:learning|get_learning_recall_workspace', { programId: missingProgram }],
+      ]) {
+        await assert.rejects(() => invoke(command, args), /not found|does not exist|invalid/i,
+          `${command} must report the missing program without synthesizing workspace data`);
+      }
+      results.checks.push('learning-studio-native-commands');
+    });
+    await step('language catalog is registered and Python resolves inside the installed app', async () => {
+      const catalog = await invoke('plugin:learning|get_learning_runtime_catalog');
+      assert.deepEqual(catalog.map(runtime => runtime.id), ['csharp', 'rust', 'node', 'python']);
+      const resourceDir = await browser.executeAsync(done => window.__TAURI__.path.resourceDir().then(done));
+      const pythonRuntime = path.join(resourceDir, 'resources', 'learning-python');
+      assert.equal(path.resolve(pythonRuntime), path.resolve(manifest.pythonRuntime));
+      const python = JSON.parse(await readFile(path.join(pythonRuntime, 'runtime-manifest.json'), 'utf8'));
+      assert.equal(python.pythonVersion, '3.14.8');
+      results.checks.push('learning-runtime-bundle');
     });
     await step('real file reads support spaces and Unicode; missing files reject cleanly', async () => {
       const dataDir = await browser.executeAsync(done => window.__TAURI__.path.appDataDir().then(done));
@@ -257,8 +288,12 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       results.checks.push('restart-persistence');
       await closeNormally();
     });
-    results.passed = results.checks.length === 7;
-    assert.equal(results.passed, true);
+    assert.deepEqual([...results.checks].sort(), [
+      'onboarding', 'learning-studio-native-commands', 'learning-runtime-bundle',
+      'native-file-access', 'minimum-window-journal', 'native-close',
+      'collection-persistence', 'resource-churn', 'restart-persistence',
+    ].sort());
+    results.passed = true;
   } catch (error) {
     if (browser) {
       results.failureContext = await browser.execute(() => ({

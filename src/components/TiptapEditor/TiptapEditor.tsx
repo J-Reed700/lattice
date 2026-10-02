@@ -18,6 +18,8 @@ export interface TiptapEditorProps {
   onChange: (markdown: string) => void;
   placeholder?: string;
   className?: string;
+  /** Accessible name for the editable surface. */
+  ariaLabel?: string;
   onWikilinkClick?: (title: string) => void;
   autofocus?: boolean;
   /** Extra verbs for the selection toolbar, after the formatting marks. */
@@ -38,6 +40,7 @@ export function TiptapEditor({
   onChange,
   placeholder,
   className = '',
+  ariaLabel,
   onWikilinkClick,
   autofocus = false,
   selectionActions,
@@ -95,6 +98,9 @@ export function TiptapEditor({
     editorProps: {
       attributes: {
         class: `tiptap-editor focus:outline-none ${className}`,
+        role: 'textbox',
+        'aria-multiline': 'true',
+        ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
       },
     },
   });

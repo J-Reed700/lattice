@@ -10,18 +10,22 @@ import { useReviewStudyCard } from './useStudy';
 
 export type StudyMode = 'flashcard' | 'quiz';
 export function StudySession({ cards, mode, title, onClose }: { cards: StudyCardDto[]; mode: StudyMode; title: string; onClose: () => void }) {
+  const sessionCards = mode === 'quiz' ? cards.filter(card => (card.format ?? 'multiple_choice') === 'multiple_choice' && card.options.length > 0) : cards;
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const [correctCount, setCorrectCount] = useState(0);
   const [missed, setMissed] = useState<string[]>([]);
-  const reviewId = useRef(crypto.randomUUID());
+  const reviewAttempt = useRef<{ signature: string; id: string } | null>(null);
   const review = useReviewStudyCard();
-  const card = cards[index];
-  const next = () => { setIndex(i => i + 1); setSelected(null); setRevealed(false); reviewId.current = crypto.randomUUID(); review.reset(); };
+  const card = sessionCards[index];
+  const next = () => { setIndex(i => i + 1); setSelected(null); setRevealed(false); reviewAttempt.current = null; review.reset(); };
   const grade = (rating: StudyRating) => {
     if (review.isPending || (mode === 'quiz' && selected === null)) return;
-    review.mutate({ reviewId: reviewId.current, cardId: card.id, expectedReviews: card.reviewCount, selectedOption: mode === 'quiz' ? selected : null, rating }, {
+    const selectedOption = mode === 'quiz' ? selected : null;
+    const signature = `${card.id}:${rating}:${selectedOption ?? 'recall'}`;
+    if (reviewAttempt.current?.signature !== signature) reviewAttempt.current = { signature, id: crypto.randomUUID() };
+    review.mutate({ reviewId: reviewAttempt.current.id, cardId: card.id, expectedReviews: card.reviewCount, selectedOption, rating }, {
       onSuccess: saved => {
         const correct = mode === 'quiz' ? selected === saved.correctIndex : rating !== 'again';
         if (correct) setCorrectCount(c => c + 1);
@@ -31,15 +35,20 @@ export function StudySession({ cards, mode, title, onClose }: { cards: StudyCard
       },
     });
   };
+  if (mode === 'quiz' && cards.length > 0 && sessionCards.length === 0) return <>
+    <PageHeader title="No quiz cards available" meta={title} />
+    <p className="text-sm text-text-secondary">This deck contains recall cards. Review them as flashcards from the deck.</p>
+    <Button className="mt-8" onClick={onClose}>Back to deck</Button>
+  </>;
   if (!card) return <>
-    <PageHeader title={mode === 'quiz' ? 'Practice complete' : 'Review complete'} meta={`${cards.length} ${mode === 'quiz' ? cards.length === 1 ? 'question' : 'questions' : cards.length === 1 ? 'card' : 'cards'} · ${correctCount} ${mode === 'quiz' ? 'correct' : 'recalled'}`} />
+    <PageHeader title={mode === 'quiz' ? 'Practice complete' : 'Review complete'} meta={`${sessionCards.length} ${mode === 'quiz' ? sessionCards.length === 1 ? 'question' : 'questions' : sessionCards.length === 1 ? 'card' : 'cards'} · ${correctCount} ${mode === 'quiz' ? 'correct' : 'recalled'}`} />
     <p className="text-sm text-text-secondary">Your results and next review dates are saved.</p>
     {missed.length > 0 && <div className="mt-8"><h2 className="mb-3 text-lg text-text-primary">Revisit</h2><ul className="space-y-2 text-sm text-text-secondary">{[...new Set(missed)].map(topic => <li key={topic}>{topic}</li>)}</ul></div>}
     <Button className="mt-8" onClick={onClose}>Back to deck</Button>
   </>;
   return <>
-    <PageHeader title={mode === 'quiz' ? 'Practice quiz' : 'Flashcards'} meta={`${index + 1} of ${cards.length} · ${title}`} actions={<Button variant="ghost" disabled={review.isPending} onClick={onClose}>End session</Button>} />
-    <div className="mb-8 h-1 overflow-hidden rounded-full bg-surface-raised" role="progressbar" aria-label="Session progress" aria-valuenow={index} aria-valuemin={0} aria-valuemax={cards.length}><div className="h-full bg-accent transition-all duration-fast" style={{ width: `${index / cards.length * 100}%` }} /></div>
+    <PageHeader title={mode === 'quiz' ? 'Practice quiz' : 'Flashcards'} meta={`${index + 1} of ${sessionCards.length} · ${title}`} actions={<Button variant="ghost" disabled={review.isPending} onClick={onClose}>End session</Button>} />
+    <div className="mb-8 h-1 overflow-hidden rounded-full bg-surface-raised" role="progressbar" aria-label="Session progress" aria-valuenow={index} aria-valuemin={0} aria-valuemax={sessionCards.length}><div className="h-full bg-accent transition-all duration-fast" style={{ width: `${index / sessionCards.length * 100}%` }} /></div>
     {revealed && <p className="mb-4 text-xs text-text-muted">{card.topic}</p>}
     <h2 className="font-serif text-2xl leading-relaxed text-text-primary">{card.question}</h2>
     {mode === 'quiz' && <fieldset className="mt-8 space-y-2" disabled={review.isPending || revealed}>
@@ -60,7 +69,7 @@ export function StudySession({ cards, mode, title, onClose }: { cards: StudyCard
       {mode === 'flashcard' && !revealed && <Button onClick={() => setRevealed(true)}>Reveal answer</Button>}
       {mode === 'flashcard' && revealed && (['again', 'hard', 'good', 'easy'] as const).map(rating => <Button key={rating} variant={rating === 'good' ? 'default' : 'secondary'} disabled={review.isPending} onClick={() => grade(rating)}>{rating[0].toUpperCase() + rating.slice(1)}</Button>)}
       {mode === 'quiz' && !revealed && <Button disabled={selected === null || review.isPending} onClick={() => grade('good')}>{review.isPending ? 'Saving…' : 'Check answer'}</Button>}
-      {mode === 'quiz' && revealed && <Button onClick={next}>{index + 1 === cards.length ? 'Finish practice' : 'Next question'}</Button>}
+      {mode === 'quiz' && revealed && <Button onClick={next}>{index + 1 === sessionCards.length ? 'Finish practice' : 'Next question'}</Button>}
     </div>
   </>;
 }

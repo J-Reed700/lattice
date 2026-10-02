@@ -13,7 +13,8 @@ export default defineConfig({
     include: ['src/**/*.{test,spec,integration.test}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html', 'lcov'],
+      reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],
+      reportOnFailure: true,
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/**/*.test.{ts,tsx}',
@@ -25,10 +26,22 @@ export default defineConfig({
         'src/lib/bindings.ts', // Exclude generated file
       ],
       all: true,
-      lines: 70,
-      functions: 70,
-      branches: 70,
-      statements: 70,
+      // Vitest 4 only enforces floors nested under `thresholds`. Keep a
+      // realistic whole-renderer baseline while applying a substantially
+      // stronger contract to Learning Studio, where failures can corrupt a
+      // learner's durable workflow. Raise these values as coverage grows.
+      thresholds: {
+        lines: 53,
+        functions: 47,
+        branches: 47,
+        statements: 52,
+        'src/components/LearningStudio/**': {
+          lines: 87,
+          functions: 75,
+          branches: 67,
+          statements: 77,
+        },
+      },
     },
   },
   resolve: {

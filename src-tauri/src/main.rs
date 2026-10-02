@@ -3,6 +3,9 @@
 // Import from the library crate
 use lattice::infrastructure::setup;
 
+#[cfg(feature = "desktop-e2e")]
+mod learning_runtime_self_test;
+
 // IPC commands are exposed through domain-specific Tauri plugins.
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,6 +29,15 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .setup(|app| {
             // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();
+            if let Ok(resources) = app.path().resource_dir() {
+                if let Err(error) =
+                    lattice::features::learning::python_runtime::configure_python_runtime(
+                        resources.join("resources/learning-python"),
+                    )
+                {
+                    tracing::warn!(%error, "Bundled Python runtime could not be configured");
+                }
+            }
 
             // Register before the webview can announce readiness. On macOS
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
@@ -107,6 +119,24 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     lattice::infrastructure::crash::install_panic_hook();
+    // This entrypoint exists only in an instrumented, isolated test package.
+    // Exercise the installed executable's signing policy and bundled assets
+    // without adding a production IPC command or requiring a model response.
+    #[cfg(feature = "desktop-e2e")]
+    {
+        let mut args = std::env::args_os().skip(1);
+        if args.next().as_deref() == Some(std::ffi::OsStr::new("--learning-runtime-self-test")) {
+            let Some(resources) = args.next() else {
+                eprintln!("A bundled Python resource directory is required.");
+                std::process::exit(2);
+            };
+            if let Err(error) = learning_runtime_self_test::run(resources.into()) {
+                eprintln!("Embedded runtime self-test failed: {error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
     // Note: setup_tracing() moved to .setup() hook where Tokio runtime is available for OTEL
 
     if let Err(e) = run_app() {

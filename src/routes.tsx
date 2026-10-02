@@ -8,6 +8,7 @@ import {
   QASectionErrorBoundary,
   SearchSectionErrorBoundary,
   SettingsSectionErrorBoundary,
+  StudioSectionErrorBoundary,
 } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { RootLayout } from './components/RootLayout';
@@ -21,6 +22,7 @@ const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ def
 const JournalWorkspace = lazy(() => import('./components/Journal').then((m) => ({ default: m.JournalWorkspace })));
 const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then((m) => ({ default: m.ReferenceInbox })));
 const StudyPage = lazy(() => import('./components/Study').then((m) => ({ default: m.StudyPage })));
+const LearningStudioPage = lazy(() => import('./components/LearningStudio').then((m) => ({ default: m.LearningStudioPage })));
 const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
 const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
 
@@ -88,6 +90,7 @@ export const router = createBrowserRouter([
           { path: 'daily', element: <Navigate to="/journals" replace /> },
           { path: 'references', element: <Page id="references"><ReferenceInbox /></Page> },
           { path: 'study', element: <Page id="study"><StudyPage /></Page> },
+          { path: 'studio', element: <Page id="studio" boundary={StudioSectionErrorBoundary}><LearningStudioPage /></Page> },
           { path: 'compare', element: <Page id="compare"><ComparePage /></Page> },
           {
             path: 'settings',
