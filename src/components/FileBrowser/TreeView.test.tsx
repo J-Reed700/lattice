@@ -41,6 +41,10 @@ const setDocuments = (documents: DocumentMetadata[], filteredDocuments = documen
     isLoading: false,
     error: null,
     refreshFiles: vi.fn(),
+    collections: [],
+    collectionsError: null,
+    collectionsLoading: false,
+    refreshCollections: vi.fn(),
   });
 };
 

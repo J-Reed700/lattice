@@ -13,9 +13,11 @@ struct MemoryToIndex {
     content: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn persist_user_message_pending(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    request_id: &str,
     user_message: &str,
     attachment_names: &[String],
     attachment_document_ids: &[String],
@@ -26,23 +28,21 @@ pub(super) async fn persist_user_message_pending(
     // so history shows where they entered. The names draw the chips; the ids
     // are what a regenerate re-reads, so the second run of a turn sees the same
     // files the first one did.
-    let metadata =
-        (!attachment_names.is_empty() || !attachment_document_ids.is_empty()).then(|| {
-            let mut payload = serde_json::Map::new();
-            if !attachment_names.is_empty() {
-                payload.insert(
-                    "attachments".to_string(),
-                    serde_json::json!(attachment_names),
-                );
-            }
-            if !attachment_document_ids.is_empty() {
-                payload.insert(
-                    "attachmentDocumentIds".to_string(),
-                    serde_json::json!(attachment_document_ids),
-                );
-            }
-            serde_json::Value::Object(payload).to_string()
-        });
+    let mut payload = serde_json::Map::new();
+    payload.insert("requestId".to_string(), serde_json::json!(request_id));
+    if !attachment_names.is_empty() {
+        payload.insert(
+            "attachments".to_string(),
+            serde_json::json!(attachment_names),
+        );
+    }
+    if !attachment_document_ids.is_empty() {
+        payload.insert(
+            "attachmentDocumentIds".to_string(),
+            serde_json::json!(attachment_document_ids),
+        );
+    }
+    let metadata = Some(serde_json::Value::Object(payload).to_string());
     let user_msg = conv_service
         .add_message_with_metadata(
             conversation_id,
@@ -742,6 +742,39 @@ mod turn_commit_tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn failed_question_retains_request_identity_and_attachments() {
+        let (service, pool, id, _) = service_with_pending_question().await;
+        let llm: Arc<dyn crate::application::ports::LLMPort> =
+            Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+        let (user_id, _) = persist_user_message_pending(
+            &service,
+            &id,
+            "request-one",
+            "same question",
+            &["notes.pdf".into()],
+            &["document-one".into()],
+            &llm,
+        )
+        .await
+        .unwrap();
+        mark_user_message_failed(&service, &user_id).await;
+        let raw: String =
+            sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(metadata["requestId"], "request-one");
+        assert_eq!(metadata["attachments"], serde_json::json!(["notes.pdf"]));
+        assert_eq!(
+            metadata["attachmentDocumentIds"],
+            serde_json::json!(["document-one"])
+        );
+        assert_eq!(status_of(&pool, &user_id).await, "failed");
     }
 
     #[tokio::test]

@@ -1,0 +1,25 @@
+{
+  "python": {
+    "version": "3.14.8",
+    "source": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tgz",
+    "sha256": "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
+  },
+  "wasiSdk": {
+    "version": "24.0",
+    "source": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-24/wasi-sdk-24.0-arm64-macos.tar.gz",
+    "sha256": "aeae999396d5f5caa5ce419f52e83c35869d5fd21d40af80acba2c80f51b0b3a"
+  },
+  "wasmtimeBuildRunner": {
+    "version": "48.0.1",
+    "source": "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.1/wasmtime-v48.0.1-aarch64-macos.tar.xz",
+    "sha256": "88cc08b395fbfb960b99f355a81224af975679b8a5f4b74a51d59e5e34b20dcd"
+  },
+  "runtimeCrates": {
+    "wasmtime": "48.0.3",
+    "wasmtime-wasi": "48.0.3"
+  },
+  "limitations": [
+    "The build script is pinned for macOS arm64; output is wasm32-wasip1 and runs on supported Wasmtime hosts.",
+    "The CPython WASI configuration does not include zlib; the pure-Python standard-library archive uses ZIP_STORED."
+  ]
+}

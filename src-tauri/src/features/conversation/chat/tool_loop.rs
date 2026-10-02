@@ -917,7 +917,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                             // conversation's permanent archive;
                                             // an archived one already is.
                                             super::source_snapshots::archive_page_for_url(
-                                                container, conv_id, &url, &page,
+                                                container, conv_id, url, &page,
                                             )
                                             .await;
                                         }

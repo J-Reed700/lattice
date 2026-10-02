@@ -11,6 +11,16 @@ const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tracing::info!("Exit requested, starting graceful shutdown");
 
+    // Close background admission and broadcast cancellation before sweeping
+    // sidecars. In-flight model starts can still cross the process boundary,
+    // but SidecarRegistry closes admission atomically during kill_all() and
+    // kills any child that tries to register afterwards.
+    if let Some(tasks) =
+        app_handle.try_state::<std::sync::Arc<crate::shared::background::BackgroundTasks>>()
+    {
+        tasks.close();
+    }
+
     // Kill llama-server sidecars first, synchronously,
     // before any async cleanup runs. This is the load-bearing
     // anti-zombie hook — by the time the tokio runtime starts tearing
@@ -36,7 +46,6 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
             if let Some(tasks) =
                 app_handle.try_state::<std::sync::Arc<crate::shared::background::BackgroundTasks>>()
             {
-                tasks.close();
                 // Critical writes finish or remain durably queued. The outer
                 // process deadline handles a stuck worker without closing its DB.
                 tasks.wait().await;

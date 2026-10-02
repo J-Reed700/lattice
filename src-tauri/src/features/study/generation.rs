@@ -90,7 +90,9 @@ pub(super) fn parse_cards(
         let mut source = source.clone();
         source.excerpt = item.quote.trim().to_owned();
         Ok(StudyCardDto {
-            id: uuid::Uuid::new_v4().to_string(), deck_id: deck_id.to_owned(), question: item.question.trim().to_owned(),
+            id: uuid::Uuid::new_v4().to_string(), format: crate::features::study::dto::StudyCardFormat::MultipleChoice,
+            scheduler_version: crate::features::study::dto::StudySchedulerVersion::ExpandingV1,
+            deck_id: deck_id.to_owned(), question: item.question.trim().to_owned(),
             answer, options: item.options.into_iter().map(|o| o.trim().to_owned()).collect(), correct_index: item.correct_index,
             explanation: item.explanation.trim().to_owned(), citations: vec![source.clone()], source, topic: item.topic.trim().to_owned(),
             due_at: now, interval_days: 0, review_count: 0, lapses: 0,
@@ -184,6 +186,8 @@ pub(super) fn parse_conversation_cards(
         if let Some(slot) = generated.get_mut(item.claim_index) {
             *slot = Some(StudyCardDto {
                 id: uuid::Uuid::new_v4().to_string(),
+                format: crate::features::study::dto::StudyCardFormat::MultipleChoice,
+                scheduler_version: crate::features::study::dto::StudySchedulerVersion::ExpandingV1,
                 deck_id: deck_id.to_owned(),
                 question: item.question.trim().to_owned(),
                 answer: claim.answer.clone(),

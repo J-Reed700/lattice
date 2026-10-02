@@ -9,6 +9,7 @@
 //! dispatch from multiple threads.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,47 @@ pub const TRANSCRIPTION_IDLE_TTL: Duration = Duration::from_secs(300);
 
 /// Longest recording accepted, in seconds.
 pub const MAX_AUDIO_SECS: u64 = 2 * 60 * 60;
+
+fn idle_expired(last_used: Instant, now: Instant, idle_ttl: Duration) -> bool {
+    now.saturating_duration_since(last_used) >= idle_ttl
+}
+
+fn claim_idle_timer(active: &AtomicBool) -> bool {
+    active
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn try_take_loaded(
+    loaded: &parking_lot::Mutex<Option<LoadedWhisper>>,
+) -> Option<Option<LoadedWhisper>> {
+    Some(loaded.try_lock()?.take())
+}
+
+async fn wait_for_idle_permit(
+    permits: Arc<tokio::sync::Semaphore>,
+    last_used: Arc<parking_lot::Mutex<Instant>>,
+    cancel: tokio_util::sync::CancellationToken,
+    idle_ttl: Duration,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    loop {
+        let deadline = *last_used.lock() + idle_ttl;
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return None,
+            _ = tokio::time::sleep_until(deadline.into()) => {}
+        }
+        let permit = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return None,
+            permit = Arc::clone(&permits).acquire_owned() => permit.ok()?,
+        };
+        if idle_expired(*last_used.lock(), Instant::now(), idle_ttl) {
+            return Some(permit);
+        }
+        drop(permit);
+    }
+}
 
 /// Mel bin count of the base/small models this engine supports.
 const SUPPORTED_MEL_BINS: usize = 80;
@@ -81,6 +123,7 @@ pub struct WhisperTranscriptionService {
     permits: Arc<tokio::sync::Semaphore>,
     loaded: Arc<parking_lot::Mutex<Option<LoadedWhisper>>>,
     last_used: Arc<parking_lot::Mutex<Instant>>,
+    idle_timer_active: Arc<AtomicBool>,
 }
 
 impl WhisperTranscriptionService {
@@ -91,6 +134,7 @@ impl WhisperTranscriptionService {
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             loaded: Arc::new(parking_lot::Mutex::new(None)),
             last_used: Arc::new(parking_lot::Mutex::new(Instant::now())),
+            idle_timer_active: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -131,28 +175,69 @@ impl WhisperTranscriptionService {
         Ok(best.map(|(_, model)| model))
     }
 
-    /// Drop the model once it has been idle for [`TRANSCRIPTION_IDLE_TTL`].
-    ///
-    /// Timers may pile up when transcriptions come in bursts; the elapsed check
-    /// makes them idempotent.
+    /// Keep one supervised timer alive while the model is loaded. It waits for
+    /// the inference permit before inspecting the model, so it never blocks an
+    /// async executor thread on the synchronous model mutex.
     fn schedule_idle_unload(&self) {
+        if !claim_idle_timer(&self.idle_timer_active) {
+            return;
+        }
         let loaded = Arc::clone(&self.loaded);
         let last_used = Arc::clone(&self.last_used);
+        let permits = Arc::clone(&self.permits);
+        let idle_timer_active = Arc::clone(&self.idle_timer_active);
+        let cancel = crate::shared::background::cancellation_token();
 
-        tokio::spawn(async move {
-            tokio::time::sleep(TRANSCRIPTION_IDLE_TTL).await;
-
-            let idle = last_used.lock().elapsed();
-            if idle < TRANSCRIPTION_IDLE_TTL {
+        let task = async move {
+            loop {
+                let Some(permit) = wait_for_idle_permit(
+                    Arc::clone(&permits),
+                    Arc::clone(&last_used),
+                    cancel.clone(),
+                    TRANSCRIPTION_IDLE_TTL,
+                )
+                .await
+                else {
+                    idle_timer_active.store(false, Ordering::Release);
+                    return;
+                };
+                // The semaphore guarantees inference is not holding this lock;
+                // try_lock keeps this task nonblocking even if another short
+                // model-management operation owns it.
+                let model = match try_take_loaded(&loaded) {
+                    None => {
+                        drop(permit);
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    }
+                    Some(None) => {
+                        // Inference may have failed while loading the model.
+                        // There is nothing to unload, and the next request
+                        // will start a fresh timer after it obtains the permit.
+                        idle_timer_active.store(false, Ordering::Release);
+                        drop(permit);
+                        return;
+                    }
+                    Some(Some(model)) => model,
+                };
+                // Tensor destruction can be expensive; keep it off the async
+                // executor just like model loading and inference.
+                idle_timer_active.store(false, Ordering::Release);
+                let _ = tokio::task::spawn_blocking(move || {
+                    info!(
+                        model_id = %model.model_id,
+                        "transcription model unloaded after idle"
+                    );
+                    drop(model);
+                })
+                .await;
+                drop(permit);
                 return;
             }
-            if let Some(model) = loaded.lock().take() {
-                info!(
-                    model_id = %model.model_id,
-                    "transcription model unloaded after idle"
-                );
-            }
-        });
+        };
+        if crate::shared::background::spawn(task).is_none() {
+            self.idle_timer_active.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -694,16 +779,23 @@ impl TranscriptionPort for WhisperTranscriptionService {
             ));
         };
 
-        let _permit = self
+        let permit = self
             .permits
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .map_err(|e| AppError::InternalError(format!("transcription queue closed: {e}")))?;
 
         let path = audio.to_path_buf();
         let loaded_slot = Arc::clone(&self.loaded);
+        let last_used = Arc::clone(&self.last_used);
+        self.schedule_idle_unload();
 
         let outcome = tokio::task::spawn_blocking(move || -> Result<Transcript, AppError> {
+            // The blocking child owns the permit. Dropping the async caller
+            // cannot release inference admission while this closure still
+            // holds the model lock.
+            let _permit = permit;
             with_autorelease_pool(move || -> Result<Transcript, AppError> {
                 let decoded = decode_to_mono_16k(&path, MAX_AUDIO_SECS)?;
 
@@ -719,6 +811,7 @@ impl TranscriptionPort for WhisperTranscriptionService {
                 })?;
 
                 let (segments, language) = transcribe_pcm(loaded, &decoded.samples)?;
+                *last_used.lock() = Instant::now();
 
                 Ok(Transcript {
                     segments,
@@ -729,9 +822,6 @@ impl TranscriptionPort for WhisperTranscriptionService {
         })
         .await
         .map_err(|e| AppError::InternalError(format!("transcription task failed: {e}")))?;
-
-        *self.last_used.lock() = Instant::now();
-        self.schedule_idle_unload();
 
         outcome
     }
@@ -757,6 +847,113 @@ mod tests_e2e;
 )]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_idle_unload_timer_can_be_active() {
+        let active = Arc::new(AtomicBool::new(false));
+        let barrier = Arc::new(std::sync::Barrier::new(16));
+        let workers: Vec<_> = (0..16)
+            .map(|_| {
+                let active = Arc::clone(&active);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    claim_idle_timer(&active)
+                })
+            })
+            .collect();
+        let claims = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .filter(|claimed| *claimed)
+            .count();
+
+        assert_eq!(claims, 1);
+        active.store(false, Ordering::Release);
+        assert!(claim_idle_timer(&active));
+    }
+
+    #[test]
+    fn idle_deadline_recheck_keeps_a_recently_used_model_loaded() {
+        let last_used = Instant::now();
+
+        assert!(!idle_expired(
+            last_used,
+            last_used + TRANSCRIPTION_IDLE_TTL - Duration::from_millis(1),
+            TRANSCRIPTION_IDLE_TTL,
+        ));
+        assert!(idle_expired(
+            last_used,
+            last_used + TRANSCRIPTION_IDLE_TTL,
+            TRANSCRIPTION_IDLE_TTL,
+        ));
+    }
+
+    #[tokio::test]
+    async fn blocking_inference_keeps_its_permit_if_its_async_caller_is_dropped() {
+        let permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = Arc::clone(&permits).acquire_owned().await.unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let child = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+        });
+
+        started_rx.await.unwrap();
+        child.abort();
+        assert!(Arc::clone(&permits).try_acquire_owned().is_err());
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(permit) = Arc::clone(&permits).try_acquire_owned() {
+                    drop(permit);
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_idle_timer_rechecks_use_after_waiting_for_inference_gate() {
+        let idle_ttl = Duration::from_millis(100);
+        let permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let inference_permit = Arc::clone(&permits).acquire_owned().await.unwrap();
+        let last_used = Arc::new(parking_lot::Mutex::new(
+            Instant::now() - idle_ttl + Duration::from_millis(30),
+        ));
+        let resident_model = Arc::new(parking_lot::Mutex::new(Some(())));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let timer = tokio::spawn(wait_for_idle_permit(
+            Arc::clone(&permits),
+            Arc::clone(&last_used),
+            cancel,
+            idle_ttl,
+        ));
+
+        // The timer's first deadline passes while inference still owns the
+        // gate. Inference uses the model again before releasing that gate.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        *last_used.lock() = Instant::now();
+        drop(inference_permit);
+
+        tokio::pin!(timer);
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut timer)
+            .await
+            .is_err());
+        assert!(resident_model.lock().is_some());
+        let idle_permit = tokio::time::timeout(Duration::from_secs(1), &mut timer)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(resident_model.lock().take().is_some());
+        drop(idle_permit);
+    }
 
     #[test]
     fn compression_ratio_flags_repetition_loops() {

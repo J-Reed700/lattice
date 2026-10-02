@@ -1,0 +1,5 @@
+{
+  "pythonVersion": "3.14.8",
+  "wasmSha256": "e12fbffc5e38497f4950d066ba89aa09d9311a81c45faa95f644890909fcbcb8",
+  "stdlibSha256": "844e2fb1914642c9f4977b5b00d7df476c435002aa6770114bcea7d16f197447"
+}

@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { migrateLegacyCustomCollections } from '@/hooks/queries/useCustomCollectionsQuery';
 import VaultAPI from '@/lib/api';
 import type {
   ArchiveRun,
@@ -149,6 +150,7 @@ export function useCreateArchiveNowMutation() {
 
   return useMutation<ArchiveRun, Error, void>({
     mutationFn: async () => {
+      await migrateLegacyCustomCollections();
       const result = await VaultAPI.createArchiveNow();
       if (!result.ok) {
         throw new Error(result.error);

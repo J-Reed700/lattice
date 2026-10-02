@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({ review: vi.fn(), generate: vi.fn(), documents:
 vi.mock('@/lib/api', () => ({ default: { reviewStudyCard: mocks.review, generateStudyDeck: mocks.generate, listAllDocuments: mocks.documents, listStudyDecks: mocks.decks, getStudyDeck: mocks.deck } }));
 vi.mock('@/components/ContentViewer/ContentViewer', () => ({ ContentViewer: () => <div>Source viewer</div> }));
 const card: StudyCardDto = {
-  id: 'card', deckId: 'deck', question: 'What absorbs light in photosynthesis?', answer: 'Chlorophyll',
+  id: 'card', format: 'multiple_choice', schedulerVersion: 'expanding_v1', deckId: 'deck', question: 'What absorbs light in photosynthesis?', answer: 'Chlorophyll',
   options: ['Chlorophyll', 'Water', 'Oxygen', 'Glucose', 'Carbon dioxide'], correctIndex: 0,
   explanation: 'Chlorophyll absorbs the light used in photosynthesis.', topic: 'Chlorophyll',
   source: { chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' },
@@ -29,7 +29,10 @@ describe('Study', () => {
   beforeEach(() => { vi.resetAllMocks(); });
   it('keeps a revealed flashcard in place on save failure and retries the same review', async () => {
     const user = userEvent.setup();
-    mocks.review.mockResolvedValueOnce({ ok: false, error: 'Disk full' }).mockResolvedValueOnce({ ok: true, data: { ...card, reviewCount: 1 } });
+    mocks.review
+      .mockResolvedValueOnce({ ok: false, error: 'Disk full' })
+      .mockResolvedValueOnce({ ok: false, error: 'Disk full' })
+      .mockResolvedValueOnce({ ok: true, data: { ...card, reviewCount: 1 } });
     show(<StudySession cards={[card]} mode="flashcard" title="Biology" onClose={vi.fn()} />);
     expect(screen.queryByText(card.answer, { exact: true })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Reveal answer' }));
@@ -38,9 +41,18 @@ describe('Study', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Disk full');
     expect(screen.queryByText('Review complete')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Good' }));
-    expect(await screen.findByText('Review complete')).toBeVisible();
+    await waitFor(() => expect(mocks.review).toHaveBeenCalledTimes(2));
     expect(mocks.review.mock.calls[1][0].reviewId).toBe(mocks.review.mock.calls[0][0].reviewId);
+    await user.click(screen.getByRole('button', { name: 'Hard' }));
+    expect(await screen.findByText('Review complete')).toBeVisible();
+    expect(mocks.review.mock.calls[2][0].reviewId).not.toBe(mocks.review.mock.calls[0][0].reviewId);
     expect(mocks.review.mock.calls[0][0]).toMatchObject({ cardId: 'card', rating: 'good', selectedOption: null, expectedReviews: 0 });
+  });
+  it('does not place question-answer recall cards into quiz sessions', () => {
+    const recallCard: StudyCardDto = { ...card, format: 'question_answer', options: [] };
+    show(<StudySession cards={[recallCard]} mode="quiz" title="Biology" onClose={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'No quiz cards available' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Check answer' })).not.toBeInTheDocument();
   });
   it('records a quiz selection before revealing the answer and reports missed topics', async () => {
     const user = userEvent.setup();

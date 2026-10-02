@@ -119,7 +119,7 @@ pub(super) async fn archive_page_for_url(
 /// conversation archived is given that page's text for verification; the
 /// sources persisted with the message are left as they were.
 pub(super) async fn with_archived_page_text(
-    container: &Container,
+    repository: &ConversationRepository,
     conversation_id: &str,
     sources: &[SourceDto],
 ) -> Vec<SourceDto> {
@@ -130,9 +130,12 @@ pub(super) async fn with_archived_page_text(
             continue;
         }
         let url = url.to_string();
-        if let Some(page) = archived_page(container, conversation_id, &url).await {
-            if !page.content.trim().is_empty() {
-                source.content = page.content;
+        let snapshot = repository
+            .conversation_web_source_snapshot(conversation_id.to_string(), url)
+            .await;
+        if let Ok(Some(snapshot)) = snapshot {
+            if !snapshot.content.trim().is_empty() {
+                source.content = snapshot.content;
             }
         }
     }
@@ -211,9 +214,7 @@ pub(crate) async fn hydrate_message_metadata(
     conversation_id: &str,
     metadata: Option<String>,
 ) -> Option<String> {
-    let Some(raw) = metadata.as_deref() else {
-        return None;
-    };
+    let raw = metadata.as_deref()?;
     let Some(mut value) = metadata_value_with_sources(raw) else {
         return metadata;
     };

@@ -1,9 +1,72 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createReadStream, cpSync, mkdirSync, statSync } from 'node:fs'
 import path from 'path'
+import type { Plugin } from 'vite'
+
+const excalidrawAssets = path.resolve(
+  import.meta.dirname,
+  'node_modules/@excalidraw/excalidraw/dist/prod',
+)
+
+/**
+ * Excalidraw's runtime font loader expects its stylesheet and `fonts/` tree to
+ * keep their original relative paths. Serve those assets in development and
+ * copy them beside every production renderer build so the local-first editor
+ * never falls back to its public CDN. The editor injects this stylesheet only
+ * when Canvas opens, avoiding a second Vite-hashed copy of the font family.
+ */
+function packagedExcalidrawFonts(): Plugin {
+  return {
+    name: 'lattice-packaged-excalidraw-fonts',
+    configureServer(server) {
+      server.middlewares.use('/excalidraw-assets', (request, response, next) => {
+        let relativePath: string
+        try {
+          relativePath = decodeURIComponent(request.url?.split('?')[0] ?? '').replace(/^\/+/, '')
+        } catch {
+          response.statusCode = 400
+          response.end('Invalid font path')
+          return
+        }
+
+        const filePath = path.resolve(excalidrawAssets, relativePath)
+        const supportedAsset = relativePath === 'index.css'
+          || (relativePath.startsWith(`fonts${path.sep}`) && relativePath.endsWith('.woff2'))
+          || (relativePath.startsWith('fonts/') && relativePath.endsWith('.woff2'))
+        if (!supportedAsset || !filePath.startsWith(`${excalidrawAssets}${path.sep}`)) {
+          response.statusCode = 403
+          response.end('Invalid font path')
+          return
+        }
+
+        try {
+          if (!statSync(filePath).isFile()) {
+            next()
+            return
+          }
+          response.setHeader('Content-Type', relativePath === 'index.css' ? 'text/css; charset=utf-8' : 'font/woff2')
+          response.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+          createReadStream(filePath).pipe(response)
+        } catch {
+          next()
+        }
+      })
+    },
+    writeBundle(outputOptions) {
+      const outputDirectory = path.resolve(outputOptions.dir ?? 'dist')
+      const destination = path.join(outputDirectory, 'excalidraw-assets')
+      mkdirSync(destination, { recursive: true })
+      cpSync(path.join(excalidrawAssets, 'index.css'), path.join(destination, 'index.css'))
+      cpSync(path.join(excalidrawAssets, 'fonts'), path.join(destination, 'fonts'), {
+        recursive: true,
+      })
+    },
+  }
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), packagedExcalidrawFonts()],
   clearScreen: false,
   server: {
     port: 5173,

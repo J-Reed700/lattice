@@ -742,6 +742,71 @@ async fn retrying_the_same_operation_id_returns_one_committed_result() {
 }
 
 #[tokio::test]
+async fn concurrent_retries_of_one_memory_operation_serialize_idempotently() {
+    // File-backed WAL with more than one connection is deliberate: an
+    // in-memory/single-connection fixture would accidentally serialize these
+    // calls before SQLite's read-to-write upgrade race is exercised.
+    let temp = tempfile::tempdir().unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(temp.path().join("memory-concurrency.db"))
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    let id = MemoryId::new();
+    let span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
+    let request = candidate(
+        MemoryCommit {
+            inserts: vec![item(&id, &conversation_id, MemoryKind::Constraint, span)],
+            processed_through_sequence: 4,
+            ..Default::default()
+        },
+        snapshot.transcript_revision,
+        None,
+    );
+    let preconditions = MemoryCommitPreconditions {
+        conversation_id: conversation_id.clone(),
+        expected_transcript_revision: snapshot.transcript_revision,
+        expected_memory_revision: 0,
+        operation_id: "op-concurrent-retry".into(),
+    };
+
+    let (first, second) = tokio::join!(
+        repo.commit_memory(&preconditions, &request),
+        repo.commit_memory(&preconditions, &request),
+    );
+    let first = first.expect("first concurrent retry should commit");
+    let second = second.expect("second concurrent retry should observe idempotency record");
+    assert_ne!(
+        first.was_already_committed, second.was_already_committed,
+        "exactly one caller creates the event"
+    );
+    assert_eq!(first.memory_revision, second.memory_revision);
+
+    let after = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(after.state.memory_revision, 1);
+    assert_eq!(after.active_items.len(), 1);
+    let events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_memory_events WHERE conversation_id = ? AND operation_id = ?",
+    )
+    .bind(&conversation_id)
+    .bind("op-concurrent-retry")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn deleting_a_source_message_takes_its_quotation_and_the_summary_with_it() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

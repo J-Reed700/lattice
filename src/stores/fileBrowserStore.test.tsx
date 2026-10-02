@@ -58,7 +58,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       filterBySource: 'all',
       contentSearchMatches: new Set(),
       isContentSearchLoading: false,
-      customCollections: [],
       savedSearches: [],
       activeSavedSearchId: null,
       sourceConnections: [],
@@ -129,129 +128,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     expect([...result.current.selectedDocumentIds]).toEqual(['2']);
   });
 
-  it('should create custom collection, dedupe names, and add/remove documents', () => {
-    renderHook(() => useFileBrowserStore());
-
-    let createdId: string | null = null;
-    act(() => {
-      createdId = useFileBrowserStore.getState().createCustomCollection(' Product Docs ');
-    });
-    expect(createdId).toBeTruthy();
-    expect(useFileBrowserStore.getState().customCollections).toHaveLength(1);
-    expect(useFileBrowserStore.getState().customCollections[0].name).toBe('Product Docs');
-    expect(useFileBrowserStore.getState().customCollections[0].kind).toBe('manual');
-    expect(useFileBrowserStore.getState().customCollections[0].parentId).toBeNull();
-
-    let duplicateId: string | null = null;
-    act(() => {
-      duplicateId = useFileBrowserStore.getState().createCustomCollection('product docs');
-    });
-    expect(duplicateId).toBeNull();
-    expect(useFileBrowserStore.getState().customCollections).toHaveLength(1);
-
-    act(() => {
-      useFileBrowserStore.getState().addDocumentsToCustomCollection(createdId!, ['a', 'b', 'a']);
-    });
-    expect(useFileBrowserStore.getState().customCollections[0].documentIds).toEqual(['a', 'b']);
-
-    act(() => {
-      useFileBrowserStore.getState().removeDocumentsFromCustomCollection(createdId!, ['a']);
-    });
-    expect(useFileBrowserStore.getState().customCollections[0].documentIds).toEqual(['b']);
-  });
-
-  it('should create immutable snapshot collection from document ids', () => {
-    renderHook(() => useFileBrowserStore());
-
-    let snapshotId: string | null = null;
-    act(() => {
-      snapshotId = useFileBrowserStore.getState().createSnapshotCollection('Search Snapshot', ['x', 'y', 'x']);
-    });
-
-    expect(snapshotId).toBeTruthy();
-    const snapshot = useFileBrowserStore.getState().customCollections.find((collection) => collection.id === snapshotId);
-    expect(snapshot).toBeTruthy();
-    expect(snapshot?.kind).toBe('snapshot');
-    expect(snapshot?.documentIds).toEqual(['x', 'y']);
-
-    act(() => {
-      useFileBrowserStore.getState().addDocumentsToCustomCollection(snapshotId!, ['z']);
-      useFileBrowserStore.getState().removeDocumentsFromCustomCollection(snapshotId!, ['x']);
-    });
-
-    const unchanged = useFileBrowserStore.getState().customCollections.find((collection) => collection.id === snapshotId);
-    expect(unchanged?.documentIds).toEqual(['x', 'y']);
-  });
-
-  it('should support nested custom collections and cascade delete descendants', () => {
-    renderHook(() => useFileBrowserStore());
-
-    let parentId = '';
-    let childId = '';
-    let grandchildId = '';
-
-    act(() => {
-      parentId = useFileBrowserStore.getState().createCustomCollection('Projects') ?? '';
-      childId = useFileBrowserStore.getState().createCustomCollection('Roadmap', parentId) ?? '';
-      grandchildId = useFileBrowserStore.getState().createCustomCollection('Q1', childId) ?? '';
-    });
-
-    const created = useFileBrowserStore.getState().customCollections;
-    expect(created.find(collection => collection.id === parentId)?.parentId).toBeNull();
-    expect(created.find(collection => collection.id === childId)?.parentId).toBe(parentId);
-    expect(created.find(collection => collection.id === grandchildId)?.parentId).toBe(childId);
-
-    act(() => {
-      useFileBrowserStore.getState().deleteCustomCollection(parentId);
-    });
-
-    const remaining = useFileBrowserStore.getState().customCollections;
-    expect(remaining.find(collection => collection.id === parentId)).toBeUndefined();
-    expect(remaining.find(collection => collection.id === childId)).toBeUndefined();
-    expect(remaining.find(collection => collection.id === grandchildId)).toBeUndefined();
-  });
-
-  it('should update custom collection name and parent with validation', () => {
-    renderHook(() => useFileBrowserStore());
-
-    let rootA = '';
-    let rootB = '';
-    let child = '';
-    let grandchild = '';
-
-    act(() => {
-      rootA = useFileBrowserStore.getState().createCustomCollection('Root A') ?? '';
-      rootB = useFileBrowserStore.getState().createCustomCollection('Root B') ?? '';
-      child = useFileBrowserStore.getState().createCustomCollection('Child', rootA) ?? '';
-      grandchild = useFileBrowserStore.getState().createCustomCollection('Grandchild', child) ?? '';
-    });
-
-    let updated = false;
-    act(() => {
-      updated = useFileBrowserStore
-        .getState()
-        .updateCustomCollection(child, { name: 'Product Roadmap', parentId: rootB });
-    });
-    expect(updated).toBe(true);
-
-    const movedChild = useFileBrowserStore.getState().customCollections.find((collection) => collection.id === child);
-    expect(movedChild?.name).toBe('Product Roadmap');
-    expect(movedChild?.parentId).toBe(rootB);
-
-    let preventedCycle = true;
-    act(() => {
-      preventedCycle = useFileBrowserStore
-        .getState()
-        .updateCustomCollection(rootB, { parentId: grandchild });
-    });
-    expect(preventedCycle).toBe(false);
-
-    const unchangedRootB = useFileBrowserStore
-      .getState()
-      .customCollections.find((collection) => collection.id === rootB);
-    expect(unchangedRootB?.parentId).toBeNull();
-  });
-
   it('should keep backend-owned local folders out of client source state', () => {
     renderHook(() => useFileBrowserStore());
 
@@ -312,15 +188,19 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
         indexedAt: '2026-01-01', wordCount: 10,
       },
     ];
-
-    let parentId = '';
-    act(() => {
-      parentId = useFileBrowserStore.getState().createSnapshotCollection('Only Alpha', ['1']) ?? '';
-      useFileBrowserStore.getState().setScope({ kind: 'collection', id: parentId });
-    });
-
     const state = useFileBrowserStore.getState();
-    const filtered = filterLibraryDocuments(documents, state);
+    const collections = [
+      { id: 'parent', name: 'Parent', kind: 'manual' as const, parentId: null, documentIds: [], createdAt: '', updatedAt: '' },
+      { id: 'child', name: 'Child', kind: 'manual' as const, parentId: 'parent', documentIds: ['1'], createdAt: '', updatedAt: '' },
+    ];
+    const filtered = filterLibraryDocuments(documents, {
+      searchQuery: state.searchQuery,
+      filterByType: state.filterByType,
+      filterBySource: state.filterBySource,
+      contentSearchMatches: state.contentSearchMatches,
+      customCollections: collections,
+      scope: { kind: 'collection', id: 'parent' },
+    });
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.id).toBe('1');
   });
@@ -344,7 +224,15 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/example/Notes' });
     });
 
-    const filtered = filterLibraryDocuments(documents, useFileBrowserStore.getState());
+    const current = useFileBrowserStore.getState();
+    const filtered = filterLibraryDocuments(documents, {
+      searchQuery: current.searchQuery,
+      filterByType: current.filterByType,
+      filterBySource: current.filterBySource,
+      contentSearchMatches: current.contentSearchMatches,
+      customCollections: [],
+      scope: current.scope,
+    });
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.id).toBe('1');
   });

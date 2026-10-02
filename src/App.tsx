@@ -7,6 +7,7 @@ import { FirstRunGate } from './components/FirstRun';
 import { ToastContainer } from './components/Toast';
 import { TooltipProvider } from './components/ui';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
+import { migrateLegacyCustomCollections } from './hooks/queries/useCustomCollectionsQuery';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useDownloadedModelsListener } from './hooks/useDownloadedModels';
 import { useDownloadsListener } from './hooks/useDownloads';
@@ -46,6 +47,12 @@ function App() {
       if (!dbResult.ok) {
         console.warn('Database initialization check failed:', dbResult.error);
       }
+
+      // The backend database is available now. Migrate independently so a
+      // malformed legacy preference never blocks the app shell from starting.
+      void migrateLegacyCustomCollections().catch((error: unknown) => {
+        console.warn('Legacy collections migration failed:', error);
+      });
 
       setIsInitializing(false);
     };

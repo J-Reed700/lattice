@@ -1,0 +1,19 @@
+Lattice Python WASI runtime attributions
+
+CPython 3.14.8
+Copyright (c) Python Software Foundation. All rights reserved.
+The CPython WebAssembly module and Python standard-library sources in this
+bundle are from the official CPython 3.14.8 source distribution. They are
+licensed under the Python Software Foundation License Version 2. See the
+adjacent LICENSE file and https://docs.python.org/3.14/license.html.
+
+Build-only dependencies (not included as executables in the runtime bundle)
+
+WASI SDK 24.0 is used to compile CPython to wasm32-wasip1. Its source and
+license details are at https://github.com/WebAssembly/wasi-sdk. The pinned
+release archive and SHA-256 are in PROVENANCE.json.
+
+Wasmtime 48.0.1 CLI is used by CPython's upstream WASI build helper. It is
+not shipped in the runtime bundle. Its license is Apache-2.0 OR MIT; the
+pinned archive and SHA-256 are in PROVENANCE.json. Lattice's in-process
+Wasmtime Rust crates are declared and locked by Cargo separately.

@@ -3951,6 +3951,12 @@
           "markdownDescription": "Denies the remove_favorite command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_documents_to_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-add-documents-to-custom-collection",
+          "markdownDescription": "Enables the add_documents_to_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_indexing command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-cancel-indexing",
@@ -3961,6 +3967,18 @@
           "type": "string",
           "const": "file:allow-clear-indexing-failure",
           "markdownDescription": "Enables the clear_indexing_failure command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-create-custom-collection",
+          "markdownDescription": "Enables the create_custom_collection command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-delete-custom-collection",
+          "markdownDescription": "Enables the delete_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the delete_document command without any pre-configured scope.",
@@ -4041,6 +4059,12 @@
           "markdownDescription": "Enables the get_recent_documents command without any pre-configured scope."
         },
         {
+          "description": "Enables the import_legacy_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-import-legacy-custom-collections",
+          "markdownDescription": "Enables the import_legacy_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Enables the index_directory command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-index-directory",
@@ -4065,10 +4089,22 @@
           "markdownDescription": "Enables the list_conversations_citing_document command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-list-custom-collections",
+          "markdownDescription": "Enables the list_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_indexed_files command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-list-indexed-files",
           "markdownDescription": "Enables the list_indexed_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the move_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-move-custom-collection",
+          "markdownDescription": "Enables the move_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the open_file command without any pre-configured scope.",
@@ -4107,10 +4143,22 @@
           "markdownDescription": "Enables the reindex_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_documents_from_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-remove-documents-from-custom-collection",
+          "markdownDescription": "Enables the remove_documents_from_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_indexed_file command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-remove-indexed-file",
           "markdownDescription": "Enables the remove_indexed_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rename_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:allow-rename-custom-collection",
+          "markdownDescription": "Enables the rename_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Enables the rename_document command without any pre-configured scope.",
@@ -4143,6 +4191,12 @@
           "markdownDescription": "Enables the validate_file_path command without any pre-configured scope."
         },
         {
+          "description": "Denies the add_documents_to_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-add-documents-to-custom-collection",
+          "markdownDescription": "Denies the add_documents_to_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_indexing command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-cancel-indexing",
@@ -4153,6 +4207,18 @@
           "type": "string",
           "const": "file:deny-clear-indexing-failure",
           "markdownDescription": "Denies the clear_indexing_failure command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-create-custom-collection",
+          "markdownDescription": "Denies the create_custom_collection command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-delete-custom-collection",
+          "markdownDescription": "Denies the delete_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the delete_document command without any pre-configured scope.",
@@ -4233,6 +4299,12 @@
           "markdownDescription": "Denies the get_recent_documents command without any pre-configured scope."
         },
         {
+          "description": "Denies the import_legacy_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-import-legacy-custom-collections",
+          "markdownDescription": "Denies the import_legacy_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Denies the index_directory command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-index-directory",
@@ -4257,10 +4329,22 @@
           "markdownDescription": "Denies the list_conversations_citing_document command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_custom_collections command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-list-custom-collections",
+          "markdownDescription": "Denies the list_custom_collections command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_indexed_files command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-list-indexed-files",
           "markdownDescription": "Denies the list_indexed_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the move_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-move-custom-collection",
+          "markdownDescription": "Denies the move_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the open_file command without any pre-configured scope.",
@@ -4299,10 +4383,22 @@
           "markdownDescription": "Denies the reindex_file command without any pre-configured scope."
         },
         {
+          "description": "Denies the remove_documents_from_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-remove-documents-from-custom-collection",
+          "markdownDescription": "Denies the remove_documents_from_custom_collection command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_indexed_file command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-remove-indexed-file",
           "markdownDescription": "Denies the remove_indexed_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rename_custom_collection command without any pre-configured scope.",
+          "type": "string",
+          "const": "file:deny-rename-custom-collection",
+          "markdownDescription": "Denies the rename_custom_collection command without any pre-configured scope."
         },
         {
           "description": "Denies the rename_document command without any pre-configured scope.",
@@ -4465,6 +4561,1050 @@
           "type": "string",
           "const": "huggingface:deny-set-huggingface-token",
           "markdownDescription": "Denies the set_huggingface_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the accept_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-accept-learning-card-draft",
+          "markdownDescription": "Enables the accept_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the accept_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-accept-learning-curriculum-revision",
+          "markdownDescription": "Enables the accept_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the accept_learning_follow_up command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-accept-learning-follow-up",
+          "markdownDescription": "Enables the accept_learning_follow_up command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the accept_learning_practice_proposal command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-accept-learning-practice-proposal",
+          "markdownDescription": "Enables the accept_learning_practice_proposal command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the accept_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-accept-learning-program",
+          "markdownDescription": "Enables the accept_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_learning_document_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-add-learning-document-source",
+          "markdownDescription": "Enables the add_learning_document_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_learning_text_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-add-learning-text-source",
+          "markdownDescription": "Enables the add_learning_text_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_learning_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-add-learning-web-source",
+          "markdownDescription": "Enables the add_learning_web_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the adopt_learning_source_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-adopt-learning-source-version",
+          "markdownDescription": "Enables the adopt_learning_source_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the apply_learning_pack_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-apply-learning-pack-import",
+          "markdownDescription": "Enables the apply_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-cancel-learning-generation-job",
+          "markdownDescription": "Enables the cancel_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_learning_pack_import_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-cancel-learning-pack-import-preview",
+          "markdownDescription": "Enables the cancel_learning_pack_import_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_learning_practical_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-cancel-learning-practical-run",
+          "markdownDescription": "Enables the cancel_learning_practical_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the change_learning_practice_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-change-learning-practice-mode",
+          "markdownDescription": "Enables the change_learning_practice_mode command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the change_learning_recall_scheduler command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-change-learning-recall-scheduler",
+          "markdownDescription": "Enables the change_learning_recall_scheduler command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the complete_learning_lesson command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-complete-learning-lesson",
+          "markdownDescription": "Enables the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_learning_assessment_blueprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-assessment-blueprint",
+          "markdownDescription": "Enables the create_learning_assessment_blueprint command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_learning_canvas command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-canvas",
+          "markdownDescription": "Enables the create_learning_canvas command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_learning_canvas_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-canvas-snapshot",
+          "markdownDescription": "Enables the create_learning_canvas_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-create-learning-source-selector",
+          "markdownDescription": "Enables the create_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the decide_learning_recall_duplicate command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-decide-learning-recall-duplicate",
+          "markdownDescription": "Enables the decide_learning_recall_duplicate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-delete-learning-program",
+          "markdownDescription": "Enables the delete_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-delete-learning-source",
+          "markdownDescription": "Enables the delete_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discard_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-discard-learning-card-draft",
+          "markdownDescription": "Enables the discard_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discard_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-discard-learning-curriculum-revision",
+          "markdownDescription": "Enables the discard_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dismiss_learning_follow_up command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-dismiss-learning-follow-up",
+          "markdownDescription": "Enables the dismiss_learning_follow_up command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ensure_learning_lesson_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-ensure-learning-lesson-note",
+          "markdownDescription": "Enables the ensure_learning_lesson_note command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_learning_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-export-learning-pack",
+          "markdownDescription": "Enables the export_learning_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the finish_learning_simulation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-finish-learning-simulation",
+          "markdownDescription": "Enables the finish_learning_simulation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_learning_card_drafts command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-generate-learning-card-drafts",
+          "markdownDescription": "Enables the generate_learning_card_drafts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_learning_practical_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-generate-learning-practical-activity",
+          "markdownDescription": "Enables the generate_learning_practical_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-generate-learning-program",
+          "markdownDescription": "Enables the generate_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-assessment-form",
+          "markdownDescription": "Enables the get_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_assessment_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-assessment-workspace",
+          "markdownDescription": "Enables the get_learning_assessment_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_canvas_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-canvas-workspace",
+          "markdownDescription": "Enables the get_learning_canvas_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-generation-job",
+          "markdownDescription": "Enables the get_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_memory command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-memory",
+          "markdownDescription": "Enables the get_learning_memory command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-plan",
+          "markdownDescription": "Enables the get_learning_plan command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_portability_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-portability-workspace",
+          "markdownDescription": "Enables the get_learning_portability_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_practical_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-practical-draft",
+          "markdownDescription": "Enables the get_learning_practical_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_practical_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-practical-workspace",
+          "markdownDescription": "Enables the get_learning_practical_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_practice_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-practice-session",
+          "markdownDescription": "Enables the get_learning_practice_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_practice_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-practice-workspace",
+          "markdownDescription": "Enables the get_learning_practice_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-program",
+          "markdownDescription": "Enables the get_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_recall_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-recall-workspace",
+          "markdownDescription": "Enables the get_learning_recall_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_runtime_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-runtime-catalog",
+          "markdownDescription": "Enables the get_learning_runtime_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-source-selector",
+          "markdownDescription": "Enables the get_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_source_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-source-version",
+          "markdownDescription": "Enables the get_learning_source_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_source_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-source-workspace",
+          "markdownDescription": "Enables the get_learning_source_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the interrupt_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-interrupt-learning-assessment-form",
+          "markdownDescription": "Enables the interrupt_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_learning_programs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-list-learning-programs",
+          "markdownDescription": "Enables the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the match_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-match-learning-source-selector",
+          "markdownDescription": "Enables the match_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_learning_practice_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-open-learning-practice-source",
+          "markdownDescription": "Enables the open_learning_practice_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the prepare_learning_lesson command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-prepare-learning-lesson",
+          "markdownDescription": "Enables the prepare_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the prepare_learning_runtime_preset command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-prepare-learning-runtime-preset",
+          "markdownDescription": "Enables the prepare_learning_runtime_preset command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-preview-learning-curriculum-revision",
+          "markdownDescription": "Enables the preview_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_learning_pack_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-preview-learning-pack-import",
+          "markdownDescription": "Enables the preview_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the refresh_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-refresh-learning-source",
+          "markdownDescription": "Enables the refresh_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reimport_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reimport-learning-source",
+          "markdownDescription": "Enables the reimport_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reject_learning_practice_proposal command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reject-learning-practice-proposal",
+          "markdownDescription": "Enables the reject_learning_practice_proposal command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_learning_tutor_response command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-request-learning-tutor-response",
+          "markdownDescription": "Enables the request_learning_tutor_response command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_learning_canvas_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-restore-learning-canvas-snapshot",
+          "markdownDescription": "Enables the restore_learning_canvas_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the retry_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-retry-learning-generation-job",
+          "markdownDescription": "Enables the retry_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reveal_learning_practice_solution command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reveal-learning-practice-solution",
+          "markdownDescription": "Enables the reveal_learning_practice_solution command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the review_learning_recall_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-review-learning-recall-card",
+          "markdownDescription": "Enables the review_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_assessment_response command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-assessment-response",
+          "markdownDescription": "Enables the save_learning_assessment_response command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_canvas command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-canvas",
+          "markdownDescription": "Enables the save_learning_canvas command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-card-draft",
+          "markdownDescription": "Enables the save_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_practical_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-practical-draft",
+          "markdownDescription": "Enables the save_learning_practical_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_practice_artifact command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-practice-artifact",
+          "markdownDescription": "Enables the save_learning_practice_artifact command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_recall_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-recall-card",
+          "markdownDescription": "Enables the save_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_learning_runtime_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-save-learning-runtime-profile",
+          "markdownDescription": "Enables the save_learning_runtime_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the search_learning_sources command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-search-learning-sources",
+          "markdownDescription": "Enables the search_learning_sources command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the search_learning_sources_semantically command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-search-learning-sources-semantically",
+          "markdownDescription": "Enables the search_learning_sources_semantically command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_learning_simulation_turn command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-send-learning-simulation-turn",
+          "markdownDescription": "Enables the send_learning_simulation_turn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the skip_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-skip-learning-diagnostic",
+          "markdownDescription": "Enables the skip_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-assessment-form",
+          "markdownDescription": "Enables the start_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-diagnostic",
+          "markdownDescription": "Enables the start_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-generation-job",
+          "markdownDescription": "Enables the start_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_practical_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-practical-run",
+          "markdownDescription": "Enables the start_learning_practical_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_practice_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-practice-session",
+          "markdownDescription": "Enables the start_learning_practice_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_learning_simulation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-start-learning-simulation",
+          "markdownDescription": "Enables the start_learning_simulation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-submit-learning-assessment-form",
+          "markdownDescription": "Enables the submit_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_learning_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-submit-learning-attempt",
+          "markdownDescription": "Enables the submit_learning_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-submit-learning-diagnostic",
+          "markdownDescription": "Enables the submit_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_learning_practice_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-submit-learning-practice-attempt",
+          "markdownDescription": "Enables the submit_learning_practice_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_learning_source_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-update-learning-source-policy",
+          "markdownDescription": "Enables the update_learning_source_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accept_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-accept-learning-card-draft",
+          "markdownDescription": "Denies the accept_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accept_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-accept-learning-curriculum-revision",
+          "markdownDescription": "Denies the accept_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accept_learning_follow_up command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-accept-learning-follow-up",
+          "markdownDescription": "Denies the accept_learning_follow_up command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accept_learning_practice_proposal command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-accept-learning-practice-proposal",
+          "markdownDescription": "Denies the accept_learning_practice_proposal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accept_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-accept-learning-program",
+          "markdownDescription": "Denies the accept_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_learning_document_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-add-learning-document-source",
+          "markdownDescription": "Denies the add_learning_document_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_learning_text_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-add-learning-text-source",
+          "markdownDescription": "Denies the add_learning_text_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_learning_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-add-learning-web-source",
+          "markdownDescription": "Denies the add_learning_web_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the adopt_learning_source_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-adopt-learning-source-version",
+          "markdownDescription": "Denies the adopt_learning_source_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the apply_learning_pack_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-apply-learning-pack-import",
+          "markdownDescription": "Denies the apply_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-cancel-learning-generation-job",
+          "markdownDescription": "Denies the cancel_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_learning_pack_import_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-cancel-learning-pack-import-preview",
+          "markdownDescription": "Denies the cancel_learning_pack_import_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_learning_practical_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-cancel-learning-practical-run",
+          "markdownDescription": "Denies the cancel_learning_practical_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the change_learning_practice_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-change-learning-practice-mode",
+          "markdownDescription": "Denies the change_learning_practice_mode command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the change_learning_recall_scheduler command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-change-learning-recall-scheduler",
+          "markdownDescription": "Denies the change_learning_recall_scheduler command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the complete_learning_lesson command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-complete-learning-lesson",
+          "markdownDescription": "Denies the complete_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_learning_assessment_blueprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-assessment-blueprint",
+          "markdownDescription": "Denies the create_learning_assessment_blueprint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_learning_canvas command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-canvas",
+          "markdownDescription": "Denies the create_learning_canvas command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_learning_canvas_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-canvas-snapshot",
+          "markdownDescription": "Denies the create_learning_canvas_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-create-learning-source-selector",
+          "markdownDescription": "Denies the create_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the decide_learning_recall_duplicate command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-decide-learning-recall-duplicate",
+          "markdownDescription": "Denies the decide_learning_recall_duplicate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-delete-learning-program",
+          "markdownDescription": "Denies the delete_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-delete-learning-source",
+          "markdownDescription": "Denies the delete_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discard_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-discard-learning-card-draft",
+          "markdownDescription": "Denies the discard_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discard_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-discard-learning-curriculum-revision",
+          "markdownDescription": "Denies the discard_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dismiss_learning_follow_up command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-dismiss-learning-follow-up",
+          "markdownDescription": "Denies the dismiss_learning_follow_up command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ensure_learning_lesson_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-ensure-learning-lesson-note",
+          "markdownDescription": "Denies the ensure_learning_lesson_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_learning_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-export-learning-pack",
+          "markdownDescription": "Denies the export_learning_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the finish_learning_simulation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-finish-learning-simulation",
+          "markdownDescription": "Denies the finish_learning_simulation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_learning_card_drafts command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-generate-learning-card-drafts",
+          "markdownDescription": "Denies the generate_learning_card_drafts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_learning_practical_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-generate-learning-practical-activity",
+          "markdownDescription": "Denies the generate_learning_practical_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-generate-learning-program",
+          "markdownDescription": "Denies the generate_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-assessment-form",
+          "markdownDescription": "Denies the get_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_assessment_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-assessment-workspace",
+          "markdownDescription": "Denies the get_learning_assessment_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_canvas_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-canvas-workspace",
+          "markdownDescription": "Denies the get_learning_canvas_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-generation-job",
+          "markdownDescription": "Denies the get_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_memory command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-memory",
+          "markdownDescription": "Denies the get_learning_memory command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-plan",
+          "markdownDescription": "Denies the get_learning_plan command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_portability_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-portability-workspace",
+          "markdownDescription": "Denies the get_learning_portability_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_practical_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-practical-draft",
+          "markdownDescription": "Denies the get_learning_practical_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_practical_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-practical-workspace",
+          "markdownDescription": "Denies the get_learning_practical_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_practice_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-practice-session",
+          "markdownDescription": "Denies the get_learning_practice_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_practice_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-practice-workspace",
+          "markdownDescription": "Denies the get_learning_practice_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_program command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-program",
+          "markdownDescription": "Denies the get_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_recall_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-recall-workspace",
+          "markdownDescription": "Denies the get_learning_recall_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_runtime_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-runtime-catalog",
+          "markdownDescription": "Denies the get_learning_runtime_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-source-selector",
+          "markdownDescription": "Denies the get_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_source_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-source-version",
+          "markdownDescription": "Denies the get_learning_source_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_source_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-source-workspace",
+          "markdownDescription": "Denies the get_learning_source_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the interrupt_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-interrupt-learning-assessment-form",
+          "markdownDescription": "Denies the interrupt_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_learning_programs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-list-learning-programs",
+          "markdownDescription": "Denies the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the match_learning_source_selector command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-match-learning-source-selector",
+          "markdownDescription": "Denies the match_learning_source_selector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_learning_practice_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-open-learning-practice-source",
+          "markdownDescription": "Denies the open_learning_practice_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_learning_lesson command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-prepare-learning-lesson",
+          "markdownDescription": "Denies the prepare_learning_lesson command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_learning_runtime_preset command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-prepare-learning-runtime-preset",
+          "markdownDescription": "Denies the prepare_learning_runtime_preset command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_learning_curriculum_revision command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-preview-learning-curriculum-revision",
+          "markdownDescription": "Denies the preview_learning_curriculum_revision command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_learning_pack_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-preview-learning-pack-import",
+          "markdownDescription": "Denies the preview_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the refresh_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-refresh-learning-source",
+          "markdownDescription": "Denies the refresh_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reimport_learning_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reimport-learning-source",
+          "markdownDescription": "Denies the reimport_learning_source command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reject_learning_practice_proposal command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reject-learning-practice-proposal",
+          "markdownDescription": "Denies the reject_learning_practice_proposal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_learning_tutor_response command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-request-learning-tutor-response",
+          "markdownDescription": "Denies the request_learning_tutor_response command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_learning_canvas_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-restore-learning-canvas-snapshot",
+          "markdownDescription": "Denies the restore_learning_canvas_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the retry_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-retry-learning-generation-job",
+          "markdownDescription": "Denies the retry_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reveal_learning_practice_solution command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reveal-learning-practice-solution",
+          "markdownDescription": "Denies the reveal_learning_practice_solution command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the review_learning_recall_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-review-learning-recall-card",
+          "markdownDescription": "Denies the review_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_assessment_response command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-assessment-response",
+          "markdownDescription": "Denies the save_learning_assessment_response command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_canvas command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-canvas",
+          "markdownDescription": "Denies the save_learning_canvas command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_card_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-card-draft",
+          "markdownDescription": "Denies the save_learning_card_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_practical_draft command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-practical-draft",
+          "markdownDescription": "Denies the save_learning_practical_draft command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_practice_artifact command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-practice-artifact",
+          "markdownDescription": "Denies the save_learning_practice_artifact command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_recall_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-recall-card",
+          "markdownDescription": "Denies the save_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_learning_runtime_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-save-learning-runtime-profile",
+          "markdownDescription": "Denies the save_learning_runtime_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_learning_sources command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-search-learning-sources",
+          "markdownDescription": "Denies the search_learning_sources command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_learning_sources_semantically command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-search-learning-sources-semantically",
+          "markdownDescription": "Denies the search_learning_sources_semantically command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_learning_simulation_turn command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-send-learning-simulation-turn",
+          "markdownDescription": "Denies the send_learning_simulation_turn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the skip_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-skip-learning-diagnostic",
+          "markdownDescription": "Denies the skip_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-assessment-form",
+          "markdownDescription": "Denies the start_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-diagnostic",
+          "markdownDescription": "Denies the start_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-generation-job",
+          "markdownDescription": "Denies the start_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_practical_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-practical-run",
+          "markdownDescription": "Denies the start_learning_practical_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_practice_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-practice-session",
+          "markdownDescription": "Denies the start_learning_practice_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_learning_simulation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-start-learning-simulation",
+          "markdownDescription": "Denies the start_learning_simulation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_learning_assessment_form command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-submit-learning-assessment-form",
+          "markdownDescription": "Denies the submit_learning_assessment_form command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_learning_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-submit-learning-attempt",
+          "markdownDescription": "Denies the submit_learning_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_learning_diagnostic command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-submit-learning-diagnostic",
+          "markdownDescription": "Denies the submit_learning_diagnostic command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_learning_practice_attempt command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-submit-learning-practice-attempt",
+          "markdownDescription": "Denies the submit_learning_practice_attempt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_learning_source_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-update-learning-source-policy",
+          "markdownDescription": "Denies the update_learning_source_policy command without any pre-configured scope."
         },
         {
           "description": "Enables the create_mention command without any pre-configured scope.",

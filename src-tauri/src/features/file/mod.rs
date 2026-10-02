@@ -17,6 +17,7 @@
 //! stays outside this slice — consumed by multiple features.
 
 pub mod commands;
+pub mod custom_collections;
 pub mod di;
 pub mod dto;
 pub mod plugin;

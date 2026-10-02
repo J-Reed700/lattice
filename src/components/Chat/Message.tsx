@@ -99,6 +99,8 @@ export const Message = memo(({
   const bookmarkMessage = useConversationsStore((s) => s.bookmarkMessage);
   const unbookmarkMessage = useConversationsStore((s) => s.unbookmarkMessage);
   const deleteMessage = useConversationsStore((s) => s.deleteMessage);
+  const dismissFailedMessage = useConversationsStore((s) => s.dismissFailedMessage);
+  const retryFailedMessage = useConversationsStore((s) => s.retryFailedMessage);
   const lastMessageSources = useConversationsStore((s) => s.lastMessageSources);
   const messageRetrieval = useConversationsStore((s) => s.messageRetrieval);
   const liveRetrieval = useConversationsStore((s) => s.liveRetrieval);
@@ -751,15 +753,29 @@ export const Message = memo(({
               </span>
             )}
             {/* Only the last question: regenerate re-asks whatever came last. */}
-            {isFailed && isUser && isLastTurn && conversationId && (
+            {isFailed && isUser && (isLastTurn || 'tempId' in message) && conversationId && (
               <button
                 type="button"
-                onClick={() => void handleRegenerate()}
+                onClick={() => {
+                  if ('tempId' in message) {
+                    void retryFailedMessage(message.tempId);
+                  }
+                  else void handleRegenerate();
+                }}
                 disabled={isBusy}
                 className="inline-flex items-center gap-1 rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] disabled:opacity-50"
               >
                 <RefreshCw className="h-3 w-3" />
                 Try again
+              </button>
+            )}
+            {isFailed && 'tempId' in message && (
+              <button
+                type="button"
+                onClick={() => dismissFailedMessage(message.tempId)}
+                className="rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Dismiss
               </button>
             )}
             {verificationBadge && (

@@ -66,6 +66,681 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningPlan(id: string) : Promise<Result<LearningPlanDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_plan", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningPortabilityWorkspace(programId: string) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_portability_workspace", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async exportLearningPack(request: ExportLearningPackRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_learning_pack", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewLearningPackImport(request: PreviewLearningPackImportRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_learning_pack_import", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyLearningPackImport(request: ApplyLearningPackImportRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_learning_pack_import", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelLearningPackImportPreview(request: CancelLearningPackImportPreviewRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_pack_import_preview", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewLearningCurriculumRevision(request: PreviewLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_learning_curriculum_revision", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async acceptLearningCurriculumRevision(request: LearningCurriculumRevisionActionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_learning_curriculum_revision", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discardLearningCurriculumRevision(request: DiscardLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discard_learning_curriculum_revision", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningDiagnostic(request: StartLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_diagnostic", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async submitLearningDiagnostic(request: SubmitLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submit_learning_diagnostic", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async skipLearningDiagnostic(request: SkipLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("skip_learning_diagnostic", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningGenerationJob(request: StartLearningGenerationJobRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_generation_job", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listLearningPrograms() : Promise<Result<LearningProgramSummaryDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_learning_programs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningProgram(id: string) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_program", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateLearningProgram(request: GenerateLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_learning_program", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_learning_program", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_learning_lesson", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_learning_lesson", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async submitLearningAttempt(request: SubmitLearningAttemptRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submit_learning_attempt", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteLearningProgram(id: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_learning_program", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningMemory(id: string) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_memory", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ensureLearningLessonNote(request: EnsureLearningLessonNoteRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ensure_learning_lesson_note", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateLearningCardDrafts(request: GenerateLearningCardDraftsRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_learning_card_drafts", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningCardDraft(request: SaveLearningCardDraftRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_card_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async acceptLearningCardDraft(request: LearningCardDraftActionRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_learning_card_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discardLearningCardDraft(request: LearningCardDraftActionRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discard_learning_card_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningCanvasWorkspace(id: string) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_canvas_workspace", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createLearningCanvas(request: CreateLearningCanvasRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_learning_canvas", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningCanvas(request: SaveLearningCanvasRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_canvas", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createLearningCanvasSnapshot(request: CreateLearningCanvasSnapshotRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_learning_canvas_snapshot", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async restoreLearningCanvasSnapshot(request: RestoreLearningCanvasSnapshotRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_learning_canvas_snapshot", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningSourceWorkspace(id: string) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_workspace", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningSourceVersion(request: GetLearningSourceVersionRequestDto) : Promise<Result<LearningSourceVersionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_version", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async searchLearningSources(request: SearchLearningSourcesRequestDto) : Promise<Result<LearningSourceSearchResultDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_learning_sources", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addLearningWebSource(request: AddLearningWebSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_learning_web_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addLearningDocumentSource(request: AddLearningDocumentSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_learning_document_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addLearningTextSource(request: AddLearningTextSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_learning_text_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async refreshLearningSource(request: RefreshLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("refresh_learning_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async adoptLearningSourceVersion(request: AdoptLearningSourceVersionRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("adopt_learning_source_version", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateLearningSourcePolicy(request: UpdateLearningSourcePolicyRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_learning_source_policy", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteLearningSource(request: DeleteLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_learning_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reimportLearningSource(request: ReimportLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reimport_learning_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createLearningSourceSelector(request: CreateLearningSourceSelectorRequestDto) : Promise<Result<LearningSourceSelectorDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_learning_source_selector", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningSourceSelector(programId: string, selectorId: string) : Promise<Result<LearningSourceSelectorDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_selector", { programId, selectorId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async matchLearningSourceSelector(request: MatchLearningSourceSelectorRequestDto) : Promise<Result<LearningQuoteMatch, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("match_learning_source_selector", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async searchLearningSourcesSemantically(request: SearchLearningSourcesSemanticallyRequestDto) : Promise<Result<LearningSourceSemanticSearchResultDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_learning_sources_semantically", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningRecallWorkspace(programId: string) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_recall_workspace", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningRecallCard(request: SaveLearningRecallCardRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_recall_card", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async decideLearningRecallDuplicate(request: DecideLearningRecallDuplicateRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("decide_learning_recall_duplicate", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLearningRecallScheduler(request: ChangeLearningRecallSchedulerRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_learning_recall_scheduler", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reviewLearningRecallCard(request: ReviewLearningRecallCardRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("review_learning_recall_card", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningPracticeWorkspace(id: string) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_practice_workspace", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningPracticeSession(id: string) : Promise<Result<LearningPracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_practice_session", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningPracticeSession(request: StartLearningPracticeSessionRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_practice_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticeArtifact(request: SaveLearningPracticeArtifactRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_practice_artifact", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLearningPracticeMode(request: ChangeLearningPracticeModeRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_learning_practice_mode", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openLearningPracticeSource(request: OpenLearningPracticeSourceRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_learning_practice_source", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async requestLearningTutorResponse(request: RequestLearningTutorResponseRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_learning_tutor_response", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async revealLearningPracticeSolution(request: RevealLearningPracticeSolutionRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_learning_practice_solution", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async submitLearningPracticeAttempt(request: SubmitLearningPracticeAttemptRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submit_learning_practice_attempt", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async acceptLearningPracticeProposal(request: DecideLearningPracticeProposalRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_learning_practice_proposal", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rejectLearningPracticeProposal(request: DecideLearningPracticeProposalRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reject_learning_practice_proposal", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningAssessmentWorkspace(id: string) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_assessment_workspace", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createLearningAssessmentBlueprint(request: CreateLearningAssessmentBlueprintRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_learning_assessment_blueprint", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningAssessmentForm(request: StartLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_assessment_form", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningAssessmentForm(id: string) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_assessment_form", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningAssessmentResponse(request: SaveLearningAssessmentResponseRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_assessment_response", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async interruptLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("interrupt_learning_assessment_form", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submit_learning_assessment_form", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_learning_follow_up", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dismiss_learning_follow_up", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningPracticalWorkspace(programId: string) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_workspace", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningRuntimeCatalog() : Promise<LearningRuntimePresetDto[]> {
+    return await TAURI_INVOKE("get_learning_runtime_catalog");
+},
+async prepareLearningRuntimePreset(request: PrepareLearningRuntimePresetRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_learning_runtime_preset", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningRuntimeProfile(request: SaveLearningRuntimeProfileRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_runtime_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateLearningPracticalActivity(request: GenerateLearningPracticalActivityRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_learning_practical_activity", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningPracticalRun(request: StartLearningPracticalRunRequestDto) : Promise<Result<LearningPracticalRunDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_practical_run", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelLearningPracticalRun(request: CancelLearningPracticalRunRequestDto) : Promise<Result<LearningPracticalRunDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_practical_run", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startLearningSimulation(request: StartLearningSimulationRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_learning_simulation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendLearningSimulationTurn(request: SendLearningSimulationTurnRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_learning_simulation_turn", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async finishLearningSimulation(request: FinishLearningSimulationRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("finish_learning_simulation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Download a model by ID
  *
@@ -3044,6 +3719,70 @@ async listConversationsCitingDocument(documentId: string, limit: number | null) 
     else return { status: "error", error: e  as any };
 }
 },
+async listCustomCollections() : Promise<Result<CustomCollectionDto[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_custom_collections") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async importLegacyCustomCollections(collections: CustomCollectionDto[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_legacy_custom_collections", { collections }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createCustomCollection(request: CreateCustomCollectionRequest) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_custom_collection", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameCustomCollection(collectionId: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_custom_collection", { collectionId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveCustomCollection(collectionId: string, parentId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_custom_collection", { collectionId, parentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteCustomCollection(collectionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_custom_collection", { collectionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addDocumentsToCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_documents_to_custom_collection", { collectionId, documentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeDocumentsFromCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_documents_from_custom_collection", { collectionId, documentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async clusterVaultDebug() : Promise<Result<string, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cluster_vault_debug") };
@@ -3096,8 +3835,13 @@ async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError
 
 /** user-defined types **/
 
+export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
 export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
+export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
+export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; title: string; publisher: string | null; text: string }
+export type AddLearningWebSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; url: string; freshnessPolicy: LearningSourcePolicy }
+export type AdoptLearningSourceVersionRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number }
 /**
  * Structured error information for API responses.
  *
@@ -3467,6 +4211,7 @@ export type ApplicationError =
  * ```
  */
 { MappingError: { context: string; reason: string } }
+export type ApplyLearningPackImportRequestDto = { operationId: string; previewId: string; expectedRootSha256: string }
 /**
  * Request to apply multiple tags to a document.
  */
@@ -3700,6 +4445,10 @@ export type CancelBatchJobResponseDto = {
  * Number of items that were cancelled
  */
 cancelledCount: number }
+export type CancelLearningPackImportPreviewRequestDto = { operationId: string; previewId: string }
+export type CancelLearningPracticalRunRequestDto = { operationId: string; programId: string; runId: string }
+export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
+export type ChangeLearningRecallSchedulerRequestDto = { operationId: string; programId: string; cardId: string; expectedReviewCount: number; schedulerVersion: LearningRecallSchedulerVersion }
 /**
  * Chat response with conversation metadata
  */
@@ -4009,6 +4758,7 @@ recommendations: string[];
  * Blockers
  */
 blockers: string[] }
+export type CompleteLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto[];
 /**
  * Optional second unlock path. At least 8 characters when present.
@@ -4233,12 +4983,19 @@ conversation: ConversationDto;
  */
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
+export type CreateCustomCollectionRequest = { name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[] }
+export type CreateLearningAssessmentBlueprintRequestDto = { operationId: string; programId: string; blueprintId: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; changeReason: string }
+export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue }
+export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
+export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
 export type CreateWorkspaceNoteRequestDto = { title: string | null;
 /**
  * The journal this page belongs to. Omitted for an unfiled page.
  */
 journalId: string | null }
+export type CustomCollectionDto = { id: string; name: string; kind: CustomCollectionKind; parentId: string | null; documentIds: string[]; createdAt: string; updatedAt: string }
+export type CustomCollectionKind = "manual" | "snapshot"
 /**
  * User-defined tool configuration.
  *
@@ -4277,6 +5034,9 @@ defaultMaxResults: number }
 export type DailyNoteCompatDto = { id: string; date: string; content: string; createdAt: string; updatedAt: string }
 export type DailyNoteCursorRequestDto = { currentDate: string }
 export type DailyNotesRangeRequestDto = { startDate: string; endDate: string }
+export type DecideLearningFollowUpRequestDto = { operationId: string; programId: string; followUpId: string }
+export type DecideLearningPracticeProposalRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; proposalId: string }
+export type DecideLearningRecallDuplicateRequestDto = { operationId: string; programId: string; suggestionId: string; accept: boolean }
 /**
  * Response from deleting a batch job.
  */
@@ -4303,7 +5063,9 @@ export type DeleteConversationResponseDto = {
  * Status message
  */
 status: string }
+export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+export type DiscardLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 /**
  * Document metadata DTO for display in UI
  *
@@ -4504,6 +5266,7 @@ export type EmbeddingStrategySettingDto =
  * states, so every chunk is conditioned on the rest of its span.
  */
 "late_chunking"
+export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: string }
 /**
  * Comprehensive error code enumeration for API responses.
  *
@@ -4700,6 +5463,7 @@ export type ExportJsonRequestDto = {
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
  */
 outputPath?: string | null; pretty: boolean }
+export type ExportLearningPackRequestDto = { operationId: string; programId: string; fileName: string; includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
 export type ExportMarkdownRequestDto = {
 /**
  * `None` means the app's exports folder, which is the only place the
@@ -4760,6 +5524,7 @@ path: string }
  * Supported file types for internal viewing
  */
 export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
+export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 export type ForkConversationRequestDto = { conversationId: string;
 /**
  * Copy messages up to and including this id. `None` copies everything.
@@ -4843,6 +5608,9 @@ error_code?: string | null;
  */
 error_message?: string | null }
 export type GenerateConversationStudyDeckRequestDto = { conversationId: string; title: string }
+export type GenerateLearningCardDraftsRequestDto = { programId: string; lessonId: string; count: number }
+export type GenerateLearningPracticalActivityRequestDto = { operationId: string; activityId: string; programId: string; lessonId: string; expectedProgramRevision: number; kind: LearningPracticalActivityKind; learnerBrief: string; practiceMode: LearningPracticeMode; allowedAids: string[]; runtimeProfileId: string | null; builtinRuntime?: LearningBuiltinRuntime | null }
+export type GenerateLearningProgramRequestDto = { goal: string; priorKnowledge: string; minutesPerSession: number; documentIds: string[]; sourceUrls: string[] }
 export type GenerateStudyDeckRequestDto = { title: string; documentIds: string[]; focus: string; studyGoal?: string; count: number }
 /**
  * Request to generate tags for a document using LLM.
@@ -4909,6 +5677,7 @@ export type GetConversationResponseDto = {
  * The conversation (if found)
  */
 conversation: ConversationDto | null }
+export type GetLearningSourceVersionRequestDto = { programId: string; sourceId: string; versionId: string }
 export type GetMentionsForDocumentResultDto = { documentId: string; mentions: MentionWithContextDto[]; count: number }
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
 export type HfTokenStatus = { isSet: boolean }
@@ -5231,6 +6000,179 @@ topP: number;
  * Top-k sampling for the claim judge. One takes the argmax token.
  */
 topK: number }
+export type LearningAnswerDto = { questionId: string; selectedIndex: number }
+export type LearningAssessmentBlueprintDto = { id: string; revision: number; predecessorRevision: number | null; purpose: LearningAssessmentPurpose; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; requirements: LearningBlueprintRequirement[]; status: LearningBlueprintStatus; changeReason: string; createdAt: number }
+export type LearningAssessmentCriterionResultDto = { criterionId: string; score: number | null; maxPoints: number; observation: string; artifactQuote: string | null }
+export type LearningAssessmentFormDto = { id: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null; status: LearningAssessmentFormStatus; revision: number; title: string; instructions: string; expectedMinutes: number; allowedAids: string[]; purpose: LearningAssessmentPurpose; passingScore: number; feedbackTiming: LearningFeedbackTiming; rubric: LearningRubricCriterion[]; sourceVersionIds: string[]; modelName: string | null; items: LearningAssessmentFormItemDto[]; createdAt: number; updatedAt: number; submittedAt: number | null; submission: LearningAssessmentSubmissionDto | null }
+export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; format: LearningItemFormat; difficulty: number; prompt: string; options: string[]; artifactKind: string | null; rubric: LearningRubricCriterion[]; points: number; sourceVersionIds: string[]; previouslyExposed: boolean; selectedIndex: number | null; textResponse: string | null; orderedValues: string[]; artifactJson: JsonValue | null; responseRevision: number }
+export type LearningAssessmentFormStatus = "active" | "submitted" | "interrupted"
+export type LearningAssessmentFormSummaryDto = { id: string; blueprintId: string; blueprintRevision: number; title: string; purpose: LearningAssessmentPurpose; status: LearningAssessmentFormStatus; revision: number; retakeOfFormId: string | null; score: number | null; gradeStatus: LearningAssessmentGradeStatus | null; createdAt: number; submittedAt: number | null }
+export type LearningAssessmentGradeStatus = "deterministic" | "provisional" | "uncertain" | "needs_review"
+export type LearningAssessmentItemResultDto = { itemId: string; outcomeIds: string[]; score: number; correct: boolean | null; gradeStatus: LearningAssessmentGradeStatus; feedback: string; criterionResults: LearningAssessmentCriterionResultDto[]; artifactQuotes: string[] }
+export type LearningAssessmentKind = "practice" | "quiz" | "test"
+export type LearningAssessmentPurpose = "practice" | "checkpoint" | "module_test" | "cumulative" | "transfer"
+export type LearningAssessmentResponse = { itemId: string; selectedIndex: number | null; text: string | null; orderedValues: string[]; artifactJson: JsonValue | null }
+export type LearningAssessmentSubmissionDto = { score: number; passed: boolean; gradeStatus: LearningAssessmentGradeStatus; graderModel: string | null; graderDisagreement: string[]; feedback: string; itemResults: LearningAssessmentItemResultDto[]; submittedAt: number }
+export type LearningAssessmentWorkspaceDto = { programId: string; outcomes: LearningOutcomeDefinitionDto[]; blueprints: LearningAssessmentBlueprintDto[]; forms: LearningAssessmentFormSummaryDto[]; evidence: LearningEvidenceEventDto[]; followUps: LearningFollowUpRecommendationDto[] }
+export type LearningAttemptDto = { id: string; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; correct: number; total: number; results: LearningQuestionResultDto[]; submittedAt: number }
+export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[] }
+export type LearningBlockKind = "explanation" | "worked_example" | "reflection"
+export type LearningBlueprintRequirement = { outcomeId: string; format: LearningItemFormat; count: number; difficultyMin: number; difficultyMax: number }
+export type LearningBlueprintStatus = "draft" | "accepted" | "retired"
+export type LearningBuiltinRuntime = "javascript" | "python"
+export type LearningBuiltinRuntimeCapability = { id: LearningBuiltinRuntime; name: string; description: string; available: boolean; reason: string | null }
+export type LearningCanvasDto = { id: string; programId: string; lessonId: string | null; title: string; description: string; sceneJson: JsonValue; elementCount: number; revision: number; createdAt: number; updatedAt: number; snapshots: LearningCanvasSnapshotDto[] }
+export type LearningCanvasSnapshotDto = { id: string; canvasId: string; name: string; title: string; description: string; sceneJson: JsonValue; elementCount: number; canvasRevision: number; createdAt: number }
+export type LearningCanvasWorkspaceDto = { programId: string; canvases: LearningCanvasDto[] }
+export type LearningCardDraftActionRequestDto = { programId: string; draftId: string }
+export type LearningCardDraftDto = { id: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[]; origin: LearningCardDraftOrigin; createdAt: number }
+export type LearningCardDraftOrigin = "generated" | "manual"
+export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: LearningCardDraftOrigin; sourceIds: string[]; acceptedAt: number }
+export type LearningContainerEngine = "docker" | "podman"
+export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
+/**
+ * Immutable before/after values make previews auditable and useful to
+ * clients without asking them to reconstruct state from prose.
+ */
+before: LearningCurriculumLesson | null; after: LearningCurriculumLesson | null; description: string }
+export type LearningCurriculumChangeKind = "added" | "edited" | "moved" | "skipped" | "replaced" | "challenged"
+export type LearningCurriculumLesson = { id: string; title: string; objective: string; estimatedMinutes: number; state: LearningCurriculumLessonState; assessmentStarted: boolean; replacementLessonId: string | null }
+export type LearningCurriculumLessonState = "outline" | "ready" | "completed" | "skipped" | "replaced" | "challenged"
+export type LearningCurriculumModule = { id: string; title: string; purpose: string; prerequisiteModuleIds: string[]; outcomeIds: string[]; lessons: LearningCurriculumLesson[] }
+export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
+export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
+export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
+export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; createdAt: number; submittedAt: number | null }
+export type LearningDiagnosticCoverageGapDto = { outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
+export type LearningDiagnosticPromptDto = { id: string; prompt: string; outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
+export type LearningDiagnosticResponseDto = { promptId: string; response: string }
+export type LearningDiagnosticStatus = "active" | "submitted" | "skipped"
+export type LearningEvidenceDimension = "recall" | "explanation" | "application" | "transfer"
+export type LearningEvidenceEventDto = { id: string; outcomeId: string | null; sourceKind: LearningEvidenceSourceKind; sourceId: string; dimension: LearningEvidenceDimension; result: LearningEvidenceResult; score: number | null; observation: string; evidenceQuote: string | null; assistance: JsonValue; observedAt: number }
+export type LearningEvidenceResult = "observed" | "not_observed" | "uncertain" | "not_assessed"
+export type LearningEvidenceSourceKind = "practice" | "assessment" | "recall" | "practical" | "simulation" | "manual"
+export type LearningFeedbackTiming = "immediate" | "after_batch" | "after_submission"
+export type LearningFollowUpActionKind = "lesson" | "practice" | "assessment" | "recall" | "practical"
+export type LearningFollowUpReasonCode = "missed_outcome" | "assisted_success" | "low_transfer" | "stale_evidence" | "uncertain_grade"
+export type LearningFollowUpRecommendationDto = { id: string; outcomeId: string | null; reasonCode: LearningFollowUpReasonCode; explanation: string; actionKind: LearningFollowUpActionKind; actionRef: string | null; status: LearningFollowUpStatus; evidenceEventIds: string[]; createdAt: number; decidedAt: number | null }
+export type LearningFollowUpStatus = "pending" | "accepted" | "dismissed" | "completed"
+export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
+export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"
+export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
+export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
+export type LearningLabFile = { path: string; content: string }
+export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
+export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; available: boolean; version: string | null; reason: string | null }
+export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
+export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
+export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number; schedulerVersion: string }
+export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[] }
+export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
+export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
+export type LearningPackConflictDto = { entityKind: string; incomingId: string; incomingTitle: string; existingId: string; existingTitle: string; resolution: string }
+export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
+export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
+export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
+export type LearningPackImportPreviewDto = { id: string; sourcePath: string; manifest: LearningPackManifest; incomingProgramId: string; incomingProgramTitle: string; conflictPolicy: LearningPackConflictPolicy; conflicts: LearningPackConflictDto[]; changes: LearningPackChangeDto[]; warnings: string[]; status: LearningPackPreviewStatus; canApply: boolean; createdAt: number; decidedAt: number | null }
+export type LearningPackImportResultDto = { id: string; previewId: string; importedProgramId: string; backupId: string | null; appliedChanges: LearningPackChangeDto[]; importedAt: number }
+export type LearningPackManifest = { format: string; version: number; packId: string; title: string; createdAt: number; applicationVersion: string; rootSha256: string; privacy: LearningPackPrivacyManifest; entries: LearningPackManifestEntry[] }
+export type LearningPackManifestEntry = { path: string; kind: LearningPackEntryKind; sha256: string; bytes: number }
+export type LearningPackPreviewStatus = "pending" | "applied" | "cancelled" | "stale"
+export type LearningPackPrivacyManifest = { includesPrivateChat: boolean; includesCredentials: boolean; includesFullSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean; includesAnswerKeys: boolean; includesHiddenEvaluators: boolean; includesLearnerEvidence: boolean; includesPracticalArtifacts: boolean; omittedItems: string[] }
+export type LearningPlanDto = { programId: string; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
+export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto }
+export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; revision: number; createdAt: number; updatedAt: number }
+export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
+export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
+export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
+export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
+export type LearningPracticalFileDto = { path: string; role: LearningPracticalPublicFileRole; content: string; contentSha256: string; editable: boolean }
+export type LearningPracticalPublicFileRole = "starter" | "reference"
+export type LearningPracticalRunDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; status: LearningPracticalRunStatus; builtinRuntime?: LearningBuiltinRuntime | null; engine: LearningContainerEngine | null; imageId: string | null; learnerFiles: LearningLabFile[]; stdout: string; stderr: string; outputTruncated: boolean; exitCode: number | null; durationMs: number | null; checks: LearningPracticalCheckResultDto[]; createdAt: number; completedAt: number | null }
+export type LearningPracticalRunStatus = "pending" | "running" | "passed" | "failed" | "timed_out" | "cancelled" | "interrupted" | "runtime_unavailable"
+export type LearningPracticalRuntimeKind = "none" | "container" | "builtin"
+export type LearningPracticalWorkspaceDto = { programId: string; builtinRuntimes: LearningBuiltinRuntimeCapability[]; runtimeCapabilities: LearningLabRuntimeCapability[]; runtimeProfiles: LearningRuntimeProfileDto[]; activities: LearningPracticalActivityDto[]; runs: LearningPracticalRunDto[]; simulations: LearningSimulationSessionDto[] }
+export type LearningPracticeArtifactDto = { revision: number; text: string; sha256: string; updatedAt: number }
+export type LearningPracticeAssistanceEventDto = { id: string; kind: LearningPracticeAssistanceKind; mode: LearningPracticeMode; artifactRevision: number; details: JsonValue; createdAt: number }
+export type LearningPracticeAssistanceKind = "source_opened" | "tutor_response" | "hint" | "solution_revealed" | "mode_changed"
+export type LearningPracticeCitationDto = { sourceId: string; versionId: string; quote: string }
+export type LearningPracticeCriterionDto = { id: string; dimension: LearningPracticeEvidenceDimension; title: string; description: string; maxPoints: number }
+export type LearningPracticeCriterionResultDto = { criterionId: string; dimension: LearningPracticeEvidenceDimension; score: number | null; maxPoints: number; observation: string; evidenceQuote: string | null }
+export type LearningPracticeEvidenceDimension = "recall" | "explanation" | "application" | "transfer"
+export type LearningPracticeEvidenceEventDto = { dimension: LearningPracticeEvidenceDimension; observed: boolean; observation: string; evidenceQuote: string | null; assistanceKinds: LearningPracticeAssistanceKind[] }
+export type LearningPracticeGradeStatus = "provisional" | "uncertain"
+export type LearningPracticeHintLevel = "orienting_question" | "concept_or_source" | "partial_strategy" | "worked_explanation"
+export type LearningPracticeMode = "explore" | "practice" | "demonstrate"
+export type LearningPracticeProposalDto = { id: string; kind: LearningPracticeProposalKind; text: string; evidenceQuote: string | null; tutorTurnId: string | null; status: LearningPracticeProposalStatus; createdAt: number; decidedAt: number | null }
+export type LearningPracticeProposalKind = "misconception" | "follow_up"
+export type LearningPracticeProposalStatus = "pending" | "accepted" | "rejected"
+export type LearningPracticeResultDto = { gradeStatus: LearningPracticeGradeStatus; artifactRevision: number; artifactText: string; rubric: LearningPracticeCriterionDto[]; criteria: LearningPracticeCriterionResultDto[]; evidence: LearningPracticeEvidenceEventDto[]; modeAtSubmission: LearningPracticeMode; assistance: LearningPracticeAssistanceEventDto[]; graderModel: string; submittedAt: number }
+export type LearningPracticeSessionDto = { summary: LearningPracticeSessionSummaryDto; taskPrompt: string; lessonObjective: string; rubric: LearningPracticeCriterionDto[]; artifact: LearningPracticeArtifactDto; assistance: LearningPracticeAssistanceEventDto[]; tutorTurns: LearningPracticeTutorTurnDto[]; proposals: LearningPracticeProposalDto[]; revealedSolution: string | null; revealedSolutionCitations: LearningPracticeCitationDto[]; result: LearningPracticeResultDto | null }
+export type LearningPracticeSessionStatus = "active" | "submitted"
+export type LearningPracticeSessionSummaryDto = { id: string; lessonId: string; lessonTitle: string; status: LearningPracticeSessionStatus; mode: LearningPracticeMode; revision: number; artifactRevision: number; sourceVersionIds: string[]; createdAt: number; updatedAt: number; submittedAt: number | null; gradeStatus: LearningPracticeGradeStatus | null }
+export type LearningPracticeTutorTurnDto = { id: string; prompt: string; response: string; requestKind: LearningTutorRequestKind; hintLevel: LearningPracticeHintLevel | null; citations: LearningPracticeCitationDto[]; proposalIds: string[]; modelName: string; createdAt: number }
+export type LearningPracticeWorkspaceDto = { programId: string; sessions: LearningPracticeSessionSummaryDto[] }
+export type LearningPreparation = "outline" | "ready"
+export type LearningProgramDto = { summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[]; attempts: LearningAttemptDto[] }
+export type LearningProgramStatus = "draft" | "active"
+export type LearningProgramSummaryDto = { id: string; title: string; goal: string; status: LearningProgramStatus; revision: number; moduleCount: number; lessonCount: number; completedLessons: number; currentLessonId: string | null; createdAt: number }
+export type LearningQuestionDto = { id: string; kind: LearningAssessmentKind; prompt: string; options: string[]; sourceIds: string[] }
+export type LearningQuestionResultDto = { questionId: string; prompt: string; options: string[]; selectedIndex: number; correctIndex: number; explanation: string; sourceIds: string[] }
+export type LearningQuoteMatch = { status: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number }
+export type LearningQuoteMatchStatus = "exact" | "context_disambiguated" | "ambiguous" | "not_found"
+export type LearningRecallCardDto = { id: string; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; contentRevision: number; scheduler: LearningRecallSchedulerStateDto; versions: LearningRecallCardVersionDto[]; createdAt: number; updatedAt: number }
+export type LearningRecallCardFormat = "multiple_choice" | "question_answer" | "cloze" | "reverse" | "code_prediction" | "reconstruction"
+export type LearningRecallCardVersionDto = { revision: number; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string; createdAt: number }
+export type LearningRecallContentDto = { prompt: string; answer: string; explanation: string;
+/**
+ * Required for multiple-choice recall; empty for every other format.
+ */
+options: string[];
+/**
+ * Required for multiple-choice recall; empty for every other format.
+ */
+correctOptionIndex: number | null; language: string | null; clozeDeletions: string[] }
+export type LearningRecallDuplicateStatus = "pending" | "confirmed" | "dismissed"
+export type LearningRecallDuplicateSuggestionDto = { id: string; cardId: string; possibleDuplicateCardId: string; reason: string; similarity: number | null; status: LearningRecallDuplicateStatus; createdAt: number; decidedAt: number | null }
+export type LearningRecallSchedulerStateDto = { schedulerVersion: LearningRecallSchedulerVersion; stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
+export type LearningRecallSchedulerVersion = "expanding_v1" | "fsrs_6_v1"
+export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; fsrsAvailable: boolean; schedulerDisclosure: string }
+export type LearningRubricCriterion = { id: string; title: string; description: string; maxPoints: number }
+export type LearningRuntimePresetDto = { id: LearningRuntimePresetId; name: string; description: string;
+/**
+ * Fixed, versioned app-owned image reference used only during preparation.
+ */
+imageRef: string;
+/**
+ * Fixed argv executed by the contained lab runner after preparation.
+ */
+command: string[]; limits: LearningLabLimits;
+/**
+ * Describes required workspace files and what the base image supports.
+ */
+entrypointContract: string }
+export type LearningRuntimePresetId = "csharp" | "rust" | "node" | "python"
+export type LearningRuntimeProfileDto = { id: string; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits; enabled: boolean; revision: number; createdAt: number; updatedAt: number }
+export type LearningSimulationSessionDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string; status: LearningSimulationStatus; revision: number; turns: LearningSimulationTurnDto[]; createdAt: number; updatedAt: number; submittedAt: number | null }
+export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
+export type LearningSimulationStatus = "active" | "submitted" | "cancelled"
+export type LearningSimulationTurnDto = { id: string; ordinal: number; speaker: LearningSimulationSpeaker; content: string; citations: LearningPracticeCitationDto[]; modelName: string | null; createdAt: number }
+export type LearningSourceCheckDto = { operationId: string; status: LearningSourceCheckStatus; checkedAt: number; activeDigest: string | null; pendingVersionId: string | null; message: string | null }
+export type LearningSourceCheckStatus = "unchanged" | "update_available" | "failed"
+export type LearningSourceDto = { id: string; title: string; url: string | null; excerpt: string; acquiredAt: number }
+export type LearningSourceKind = "web" | "document" | "pasted"
+export type LearningSourceLibraryItemDto = { id: string; kind: LearningSourceKind; origin: string; requestedUrl: string | null; freshnessPolicy: LearningSourcePolicy; activeVersionId: string | null; pendingVersionId: string | null; revision: number; deletedAt: number | null; deletionReason: string | null; activeVersion: LearningSourceVersionSummaryDto | null; pendingVersion: LearningSourceVersionSummaryDto | null; versions: LearningSourceVersionSummaryDto[]; latestCheck: LearningSourceCheckDto | null; checks: LearningSourceCheckDto[]; createdAt: number; updatedAt: number }
+export type LearningSourcePolicy = "fixed" | "manual" | "before_use"
+export type LearningSourceSearchResultDto = { sourceId: string; versionId: string; title: string; excerpt: string }
+export type LearningSourceSelectorDto = { id: string; sourceId: string; sourceVersionId: string; selector: LearningTextQuoteSelector; matchStatus: LearningQuoteMatchStatus; startByte: number | null; endByte: number | null; candidateCount: number; createdAt: number }
+export type LearningSourceSemanticSearchResultDto = { sourceId: string; version: LearningSourceVersionSummaryDto; excerpt: string; score: number; retrievalKind: string; selector: LearningTextQuoteSelector }
+export type LearningSourceUsageDto = { lessonId: string; lessonTitle: string; referenceKind: string; referenceTitle: string }
+export type LearningSourceVersionDto = { sourceId: string; version: LearningSourceVersionSummaryDto; fullText: string; usage: LearningSourceUsageDto[] }
+export type LearningSourceVersionSummaryDto = { id: string; versionNumber: number; title: string; publisher: string | null; resolvedUrl: string | null; excerpt: string; contentSha256: string; wordCount: number; truncated: boolean; extractionVersion: string; acquiredAt: number }
+export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[] }
+export type LearningTextQuoteSelector = { exact: string; prefix: string; suffix: string }
+export type LearningTutorRequestKind = "hint" | "question" | "critique"
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -5289,6 +6231,7 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+export type MatchLearningSourceSelectorRequestDto = { programId: string; selectorId: string; targetVersionId: string }
 /**
  * One quoted passage behind a memory item.
  */
@@ -5547,6 +6490,7 @@ export type ModelSourceDto =
  */
 "External"
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
+export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
 /**
  * Onboarding state — what the user has already been through.
@@ -5584,6 +6528,7 @@ contentPath: string;
  * Title (for web articles)
  */
 title?: string | null }
+export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */
@@ -5612,6 +6557,14 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
+/**
+ * Installs an app-authored language environment. Images and commands are
+ * selected by the catalog, never supplied by generated lesson content.
+ */
+export type PrepareLearningRuntimePresetRequestDto = { operationId: string; programId: string; profileId: string; preset: LearningRuntimePresetId; engine: LearningContainerEngine }
+export type PreviewLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; expectedRevision: number; reason: string; operations: LearningCurriculumOperation[] }
+export type PreviewLearningPackImportRequestDto = { operationId: string; previewId: string; sourcePath: string; conflictPolicy: LearningPackConflictPolicy }
 /**
  * Privacy settings — defaults to opt-out for both flags.
  *
@@ -5663,6 +6616,7 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
+export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
  * Function registry statistics
  *
@@ -5677,6 +6631,7 @@ total_functions: number;
  * Function call counts (name -> count)
  */
 call_counts: { [key in string]: number } }
+export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
 export type RemoveConversationFromJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type RemoveConversationSpaceMemberRequestDto = { spaceId: string; memberId: string }
 /**
@@ -5729,6 +6684,7 @@ message: string;
  * The new name that was applied
  */
 new_name: string }
+export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
  * Whether reranking is switched on, and whether it could run if it were.
  *
@@ -5771,6 +6727,7 @@ outcome: string; message: string | null; restartRequired: boolean; reembedRequir
 vaultRestoredTo: string | null; filesRestored: number }
 export type RestoreBackupRequestDto = { backupPath: string }
 export type RestoreBackupResultDto = { success: boolean; restoredCount: number; message: string | null }
+export type RestoreLearningCanvasSnapshotRequestDto = { operationId: string; preRestoreSnapshotId: string; programId: string; canvasId: string; snapshotId: string; expectedRevision: number }
 export type RetrievalSubTimingMetrics = { kbTotalMs: number; kbScopeLoadMs: number; kbHydeInterpretationMs: number; kbSearchPlanMs: number; kbShortlistPlanningMs: number; kbQueryExecutionMs: number; kbMergeShortlistGateMs: number; kbPostFiltersMs: number; kbRerankMs: number;
 /**
  * Cost of the post-rerank sufficiency check. Local and cheap by design —
@@ -5943,6 +6900,8 @@ newJobId: string;
  * Number of failed items being retried
  */
 retriedCount: number }
+export type RevealLearningPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
@@ -5988,7 +6947,15 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
+export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
+export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
+export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
+export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
+export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
+export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
 export type SearchCacheStats = { size: number; capacity: number; hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
+export type SearchLearningSourcesRequestDto = { programId: string; query: string; limit: number }
+export type SearchLearningSourcesSemanticallyRequestDto = { programId: string; query: string; limit: number }
 export type SearchMentionsResultDto = { mentions: MentionDto[] }
 /**
  * Search mode for algorithm selection.
@@ -6172,6 +7139,7 @@ embeddingStrategy: EmbeddingStrategySettingDto;
  * by the utility model, so this is off until a utility model is set up.
  */
 summaryIndexEnabled: boolean }
+export type SendLearningSimulationTurnRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; content: string }
 export type SetArchiveKeepCountRequestDto = { keepCount: number }
 export type SetArchivePassphraseRequestDto = {
 /**
@@ -6219,6 +7187,7 @@ onboarding: OnboardingSettingsDto }
  * One neighbour of a document, collapsed from its chunk hits.
  */
 export type SimilarDocumentDto = { documentId: string; title: string; filePath: string | null; score: number }
+export type SkipLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null }
 /**
  * Source citation for Q&A response.
@@ -6429,18 +7398,33 @@ export type StartBatchUrlImportResponseDto = {
  */
 jobId: string }
 export type StartDownloadRequest = { url: string; destination: string; checksum: ChecksumRequest | null; auth_token: string | null; model_name: string | null; model_id: string | null }
+export type StartLearningAssessmentFormRequestDto = { operationId: string; formId: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null }
+export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
+export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
+export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
+export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode }
+export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
 export type StructureMode = "sections" | "pages"
-export type StudyCardDto = { id: string; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
+export type StudyCardDto = { id: string; format?: StudyCardFormat; schedulerVersion?: StudySchedulerVersion; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
 /**
  * Every passage cited by the answer. `source` remains the primary passage
  * for compatibility with decks created before multi-citation cards.
  */
 citations?: StudySourceDto[]; topic: string; dueAt: number; intervalDays: number; reviewCount: number; lapses: number }
+export type StudyCardFormat = "multiple_choice" | "question_answer"
 export type StudyDeckDto = { id: string; title: string; focus: string; studyGoal?: string; modelName: string; createdAt: number; cards: StudyCardDto[] }
 export type StudyDeckSummaryDto = { id: string; title: string; focus: string; studyGoal?: string; createdAt: number; cardCount: number; dueCount: number; quizAttempts: number; quizCorrect: number }
 export type StudyRating = "again" | "hard" | "good" | "easy"
-export type StudySourceDto = { chunkId: string; documentId: string; fileName: string; filePath: string; excerpt: string }
+export type StudySchedulerVersion = "expanding_v1" | "fsrs_6_v1"
+export type StudySourceDto = { chunkId: string; documentId: string; fileName: string; filePath: string; excerpt: string;
+/**
+ * External web source URL when this citation is not an indexed document.
+ */
+url?: string | null }
+export type SubmitLearningAttemptRequestDto = { attemptId: string; programId: string; expectedRevision: number; moduleId: string; lessonId: string | null; kind: LearningAssessmentKind; answers: LearningAnswerDto[] }
+export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[] }
+export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**
  * Sync settings.
  */
@@ -6802,6 +7786,7 @@ export type UpdateConversationJournalRequestDto = { journalId: string; name: str
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
 export type UpdateInfoDto = { available: boolean; currentVersion: string; latestVersion: string | null; downloadUrl: string | null; releaseNotes: string | null }
+export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }
 export type UpdatePassageReferenceRequestDto = { id: string; title: string | null; note: string | null }
 export type UpdateSettingsRequest = { category: string | null; updates: { [key in string]: JsonValue } }
 export type UpdateStudyCardRequestDto = { cardId: string; question: string; answer: string; explanation: string }

@@ -22,6 +22,10 @@ function shuffled<T>(items: T[]): T[] {
   return result;
 }
 
+function supportsQuiz(card: StudyCardDto) {
+  return (card.format ?? 'multiple_choice') === 'multiple_choice' && card.options.length > 0;
+}
+
 export function StudyPage() {
   const [params, setParams] = useSearchParams();
   const id = params.get('deck');
@@ -41,7 +45,10 @@ export function StudyPage() {
     return () => window.clearInterval(timer);
   }, []);
   const due = current?.cards.filter(card => card.dueAt <= now).sort((a, b) => a.dueAt - b.dueAt) ?? [];
-  const weakTopics = [...new Set(current?.cards.filter(card => card.lapses > 0).sort((a, b) => b.lapses - a.lapses).map(card => card.topic) ?? [])].slice(0, 5);
+  const quizCards = current?.cards.filter(supportsQuiz) ?? [];
+  const weakCards = current?.cards.filter(card => card.lapses > 0).sort((a, b) => b.lapses - a.lapses) ?? [];
+  const weakQuizCards = weakCards.filter(supportsQuiz);
+  const weakTopics = [...new Set(weakCards.map(card => card.topic))].slice(0, 5);
   const start = (cards: StudyCardDto[], mode: StudyMode) => setSession({ id: crypto.randomUUID(), cards, mode });
   const back = () => { setSession(null); setParams({}); };
 
@@ -57,11 +64,11 @@ export function StudyPage() {
       {current.studyGoal && <p className="mb-6 text-sm text-text-secondary">Learning goal · {current.studyGoal}</p>}
       <div className="mb-8 flex flex-wrap gap-2">
         <Button disabled={due.length === 0} onClick={() => start(due, 'flashcard')}>Review due{due.length > 0 ? ` (${due.length})` : ''}</Button>
-        <Button variant="secondary" disabled={!current.cards.length} onClick={() => start(shuffled(current.cards), 'quiz')}>Practice quiz</Button>
+        <Button variant="secondary" disabled={!quizCards.length} title={quizCards.length ? undefined : 'This deck has no multiple-choice cards'} onClick={() => start(shuffled(quizCards), 'quiz')}>Practice quiz</Button>
         <Button variant="ghost" disabled={!current.cards.length} onClick={() => start(current.cards, 'flashcard')}>Study all</Button>
       </div>
       {due.length === 0 && current.cards.length > 0 && <p className="mb-8 text-sm text-text-muted">Next review {new Date(Math.min(...current.cards.map(card => card.dueAt))).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.</p>}
-      {weakTopics.length > 0 && <section className="mb-8"><SectionHeading>Topics to revisit</SectionHeading><p className="text-sm leading-relaxed text-text-secondary">{weakTopics.join(' · ')}</p><Button variant="ghost" size="sm" className="mt-3 -ml-3" onClick={() => start(shuffled(current.cards.filter(card => card.lapses > 0)), 'quiz')}>Practice missed cards</Button></section>}
+      {weakTopics.length > 0 && <section className="mb-8"><SectionHeading>Topics to revisit</SectionHeading><p className="text-sm leading-relaxed text-text-secondary">{weakTopics.join(' · ')}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="ghost" size="sm" className="-ml-3" onClick={() => start(shuffled(weakCards), 'flashcard')}>Review missed cards</Button>{weakQuizCards.length > 0 && <Button variant="ghost" size="sm" onClick={() => start(shuffled(weakQuizCards), 'quiz')}>Practice missed quiz cards</Button>}</div></section>}
       <SectionHeading>Cards</SectionHeading>
       <div className="border-t border-border-subtle">
         {current.cards.map((card, index) => <details key={card.id} className="border-b border-border-subtle py-4">

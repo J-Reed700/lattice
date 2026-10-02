@@ -17,6 +17,7 @@ fn source() -> StudySourceDto {
         file_name: "chapter.pdf".into(),
         file_path: "/library/chapter.pdf".into(),
         excerpt: PASSAGE.into(),
+        url: None,
     }
 }
 fn generated() -> serde_json::Value {
@@ -102,6 +103,12 @@ fn review_schedule_uses_recall_and_bounds_intervals() {
     assert_eq!(next_review(StudyRating::Good, 6, 0).1, 12);
     assert_eq!(next_review(StudyRating::Easy, i64::MAX, 0).1, 365);
 }
+
+#[test]
+fn study_rejects_unknown_persisted_card_and_scheduler_versions() {
+    assert!(super::repository::parse_card_format("future_format").is_err());
+    assert!(super::repository::parse_scheduler_version("future_scheduler").is_err());
+}
 #[tokio::test]
 async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -138,6 +145,9 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
         1,
         "retry is idempotent"
     );
+    let mut changed_retry = request.clone();
+    changed_retry.selected_option = Some(0);
+    assert!(repo.review(&changed_retry, 3000).await.is_err());
     let mut stale = request.clone();
     stale.review_id = uuid::Uuid::new_v4().to_string();
     assert!(repo.review(&stale, 3000).await.is_err());
@@ -178,6 +188,53 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
             .await?,
         0
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn question_answer_reviews_reject_choices_and_replay_only_matching_payloads(
+) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let db = DatabaseConnection::new(dir.path().join("qa-study.db")).await?;
+    initialize_database(db.pool()).await?;
+    let repo = StudyRepository::new(db.pool().clone());
+    let mut d = deck();
+    let card = d
+        .cards
+        .first_mut()
+        .ok_or_else(|| anyhow::anyhow!("fixture card missing"))?;
+    card.format = StudyCardFormat::QuestionAnswer;
+    card.options.clear();
+    card.correct_index = 0;
+    repo.save(&d).await?;
+    let card_id = d
+        .cards
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("fixture card missing"))?
+        .id
+        .clone();
+    let review_id = uuid::Uuid::new_v4().to_string();
+    let request = ReviewStudyCardRequestDto {
+        review_id: review_id.clone(),
+        card_id: card_id.clone(),
+        expected_reviews: 0,
+        selected_option: None,
+        rating: StudyRating::Good,
+    };
+    let mut quiz_request = request.clone();
+    quiz_request.selected_option = Some(0);
+    assert!(repo.review(&quiz_request, 10_000).await.is_err());
+    let first = repo.review(&request, 10_000).await?;
+    assert_eq!(
+        (first.format, first.options.len(), first.review_count),
+        (StudyCardFormat::QuestionAnswer, 0, 1)
+    );
+    let replay = repo.review(&request, 20_000).await?;
+    assert_eq!(replay.review_count, 1);
+    assert_eq!(replay.due_at, first.due_at);
+    let mut mismatched = request;
+    mismatched.rating = StudyRating::Easy;
+    assert!(repo.review(&mismatched, 20_000).await.is_err());
     Ok(())
 }
 

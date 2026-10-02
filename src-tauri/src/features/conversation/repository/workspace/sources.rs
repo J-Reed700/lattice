@@ -260,8 +260,7 @@ impl ConversationRepository {
                 excerpt: row.excerpt,
                 relevance_score: row.relevance_score,
                 added_at: row.added_at,
-            
-})
+            })
             .collect())
     }
 

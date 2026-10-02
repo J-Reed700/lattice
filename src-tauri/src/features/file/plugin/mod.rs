@@ -61,6 +61,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             document_list::get_document,
             commands::get_corpus_shape,
             commands::list_conversations_citing_document,
+            crate::features::file::custom_collections::commands::list_custom_collections,
+            crate::features::file::custom_collections::commands::import_legacy_custom_collections,
+            crate::features::file::custom_collections::commands::create_custom_collection,
+            crate::features::file::custom_collections::commands::rename_custom_collection,
+            crate::features::file::custom_collections::commands::move_custom_collection,
+            crate::features::file::custom_collections::commands::delete_custom_collection,
+            crate::features::file::custom_collections::commands::add_documents_to_custom_collection,
+            crate::features::file::custom_collections::commands::remove_documents_from_custom_collection,
         ])
         .build()
 }

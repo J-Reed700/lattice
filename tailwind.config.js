@@ -1,3 +1,8 @@
+// Border tokens already include their carefully tuned alpha channel. Tailwind's
+// default opacity modifier would append a second slash (invalid CSS), so border
+// utilities keep the token's fixed alpha even when legacy `/nn` classes occur.
+const fixedAlphaColor = (variable) => () => `hsl(var(${variable}))`;
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -22,10 +27,10 @@ export default {
           sunken: 'hsl(var(--surface-sunken))',
         },
         border: {
-          DEFAULT: 'hsl(var(--border-subtle))',
-          subtle: 'hsl(var(--border-subtle))',
-          default: 'hsl(var(--border-default))',
-          strong: 'hsl(var(--border-strong))',
+          DEFAULT: fixedAlphaColor('--border-subtle'),
+          subtle: fixedAlphaColor('--border-subtle'),
+          default: fixedAlphaColor('--border-default'),
+          strong: fixedAlphaColor('--border-strong'),
         },
         text: {
           primary: 'hsl(var(--text-primary))',

@@ -26,6 +26,15 @@ use tracing::{error, info, warn};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Best-effort cleanup for a sibling snapshot after success or failure.
+struct TemporarySnapshot(PathBuf);
+
+impl Drop for TemporarySnapshot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Validate that a filename is safe (no directory traversal patterns).
 ///
 /// This function checks for directory traversal patterns including:
@@ -190,24 +199,40 @@ impl BackupAdapter {
     /// safety copy. `VACUUM INTO` refuses an existing file, and a stale copy
     /// from an earlier restore is worth less than a current one.
     async fn write_safety_copy(&self, destination: &Path) -> Result<()> {
-        match tokio::fs::remove_file(destination).await {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(AppError::FileSystem(format!(
-                    "Failed to replace the previous safety backup: {e}"
-                )))
-            }
-        }
+        // Build and verify the new copy before touching the last recovery
+        // point. A failed VACUUM (disk full, locked/corrupt DB, etc.) must not
+        // destroy the previous safety copy.
         let destination_str = destination.to_string_lossy().to_string();
         validate_sql_safe_path(&destination_str)?;
-        let escaped = destination_str.replace('\'', "''");
-        sqlx::query(&format!("VACUUM INTO '{escaped}'"))
+        let file_name = destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("database.db");
+        let temp_path =
+            destination.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+        let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
+        let temp_str = temp_path.to_string_lossy().to_string();
+        validate_sql_safe_path(&temp_str)?;
+        let escaped = temp_str.replace('\'', "''");
+        if let Err(error) = sqlx::query(&format!("VACUUM INTO '{escaped}'"))
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                error!("Failed to create safety backup: {}", e);
-                AppError::Database(format!("Failed to create safety backup: {e}"))
+        {
+            error!("Failed to create safety backup: {}", error);
+            return Err(AppError::Database(format!(
+                "Failed to create safety backup: {error}"
+            )));
+        }
+
+        self.validate_backup(&temp_path).await?;
+
+        // The temporary lives beside the destination, so replacement is one
+        // same-filesystem rename. If it fails, the original recovery copy is
+        // still at its canonical path.
+        tokio::fs::rename(&temp_path, destination)
+            .await
+            .map_err(|error| {
+                AppError::FileSystem(format!("Failed to install the new safety backup: {error}"))
             })?;
         Ok(())
     }
@@ -971,6 +996,24 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
+        // User-created collections live in ordinary SQLite tables. Include both
+        // collection metadata and normalized memberships in this database copy
+        // round trip so backup coverage protects the feature's persisted state.
+        sqlx::query("CREATE TABLE custom_collections (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE custom_collection_documents (collection_id TEXT NOT NULL, document_id TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(collection_id, document_id))")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO custom_collections (id, name) VALUES ('collection-1', 'Research')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO custom_collection_documents (collection_id, document_id, ordinal) VALUES ('collection-1', 'doc-1', 0)")
+            .execute(&pool).await.unwrap();
+
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(backup_path);
 
@@ -987,6 +1030,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 2);
+        sqlx::query("DELETE FROM custom_collection_documents WHERE collection_id = 'collection-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // Restore from backup (closes pool internally)
         let result = adapter.restore_backup(backup_pathbuf).await;
@@ -1006,6 +1053,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(restored_count.0, 1);
+        let collection_name: String =
+            sqlx::query_scalar("SELECT name FROM custom_collections WHERE id = 'collection-1'")
+                .fetch_one(&new_pool)
+                .await
+                .unwrap();
+        let membership_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM custom_collection_documents WHERE collection_id = 'collection-1' AND document_id = 'doc-1'")
+            .fetch_one(&new_pool).await.unwrap();
+        assert_eq!(collection_name, "Research");
+        assert_eq!(membership_count, 1);
 
         new_pool.close().await;
     }
@@ -1117,6 +1173,64 @@ mod tests {
         assert_eq!(count.0, 1);
 
         safety_pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_safety_snapshot_keeps_the_previous_recovery_copy() {
+        let (pool, db_path, _dir) = create_test_pool().await;
+        let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+        // An invalid SQLite output path makes snapshot preparation fail before
+        // VACUUM INTO. The existing copy must survive all preparation errors.
+        let invalid_destination = db_path.parent().unwrap().join("unsafe;destination.db");
+        fs::write(&invalid_destination, b"last known-good recovery copy").unwrap();
+        assert!(adapter
+            .write_safety_copy(&invalid_destination)
+            .await
+            .is_err());
+        assert_eq!(
+            fs::read(&invalid_destination).unwrap(),
+            b"last known-good recovery copy"
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_vacuum_keeps_the_previous_recovery_copy() {
+        let (pool, db_path, _dir) = create_test_pool().await;
+        let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+        let safety_path = db_path.with_extension("db.pre_restore");
+        fs::write(&safety_path, b"last known-good recovery copy").unwrap();
+        pool.close().await;
+
+        assert!(adapter.write_safety_copy(&safety_path).await.is_err());
+        assert_eq!(
+            fs::read(&safety_path).unwrap(),
+            b"last known-good recovery copy"
+        );
+        assert_eq!(
+            fs::read_dir(safety_path.parent().unwrap())
+                .unwrap()
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+                .count(),
+            0,
+            "failed snapshot should not leave a temporary file"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_safety_snapshot_replaces_the_previous_copy() {
+        let (pool, db_path, _dir) = create_test_pool().await;
+        let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+        let safety_path = db_path.with_extension("db.pre_restore");
+        fs::write(&safety_path, b"stale recovery copy").unwrap();
+
+        adapter.write_safety_copy(&safety_path).await.unwrap();
+        assert_ne!(fs::read(&safety_path).unwrap(), b"stale recovery copy");
+        adapter.validate_backup(&safety_path).await.unwrap();
+
+        pool.close().await;
     }
 
     #[tokio::test]

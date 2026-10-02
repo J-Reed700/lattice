@@ -158,6 +158,79 @@ fn inspect_with_drivers(
     Ok((visitor.violations, visitor.aliases))
 }
 
+#[derive(Default)]
+struct RawTokioSpawn {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for RawTokioSpawn {
+    fn visit_item(&mut self, item: &'ast Item) {
+        let attrs = match item {
+            Item::Const(i) => &i.attrs,
+            Item::Enum(i) => &i.attrs,
+            Item::ExternCrate(i) => &i.attrs,
+            Item::Fn(i) => &i.attrs,
+            Item::ForeignMod(i) => &i.attrs,
+            Item::Impl(i) => &i.attrs,
+            Item::Macro(i) => &i.attrs,
+            Item::Mod(i) => &i.attrs,
+            Item::Static(i) => &i.attrs,
+            Item::Struct(i) => &i.attrs,
+            Item::Trait(i) => &i.attrs,
+            Item::TraitAlias(i) => &i.attrs,
+            Item::Type(i) => &i.attrs,
+            Item::Union(i) => &i.attrs,
+            Item::Use(i) => &i.attrs,
+            _ => {
+                visit::visit_item(self, item);
+                return;
+            }
+        };
+        if !test_only(attrs) {
+            visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        if segments == ["tokio", "spawn"] || segments == ["tokio", "task", "spawn"] {
+            self.found = true;
+        }
+        visit::visit_path(self, path);
+    }
+}
+
+fn has_production_raw_tokio_spawn(source: &str) -> Result<bool, syn::Error> {
+    let ast = syn::parse_file(source)?;
+    if test_only(&ast.attrs) {
+        return Ok(false);
+    }
+    let mut visitor = RawTokioSpawn::default();
+    visitor.visit_file(&ast);
+    Ok(visitor.found)
+}
+
+fn check_supervised_background_paths(
+    root: &Path,
+    failures: &mut usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for path in [
+        "features/batch/use_cases/start_url_import.rs",
+        "features/conversation/chat/verification/background.rs",
+        "features/transcription/engine/whisper.rs",
+    ] {
+        let file = root.join(path);
+        if has_production_raw_tokio_spawn(&fs::read_to_string(&file)?)? {
+            eprintln!(
+                "VIOLATION: {} uses raw tokio::spawn; use the shared background supervisor",
+                file.display()
+            );
+            *failures += 1;
+        }
+    }
+    Ok(())
+}
+
 fn scan(
     path: &Path,
     forbidden: &[&str],
@@ -272,6 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("expected Rust source root")?,
     );
     let mut failures = 0;
+    check_supervised_background_paths(&root, &mut failures)?;
     check_feature_entrypoints(&root.join("features"), &mut failures)?;
     for workflow in ["branching.rs", "synthesis.rs"] {
         scan_with_drivers(
@@ -357,6 +431,15 @@ mod tests {
     #[test]
     fn invalid_rust_fails_closed() {
         assert!(inspect("fn broken(", &[]).is_err());
+    }
+
+    #[test]
+    fn supervised_workflows_reject_production_tokio_spawn_but_allow_tests() {
+        assert!(has_production_raw_tokio_spawn("fn run() { tokio::spawn(async {}); }").unwrap());
+        assert!(!has_production_raw_tokio_spawn(
+            "#[cfg(test)] mod tests { fn run() { tokio::spawn(async {}); } }"
+        )
+        .unwrap());
     }
 
     #[test]

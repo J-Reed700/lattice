@@ -43,4 +43,5 @@ pub mod updates;
 pub mod vault;
 pub mod web;
 
+pub mod learning;
 pub mod study;

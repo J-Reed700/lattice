@@ -1,0 +1,94 @@
+.learning-code-editor {
+  --code-bg: hsl(var(--surface));
+  --code-panel: hsl(var(--surface-raised));
+  --code-control: hsl(var(--surface));
+  --code-fg: hsl(var(--text-primary));
+  --code-gutter-bg: hsl(var(--surface-raised));
+  --code-gutter-fg: hsl(var(--text-muted));
+  --code-gutter-active: hsl(var(--text-secondary));
+  --code-divider: hsl(var(--border-subtle));
+  --code-active-line: hsl(var(--accent) / 0.045);
+  --code-selection: hsl(var(--accent) / 0.2);
+  --code-caret: hsl(var(--accent));
+  --code-match-bg: hsl(var(--accent) / 0.16);
+  --code-match-fg: hsl(var(--text-primary));
+  --code-invalid: #b42318;
+  --code-keyword: #7241b8;
+  --code-identifier: hsl(var(--text-primary));
+  --code-function: #165d9c;
+  --code-type: #15735b;
+  --code-string: #a34822;
+  --code-number: #9b4e91;
+  --code-comment: hsl(var(--text-muted));
+  --code-punctuation: #627080;
+  color: hsl(var(--text-primary));
+}
+
+:root[data-theme='dark'] .learning-code-editor,
+.dark .learning-code-editor {
+  --code-invalid: #ff8a84;
+  --code-keyword: #c9a5ff;
+  --code-function: #8fc5ff;
+  --code-type: #86d6b8;
+  --code-string: #f3b27d;
+  --code-number: #e6a8dc;
+  --code-punctuation: #a5b4c3;
+}
+
+.learning-code-editor__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12);
+}
+
+.learning-code-editor__language {
+  color: hsl(var(--accent));
+  background: hsl(var(--accent) / 0.09);
+}
+
+.learning-code-editor__readonly {
+  color: hsl(var(--text-muted));
+}
+
+.learning-code-editor__find {
+  color: hsl(var(--text-secondary));
+  background: hsl(var(--surface-raised));
+}
+
+.learning-code-editor__find:hover {
+  color: hsl(var(--text-primary));
+  background: hsl(var(--accent) / 0.1);
+}
+
+.learning-code-editor__find:focus-visible {
+  outline-color: hsl(var(--accent));
+}
+
+.learning-code-editor__find kbd {
+  border-color: hsl(var(--border-subtle));
+  color: hsl(var(--text-muted));
+}
+
+.learning-code-editor .cm-editor {
+  min-height: inherit;
+  outline: none;
+}
+
+.learning-code-editor .cm-editor.cm-focused .cm-cursor {
+  visibility: visible;
+}
+
+@media (max-width: 640px) {
+  .learning-code-editor .cm-line {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .learning-code-editor__find {
+    transition: none;
+  }
+}

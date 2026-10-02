@@ -13,7 +13,7 @@
         {
           "identifier": "desktop-e2e",
           "windows": ["main"],
-          "permissions": ["wdio-webdriver:default"]
+          "permissions": ["wdio-webdriver:default", "core:window:allow-set-focus"]
         }
       ]
     }

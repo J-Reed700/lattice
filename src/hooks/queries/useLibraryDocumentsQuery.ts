@@ -3,15 +3,17 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { useClustersQuery } from '@/hooks/queries/useClustersQuery';
+import { useCustomCollectionsQuery } from '@/hooks/queries/useCustomCollectionsQuery';
 import VaultAPI from '@/lib/api';
 import {
   filterLibraryDocuments,
   sortLibraryDocuments,
   useFileBrowserStore,
 } from '@/stores/fileBrowserStore';
-import type { DocumentMetadata } from '@/types/fileBrowser';
+import type { CustomCollection, DocumentMetadata } from '@/types/fileBrowser';
 
 export const LIBRARY_DOCUMENTS_QUERY_KEY = ['library-documents'] as const;
+const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 
 export function useLibraryDocumentsQuery() {
   const query = useQuery<DocumentMetadata[]>({
@@ -37,7 +39,8 @@ export function useLibraryDocumentsQuery() {
   const filterByType = useFileBrowserStore(state => state.filterByType);
   const filterBySource = useFileBrowserStore(state => state.filterBySource);
   const contentSearchMatches = useFileBrowserStore(state => state.contentSearchMatches);
-  const customCollections = useFileBrowserStore(state => state.customCollections);
+  const collectionsQuery = useCustomCollectionsQuery();
+  const customCollections = collectionsQuery.data ?? EMPTY_CUSTOM_COLLECTIONS;
   const scope = useFileBrowserStore(state => state.scope);
   // Themes are only fetched once the rail can show them; until the cache warms
   // a theme scope matches nothing, which is one render, not a wrong answer.
@@ -76,5 +79,9 @@ export function useLibraryDocumentsQuery() {
     isLoading: query.isLoading,
     error: query.error?.message ?? null,
     refreshFiles: query.refetch,
+    collections: customCollections,
+    collectionsError: collectionsQuery.error?.message ?? null,
+    collectionsLoading: collectionsQuery.isLoading,
+    refreshCollections: collectionsQuery.refetch,
   };
 }

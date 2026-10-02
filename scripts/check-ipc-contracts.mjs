@@ -12,6 +12,7 @@ const getSourceFile = host.getSourceFile.bind(host);
 const probe = `
 declare function invoke<T>(command: string, args?: unknown): Promise<T>;
 invoke<{ madeUpField: string }[]>('get_indexing_activities', { limit: 10 });
+invoke<{ madeUpField: string }[]>('get_learning_runtime_catalog');
 invoke<null>('remove_tag_from_document', { request: { documentId: 'doc', tagId: 'tag' } });
 invoke<null>('remove_tag_from_document', { request: { document_id: 'doc', tag_id: 'tag' } });
 invoke<null>('command_without_a_generated_contract');
@@ -31,7 +32,12 @@ const bindings = program.getSourceFile(path.join(root, 'src/lib/bindings.ts')), 
 visit(bindings, node => {
     if (!ts.isMethodDeclaration(node))
         return;
-    const response = node.type?.typeArguments?.[0]?.typeArguments?.[0];
+    const awaited = node.type?.typeArguments?.[0];
+    // Most commands return Promise<Result<T, ApiError>>, but infallible
+    // commands return Promise<T> directly. Preserve arrays and other raw types.
+    const response = awaited && ts.isTypeReferenceNode(awaited)
+        && awaited.typeName.getText(bindings) === 'Result'
+        ? awaited.typeArguments?.[0] : awaited;
     if (!response)
         return;
     visit(node.body, call => {
@@ -140,15 +146,16 @@ for (const source of program.getSourceFiles()) {
 }
 if (process.argv.includes('--self-test')) {
     const isProbe = item => item.location.startsWith('src/__contract_probe__.ts:');
-    if (report.mismatches.filter(isProbe).length !== 1 || report.uncovered.filter(isProbe).length !== 1
+    if (report.mismatches.filter(isProbe).length !== 2 || report.uncovered.filter(isProbe).length !== 1
+        || !report.mismatches.some(item => isProbe(item) && item.command === 'get_learning_runtime_catalog')
         || report.unrouted.filter(isProbe).length !== 1
         || !report.argumentNames.some(item => isProbe(item) && item.unexpected === 'request.documentId')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'request.document_id')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'deleteFile'))
         throw new Error('IPC guard failed to detect intentionally broken contracts');
     for (const key of ['mismatches', 'uncovered', 'unrouted', 'argumentNames']) report[key] = report[key].filter(item => !isProbe(item));
-    report.checked -= 4;
-    console.log('IPC guard rejects stale responses, missing contracts, unrouted commands, and incorrect nested request fields.');
+    report.checked -= 5;
+    console.log('IPC guard rejects stale wrapped and direct responses, missing contracts, unrouted commands, and incorrect nested request fields.');
 }
 if (process.argv.includes('--json'))
     console.log(JSON.stringify(report, null, 2));

@@ -44,7 +44,6 @@ pub struct ConversationWebSourceDto {
     pub excerpt: Option<String>,
     pub relevance_score: Option<f32>,
     pub added_at: String,
-
 }
 
 /// The archived text of a cited page — the permanent per-conversation record,
