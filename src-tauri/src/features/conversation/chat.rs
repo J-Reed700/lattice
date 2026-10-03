@@ -96,6 +96,7 @@ pub use self::turn_record::{
 };
 pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
+use crate::features::explorer::prompt::ExplorerTurn;
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -322,6 +323,11 @@ pub struct ToolPreferences {
     /// retrieval pipeline.
     #[serde(default)]
     pub focus_document_ids: Option<Vec<String>>,
+    /// The file open in Explorer and its selected lines, sent with each turn
+    /// of an Explorer conversation. Resolved against the conversation's stored
+    /// folder; ignored when it has none, and dropped when it does not resolve.
+    #[serde(default)]
+    pub explorer_focus: Option<crate::features::explorer::dto::ExplorerFocusDto>,
     /// The message already carries everything the turn may use: no retrieval of
     /// any kind runs, no tools are offered, and nothing is verified against
     /// sources. Backend callers only — it is never deserialized, so the
@@ -596,6 +602,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         force_kb_search: search_flags.force_kb_search || focus.is_requested(),
         ..search_flags
     };
+    // An Explorer conversation reads a folder beside the chat. The stored root
+    // is the boundary for every folder tool, and the open file the request
+    // names is checked against it here, once.
+    let explorer = ExplorerTurn::resolve(
+        container.db_pool(),
+        &conv_id,
+        tool_preferences
+            .as_ref()
+            .and_then(|preferences| preferences.explorer_focus.as_ref()),
+    )
+    .await;
 
     let conv_service = container.conversation_service();
 
@@ -639,15 +656,22 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     // The utility model infers what an unflagged turn needs (vault search, web,
     // follow-up) so an obvious case retrieves even with every toggle on its
     // default. Enable-only: it can add retrieval, never take any away.
-    let search_flags = infer_turn_intent_flags(
-        container,
-        &llm,
-        tool_preferences.as_ref(),
-        search_flags,
-        &validated_message,
-        &context,
-    )
-    .await;
+    //
+    // Not in an Explorer turn: its subject is the folder on screen, and the
+    // library and the web are read there only when the user turns them on.
+    let search_flags = if explorer.is_some() {
+        search_flags
+    } else {
+        infer_turn_intent_flags(
+            container,
+            &llm,
+            tool_preferences.as_ref(),
+            search_flags,
+            &validated_message,
+            &context,
+        )
+        .await
+    };
 
     // The files this turn brought in are read, not searched for. Retrieval can
     // miss them, and on a forced-web turn the vault is not searched at all, so
@@ -697,6 +721,26 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         .await
     };
     let attachment_tokens = attachments.prompt_tokens(&llm);
+    // The folder block is the reader's own material too, so it is budgeted
+    // before retrieval the way an attachment is: what it fills is not there
+    // for library passages. When the folder has an index, the block also
+    // carries what it finds for the question, which is how a model without
+    // tool calling gets past the open file. A closed-book turn searches
+    // nothing, the folder's index included.
+    let explorer_context = match &explorer {
+        Some(turn) => Some(
+            turn.context_block(
+                explorer_block_chars(max_tokens),
+                llm.supports_tool_calling() && !search_flags.closed_book,
+                (!search_flags.closed_book).then_some(validated_message.as_str()),
+            )
+            .await,
+        ),
+        None => None,
+    };
+    let explorer_tokens = explorer_context
+        .as_deref()
+        .map_or(0, |text| llm.count_tokens(text));
     if !attachments.is_empty() {
         let carried = attachments.carried_count();
         let unreadable = attachments.unreadable_names().len();
@@ -719,7 +763,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         max_tokens,
         question_tokens,
         context_history_tokens,
-        attachment_tokens,
+        attachment_tokens + explorer_tokens,
     );
     // A message that only points at a file ("reference the chat I attached")
     // has no subject of its own, so the web-query rewrite has to read one off
@@ -732,6 +776,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &conversation_document_context,
         &validated_message,
         search_flags,
+        explorer.is_some(),
         &router_settings,
         &recorder,
     )
@@ -992,6 +1037,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         retrieval.interpretation.query_type == QueryType::Greeting,
         search_flags,
     )
+    .with_explorer_context(explorer_context)
     .with_prior_evidence_context(prior_evidence_context)
     .with_attachment_context(attachment_context)
     .with_followup_context(followup_context_text)
@@ -1061,8 +1107,18 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     // Gated on `supports_tools` because a model without tool calling must not be
     // handed a schema it cannot use: telling it to call a tool that was never
     // supplied is its own failure mode.
-    let turn_tools =
+    let mut turn_tools =
         history_tools::tools_for_turn(selected_tools, search_flags.closed_book, supports_tools);
+    // The folder tools ride on top of whichever branch was chosen above, the
+    // way history access does: a turn grounded in library passages may still
+    // need to open the file the question is about. A closed-book turn reads
+    // nothing outside its message, the folder included.
+    if let Some(turn) = explorer
+        .as_ref()
+        .filter(|_| supports_tools && !search_flags.closed_book)
+    {
+        crate::features::explorer::tools::add_to_turn(&mut turn_tools, turn.has_folder_index());
+    }
     let tools_ref = (!turn_tools.is_empty()).then_some(turn_tools.as_slice());
     flow_metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
 
@@ -1174,6 +1230,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     generation_time_budget(search_flags),
                     std::mem::take(&mut retrieval.pages_read),
                     &focus,
+                    explorer.as_ref(),
                     &recorder,
                     memory_turn.as_ref().map(|turn| &turn.plan),
                     response_token_budget(max_tokens),
@@ -1437,6 +1494,13 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Characters the Explorer folder block may take: a sixth of the window, so
+/// the open file is visible on a small local model without crowding out the
+/// question, its history and the reply. Three characters a token errs short.
+fn explorer_block_chars(context_tokens: usize) -> usize {
+    (context_tokens / 6).clamp(500, 8_000) * 3
+}
+
 /// Generation allowance for one turn, shared by tool rounds and provider retries.
 /// Deep research reads many sources and reasons for much longer than a reply.
 fn generation_time_budget(search_flags: SearchFlags) -> Duration {
@@ -1686,17 +1750,26 @@ async fn resolve_router_decision(
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,
+    explorer: bool,
     router_settings: &RouterSettingsDto,
     recorder: &TurnRecorder,
 ) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
+    // In an Explorer turn the question is about the folder on screen, so the
+    // router's default "search the library" is not enough to start one.
+    let router_may_search = !explorer;
     // A closed-book turn has nothing to route: the pipeline returns before it
-    // reads this, and asking the router model would only spend time.
-    if search_flags.force_web_search || search_flags.closed_book {
+    // reads this, and asking the router model would only spend time. Nor does
+    // an Explorer turn the user did not point at the library.
+    if search_flags.force_web_search
+        || search_flags.closed_book
+        || (explorer && !search_flags.force_kb_search)
+    {
         return Ok((
             RouterDecisionOutcome {
                 action: RouterAction::NewSearch,
                 recent_doc_meta: None,
                 clarify_message: None,
+                router_may_search,
             },
             None,
         ));
@@ -1712,6 +1785,7 @@ async fn resolve_router_decision(
                 action: RouterAction::NewSearch,
                 recent_doc_meta,
                 clarify_message: None,
+                router_may_search,
             },
             None,
         ));
@@ -1743,6 +1817,7 @@ async fn resolve_router_decision(
             action: decision.action,
             recent_doc_meta,
             clarify_message: decision.clarify_question,
+            router_may_search,
         },
         Some(TurnRouterDto {
             action,
@@ -2206,6 +2281,7 @@ mod tests {
             turn_mode: Some("followup".to_string()),
             enabled_tools: None,
             focus_document_ids: None,
+            explorer_focus: None,
             closed_book: false,
         };
 
@@ -2228,6 +2304,7 @@ mod tests {
             turn_mode: Some("query".to_string()),
             enabled_tools: Some(vec!["wiki_search".to_string()]),
             focus_document_ids: None,
+            explorer_focus: None,
             closed_book: true,
         };
 
@@ -2261,6 +2338,7 @@ mod tests {
             turn_mode: None,
             enabled_tools: None,
             focus_document_ids: None,
+            explorer_focus: None,
             closed_book: false,
         };
         let chat = generation_time_budget(SearchFlags::from_preferences(Some(&prefs)));
@@ -2281,6 +2359,7 @@ mod tests {
             turn_mode: Some("query".to_string()),
             enabled_tools: None,
             focus_document_ids: None,
+            explorer_focus: None,
             closed_book: false,
         };
 

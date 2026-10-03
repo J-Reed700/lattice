@@ -151,6 +151,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     time_budget: Duration,
     pages_already_read: FetchMemory,
     focus: &FocusScope,
+    // The folder of an Explorer conversation; `None` for every other turn. The
+    // folder tools are only in `tools_ref` when this is set.
+    explorer: Option<&crate::features::explorer::prompt::ExplorerTurn>,
     recorder: &TurnRecorder,
     // A bounded typed plan from the shared context assembler, when bounded
     // conversation memory is on for this turn. When present it *replaces* the
@@ -707,8 +710,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 resolved_tool,
                                 tc.arguments.clone(),
                             );
+                            let explorer_turn = explorer.filter(|_| {
+                                crate::features::explorer::tools::is_explorer_tool(resolved_tool)
+                            });
                             let execution = async {
-                                if super::history_tools::is_history_tool(resolved_tool) {
+                                if let Some(turn) = explorer_turn {
+                                    // Cut to the same allowance as every other
+                                    // result, at a line boundary, with a note
+                                    // saying where to read on.
+                                    turn.execute_tool(call, result_allowance).await
+                                } else if super::history_tools::is_history_tool(resolved_tool) {
                                     let scope = super::history_tools::HistoryToolScope::new(
                                         conv_id,
                                         super::history_tools::HistoryToolBudget {
@@ -1359,7 +1370,7 @@ fn tool_step_kind(tool: &str) -> TurnStepKind {
 /// rest is noise a reader cannot act on, and `TurnRecorder` clips whatever gets
 /// through.
 fn tool_argument_summary(arguments: &serde_json::Value) -> String {
-    const INTERESTING: [&str; 4] = ["query", "url", "document_id", "page"];
+    const INTERESTING: [&str; 6] = ["query", "url", "document_id", "page", "path", "pattern"];
     let Some(object) = arguments.as_object() else {
         return arguments.to_string();
     };
@@ -1474,6 +1485,9 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
         "get_document" => "Opening a document".to_string(),
         "search_conversation_history" | "read_conversation_history" => {
             "Looking back through this conversation".to_string()
+        }
+        other if crate::features::explorer::tools::is_explorer_tool(other) => {
+            crate::features::explorer::tools::activity_label(other, arguments)
         }
         other => format!("Running {other}"),
     }

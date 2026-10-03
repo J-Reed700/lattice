@@ -6,6 +6,7 @@ import { VaultAPI } from '@/lib/api';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import type { GenerationOutcome } from '@/stores/conversationsStore.types';
 import { conversationUiStore } from '@/stores/conversationUiStore';
+import { currentExplorerFocus, explorerStore } from '@/stores/explorerStore';
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
@@ -36,6 +37,24 @@ const setUiError = (error: unknown): void => {
 const isUserInitiatedCancellation = (requestId: string, errorCode?: string): boolean =>
   pendingCancellationRequests.has(requestId)
   && (errorCode === ErrorCode.INVALID_STATE || errorCode === ErrorCode.INTERNAL_ERROR);
+
+/**
+ * A turn from an Explorer thread carries what the Explorer shows: the open
+ * file and the selected lines. Only while the Explorer is on that thread's
+ * folder, since the paths are relative to it.
+ */
+const withExplorerFocus = (
+  conversation: Conversation | undefined,
+  toolPreferences: ToolPreferences | undefined
+): ToolPreferences | undefined => {
+  const root = conversation?.explorerRoot;
+  if (!root || explorerStore.getState().root?.root !== root) return toolPreferences;
+  const focus = currentExplorerFocus();
+  if (!focus) return toolPreferences;
+  // Every switch is optional on the wire: a turn sent without preferences
+  // (a regenerate from the message menu) keeps the backend's defaults.
+  return { ...toolPreferences, explorerFocus: focus } as ToolPreferences;
+};
 
 interface TurnLifecycleDependencies {
   queryClient: QueryClient;
@@ -411,11 +430,20 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     attachmentDocumentIds?: string[]
   ) => {
     const state = conversationUiStore.getState();
-    const requestConversationId = conversationId ?? state.activeConversationId ?? conversations[0]?.id ?? null;
+    // The fallback is a Chat conversation: an Explorer thread is never
+    // continued without its folder.
+    const requestConversationId = conversationId
+      ?? state.activeConversationId
+      ?? conversations.find(conversation => !conversation.explorerRoot)?.id
+      ?? null;
     if (!requestConversationId) {
       setUiError('No active conversation selected. Create or select a conversation first.');
       return;
     }
+    toolPreferences = withExplorerFocus(
+      conversations.find(conversation => conversation.id === requestConversationId),
+      toolPreferences
+    );
     await runGeneration({
       conversationId: requestConversationId,
       content,
@@ -479,14 +507,18 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       conversationId,
       content: lastUser?.content ?? '',
       showUserBubble: false,
-      invoke: requestId => VaultAPI.regenerateResponse(conversationId, toolPreferences, requestId),
+      invoke: requestId => VaultAPI.regenerateResponse(
+        conversationId,
+        withExplorerFocus(conversations.find(conversation => conversation.id === conversationId), toolPreferences),
+        requestId
+      ),
       onFailure: () => {
         if (lastUser?.content) {
           conversationUiStore.setState({ composerDraft: lastUser.content });
         }
       },
     });
-  }, [queryClient, runGeneration]);
+  }, [conversations, queryClient, runGeneration]);
 
   /**
    * Drop every message after `messageId` (and it too when `inclusive`).

@@ -15,7 +15,7 @@ vi.mock('./CanvasPanel', () => ({ default: () => <div data-testid="canvas-panel"
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), submit: vi.fn(),
-  documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(),
+  documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/pendingSaves')>(),
@@ -31,6 +31,9 @@ vi.mock('@/lib/api', () => ({ default: {
   submitLearningAttempt: mocks.submit,
   getLearningPlan: mocks.plan,
   getLearningMemory: mocks.memory,
+  // Flashcards share the landing page; an unconfigured mock means "no decks".
+  listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
+  getStudyDeck: mocks.deck,
 } }));
 vi.mock('@/hooks/queries/useLibraryDocumentsQuery', () => ({ useLibraryDocumentsQuery: () => ({ documents: mocks.documents(), isLoading: false, error: null, refreshFiles: vi.fn() }) }));
 
@@ -248,5 +251,27 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('button', { name: /A thoughtful course/ })).toBeVisible();
     expect(mocks.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists flashcard decks below programs and opens one by its deck link', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    const deck = { id: 'deck-1', title: 'Cell biology', focus: 'mitochondria', studyGoal: '', modelName: 'test', createdAt: 0, cards: [] };
+    mocks.decks.mockResolvedValue(ok([{ ...deck, cardCount: 3, dueCount: 1, quizAttempts: 0, quizCorrect: 0 }]));
+    mocks.deck.mockResolvedValue(ok(deck));
+    show();
+    expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
+    await user.click(await screen.findByRole('button', { name: /Cell biology/ }));
+    expect(await screen.findByRole('heading', { name: 'Cell biology' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Studio' }));
+    expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
+  });
+
+  it('opens a deck straight from a /studio?deck= link', async () => {
+    mocks.list.mockResolvedValue(ok([]));
+    mocks.deck.mockResolvedValue(ok({ id: 'deck-1', title: 'Cell biology', focus: '', studyGoal: '', modelName: 'test', createdAt: 0, cards: [] }));
+    show('/studio?deck=deck-1');
+    expect(await screen.findByRole('heading', { name: 'Cell biology' })).toBeVisible();
+    expect(mocks.deck).toHaveBeenCalledWith('deck-1');
   });
 });

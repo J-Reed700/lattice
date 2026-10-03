@@ -18,6 +18,7 @@ pub mod credentials;
 pub mod daily_notes;
 pub mod download;
 pub mod embedding;
+pub mod explorer;
 pub mod extraction;
 pub mod favorites;
 pub mod file;

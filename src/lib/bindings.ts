@@ -10,6 +10,103 @@
 
 
 export const commands = {
+async explorerResolveRoot(path: string) : Promise<Result<ExplorerRootDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_resolve_root", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerListDir(root: string, path: string) : Promise<Result<ExplorerListingDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_list_dir", { root, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerReadFile(root: string, path: string) : Promise<Result<ExplorerFileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_read_file", { root, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerSearch(root: string, query: string, regex: boolean, pathPrefix: string | null, maxResults: number | null) : Promise<Result<ExplorerSearchResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_search", { root, query, regex, pathPrefix, maxResults }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Binds a conversation to a folder (stored canonical) or, with `None`,
+ * unbinds it.
+ */
+async setConversationExplorerRoot(conversationId: string, root: string | null) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_conversation_explorer_root", { conversationId, root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the folder's index and starts or resumes indexing it. Any other
+ * open folder is closed first.
+ */
+async explorerIndexOpen(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_open", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Closes the open folder's index: its watcher, task and database.
+ */
+async explorerIndexClose() : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_close") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerIndexStatus(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_status", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wipes the folder's index and starts over.
+ */
+async explorerIndexRebuild(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_rebuild", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes the folder's index directory, closing it first if it is open.
+ */
+async explorerIndexForget(root: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_forget", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_study_decks") };
@@ -4881,7 +4978,13 @@ forkedFromConversationId: string | null;
  * The parent's message the branch was taken at, when one was named.
  * `None` means the whole thread was copied.
  */
-forkedFromMessageId: string | null }
+forkedFromMessageId: string | null;
+/**
+ * The folder an Explorer thread is bound to, as a canonical absolute
+ * path. Set only on Explorer threads; Chat leaves them out of its list
+ * so a thread is never continued without its folder.
+ */
+explorerRoot: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
@@ -5472,6 +5575,58 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type ExplorerEntryDto = { name: string; path: string; kind: ExplorerEntryKind;
+/**
+ * Bytes on disk; `None` for directories.
+ */
+size: number | null;
+/**
+ * Matched by `.gitignore` (or sits inside something that is). The tree
+ * shows these dimmed; search and the model's tools leave them out.
+ */
+ignored: boolean }
+export type ExplorerEntryKind = "directory" | "file"
+export type ExplorerFileDto = { root: string; path: string;
+/**
+ * `None` when the file is binary or over the size cap.
+ */
+text: string | null; lineCount: number; sizeBytes: number; language: string | null; binary: boolean; tooLarge: boolean }
+/**
+ * What the user is looking at when they send: the open file and the
+ * selected lines. Rides along on each Explorer turn.
+ */
+export type ExplorerFocusDto = { openPath: string | null; selection: ExplorerLineRangeDto | null }
+/**
+ * 1-based, inclusive.
+ */
+export type ExplorerLineRangeDto = { startLine: number; endLine: number }
+/**
+ * One level of a directory: directories first, then files, each sorted
+ * case-insensitively.
+ */
+export type ExplorerListingDto = { root: string; path: string; entries: ExplorerEntryDto[] }
+/**
+ * A folder the user chose, after canonicalisation.
+ */
+export type ExplorerRootDto = { root: string;
+/**
+ * The folder's own name, for the scope bar.
+ */
+name: string }
+export type ExplorerSearchMatchDto = { path: string;
+/**
+ * 1-based.
+ */
+line: number;
+/**
+ * 1-based, in characters.
+ */
+column: number; preview: string }
+export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
+/**
+ * A bound was hit (results, files, bytes or time), so there may be more.
+ */
+truncated: boolean; filesScanned: number }
 export type ExportCsvRequestDto = { outputPath: string }
 export type ExportHtmlRequestDto = { outputDir: string }
 export type ExportJsonRequestDto = {
@@ -5541,6 +5696,36 @@ path: string }
  */
 export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * Where the open folder's index stands.
+ */
+export type FolderIndexState =
+/**
+ * Walking the folder and comparing it with what is already indexed.
+ */
+"scanning" |
+/**
+ * Embedding the files that are new or changed.
+ */
+"indexing" | "ready" |
+/**
+ * More indexable files than the cap; nothing was embedded.
+ */
+"tooLarge" |
+/**
+ * The filesystem root, the home folder or an ancestor of it, or a
+ * folder that holds Lattice's own data.
+ */
+"refused" |
+/**
+ * No active embedding model.
+ */
+"unavailable" | "error"
+/**
+ * The index of one open folder. `index_root` differs from `root` when the
+ * folder sits inside one that already has an index and that index is reused.
+ */
+export type FolderIndexStatusDto = { root: string; indexRoot: string; state: FolderIndexState; filesTotal: number; filesIndexed: number; chunks: number; message: string | null }
 export type ForkConversationRequestDto = { conversationId: string;
 /**
  * Copy messages up to and including this id. `None` copies everything.
@@ -7633,7 +7818,13 @@ export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; de
  * them; ids from outside it are dropped. See `focus_scope` in the
  * retrieval pipeline.
  */
-focusDocumentIds?: string[] | null }
+focusDocumentIds?: string[] | null;
+/**
+ * The file open in Explorer and its selected lines, sent with each turn
+ * of an Explorer conversation. Resolved against the conversation's stored
+ * folder; ignored when it has none, and dropped when it does not resolve.
+ */
+explorerFocus?: ExplorerFocusDto | null }
 /**
  * The transcript of one audio file.
  */

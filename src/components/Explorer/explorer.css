@@ -1,0 +1,75 @@
+/* The Explorer's file view. Same code palette as the Studio lab editor, so
+   code reads the same wherever the app shows it. */
+.explorer-code {
+  --code-bg: hsl(var(--bg));
+  --code-fg: hsl(var(--text-primary));
+  --code-gutter-fg: hsl(var(--text-muted));
+  --code-selection: hsl(var(--accent) / 0.2);
+  --code-keyword: #7241b8;
+  --code-function: #165d9c;
+  --code-type: #15735b;
+  --code-string: #a34822;
+  --code-number: #9b4e91;
+  --code-comment: hsl(var(--text-muted));
+  --code-punctuation: #627080;
+}
+
+:root[data-theme='dark'] .explorer-code,
+.dark .explorer-code {
+  --code-keyword: #c9a5ff;
+  --code-function: #8fc5ff;
+  --code-type: #86d6b8;
+  --code-string: #f3b27d;
+  --code-number: #e6a8dc;
+  --code-punctuation: #a5b4c3;
+}
+
+.explorer-code .cm-editor {
+  height: 100%;
+}
+
+/* Lines the reader picked: quiet, they already know which. */
+.explorer-code .cm-explorer-selected {
+  background: hsl(var(--text-primary) / 0.06);
+}
+
+/* Lines an answer pointed at: the accent, with a rule down the edge. */
+.explorer-code .cm-explorer-highlight {
+  background: hsl(var(--accent) / 0.12);
+  box-shadow: inset 2px 0 0 hsl(var(--accent));
+}
+
+/* The split handles between the three columns. The grab area is wider than
+   the line it draws, so the edge is easy to catch. */
+.explorer-split {
+  position: relative;
+  z-index: 1;
+  width: 0;
+  flex: 0 0 auto;
+}
+.explorer-split > div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.explorer-split > div::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.explorer-split > div:hover::after,
+.explorer-split > div:focus-visible::after,
+.explorer-split > div[data-dragging]::after {
+  background: hsl(var(--accent) / 0.75);
+}

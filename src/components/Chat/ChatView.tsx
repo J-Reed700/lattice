@@ -10,6 +10,7 @@ import { ChatReaderPane } from './reader/ChatReaderPane';
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
+import { conversationUiStore } from '../../stores/conversationUiStore';
 import { toast } from '../../stores/toastStore';
 import { scrollToMessage } from '../../utils/chatMessageNavigation';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
@@ -91,6 +92,17 @@ export function ChatView() {
   useEffect(() => {
     writeSidebarCollapsed(sidebarCollapsed);
   }, [sidebarCollapsed]);
+
+  // Chat never shows an Explorer thread: it would be continued without its
+  // folder. Coming back from the Explorer lands on the newest Chat
+  // conversation instead, or on none.
+  const activeExplorerRoot = conversations.find((conversation) => conversation.id === activeConversationId)?.explorerRoot;
+  useEffect(() => {
+    if (!activeExplorerRoot) return;
+    const next = conversations.find((conversation) => !conversation.explorerRoot);
+    if (next) void selectConversation(next.id);
+    else conversationUiStore.setState({ activeConversationId: null });
+  }, [activeExplorerRoot, conversations, selectConversation]);
 
   useEffect(() => {
     const element = rowRef.current;

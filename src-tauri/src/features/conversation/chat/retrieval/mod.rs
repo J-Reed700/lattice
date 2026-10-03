@@ -144,6 +144,11 @@ pub(super) struct RouterDecisionOutcome {
     pub(super) action: RouterAction,
     pub(super) recent_doc_meta: Option<RecentDocumentMetadata>,
     pub(super) clarify_message: Option<String>,
+    /// Whether the router's own call (a new search, or the last document) may
+    /// start a vault search. False in Explorer turns: the folder is the
+    /// subject there, and the library is read when the knowledge-base or web
+    /// toggle asks for it.
+    pub(super) router_may_search: bool,
 }
 
 #[derive(Debug)]
@@ -266,10 +271,11 @@ impl RetrievalPlan {
             // questions the user's own documents covered from the web alone.
             // A closed-book turn never reaches this plan.
             should_search_kb: search_flags.force_kb_search
-                || matches!(
-                    route_action,
-                    RouterAction::NewSearch | RouterAction::UseLastDocument
-                ),
+                || ((router_decision.router_may_search || search_flags.force_web_search)
+                    && matches!(
+                        route_action,
+                        RouterAction::NewSearch | RouterAction::UseLastDocument
+                    )),
             should_search_web: search_flags.force_web_search,
             should_search_wiki: search_flags.force_wiki_search,
             short_circuit_response,

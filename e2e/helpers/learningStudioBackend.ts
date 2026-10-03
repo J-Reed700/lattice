@@ -6,6 +6,7 @@ import type {
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
   StudyCardDto,
+  StudyDeckSummaryDto,
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
@@ -1896,6 +1897,23 @@ export async function installLearningStudioBackend(page: Page) {
           (item) => item.id !== request.draftId,
         );
         return copyMemory();
+      }
+      // Studio's Flashcards section lists every deck; the backend includes
+      // program decks, so the program's recall deck shows up here too.
+      if (command === "plugin:study|list_study_decks") {
+        const deck = memory.studyDeck;
+        if (!deck) return [];
+        const summary: StudyDeckSummaryDto = {
+          id: deck.id,
+          title: deck.title,
+          focus: deck.focus,
+          createdAt: deck.createdAt,
+          cardCount: deck.cards.length,
+          dueCount: deck.cards.filter((item) => item.dueAt <= Date.now()).length,
+          quizAttempts: 0,
+          quizCorrect: 0,
+        };
+        return [summary];
       }
       if (command === "plugin:study|review_study_card") {
         const request = getRequest<{

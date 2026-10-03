@@ -9,6 +9,9 @@ pub(super) struct PromptMessageBuilder<'a> {
     is_greeting: bool,
     force_kb_search: bool,
     force_web_search: bool,
+    /// The folder an Explorer conversation reads: its top level, the open
+    /// file and selection, and the rule for pointing at lines.
+    explorer_context: Option<String>,
     /// The files the reader attached to this message, already carried whole.
     attachment_context: Option<String>,
     followup_context: Option<String>,
@@ -40,6 +43,7 @@ impl<'a> PromptMessageBuilder<'a> {
             is_greeting,
             force_kb_search: search_flags.force_kb_search,
             force_web_search: search_flags.force_web_search,
+            explorer_context: None,
             attachment_context: None,
             followup_context: None,
             prior_evidence_context: None,
@@ -51,6 +55,13 @@ impl<'a> PromptMessageBuilder<'a> {
             kb_attempted: false,
             thin_kb_reason: None,
         }
+    }
+
+    /// The Explorer folder block. It leads the context: the folder is what the
+    /// user is looking at, and the library and the web are outside knowledge.
+    pub(super) fn with_explorer_context(mut self, explorer_context: Option<String>) -> Self {
+        self.explorer_context = explorer_context;
+        self
     }
 
     /// The files attached to this message.
@@ -133,6 +144,7 @@ impl<'a> PromptMessageBuilder<'a> {
         // attachment leads and the earlier document is one section among
         // several, because "here it is" means the new file, not the old one.
         if self.attachment_context.is_none()
+            && self.explorer_context.is_none()
             && self.prior_evidence_context.is_none()
             && self.web_context.is_none()
             && self.linked_web_sources_context.is_none()
@@ -161,6 +173,9 @@ impl<'a> PromptMessageBuilder<'a> {
              Earlier assistant claims alone are not source evidence; use the numbered original passages \
              supplied now, or retrieve the original source.".to_string()
         ];
+        if let Some(context) = self.explorer_context.as_ref() {
+            context_sections.push(context.clone());
+        }
         if let Some(context) = self.prior_evidence_context.as_ref() {
             context_sections.push(context.clone());
         }

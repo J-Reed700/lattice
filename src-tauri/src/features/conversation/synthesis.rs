@@ -726,6 +726,7 @@ pub async fn synthesize_journal_entries_impl(
         turn_mode: Some("followup".to_string()),
         enabled_tools: None,
         focus_document_ids: None,
+        explorer_focus: None,
         // The prompts say "use only the provided entry transcripts", and the
         // turn runs in a scratch conversation that belongs to no space the
         // entries came from. Anything retrieved for it is by definition from

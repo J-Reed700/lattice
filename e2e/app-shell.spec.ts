@@ -684,7 +684,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
   expect(errors).toEqual([]);
 });
 
-test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
+test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
   await page.addInitScript(settings => {
     const source = { chunkId: 'biology-chunk', documentId: 'biology', fileName: 'biology.md', filePath: '/library/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' };
     const original = {
@@ -703,6 +703,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
         return settings;
       }
       if (command === 'plugin:health|initialize_database') return undefined;
+      if (command === 'plugin:learning|list_learning_programs') return [];
       if (command === 'plugin:download|list_downloads' || command === 'plugin:batch|get_batch_history') return [];
       if (command === 'plugin:file|list_all_documents') return [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }];
       if (command === 'plugin:file|read_file_content') {
@@ -741,8 +742,8 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   }, makeAppSettings());
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
-  await page.goto('/study');
-  await expect(page.getByRole('button', { name: 'Study', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.goto('/studio');
+  await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByText('Put what you learn into practice.')).toBeVisible();
   await page.getByRole('button', { name: 'New deck', exact: true }).click();
   await page.getByLabel('Deck title').fill('Biology review');
@@ -753,13 +754,13 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   await page.screenshot({ path: '/tmp/lattice-study-new-dark.png' });
   await page.getByRole('button', { name: 'Generate deck' }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Study', exact: true }).click();
+  await page.getByRole('button', { name: 'Studio', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Generating 2 questions' })).toBeVisible();
   await expect(page.getByText('Put what you learn into practice.')).toHaveCount(0);
   await page.screenshot({ path: '/tmp/lattice-study-background-dark.png' });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.evaluate(() => window.dispatchEvent(new Event('test:finish-generation')));
-  await page.getByRole('button', { name: 'Study', exact: true }).click();
+  await page.getByRole('button', { name: 'Studio', exact: true }).click();
   await page.getByRole('button').filter({ hasText: 'Biology review' }).click();
   await expect(page.getByRole('heading', { name: 'Biology review', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Review due (2)' }).click();

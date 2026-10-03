@@ -4,13 +4,13 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
 
-import { StudyGenerations } from './StudyGenerations';
-import { useGenerateStudyDeck, useStudyDocuments, useStudyGenerations } from './useStudy';
+import { FlashcardGenerations } from './FlashcardGenerations';
+import { useGenerateFlashcardDeck, useFlashcardDocuments, useFlashcardGenerations } from './useFlashcards';
 
-export function NewStudyDeck({ onCreated, onCancel }: { onCreated: (id: string) => void; onCancel: () => void }) {
-  const documents = useStudyDocuments();
-  const generate = useGenerateStudyDeck();
-  const generations = useStudyGenerations();
+export function NewFlashcardDeck({ onCreated, onCancel }: { onCreated: (id: string) => void; onCancel: () => void }) {
+  const documents = useFlashcardDocuments();
+  const generate = useGenerateFlashcardDeck();
+  const generations = useFlashcardGenerations();
   const [title, setTitle] = useState('New study deck');
   const [focus, setFocus] = useState('');
   const [studyGoal, setStudyGoal] = useState('');
@@ -19,7 +19,7 @@ export function NewStudyDeck({ onCreated, onCancel }: { onCreated: (id: string) 
   const [count, setCount] = useState(6);
   const available = useMemo(() => (documents.data ?? []).filter(doc => `${doc.fileName} ${doc.filePath}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => a.fileName.localeCompare(b.fileName)), [documents.data, search]);
   if (!generate.isPending && generations.some(item => item.status === 'pending')) return <>
-    <PageHeader title="Study" /><StudyGenerations /><Button variant="ghost" onClick={onCancel}>All decks</Button>
+    <PageHeader title="Flashcards" /><FlashcardGenerations /><Button variant="ghost" onClick={onCancel}>Back to Studio</Button>
   </>;
   return <>
     <PageHeader title="New deck" />

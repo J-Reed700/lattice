@@ -33,9 +33,11 @@ import { TurnRecord } from './turn/TurnRecord';
 import { verificationSummaryLine } from './verificationSummary';
 import { useChatReaderStore } from '../../stores/chatReaderStore';
 import { useConversationsStore } from '../../stores/conversationsStore';
+import { useExplorerStore } from '../../stores/explorerStore';
 import { normalizeAssistantMarkdown } from '../../utils/assistantMarkdown';
 import { createCitationMap } from '../../utils/citations';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
+import { useRevealStreamingRef } from '../Explorer/useRevealStreamingRef';
 import { TiptapViewer } from '../TiptapEditor';
 
 import type { GenerationOutcome } from '../../stores/conversationsStore.types';
@@ -94,6 +96,7 @@ export const Message = memo(({
   const errorMessage = 'error' in message ? message.error : undefined;
 
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
+  const revealInExplorer = useExplorerStore((s) => s.reveal);
   const messageBookmarkMap = useConversationsStore((s) => s.messageBookmarkMap);
   const messageVerificationMap = useConversationsStore((s) => s.messageVerification);
   const bookmarkMessage = useConversationsStore((s) => s.bookmarkMessage);
@@ -231,6 +234,11 @@ export const Message = memo(({
   const conversationSpaceId = useConversationsStore(
     (s) => s.conversations.find((c) => c.id === conversationId)?.spaceId ?? null,
   );
+  // An Explorer thread: its answers' line references open the folder's files.
+  const explorerRoot = useConversationsStore(
+    (s) => s.conversations.find((c) => c.id === conversationId)?.explorerRoot ?? null,
+  );
+  const showsCodeRefs = !isUser && Boolean(explorerRoot);
   const isBusy = Boolean(conversationId && inFlightGenerations.has(conversationId));
 
   // In flight, the live event stream is the trace; once persisted, the message
@@ -407,6 +415,7 @@ export const Message = memo(({
     () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
     [isUser, message.content]
   );
+  useRevealStreamingRef(normalizedMarkdownContent, showsCodeRefs && isPending);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(normalizedMarkdownContent);
@@ -635,6 +644,18 @@ export const Message = memo(({
       setCitationHover(null);
       const at = Number(chip.dataset.citeAt);
       openSource(source, Number.isInteger(at) ? at : null);
+      return;
+    }
+
+    const codeRef =
+      showsCodeRefs && event.target instanceof Element ? event.target.closest<HTMLElement>('[data-code-ref]') : null;
+    if (codeRef) {
+      const startLine = Number(codeRef.dataset.codeRefStart);
+      const endLine = Number(codeRef.dataset.codeRefEnd);
+      if (codeRef.dataset.codeRef && Number.isInteger(startLine) && Number.isInteger(endLine)) {
+        event.preventDefault();
+        revealInExplorer(codeRef.dataset.codeRef, { startLine, endLine });
+      }
       return;
     }
 
@@ -972,6 +993,7 @@ export const Message = memo(({
             content={normalizedMarkdownContent}
             citationNumbers={citationNumbers}
             claims={isUser ? undefined : claimVerdicts}
+            codeRefs={showsCodeRefs}
           />
           {/* Streaming cursor — spec §3.7 */}
           {!isUser && isPending && (

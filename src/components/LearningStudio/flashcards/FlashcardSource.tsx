@@ -14,7 +14,7 @@ function safeExternalHref(value?: string | null) {
   }
 }
 
-export function StudySource({ sources }: { sources: StudySourceDto[] }) {
+export function FlashcardSource({ sources }: { sources: StudySourceDto[] }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   if (!sources.length) return null;
   return (

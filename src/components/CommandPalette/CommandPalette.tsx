@@ -5,15 +5,16 @@ import { Command } from 'cmdk'
 import {
   Bookmark,
   BookOpen,
-  GraduationCap,
   Clock,
   FilePlus,
   FileText,
   FolderOpen,
   FolderPlus,
+  FolderTree,
   Globe,
   Home,
   Keyboard,
+  Layers,
   MessageCircle,
   MessageSquarePlus,
   NotebookPen,
@@ -409,8 +410,9 @@ export function CommandPalette() {
                     <CommandItem icon={NotebookPen} label="Journal" shortcut={`${cmd}3`} onSelect={goTo('/journals')} />
                     <CommandItem icon={MessageCircle} label="Chat" shortcut={`${cmd}4`} onSelect={goTo('/chat')} />
                     <CommandItem icon={Bookmark} label="References" shortcut={`${cmd}5`} onSelect={goTo('/references')} />
-                    <CommandItem icon={GraduationCap} label="Study" shortcut={`${cmd}6`} onSelect={goTo('/study')} />
+                    <CommandItem icon={FolderTree} label="Explorer" shortcut={`${cmd}6`} onSelect={goTo('/explorer')} />
                     <CommandItem icon={BookOpen} label="Studio" shortcut={`${cmd}7`} onSelect={goTo('/studio')} />
+                    <CommandItem icon={Layers} label="Flashcards" onSelect={goTo('/studio?section=flashcards')} />
                     <CommandItem icon={Plus} label="Import" shortcut={`${cmd}I`} onSelect={goToImport('files')} />
                     <CommandItem icon={SettingsIcon} label="Settings" shortcut={`${cmd},`} onSelect={goTo('/settings')} />
                   </Command.Group>

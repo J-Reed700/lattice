@@ -102,6 +102,7 @@ fn test_conversation_dto_complete() {
         compaction: None,
         forked_from_conversation_id: None,
         forked_from_message_id: None,
+        explorer_root: None,
     };
 
     assert_eq!(dto.id, "conv-111");

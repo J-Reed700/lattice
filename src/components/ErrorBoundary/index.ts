@@ -17,6 +17,7 @@ export {
   SearchSectionErrorBoundary,
   FilesSectionErrorBoundary,
   QASectionErrorBoundary,
+  ExplorerSectionErrorBoundary,
   SettingsSectionErrorBoundary,
   DailySectionErrorBoundary,
 } from './SectionErrorBoundary';

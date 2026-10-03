@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 import type { SearchResult } from './searchResult';
+import type { ExplorerFocusDto } from '../lib/bindings';
 
 /**
  * SourceWithMetadata - Rich source metadata for citations
@@ -191,6 +192,12 @@ export interface ToolPreferences {
    * narrow what a chat may read.
    */
   focusDocumentIds?: string[];
+  /**
+   * What the Explorer has open: the file and the selected lines. Sent only by
+   * a conversation bound to a folder; the backend checks it against that
+   * conversation's stored root and ignores it otherwise.
+   */
+  explorerFocus?: ExplorerFocusDto | null;
 }
 
 /**
@@ -256,6 +263,11 @@ export interface Conversation {
   forkedFromConversationId?: string | null;
   /** The parent turn the branch was taken at, when one was named. */
   forkedFromMessageId?: string | null;
+  /**
+   * The folder this conversation is bound to, when it is an Explorer thread.
+   * Such threads live in the Explorer and are left out of Chat.
+   */
+  explorerRoot?: string | null;
   messages?: ConversationMessage[];
 }
 

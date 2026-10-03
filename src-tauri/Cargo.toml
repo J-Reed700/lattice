@@ -196,6 +196,7 @@ bip39 = "2.2"
 tar = "0.4"
 zstd = "0.14"
 walkdir = "2.5"
+ignore = "0.4"
 base64 = "0.23"
 
 # Platform-specific Metal GPU support for macOS (M-series chips).

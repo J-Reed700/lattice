@@ -311,6 +311,12 @@ fn is_claim_candidate(sentence: &str) -> bool {
     if s.ends_with('?') {
         return false;
     }
+    // A sentence that points at lines in an Explorer folder (`src/main.rs:10`)
+    // is about the file on the user's screen, not about the retrieved
+    // passages, so judging it against them can only produce a false verdict.
+    if crate::features::explorer::line_refs::contains_line_reference(s) {
+        return false;
+    }
     // The app's own line, appended when the model hit its output limit. The
     // splitter stops at its full stop, so compare the words, not the wrapper —
     // and the emphasis around it is gone by now, so match either form.
@@ -963,5 +969,21 @@ mod tests {
             ..plain
         };
         assert!(needs_judge(&weak));
+    }
+
+    /// Explorer answers point at lines in the folder. Those sentences are
+    /// about the file on screen, so the sources this turn retrieved cannot
+    /// judge them, even when one happens to share their words.
+    #[test]
+    fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
+        let passage =
+            source("The main function prints a greeting and exits with status zero after setup.");
+        let claims = lexical_pass(
+            "The main function prints a greeting and exits with status zero, see `src/main.rs:1-3` [1]. \
+             The main function prints a greeting and exits with status zero after setup [1].",
+            std::slice::from_ref(&passage),
+        );
+        assert_eq!(claims.len(), 1, "{claims:?}");
+        assert!(!claims[0].sentence.contains("src/main.rs"));
     }
 }

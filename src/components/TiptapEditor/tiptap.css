@@ -167,6 +167,18 @@
   border: none;
 }
 
+/* A line reference in an Explorer answer (`src/foo.rs:10-24`): the code span
+   takes the accent so it reads as something to click, and nothing else moves. */
+.tiptap-viewer :not(pre) > code:has(> .code-ref-chip) {
+  background: hsl(var(--accent) / 0.1);
+  color: hsl(var(--accent));
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.tiptap-viewer :not(pre) > code:has(> .code-ref-chip):hover {
+  background: hsl(var(--accent) / 0.18);
+}
+
 /* ------------------------------------------------------------------ *
  * 5. Code blocks
  * ------------------------------------------------------------------ */

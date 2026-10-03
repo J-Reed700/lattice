@@ -18,6 +18,7 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
         action: RouterAction::Clarify,
         recent_doc_meta: None,
         clarify_message: None,
+        router_may_search: true,
     };
     let flags = SearchFlags {
         force_kb_search: false,
@@ -590,6 +591,7 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
         action: RouterAction::NewSearch,
         recent_doc_meta: None,
         clarify_message: None,
+        router_may_search: true,
     };
     let plan =
         RetrievalPlan::from_router(&RouterSettingsDto::default(), &decision, "latest", merged);
@@ -597,4 +599,31 @@ fn an_intent_that_needs_the_web_still_searches_the_vault() {
     assert!(plan.should_search_kb);
     assert!(plan.should_search_web);
     assert!(kb_can_run_alongside_external(merged));
+}
+
+/// An Explorer turn is about the folder on screen. The router's default "new
+/// search" no longer reaches into the library by itself; the knowledge-base
+/// toggle does, and so does the web toggle, because web adds to the vault and
+/// never replaces it.
+#[test]
+fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
+    let explorer_decision = RouterDecisionOutcome {
+        action: RouterAction::NewSearch,
+        recent_doc_meta: None,
+        clarify_message: None,
+        router_may_search: false,
+    };
+    let settings = RouterSettingsDto::default();
+    let plan = |flags| {
+        RetrievalPlan::from_router(&settings, &explorer_decision, "what does main do", flags)
+    };
+
+    let untoggled = plan(flags(false, false, false, false));
+    assert!(!untoggled.should_search_kb);
+    assert!(!untoggled.should_search_web);
+
+    assert!(plan(flags(true, false, false, false)).should_search_kb);
+    let web = plan(flags(false, true, false, false));
+    assert!(web.should_search_kb);
+    assert!(web.should_search_web);
 }

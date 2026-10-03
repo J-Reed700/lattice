@@ -45,6 +45,7 @@ impl ConversationDtoMapper {
             // reads it from the row and fills these in.
             forked_from_conversation_id: None,
             forked_from_message_id: None,
+            explorer_root: None,
         }
     }
 
