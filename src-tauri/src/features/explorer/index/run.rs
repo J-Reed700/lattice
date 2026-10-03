@@ -6,10 +6,15 @@
 //! a file whose size and modification time match its row is not read, one
 //! whose content hash matches is not re-chunked, and one whose chunks are all
 //! in the saved vectors file is not embedded again.
+//!
+//! Progress is told in passages, after every batch, with a time left from a
+//! smoothed rate; files move when a save marks them. A full run logs one line
+//! when its scan ends, one per tenth of the passages, and one when it is
+//! ready or paused.
 
 use super::chunker::{self, Chunk};
 use super::dto::{FolderIndexState, FolderIndexStatusDto};
-use super::store::{ChunkRow, FileRow, FolderStore};
+use super::store::{self, ChunkRow, Counts, FileRow, FolderStore, TooLarge};
 use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
 use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::fs;
@@ -23,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 /// Status events go out at most this often while counts move; a change of
 /// state always goes out at once.
@@ -32,6 +38,8 @@ const PREPARE_GROUP: usize = 64;
 /// How far past the cap a too-large walk keeps counting, so the message can
 /// say how large rather than only "too large".
 const COUNT_CEILING_FACTOR: usize = 10;
+/// The walk reports how many files it has found once per this many.
+const SCAN_REPORT_EVERY: usize = 200;
 
 pub type StatusEmitter = Arc<dyn Fn(&FolderIndexStatusDto) + Send + Sync>;
 
@@ -99,6 +107,64 @@ impl Default for Limits {
             batch_size: 16,
             save_every: 500,
         }
+    }
+}
+
+/// How fast passages are embedding. Each batch's rate is folded into an
+/// average weighted by how long the batch took, so the estimate follows the
+/// last half-minute or so: a pause (a chat turn's own embedding, a save) moves
+/// it without throwing it.
+#[derive(Debug, Clone, Copy)]
+pub struct Pace {
+    started: Instant,
+    last: Instant,
+    /// Passages per second, smoothed.
+    rate: Option<f64>,
+}
+
+impl Pace {
+    /// Roughly how far back the average looks.
+    const HORIZON_SECS: f64 = 30.0;
+    /// No estimate until a run has embedded for this long: the first batches
+    /// include loading the model.
+    const WARMUP: Duration = Duration::from_secs(10);
+
+    pub fn starting_at(now: Instant) -> Self {
+        Self {
+            started: now,
+            last: now,
+            rate: None,
+        }
+    }
+
+    /// `passages` more were embedded, finishing at `now`.
+    pub fn record(&mut self, passages: usize, now: Instant) {
+        let seconds = now.duration_since(self.last).as_secs_f64().max(1e-3);
+        self.last = now;
+        let sample = passages as f64 / seconds;
+        let weight = 1.0 - (-seconds / Self::HORIZON_SECS).exp();
+        self.rate = Some(match self.rate {
+            Some(rate) => rate + weight * (sample - rate),
+            None => sample,
+        });
+    }
+
+    /// The smoothed rate, once the run is past its warm-up.
+    pub fn rate(&self, now: Instant) -> Option<f64> {
+        if now.duration_since(self.started) < Self::WARMUP {
+            return None;
+        }
+        self.rate.filter(|rate| *rate > 0.0)
+    }
+
+    /// Seconds to embed `remaining` more at the current rate.
+    pub fn eta(&self, remaining: u32, now: Instant) -> Option<u32> {
+        let rate = self.rate(now)?;
+        Some(
+            (f64::from(remaining) / rate)
+                .ceil()
+                .min(f64::from(u32::MAX)) as u32,
+        )
     }
 }
 
@@ -174,11 +240,15 @@ fn candidate(scope: &Scope, path: &Path) -> Option<Candidate> {
 /// Every indexable file under `prefix`, the way `search_files` walks:
 /// `.gitignore` honoured, `.git` skipped, symlinks not followed. Stops early
 /// when `cancel` fires, so closing a folder does not wait out a large walk.
+/// With `progress`, the count found so far shows as the status's total once
+/// it passes what the total already says, so a rescan does not count down
+/// from the last run's number to zero and back.
 fn walk(
     scope: &Scope,
     prefix: &str,
     max_files: usize,
     cancel: &CancellationToken,
+    progress: Option<&StatusCell>,
 ) -> Result<Walked> {
     let start = fs::walk_start(scope, Some(prefix))?;
     let ceiling = max_files.saturating_mul(COUNT_CEILING_FACTOR);
@@ -195,6 +265,10 @@ fn walk(
             return true;
         };
         count += 1;
+        if let Some(status) = progress.filter(|_| count.is_multiple_of(SCAN_REPORT_EVERY)) {
+            let found = u32::try_from(count).unwrap_or(u32::MAX);
+            status.update(|status| status.files_total = status.files_total.max(found));
+        }
         if count > ceiling {
             capped = true;
             return false;
@@ -277,26 +351,65 @@ pub struct Indexer {
     pub limits: Limits,
 }
 
+/// What one round of embedding did.
+struct Embedded {
+    outcome: Outcome,
+    passages: usize,
+    elapsed: Duration,
+}
+
+/// `12.3`, or `-` with no rate yet: for log lines.
+fn per_second(rate: Option<f64>) -> String {
+    rate.map_or_else(|| "-".to_string(), |rate| format!("{rate:.1}"))
+}
+
 impl Indexer {
+    /// The folder this indexer covers: the index root, or the sub-folder
+    /// under it.
+    fn folder(&self) -> PathBuf {
+        self.prefix
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .fold(self.scope.root().to_path_buf(), |path, part| {
+                path.join(part)
+            })
+    }
+
     /// Walks the folder, brings the rows in line with it, and embeds what is
     /// new.
     pub async fn run(&self) -> Result<Outcome> {
+        let started = Instant::now();
         self.status
             .update(|status| status.state = FolderIndexState::Scanning);
         let scope = self.scope.clone();
         let prefix = self.prefix.clone();
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
-        let walked = tokio::task::spawn_blocking(move || walk(&scope, &prefix, max_files, &cancel))
-            .await
-            .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
+        let status = Arc::clone(&self.status);
+        let walked = tokio::task::spawn_blocking(move || {
+            walk(&scope, &prefix, max_files, &cancel, Some(&status))
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
+        // Only a run over the whole index speaks for it; a sub-folder's run
+        // leaves the parent's markers alone.
+        let whole = self.prefix.is_empty();
         let candidates = match walked {
             Walked::TooLarge { count, capped } => {
+                if whole {
+                    let found = TooLarge { count, capped };
+                    self.store
+                        .set_meta(store::META_TOO_LARGE, &found.encode())
+                        .await?;
+                }
                 return Ok(Outcome::TooLarge { count, capped });
             }
             Walked::Cancelled => return Ok(Outcome::Cancelled),
             Walked::Files(files) => files,
         };
+        if whole {
+            self.store.delete_meta(store::META_TOO_LARGE).await?;
+        }
         let existing = self.store.files_under(&self.prefix).await?;
         let total = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
         self.status.update(|status| status.files_total = total);
@@ -305,15 +418,51 @@ impl Indexer {
             .iter()
             .map(|found| found.relative.clone())
             .collect();
-        if self.sync_candidates(candidates, &existing).await? == Outcome::Cancelled {
+        let Some(changed) = self.sync_candidates(candidates, &existing).await? else {
             return Ok(Outcome::Cancelled);
-        }
+        };
         let gone: Vec<String> = existing
             .into_keys()
             .filter(|path| !seen.contains(path))
             .collect();
         self.forget(&gone).await?;
-        self.embed_pending().await
+        let counts = self.refresh_counts().await?;
+        info!(
+            root = %self.folder().display(),
+            files = counts.files_total,
+            new_or_changed = changed,
+            removed = gone.len(),
+            passages_to_embed = counts.passages_total.saturating_sub(counts.passages_embedded),
+            elapsed_ms = started.elapsed().as_millis(),
+            "Folder index scan finished"
+        );
+
+        let embedded = self.embed_pending().await?;
+        if embedded.outcome != Outcome::Done {
+            return Ok(embedded.outcome);
+        }
+        if whole {
+            self.store
+                .set_meta(
+                    store::META_COMPLETE,
+                    &chrono::Utc::now().timestamp_millis().to_string(),
+                )
+                .await?;
+        }
+        let status = self.status.get();
+        let seconds = embedded.elapsed.as_secs_f64();
+        info!(
+            root = %self.folder().display(),
+            files = status.files_total,
+            passages = status.passages_total,
+            embedded = embedded.passages,
+            elapsed_ms = started.elapsed().as_millis(),
+            per_second = %per_second(
+                (embedded.passages > 0 && seconds > 0.0).then(|| embedded.passages as f64 / seconds)
+            ),
+            "Folder index ready"
+        );
+        Ok(Outcome::Done)
     }
 
     /// Brings the rows for `paths` (relative to the index root, as the
@@ -375,7 +524,7 @@ impl Indexer {
             }
         }
         self.refresh_counts().await?;
-        self.embed_pending().await
+        Ok(self.embed_pending().await?.outcome)
     }
 
     /// A directory that appeared or changed: walk just it.
@@ -384,9 +533,12 @@ impl Indexer {
         let start = relative.to_string();
         let max_files = self.limits.max_files;
         let cancel = self.cancel.clone();
-        let walked = tokio::task::spawn_blocking(move || walk(&scope, &start, max_files, &cancel))
-            .await
-            .map_err(|error| AppError::InternalError(format!("Folder walk failed: {error}")))??;
+        let walked =
+            tokio::task::spawn_blocking(move || walk(&scope, &start, max_files, &cancel, None))
+                .await
+                .map_err(|error| {
+                    AppError::InternalError(format!("Folder walk failed: {error}"))
+                })??;
         let candidates = match walked {
             Walked::Files(files) => files,
             Walked::Cancelled => return Ok(Outcome::Cancelled),
@@ -399,7 +551,7 @@ impl Indexer {
             .iter()
             .map(|found| found.relative.clone())
             .collect();
-        if self.sync_candidates(candidates, &existing).await? == Outcome::Cancelled {
+        if self.sync_candidates(candidates, &existing).await?.is_none() {
             return Ok(Outcome::Cancelled);
         }
         let gone: Vec<String> = existing
@@ -410,12 +562,13 @@ impl Indexer {
         Ok(Outcome::Done)
     }
 
-    /// Reads and re-chunks the candidates whose size or time moved.
+    /// Reads and re-chunks the candidates whose size or time moved. Returns
+    /// how many that was (new files included); `None` when cancelled.
     async fn sync_candidates(
         &self,
         candidates: Vec<Candidate>,
         existing: &HashMap<String, FileRow>,
-    ) -> Result<Outcome> {
+    ) -> Result<Option<usize>> {
         let changed: Vec<(Candidate, Option<String>)> = candidates
             .into_iter()
             .filter_map(|found| match existing.get(&found.relative) {
@@ -424,10 +577,11 @@ impl Indexer {
                 None => Some((found, None)),
             })
             .collect();
+        let count = changed.len();
         let mut groups = changed.into_iter().peekable();
         while groups.peek().is_some() {
             if self.cancel.is_cancelled() {
-                return Ok(Outcome::Cancelled);
+                return Ok(None);
             }
             let group: Vec<(Candidate, Option<String>)> =
                 groups.by_ref().take(PREPARE_GROUP).collect();
@@ -460,7 +614,7 @@ impl Indexer {
                 }
             }
         }
-        Ok(Outcome::Done)
+        Ok(Some(count))
     }
 
     async fn forget(&self, paths: &[String]) -> Result<()> {
@@ -481,38 +635,92 @@ impl Indexer {
         self.vectors.remove_embeddings(&vector_ids(ids))
     }
 
-    async fn refresh_counts(&self) -> Result<()> {
+    /// Sets the status's counts from the store, which is exact; the run's
+    /// own tallies only move them in between.
+    async fn refresh_counts(&self) -> Result<Counts> {
         let counts = self.store.counts(&self.prefix).await?;
         self.status.update(|status| {
             status.files_total = counts.files_total;
             status.files_indexed = counts.files_indexed;
-            status.chunks = counts.chunks;
+            status.passages_total = counts.passages_total;
+            status.passages_embedded = counts.passages_embedded;
         });
-        Ok(())
+        Ok(counts)
+    }
+
+    /// `count` more passages are in the index: the status moves, with a rate
+    /// and time left once `pace` has enough behind it, and passing another
+    /// tenth of the way gets a log line.
+    fn advance(&self, count: usize, pace: &mut Pace, logged_tenths: &mut u32) {
+        if count == 0 {
+            return;
+        }
+        let now = Instant::now();
+        pace.record(count, now);
+        let added = u32::try_from(count).unwrap_or(u32::MAX);
+        let rate = pace.rate(now);
+        self.status.update(|status| {
+            status.passages_embedded = status
+                .passages_embedded
+                .saturating_add(added)
+                .min(status.passages_total);
+            status.passages_per_second = rate.map(|rate| rate as f32);
+            status.eta_seconds = pace.eta(
+                status
+                    .passages_total
+                    .saturating_sub(status.passages_embedded),
+                now,
+            );
+        });
+        let status = self.status.get();
+        let tenths = status.percent() / 10;
+        if tenths > *logged_tenths && tenths < 10 {
+            *logged_tenths = tenths;
+            info!(
+                root = %self.folder().display(),
+                percent = status.percent(),
+                embedded = status.passages_embedded,
+                total = status.passages_total,
+                per_second = %per_second(rate),
+                eta_seconds = ?status.eta_seconds,
+                "Folder index progress"
+            );
+        }
     }
 
     /// Embeds the chunks of every file not yet marked embedded, in small
     /// batches, saving the vectors file every `save_every` chunks. A file is
     /// marked only after a save that holds all of its chunks, so a crash
     /// costs at most the work since the last save.
-    async fn embed_pending(&self) -> Result<Outcome> {
+    async fn embed_pending(&self) -> Result<Embedded> {
+        let started = Instant::now();
         let pending = self.store.pending_files(&self.prefix).await?;
         self.refresh_counts().await?;
+        let mut embedded = Embedded {
+            outcome: Outcome::Done,
+            passages: 0,
+            elapsed: Duration::ZERO,
+        };
         if pending.is_empty() {
             self.save(&mut Vec::new()).await?;
-            return Ok(Outcome::Done);
+            return Ok(embedded);
         }
-        self.status
-            .update(|status| status.state = FolderIndexState::Indexing);
+        self.status.update(|status| {
+            status.state = FolderIndexState::Indexing;
+            status.passages_per_second = None;
+            status.eta_seconds = None;
+        });
 
+        let mut pace = Pace::starting_at(started);
+        let mut logged_tenths = self.status.get().percent() / 10;
         let mut batch: Vec<ChunkRow> = Vec::new();
         let mut waiting: HashMap<String, usize> = HashMap::new();
         let mut finished: Vec<String> = Vec::new();
         let mut since_save = 0usize;
-        for path in pending {
+        'files: for path in pending {
             if self.cancel.is_cancelled() {
-                self.save(&mut finished).await?;
-                return Ok(Outcome::Cancelled);
+                embedded.outcome = Outcome::Cancelled;
+                break;
             }
             let chunks = self.store.chunks_of(&path).await?;
             if chunks.is_empty() {
@@ -525,23 +733,35 @@ impl Indexer {
                 if batch.len() < self.limits.batch_size {
                     continue;
                 }
-                since_save += self
+                let count = self
                     .embed_batch(&mut batch, &mut waiting, &mut finished)
                     .await?;
+                embedded.passages += count;
+                since_save += count;
+                self.advance(count, &mut pace, &mut logged_tenths);
                 if since_save >= self.limits.save_every {
                     since_save = 0;
                     self.save(&mut finished).await?;
                 }
                 if self.cancel.is_cancelled() {
-                    self.save(&mut finished).await?;
-                    return Ok(Outcome::Cancelled);
+                    embedded.outcome = Outcome::Cancelled;
+                    break 'files;
                 }
             }
         }
-        self.embed_batch(&mut batch, &mut waiting, &mut finished)
-            .await?;
+        if embedded.outcome == Outcome::Done {
+            let count = self
+                .embed_batch(&mut batch, &mut waiting, &mut finished)
+                .await?;
+            embedded.passages += count;
+            self.advance(count, &mut pace, &mut logged_tenths);
+        }
         self.save(&mut finished).await?;
-        Ok(Outcome::Done)
+        embedded.elapsed = started.elapsed();
+        if embedded.outcome == Outcome::Done {
+            self.refresh_counts().await?;
+        }
+        Ok(embedded)
     }
 
     /// Embeds and publishes `batch`, emptying it. Files whose last chunk was

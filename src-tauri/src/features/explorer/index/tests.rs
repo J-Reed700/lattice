@@ -1,7 +1,7 @@
 use super::chunker::{self, chunk_text, MAX_CHUNK_CHARS, MAX_CHUNK_LINES, MAX_LINE_CHARS};
-use super::dto::{FolderIndexState, FolderIndexStatusDto};
+use super::dto::{FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryState};
 use super::manager::{EmbedderSource, FolderIndexManager, ManagerConfig};
-use super::run::{Indexer, Limits, Outcome, StatusCell};
+use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
 use super::search::{fuse, match_expression, FolderHit, RRF_K};
 use super::store::{self, FolderStore};
 use super::tool;
@@ -19,7 +19,7 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 const DIM: usize = 16;
@@ -142,7 +142,6 @@ impl Rig {
                 batch_size: 4,
                 save_every: 8,
             },
-            max_indexes: 8,
             debounce: Duration::from_millis(100),
         }
     }
@@ -190,6 +189,9 @@ fn text(root: &Path) -> String {
 const RETRY_RS: &str = "pub fn schedule_backoff(attempt: u32) -> u32 {\n    attempt * 2\n}\n";
 const PARSER_RS: &str = "pub fn parse_tokens(input: &str) -> Vec<String> {\n    input.split(' ').map(String::from).collect()\n}\n";
 const NOTES_MD: &str = "# Notes\n\nThe zeppelin deployment checklist lives here.\n";
+
+/// The folders list over these indexes: `tests/folders.rs`.
+mod folders;
 
 async fn open_settled(manager: &FolderIndexManager, root: &Path) -> FolderIndexStatusDto {
     manager.open(&text(root)).await.unwrap();
@@ -431,7 +433,9 @@ mod incremental {
         assert_eq!(status.state, FolderIndexState::Ready);
         assert_eq!(status.files_total, 4, "lockfile skipped, binary recorded");
         assert_eq!(status.files_indexed, 4);
-        assert_eq!(status.chunks, 3);
+        assert_eq!(status.passages_total, 3);
+        assert_eq!(status.passages_embedded, 3);
+        assert_eq!(status.eta_seconds, None, "a finished run has no time left");
         let first: Vec<String> = embedder.embedded();
         assert_eq!(first.len(), 3);
         assert!(first.iter().any(|t| t.starts_with("src/retry.rs:1-3\n")));
@@ -491,7 +495,7 @@ mod incremental {
         store.close().await;
         assert_eq!(
             index.count() as u32,
-            counts.chunks,
+            counts.passages_total,
             "one vector per chunk, none stale"
         );
     }
@@ -615,6 +619,94 @@ mod cancellation {
     }
 }
 
+mod progress {
+    use super::*;
+
+    #[test]
+    fn the_pace_waits_out_the_warm_up_then_follows_the_rate() {
+        let start = Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let mut pace = Pace::starting_at(start);
+        pace.record(16, at(1));
+        assert_eq!(pace.rate(at(1)), None, "nothing to say inside ten seconds");
+        assert_eq!(pace.eta(100, at(1)), None);
+        for second in 2..=12 {
+            pace.record(16, at(second));
+        }
+        let rate = pace.rate(at(12)).unwrap();
+        assert!((rate - 16.0).abs() < 1e-6, "{rate}");
+        assert_eq!(pace.eta(160, at(12)), Some(10));
+        assert_eq!(pace.eta(161, at(12)), Some(11), "rounded up");
+
+        // One slow batch pulls the rate down without throwing it.
+        pace.record(16, at(20));
+        let slower = pace.rate(at(20)).unwrap();
+        assert!(slower < 16.0 && slower > 4.0, "{slower}");
+    }
+
+    #[test]
+    fn percent_is_of_passages_and_never_rounds_up_to_done() {
+        let mut status = FolderIndexStatusDto::new("/r", "/r", FolderIndexState::Indexing);
+        assert_eq!(status.percent(), 0);
+        status.passages_total = 10_958;
+        status.passages_embedded = 3_067;
+        assert_eq!(status.percent(), 27);
+        status.passages_embedded = 10_957;
+        assert_eq!(status.percent(), 99);
+        status.passages_embedded = 10_958;
+        assert_eq!(status.percent(), 100);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn passages_move_after_every_batch_and_files_at_saves() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        // Slower than the event throttle, so every batch is told.
+        embedder.delay_ms.store(300, Ordering::SeqCst);
+        let manager = rig.manager(&embedder);
+        let files: Vec<(String, String)> = (0..12)
+            .map(|n| {
+                (
+                    format!("src/m{n:02}.rs"),
+                    format!("pub fn item_{n}() {{}}\n"),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let root = rig.project("steady", &refs);
+        let status = open_settled(&manager, &root).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+        assert_eq!((status.passages_embedded, status.passages_total), (12, 12));
+        assert_eq!((status.files_indexed, status.files_total), (12, 12));
+        assert_eq!(status.passages_per_second, None);
+
+        let events = rig.events.lock().clone();
+        let indexing: Vec<&FolderIndexStatusDto> = events
+            .iter()
+            .filter(|event| event.state == FolderIndexState::Indexing)
+            .collect();
+        let embedded: Vec<u32> = indexing
+            .iter()
+            .map(|event| event.passages_embedded)
+            .collect();
+        // Batches of four, a save every eight.
+        assert_eq!(embedded, vec![0, 4, 8, 12], "{embedded:?}");
+        assert!(indexing.iter().all(|event| event.passages_total == 12));
+        assert_eq!(
+            indexing[1].files_indexed, 0,
+            "files move when a save marks them"
+        );
+        assert!(
+            indexing.iter().all(|event| event.eta_seconds.is_none()),
+            "no estimate inside the first ten seconds"
+        );
+        manager.close().await;
+    }
+}
+
 mod search {
     use super::*;
 
@@ -728,30 +820,145 @@ mod registry {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn the_ninth_folder_evicts_the_least_recently_opened() {
+    async fn a_folder_with_its_own_index_keeps_using_it() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let manager = rig.manager(&embedder);
-        let roots: Vec<PathBuf> = (0..10)
-            .map(|n| rig.project(&format!("p{n}"), &[("main.rs", "fn main() {}\n")]))
-            .collect();
-        for root in roots.iter().take(8) {
-            open_settled(&manager, root).await;
-        }
-        assert_eq!(rig.index_dirs().len(), 8);
-        // p0 opened again is now the most recent; p1 is the oldest.
-        open_settled(&manager, &roots[0]).await;
-        open_settled(&manager, &roots[8]).await;
-        let dirs = rig.index_dirs();
-        assert_eq!(dirs.len(), 8);
-        assert!(dirs.contains(&store::index_dir(&rig.base, &roots[0])));
-        assert!(!dirs.contains(&store::index_dir(&rig.base, &roots[1])));
-        assert!(dirs.contains(&store::index_dir(&rig.base, &roots[8])));
-        open_settled(&manager, &roots[9]).await;
-        assert!(!rig
-            .index_dirs()
-            .contains(&store::index_dir(&rig.base, &roots[2])));
+        let parent = rig.project(
+            "code",
+            &[
+                ("README.md", "# Code\n\nEverything lives here.\n"),
+                ("music/src/synth.rs", "pub fn render_oscillator() {}\n"),
+            ],
+        );
+        let child = parent.join("music");
+        // The child first, on its own; then the folder around it, which
+        // builds its own index with the child inside.
+        open_settled(&manager, &child).await;
         manager.close().await;
+        open_settled(&manager, &parent).await;
+        manager.close().await;
+        assert_eq!(rig.index_dirs().len(), 2);
+
+        embedder.forget_calls();
+        let status = open_settled(&manager, &child).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+        assert_eq!(
+            status.index_root,
+            text(&child),
+            "its own index, not the parent's"
+        );
+        assert!(embedder.embedded().is_empty(), "nothing embedded again");
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_index_is_deleted_unless_asked() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = rig.manager(&embedder);
+        for n in 0..10 {
+            let root = rig.project(&format!("p{n}"), &[("main.rs", "fn main() {}\n")]);
+            open_settled(&manager, &root).await;
+        }
+        manager.close().await;
+        assert_eq!(rig.index_dirs().len(), 10);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deleting_a_sub_folders_index_leaves_the_parents_alone() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = rig.manager(&embedder);
+        let parent = rig.project(
+            "repo",
+            &[
+                ("README.md", "# Repo\n"),
+                ("crates/net/src/retry.rs", "pub fn retry() {}\n"),
+            ],
+        );
+        open_settled(&manager, &parent).await;
+        manager.close().await;
+        let child = parent.join("crates/net");
+        let status = open_settled(&manager, &child).await;
+        assert_eq!(status.index_root, text(&parent));
+
+        // Open, and reusing the parent's index: closed, and nothing deleted.
+        manager.delete_index(&text(&child)).await.unwrap();
+        let parent_dir = store::index_dir(&rig.base, &parent);
+        assert_eq!(rig.index_dirs(), vec![parent_dir.clone()]);
+        assert_eq!(
+            chunk_paths(&parent_dir).await,
+            vec!["README.md", "crates/net/src/retry.rs"],
+            "the sub-folder's part of the parent's index stays too"
+        );
+        embedder.forget_calls();
+        assert_eq!(
+            open_settled(&manager, &parent).await.state,
+            FolderIndexState::Ready
+        );
+        assert!(embedder.embedded().is_empty());
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn too_large_is_remembered_after_the_folder_closes() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let mut config = rig.config();
+        config.limits.max_files = 3;
+        let manager = rig.manager_with(config, Some(Arc::clone(&embedder)));
+        let root = rig.project(
+            "big",
+            &[
+                ("a/one.rs", "fn one() {}\n"),
+                ("a/two.rs", "fn two() {}\n"),
+                ("b/three.rs", "fn three() {}\n"),
+                ("b/four.rs", "fn four() {}\n"),
+                ("b/five.rs", "fn five() {}\n"),
+            ],
+        );
+        assert_eq!(
+            open_settled(&manager, &root).await.state,
+            FolderIndexState::TooLarge
+        );
+        manager.close().await;
+
+        let indexes = manager.index_dirs().await;
+        let summary = manager
+            .summaries(std::slice::from_ref(&root), &indexes)
+            .await
+            .remove(0);
+        assert_eq!(summary.state, FolderIndexSummaryState::TooLarge);
+        assert_eq!(summary.files_total, 5);
+        let message = summary.message.unwrap();
+        assert!(
+            message.contains("5 files") && message.contains("limit is 3"),
+            "{message}"
+        );
+
+        // A folder inside it gets an index of its own rather than reuse one
+        // that holds nothing.
+        let inside = root.join("b");
+        let status = open_settled(&manager, &inside).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+        assert_eq!(status.index_root, text(&inside));
+        manager.close().await;
+
+        // Once the folder fits, the mark goes.
+        std::fs::remove_dir_all(root.join("a")).unwrap();
+        assert_eq!(
+            open_settled(&manager, &root).await.state,
+            FolderIndexState::Ready
+        );
+        manager.close().await;
+        let indexes = manager.index_dirs().await;
+        let summary = manager
+            .summaries(std::slice::from_ref(&root), &indexes)
+            .await
+            .remove(0);
+        assert_eq!(summary.state, FolderIndexSummaryState::Indexed);
+        assert_eq!(summary.passages_embedded, 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -783,7 +990,7 @@ mod registry {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn rebuild_starts_over_and_forget_deletes_the_index() {
+    async fn rebuild_starts_over_and_delete_removes_the_index() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let manager = rig.manager(&embedder);
@@ -793,7 +1000,7 @@ mod registry {
         manager.rebuild(&text(&root)).await.unwrap();
         assert_eq!(manager.settled().await.state, FolderIndexState::Ready);
         assert_eq!(embedder.embedded().len(), 1);
-        manager.forget(&text(&root)).await.unwrap();
+        manager.delete_index(&text(&root)).await.unwrap();
         assert!(rig.index_dirs().is_empty());
         assert!(manager.search_for(&root).await.is_none());
     }

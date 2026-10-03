@@ -1,936 +1,127 @@
-# Error Codes Reference
+# Error Messages and Codes
 
-Complete reference of error messages and codes in Recall/Vault.
+When something goes wrong, Lattice shows you a plain message. Behind most messages is a short code such as `DATABASE_ERROR`, which Lattice records in its log. This page explains what each code means and what to try.
 
 ## Table of Contents
 
-- [Error Code Format](#error-code-format)
-- [General Errors (1000-1999)](#general-errors-1000-1999)
-- [File System Errors (2000-2999)](#file-system-errors-2000-2999)
-- [Database Errors (3000-3999)](#database-errors-3000-3999)
-- [Indexing Errors (4000-4999)](#indexing-errors-4000-4999)
-- [Search Errors (5000-5999)](#search-errors-5000-5999)
-- [Network Errors (6000-6999)](#network-errors-6000-6999)
-- [Configuration Errors (7000-7999)](#configuration-errors-7000-7999)
-- [Python Bridge Errors (8000-8999)](#python-bridge-errors-8000-8999)
+- [Where errors appear](#where-errors-appear)
+- [Finding the code for an error](#finding-the-code-for-an-error)
+- [Files and import](#files-and-import)
+- [Models, search and indexing](#models-search-and-indexing)
+- [Database](#database)
+- [Backups](#backups)
+- [Input, settings and state](#input-settings-and-state)
+- [Network](#network)
+- [Everything else](#everything-else)
+- [Messages without a code](#messages-without-a-code)
 
 ---
 
-## Error Code Format
+## Where errors appear
 
-Error messages follow this format:
+- **Notifications.** Most failures appear as a notification in the corner of the window with a short message, such as "Couldn't add this folder" followed by the reason.
+- **Chat notices.** Problems with the chat model appear as a notice in the chat: "No chat model yet.", "Chat model is downloading…", "Warming up the model…" or "The chat model didn't load." These link to model settings.
+- **Startup dialogs.** If Lattice can't start, it shows a dialog titled **Application Setup Failed** or **Application Initialization Failed**, then quits. See [Lattice won't start](troubleshooting.md#lattice-wont-start).
+- **Settings > General > Logs.** A record of recent errors and warnings, kept on this device.
 
-```
-[ERROR_TYPE] Error message description
-```
+## Finding the code for an error
 
-**Error Severity:**
-- **ERROR:** Critical failure requiring immediate attention
-- **WARNING:** Non-critical issue that may affect functionality
-- **INFO:** Informational message about recoverable condition
+1. Open **Settings** (⌘, on macOS) and choose **Logs** under General.
+2. Click the **Errors** count to show only errors, or search for words from the message.
+3. Expand the entry. If the error came with a code, its details include a `"code"` field.
 
----
-
-## General Errors (1000-1999)
-
-### ERR_1000: Unknown Error
-
-**Message:** "An unknown error occurred"
-
-**Cause:** Unexpected error with no specific handler
-
-**Solution:**
-1. Restart the application
-2. Check logs for details
-3. Report bug if persists
+The Logs page keeps the newest 300 entries. **Export logs** saves them as a JSON file. Lattice removes common secrets (API keys, tokens, passwords) and replaces your home folder name with `/[USER]` before storing an entry. Read the file before you share it anyway.
 
 ---
 
-### ERR_1001: Operation Timeout
+## Files and import
 
-**Message:** "Operation timed out after {seconds} seconds"
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `FILE_NOT_FOUND` | The file isn't where Lattice expected it. It was moved, renamed or deleted, or a drive was disconnected. | Reconnect the drive, or import the file again from its new location. |
+| `FILE_TOO_LARGE` | The file is over the size limit. Imports accept files up to 50 MB. The in-app viewer opens files up to 10 MB. | Split the document, or export a smaller version (for example a PDF without embedded images). |
+| `UNSUPPORTED_FILE_TYPE` | Lattice can't read this kind of file. | Convert it to a supported format. See [What file types can I import?](faq.md#what-file-types-can-i-import) |
+| `FILE_READ_ERROR` | The file exists but couldn't be read. | Check that it opens in another app and isn't locked or still syncing. |
+| `FILE_SYSTEM_ERROR` | A disk operation failed: the disk is full, a folder isn't writable, or something else went wrong at the OS level. | Free some disk space and check that your user account owns Lattice's data folder. |
+| `PERMISSION_DENIED` | The operating system refused access to a file or folder. During a backup restore, it means the passphrase or recovery code was wrong. | Grant access to the folder, or choose one you own. For a restore, re-enter the passphrase or use the 24-word recovery code. |
+| `EXTRACTION_ERROR` | Lattice couldn't pull text out of the file. The file may be damaged, encrypted or password-protected. | Open and re-save the file in its original app, or remove the password. |
 
-**Cause:** Operation took longer than maximum allowed time (default: 30s)
+**Scanned PDFs.** Lattice has no OCR. A page that is only an image is skipped and the rest of the PDF is still imported. If a PDF is all scans, its text won't be searchable.
 
-**Solution:**
-1. Check system performance
-2. Reduce operation scope
-3. Increase timeout in Settings → Advanced → Timeouts
-4. Try again when system less busy
+## Models, search and indexing
 
----
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `MODEL_NOT_LOADED` | The model this action needs isn't downloaded, or it failed to load. | Open **Settings > AI > Downloaded** and check which model has the Chat, Utility or Embedding role. Download one from **Settings > AI > Models** if needed. |
+| `SERVICE_NOT_AVAILABLE` | A part of Lattice this action depends on isn't running. The usual cause is that the embedding model couldn't load, which blocks importing and indexing. | Check that an embedding model is downloaded and active, then retry. Restart Lattice if it persists. |
+| `EMBEDDING_ERROR` | Turning text into search vectors failed. | Retry. If it keeps happening, restart Lattice. If it still fails, try a different embedding model. |
+| `TOKENIZATION_ERROR` | The model's tokenizer couldn't process the text. | Retry. If one document always fails, look in Settings > General > Logs to see which one, and re-save or convert it. |
+| `QUEUE_FULL` | Too much work is waiting, for example a very large import. | Wait for the current work to finish, then retry. |
+| `RATE_LIMIT_EXCEEDED` | Too many requests arrived in a short time. This can come from Lattice's own limits (for example many searches in a row) or from Hugging Face during a model download. | Wait a minute and retry. |
 
-### ERR_1002: Invalid Input
+## Database
 
-**Message:** "Invalid input: {details}"
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `DATABASE_ERROR` | A read or write to Lattice's database failed. | Retry. If it repeats, quit and reopen Lattice. If it keeps happening, see [Database problems](troubleshooting.md#database-problems). |
+| `DATABASE_CONNECTION_ERROR` | Lattice couldn't get a database connection in time, usually because the database is busy with a long operation. | Wait for imports or indexing to finish, then retry. |
+| `MIGRATION_ERROR` | Lattice couldn't update the database to the version this build expects. | Lattice is pre-release and doesn't convert data from older builds. See [Lattice won't start](troubleshooting.md#lattice-wont-start). |
+| `CONCURRENT_MODIFICATION` | Something else changed the same item while you were editing it. | Reload the item and make your change again. |
+| `CONSTRAINT_VIOLATION` | The change would conflict with existing data, for example a duplicate that has to be unique. | Use a different name or value. |
 
-**Cause:** User provided invalid data or parameters
+## Backups
 
-**Solution:**
-1. Check input format
-2. Refer to documentation for valid values
-3. Use suggested values if provided
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `BACKUP_CREATION_FAILED` | A backup couldn't be written. | Check free space and that the backup folder still exists and is writable. If the folder was on a removable drive, reconnect it. |
+| `BACKUP_RESTORE_FAILED` | A restore didn't complete. | Read the message. "backup file has not been downloaded by …" means the file is still only in the cloud: open it in your sync app, wait for it to download, then retry. |
+| `BACKUP_CORRUPTED` | The backup file is damaged or incomplete. | Restore from an older archive in the same folder. |
 
----
+Two restore messages arrive with a different code:
 
-### ERR_1003: Resource Not Available
+- "wrong passphrase or recovery code" arrives as `PERMISSION_DENIED`. Re-enter the passphrase, or use the 24-word recovery code.
+- "backup archive format version … is not supported by this version of Lattice" arrives as a generic error. The archive was made by a newer Lattice, so update Lattice and retry.
 
-**Message:** "Resource temporarily unavailable"
+## Input, settings and state
 
-**Cause:** Requested resource is locked or in use
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `INVALID_INPUT` | A value was rejected: an empty field, a bad path or URL, or a file over the import limit ("File too large: … bytes"). | Check the value named in the message. URLs need `http://` or `https://`. |
+| `VALIDATION_ERROR` | A value is outside the allowed range or format. | Correct the field named in the message. |
+| `INVALID_CONFIG` | A stored setting is invalid. | Fix the setting named in the message. As a last resort, use **Reset all** at the bottom of the Settings sidebar. |
+| `INVALID_STATE` | The action can't run right now, for example because another operation is still in progress. | Wait for the other operation to finish, then retry. |
+| `NOT_FOUND` | The item no longer exists: a document, conversation, model or record. | Refresh the view. If you deleted the item, it's gone. |
+| `SECURITY_VIOLATION` | A security check failed, or the system keychain refused a request (for example while saving an API key). | Unlock your keychain or credential store and retry. |
 
-**Solution:**
-1. Wait a moment and retry
-2. Close other applications using the resource
-3. Restart application if persists
+## Network
 
----
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `NETWORK_ERROR` | A request to another server failed. This happens with model downloads, URL imports, web search, a remote model server or a cloud provider. | Check your connection. For a remote server, check its URL in **Settings > AI > Chat**. |
+| `TIMEOUT` | An operation took too long. | Retry. For a slow remote model server, check that it's running and reachable. |
 
-## File System Errors (2000-2999)
+## Everything else
 
-### ERR_2000: File Not Found
+| Code | What it means | What to try |
+|------|---------------|-------------|
+| `PROCESSING_ERROR` | A step inside Lattice failed. | Retry. If it repeats, check Settings > General > Logs for the details. |
+| `SERIALIZATION_ERROR`, `DESERIALIZATION_ERROR`, `PARSING_ERROR` | Lattice couldn't read or write data in the expected format, for example a damaged settings or tools file you imported. | Check the file you imported. Otherwise retry, then report it. |
+| `INTERNAL_ERROR` | Something unexpected went wrong inside Lattice. | Retry. If it repeats, report it with exported logs. See [Reporting a problem](troubleshooting.md#reporting-a-problem). |
+| `UNKNOWN` | The error came back as a plain message without a code. Many operations report errors this way. | Read the message itself. It usually says what failed. |
 
-**Message:** "File not found: {path}"
-
-**Cause:** File doesn't exist at specified path
-
-**Solution:**
-1. Verify file path is correct
-2. Check if file was moved or deleted
-3. Refresh folder index
-4. Update watch folder paths if folder moved
-
-**Severity:** WARNING
-
----
-
-### ERR_2001: Permission Denied
-
-**Message:** "Permission denied: {path}. Please check file permissions."
-
-**Cause:** Application doesn't have permission to access file/folder
-
-**Solution:**
-1. Check file/folder permissions
-2. Grant read access to the application
-3. Move file to accessible location
-4. Run app with appropriate permissions
-
-**Windows:**
-```powershell
-icacls "C:\path\to\file" /grant %USERNAME%:R
-```
-
-**Linux/macOS:**
-```bash
-chmod 644 /path/to/file  # for files
-chmod 755 /path/to/folder  # for folders
-```
-
-**Severity:** ERROR
+A few other codes are defined but not used by this version: `ALREADY_EXISTS`, `GONE`, `UNAUTHORIZED`, `FILE_WRITE_ERROR`, `SERVICE_INITIALIZATION_ERROR`, `MODEL_LOAD_ERROR` and `NOT_IMPLEMENTED`.
 
 ---
 
-### ERR_2002: File Too Large
+## Messages without a code
 
-**Message:** "File is too large to index: {path} ({size} MB). Maximum size is 50 MB."
+Some important messages are plain sentences:
 
-**Cause:** File exceeds maximum size limit (50MB)
+- **"Lattice's bundled llama-server can't run on this machine: …"** The local model engine couldn't start. The message ends with what to do. That might be "Update your graphics driver to get a Vulkan runtime", a note that Lattice is using its compatibility build, or "Reinstall Lattice." See [Chat doesn't answer](troubleshooting.md#chat-doesnt-answer-or-the-model-wont-load).
+- **"Failed to create database connection at …"** or **"Failed to initialize database schema."** These appear in the startup dialog. See [Lattice won't start](troubleshooting.md#lattice-wont-start).
+- **"No downloaded utility model is available for use."** Document search still works with basic query planning. Set a utility model in **Settings > AI > Downloaded** to turn on AI query planning.
 
-**Solution:**
-1. Split large file into smaller chunks
-2. Exclude large files from indexing
-3. Convert to compressed format if possible
+## See also
 
-**Note:** Size limit prevents out-of-memory errors and excessive processing time.
-
-**Severity:** WARNING
-
----
-
-### ERR_2003: Disk Space Insufficient
-
-**Message:** "Insufficient disk space. Please free up disk space and try again."
-
-**Cause:** Not enough free disk space for operation
-
-**Solution:**
-1. Free up disk space (at least 500MB recommended)
-2. Delete old backups
-3. Move database to drive with more space
-4. Clean up temporary files
-
-**Windows:**
-```
-Settings → System → Storage → Free up space now
-```
-
-**macOS:**
-```
-About This Mac → Storage → Manage
-```
-
-**Linux:**
-```bash
-df -h  # check disk usage
-ncdu /  # find large directories
-```
-
-**Severity:** ERROR
-
----
-
-### ERR_2004: Path Invalid
-
-**Message:** "Invalid path: {path}"
-
-**Cause:** Path contains invalid characters or format
-
-**Solution:**
-1. Check path syntax
-2. Remove special characters
-3. Use absolute path instead of relative
-4. Check for path injection attempts (security)
-
-**Severity:** ERROR
-
----
-
-### ERR_2005: File Locked
-
-**Message:** "File is locked by another process: {path}"
-
-**Cause:** File is open in another application
-
-**Solution:**
-1. Close file in other applications
-2. Wait for other process to release file
-3. Restart computer if can't identify locking process
-
-**Windows - Find locking process:**
-```
-Resource Monitor → CPU tab → Associated Handles → Search filename
-```
-
-**Linux - Find locking process:**
-```bash
-lsof /path/to/file
-```
-
-**Severity:** WARNING
-
----
-
-### ERR_2006: Cannot Open Directory
-
-**Message:** "Cannot open directories"
-
-**Cause:** Attempted to open directory instead of file
-
-**Solution:**
-1. Open specific file instead
-2. Use folder browser if wanting to browse contents
-3. Select file within directory
-
-**Severity:** WARNING
-
----
-
-## Database Errors (3000-3999)
-
-### ERR_3000: Database Error
-
-**Message:** "Database error: {details}. Try restarting the application."
-
-**Cause:** General database operation failure
-
-**Solution:**
-1. Restart application
-2. Check database file isn't corrupted
-3. Restore from backup if needed
-4. See [Database Corruption](troubleshooting.md#database-corruption)
-
-**Severity:** ERROR
-
----
-
-### ERR_3001: Database Corrupted
-
-**Message:** "Database is corrupted. Please restore from backup."
-
-**Cause:** Database file integrity check failed
-
-**Solution:**
-1. **Restore from automatic backup:**
-   - Close application
-   - Navigate to database directory
-   - Copy `vault.db.backup-[date]` to `vault.db`
-   - Restart application
-
-2. **Rebuild database:**
-   - Settings → Advanced → Rebuild Database
-   - Re-index all content (may take hours)
-
-3. **Start fresh:**
-   - Close application
-   - Rename `vault.db` to `vault.db.old`
-   - Restart (creates new database)
-   - Re-add watch folders
-
-**Database locations:**
-- Windows: `%LOCALAPPDATA%\Recall\Vault\vault.db`
-- macOS: `~/Library/Application Support/Recall/Vault/vault.db`
-- Linux: `~/.local/share/recall-vault/vault.db`
-
-**Severity:** ERROR
-
----
-
-### ERR_3002: Database Locked
-
-**Message:** "Database is locked by another process"
-
-**Cause:** Another instance accessing database or file lock not released
-
-**Solution:**
-1. Close all application instances
-2. Wait 30 seconds
-3. Restart application
-4. Check for zombie processes
-
-**Windows:**
-```
-Task Manager → Details → Find "Recall Vault" → End Task
-```
-
-**Linux/macOS:**
-```bash
-ps aux | grep recall
-kill [PID]  # if found
-```
-
-**Severity:** ERROR
-
----
-
-### ERR_3003: Query Failed
-
-**Message:** "Database query failed: {details}"
-
-**Cause:** SQL query execution error
-
-**Solution:**
-1. Retry operation
-2. Restart application
-3. Check database integrity
-4. Report bug if persists with specific query
-
-**Severity:** ERROR
-
----
-
-### ERR_3004: Schema Mismatch
-
-**Message:** "Database schema version mismatch. Migration required."
-
-**Cause:** Database from different app version
-
-**Solution:**
-1. Update to latest app version
-2. Automatic migration should run
-3. Backup database before migration
-4. Restore from backup if migration fails
-
-**Severity:** ERROR
-
----
-
-## Indexing Errors (4000-4999)
-
-### ERR_4000: Indexing Failed
-
-**Message:** "Failed to index file: {path}"
-
-**Cause:** General indexing failure
-
-**Solution:**
-1. Check error details in indexing activity log
-2. Verify file is accessible
-3. Check file isn't corrupted
-4. Try manual re-index
-
-**Severity:** WARNING
-
----
-
-### ERR_4001: Unsupported File Type
-
-**Message:** "Unsupported file type: {type}. Convert to a supported format (PDF, DOCX, TXT, MD, HTML)."
-
-**Cause:** File type not supported for indexing
-
-**Supported formats:**
-- Text: `.txt`, `.md`
-- Documents: `.pdf`, `.docx`
-- Web: `.html`
-
-**Solution:**
-1. Convert file to supported format
-2. Use PDF for universal compatibility
-3. Extract text manually and save as .txt
-4. Request format support in feature request
-
-**Severity:** INFO
-
----
-
-### ERR_4002: Extraction Failed
-
-**Message:** "Content extraction failed: {reason}"
-
-**Cause:** Unable to extract text from document
-
-**Common reasons:**
-- Corrupted PDF
-- Password-protected document
-- Unsupported PDF features
-- Malformed DOCX structure
-
-**Solution:**
-1. Try opening file in native application
-2. Export/save as new file
-3. Convert to different format
-4. Check file isn't password-protected
-
-**Severity:** WARNING
-
----
-
-### ERR_4003: Queue Full
-
-**Message:** "Indexing queue is full. Wait for current operations to complete."
-
-**Cause:** Too many files queued for indexing (limit: 10,000)
-
-**Solution:**
-1. Wait for queue to process
-2. Pause adding new folders
-3. Reduce number of concurrent indexing operations
-4. Increase queue size in advanced settings (risk: high memory)
-
-**Severity:** WARNING
-
----
-
-### ERR_4004: Embedding Generation Failed
-
-**Message:** "Failed to generate embeddings: {reason}"
-
-**Cause:** AI embedding creation error
-
-**Common reasons:**
-- Python bridge not running
-- Embedding model not downloaded
-- Out of memory
-- Text too long
-
-**Solution:**
-1. Restart application (restarts Python bridge)
-2. Check embedding model downloaded: Settings → Models
-3. Reduce text chunk size
-4. Check logs for Python errors
-
-**Severity:** ERROR
-
----
-
-### ERR_4005: Chunking Failed
-
-**Message:** "Failed to chunk document: {path}"
-
-**Cause:** Error splitting document into searchable chunks
-
-**Solution:**
-1. Check document isn't corrupted
-2. Try re-saving document
-3. Convert to plain text format
-4. Check document isn't unusually formatted
-
-**Severity:** WARNING
-
----
-
-### ERR_4006: Metadata Extraction Failed
-
-**Message:** "Failed to extract metadata from: {path}"
-
-**Cause:** Cannot read document properties
-
-**Solution:**
-1. File will be indexed without metadata
-2. Check file permissions
-3. Verify file format is valid
-4. No action required (non-critical)
-
-**Severity:** INFO
-
----
-
-## Search Errors (5000-5999)
-
-### ERR_5000: Search Failed
-
-**Message:** "Search operation failed: {reason}"
-
-**Cause:** General search error
-
-**Solution:**
-1. Retry search
-2. Simplify search query
-3. Clear search cache: Settings → Advanced → Clear Cache
-4. Restart application
-
-**Severity:** ERROR
-
----
-
-### ERR_5001: Invalid Search Query
-
-**Message:** "Invalid search query: {details}"
-
-**Cause:** Malformed search syntax
-
-**Solution:**
-1. Check query syntax
-2. Remove special characters
-3. Use simpler query
-4. Refer to search syntax guide
-
-**Valid syntax:**
-- Basic: `search terms`
-- Phrase: `"exact phrase"`
-- Filter: `type:pdf after:2024-01-01`
-- Combine: `"project plan" type:docx tag:work`
-
-**Severity:** WARNING
-
----
-
-### ERR_5002: Search Timeout
-
-**Message:** "Search timed out. Try a more specific query."
-
-**Cause:** Search exceeded maximum time (30s default)
-
-**Solution:**
-1. Use more specific search terms
-2. Add filters to narrow results
-3. Increase timeout: Settings → Advanced → Search Timeout
-4. Optimize database: Settings → Advanced → Rebuild Index
-
-**Severity:** WARNING
-
----
-
-### ERR_5003: Index Unavailable
-
-**Message:** "Search index is unavailable. Rebuild required."
-
-**Cause:** Search index corrupted or missing
-
-**Solution:**
-1. Settings → Advanced → Rebuild Search Index
-2. Wait for rebuild to complete (may take time)
-3. Search will be available after rebuild
-
-**Severity:** ERROR
-
----
-
-### ERR_5004: Too Many Results
-
-**Message:** "Query returned too many results. Please refine your search."
-
-**Cause:** Search matched more than maximum results (default: 10,000)
-
-**Solution:**
-1. Use more specific search terms
-2. Add date filters
-3. Add type filters
-4. Use phrase search for exact matches
-
-**Severity:** INFO
-
----
-
-## Network Errors (6000-6999)
-
-### ERR_6000: Network Error
-
-**Message:** "Network error: {details}. Please check your connection."
-
-**Cause:** Network connectivity issue
-
-**Solution:**
-1. Check internet connection
-2. Verify firewall settings
-3. Disable VPN temporarily
-4. Restart router
-
-**Note:** Network only needed for:
-- Update checks
-- Model downloads
-- Future cloud sync features
-
-**Severity:** WARNING
-
----
-
-### ERR_6001: Connection Refused
-
-**Message:** "Connection failed. Please check if required services are running."
-
-**Cause:** Cannot connect to internal service
-
-**Common reasons:**
-- Python bridge not started
-- Port already in use
-- Firewall blocking
-
-**Solution:**
-1. Restart application
-2. Check firewall allows local connections
-3. Ensure no port conflicts
-4. Check antivirus not blocking
-
-**Severity:** ERROR
-
----
-
-### ERR_6002: Connection Timeout
-
-**Message:** "Connection timed out. Please try again."
-
-**Cause:** Service not responding in time
-
-**Solution:**
-1. Check system load
-2. Retry operation
-3. Restart application
-4. Check no background updates running
-
-**Severity:** WARNING
-
----
-
-### ERR_6003: Download Failed
-
-**Message:** "Download failed: {resource}"
-
-**Cause:** Cannot download required resource (e.g., embedding model)
-
-**Solution:**
-1. Check internet connection
-2. Check firewall/proxy settings
-3. Try again later
-4. Manual download if available
-
-**Severity:** ERROR
-
----
-
-## Configuration Errors (7000-7999)
-
-### ERR_7000: Invalid Configuration
-
-**Message:** "Configuration error: {setting}. Please check your settings."
-
-**Cause:** Invalid value in configuration file
-
-**Solution:**
-1. Settings → Restore Defaults
-2. Or manually edit config file
-3. Remove invalid entries
-4. Restart application
-
-**Config locations:**
-- Windows: `%LOCALAPPDATA%\Recall\Vault\config.json`
-- macOS: `~/Library/Application Support/Recall/Vault/config.json`
-- Linux: `~/.config/recall-vault/config.json`
-
-**Severity:** ERROR
-
----
-
-### ERR_7001: Config File Corrupted
-
-**Message:** "Configuration file is corrupted. Restoring defaults."
-
-**Cause:** Cannot parse config file
-
-**Solution:**
-1. Application will create new config with defaults
-2. Re-apply your settings manually
-3. Check backup config if available
-
-**Severity:** WARNING
-
----
-
-### ERR_7002: Config Read Failed
-
-**Message:** "Cannot read configuration file"
-
-**Cause:** Permission or file system error
-
-**Solution:**
-1. Check file permissions
-2. Ensure config directory exists
-3. Check disk not full
-4. Try running app with appropriate permissions
-
-**Severity:** ERROR
-
----
-
-### ERR_7003: Config Write Failed
-
-**Message:** "Cannot save configuration. Settings not persisted."
-
-**Cause:** Cannot write to config file
-
-**Solution:**
-1. Check file permissions
-2. Ensure disk not full
-3. Check antivirus not blocking
-4. Verify config file not read-only
-
-**Severity:** ERROR
-
----
-
-## Python Bridge Errors (8000-8999)
-
-### ERR_8000: Python Bridge Unavailable
-
-**Message:** "AI features unavailable. Python backend may not be running."
-
-**Cause:** Python subprocess not started or crashed
-
-**Impact:**
-- Semantic search unavailable
-- Embedding generation fails
-- Indexing may be degraded
-
-**Solution:**
-1. Restart application (auto-restarts bridge)
-2. Check logs for Python errors
-3. Verify Python dependencies installed
-4. Report bug if persists
-
-**Severity:** ERROR
-
----
-
-### ERR_8001: Python Bridge Timeout
-
-**Message:** "Request timed out after {seconds} seconds"
-
-**Cause:** Python operation took too long
-
-**Solution:**
-1. Reduce batch size
-2. Increase timeout in settings
-3. Check system resources
-4. Restart application
-
-**Severity:** WARNING
-
----
-
-### ERR_8002: Python Error
-
-**Message:** "Python error (code {code}): {message}"
-
-**Cause:** Error in Python subprocess
-
-**Solution:**
-1. Check error message for details
-2. Restart application
-3. Update to latest version
-4. Report bug with error details
-
-**Severity:** ERROR
-
----
-
-### ERR_8003: Circuit Breaker Open
-
-**Message:** "Circuit breaker is open - too many failures"
-
-**Cause:** Repeated failures triggered circuit breaker (protection mechanism)
-
-**Solution:**
-1. Wait 60 seconds for circuit breaker to reset
-2. Restart application
-3. Check logs for underlying error
-4. Fix underlying issue before retry
-
-**Note:** Circuit breaker prevents cascading failures by temporarily stopping operations after repeated failures.
-
-**Severity:** ERROR
-
----
-
-### ERR_8004: Model Not Found
-
-**Message:** "Embedding model not found. Download the required model from Settings."
-
-**Cause:** AI model not downloaded or corrupted
-
-**Solution:**
-1. Settings → Models
-2. Download required model (one-time, ~500MB)
-3. Wait for download to complete
-4. Restart application
-
-**Model location:**
-- Windows: `%LOCALAPPDATA%\Recall\Vault\models`
-- macOS: `~/Library/Application Support/Recall/Vault/models`
-- Linux: `~/.local/share/recall-vault/models`
-
-**Severity:** ERROR
-
----
-
-### ERR_8005: Ollama Unavailable
-
-**Message:** "LLM unavailable. Please start Ollama (run 'ollama serve' in terminal)."
-
-**Cause:** Ollama service not running (future feature)
-
-**Solution:**
-1. Install Ollama from https://ollama.ai
-2. Start Ollama service:
-   ```bash
-   ollama serve
-   ```
-3. Verify running: `ollama list`
-4. Restart Recall/Vault
-
-**Note:** This is for future LLM features.
-
-**Severity:** WARNING
-
----
-
-## Common Error Patterns
-
-### "Permission denied" Errors
-
-**Pattern:** Various operations fail with permission errors
-
-**Common Causes:**
-1. Running from protected directory
-2. Antivirus blocking access
-3. File/folder permissions
-4. Admin rights needed
-
-**Solution:**
-1. Move database to user directory
-2. Add antivirus exclusions
-3. Check file permissions
-4. Run with appropriate rights (avoid admin if possible)
-
----
-
-### "Timeout" Errors
-
-**Pattern:** Operations timing out
-
-**Common Causes:**
-1. System overloaded
-2. Large files/datasets
-3. Slow disk (HDD vs SSD)
-4. Background processes
-
-**Solution:**
-1. Increase timeout values
-2. Reduce operation scope
-3. Upgrade to SSD
-4. Close background apps
-
----
-
-### Database Errors
-
-**Pattern:** Various database operations failing
-
-**Common Causes:**
-1. Database corruption
-2. Multiple instances running
-3. Disk issues
-4. Out of space
-
-**Solution:**
-1. Restore from backup
-2. Close duplicate instances
-3. Check disk health
-4. Free up space
-
----
-
-### Python/AI Errors
-
-**Pattern:** Embedding or AI features failing
-
-**Common Causes:**
-1. Python bridge crashed
-2. Model not downloaded
-3. Out of memory
-4. Incompatible versions
-
-**Solution:**
-1. Restart application
-2. Download models
-3. Increase RAM or reduce batch size
-4. Update to latest version
-
----
-
-## Error Reporting
-
-When reporting errors, please include:
-
-1. **Error Code/Message:** Exact error text
-2. **Steps to Reproduce:** What you did before error
-3. **System Info:**
-   - OS and version
-   - App version (Help → About)
-   - Available RAM
-   - Disk space
-4. **Logs:** From appropriate log directory
-5. **Screenshots:** If UI-related error
-
-**Log locations:**
-- Windows: `%LOCALAPPDATA%\Recall\Vault\logs`
-- macOS: `~/Library/Logs/Recall/Vault`
-- Linux: `~/.local/share/recall-vault/logs`
-
----
-
-## Additional Resources
-
-- **[Troubleshooting Guide](troubleshooting.md)** - Detailed solutions
-- **[FAQ](faq.md)** - Common questions
-- **GitHub Issues** - Report bugs
-- **Community Forum** - Get help
-
----
-
-**Error not listed?**
-
-1. Check [Troubleshooting Guide](troubleshooting.md)
-2. Search existing GitHub issues
-3. Create new issue with details
-4. Include error message and logs
+- [Troubleshooting](troubleshooting.md)
+- [FAQ](faq.md)

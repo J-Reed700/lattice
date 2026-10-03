@@ -1,5 +1,7 @@
 # Chat + Daily Notes + Reference Inbox Consolidation Plan
 
+> Status (2026-10-02): historical plan; the inventory below is not current. Daily Notes became Journal (`/journals`, `src/components/Journal/JournalWorkspace.tsx`), and per-message actions live in `src/components/Chat/Message.tsx` and `MessageActions.tsx`.
+
 ## Scope
 This document audits overlap between Chat, Daily Notes, and Reference Inbox, then proposes a reduced surface area with clearer ownership.
 

@@ -12,13 +12,15 @@
 //!
 //! ## Public surface
 //!
-//! - `dto` — `FolderIndexStatusDto` and its states
+//! - `dto` — `FolderIndexStatusDto` and its states; the folders list's
+//!   `FolderIndexSummaryDto`
 //! - `chunker` — line-based, structure-aware passages
 //! - `store` — the per-folder SQLite store and the directory registry
-//! - `run` — the incremental indexing run and per-path updates
+//! - `run` — the incremental indexing run and per-path updates, with
+//!   passage progress and a time left
 //! - `search::FolderSearch` — dense + `bm25`, fused by reciprocal rank
-//! - `manager` — open, close, rebuild, forget; refused roots, size cap,
-//!   sub-folder reuse, eviction, identity switch
+//! - `manager` — open, close, rebuild, delete; refused roots, size cap,
+//!   own-index preference and sub-folder reuse, identity switch, summaries
 //! - `tool` — the model's `search_folder`
 
 pub mod chunker;

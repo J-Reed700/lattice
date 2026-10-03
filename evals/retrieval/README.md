@@ -394,7 +394,8 @@ cargo test --lib live_corpus_retrieval_and_answer -- --ignored --nocapture
 
 This makes real inference requests to the configured llama.cpp endpoint and uses
 the installed embedding model. It leaves conversation history and the source
-index untouched. Generation is bounded by the production 300-second deadline;
+index untouched. The test bounds generation at 300 seconds, well under the
+30-minute budget production chat allows, so a slow answer fails here first;
 the report retains failures, first visible answer time, generation duration,
 finish reason, and streaming consistency. A completed smoke check is not a
 citation-support or legal-accuracy assessment.

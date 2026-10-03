@@ -3,7 +3,7 @@
 
 use super::index::dto::FolderIndexStatusDto;
 use super::index::manager::{self, EmbedderSource, FolderIndexManager, ManagerConfig};
-use super::{dto::*, fs, repository, scope::Scope};
+use super::{dto::*, folders, fs, scope::Scope};
 use crate::{
     application::ports::EmbeddingPort,
     interfaces::di::Container,
@@ -97,7 +97,7 @@ pub async fn set_conversation_explorer_root(
         Some(root) => Some(blocking(move || Scope::open(&root).map(|s| s.root_string())).await?),
         None => None,
     };
-    repository::set_conversation_root(container.db_pool(), &conversation_id, canonical.as_deref())
+    folders::bind_thread(container.db_pool(), &conversation_id, canonical.as_deref())
         .await
         .map_err(ApiError::from)
 }
@@ -139,7 +139,8 @@ fn index_manager<R: Runtime>(app: &AppHandle<R>, container: &Container) -> Arc<F
 }
 
 /// Opens the folder's index and starts or resumes indexing it. Any other
-/// open folder is closed first.
+/// open folder is closed first. The folder joins the folders list, or moves
+/// up it.
 #[tauri::command]
 #[specta::specta]
 pub async fn explorer_index_open<R: Runtime>(
@@ -147,10 +148,15 @@ pub async fn explorer_index_open<R: Runtime>(
     app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<FolderIndexStatusDto, ApiError> {
-    index_manager(&app, &container)
+    let status = index_manager(&app, &container)
         .open(&root)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    // The list is a convenience; the index is what was asked for.
+    if let Err(error) = folders::record_open(container.db_pool(), &status.root).await {
+        tracing::warn!(%error, "Could not record the Explorer folder");
+    }
+    Ok(status)
 }
 
 /// Closes the open folder's index: its watcher, task and database.
@@ -191,18 +197,91 @@ pub async fn explorer_index_rebuild<R: Runtime>(
         .map_err(ApiError::from)
 }
 
-/// Deletes the folder's index directory, closing it first if it is open.
+/// The folders list: pinned first, then the most recently opened, each with
+/// its threads and what its index holds.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_index_forget<R: Runtime>(
+pub async fn explorer_folders_list<R: Runtime>(
+    app: AppHandle<R>,
+    container: State<'_, Container>,
+) -> Result<ExplorerFolderListDto, ApiError> {
+    let manager = index_manager(&app, &container);
+    folders::list(container.db_pool(), &manager)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Renames a folder in the list; an empty name goes back to its own.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_rename(
+    root: String,
+    name: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    folders::rename(container.db_pool(), &root, &name)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_set_pinned(
+    root: String,
+    pinned: bool,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    folders::set_pinned(container.db_pool(), &root, pinned)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Sets a folder's system prompt and the space its threads belong to; an
+/// empty prompt is none, and General is the default space. The folder's
+/// threads move to the space. Returns how many threads moved.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_set_settings(
+    root: String,
+    instructions: String,
+    space_id: String,
+    container: State<'_, Container>,
+) -> Result<u32, ApiError> {
+    let moved = folders::set_settings(container.db_pool(), &root, &instructions, &space_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(u32::try_from(moved).unwrap_or(u32::MAX))
+}
+
+/// Deletes the folder's own index, closing it first if it is open. The
+/// folder stays listed, and the next open builds the index again.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_delete_index<R: Runtime>(
     root: String,
     app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    index_manager(&app, &container)
-        .forget(&root)
+    folders::delete_index(&index_manager(&app, &container), &root)
         .await
         .map_err(ApiError::from)
+}
+
+/// Removes a folder from the list with its own index; with
+/// `delete_threads`, its threads too. Returns how many threads were deleted.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_remove<R: Runtime>(
+    root: String,
+    delete_threads: bool,
+    app: AppHandle<R>,
+    container: State<'_, Container>,
+) -> Result<u32, ApiError> {
+    let manager = index_manager(&app, &container);
+    let deleted = folders::remove(container.inner(), &manager, &root, delete_threads)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(u32::try_from(deleted).unwrap_or(u32::MAX))
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -217,7 +296,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             explorer_index_close,
             explorer_index_status,
             explorer_index_rebuild,
-            explorer_index_forget
+            explorer_folders_list,
+            explorer_folder_rename,
+            explorer_folder_set_pinned,
+            explorer_folder_set_settings,
+            explorer_folder_delete_index,
+            explorer_folder_remove
         ])
         .build()
 }

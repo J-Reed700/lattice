@@ -1,10 +1,15 @@
 # Toast Notification System
 
-Professional toast notification system for Lattice/Lattice desktop application.
+Toast notification system for the Lattice desktop application.
+
+This is the general-purpose toast. Errors raised through `ErrorContext` render
+in the separate `ErrorToastContainer` (`src/components/ErrorToast/`).
 
 ## Quick Start
 
-### 1. Import ToastContainer in App.tsx
+### 1. ToastContainer is mounted once in App.tsx
+
+It is already there; don't mount a second one.
 
 ```tsx
 import { ToastContainer } from './components/Toast';
@@ -22,7 +27,7 @@ function App() {
 ### 2. Use in Components
 
 ```tsx
-import { useToast } from './hooks/useToast';
+import { useToast } from '@/hooks/useToast';
 
 function MyComponent() {
   const { toast } = useToast();
@@ -38,15 +43,13 @@ function MyComponent() {
 ## Features
 
 - 4 toast types (success, error, warning, info)
-- Auto-dismiss with progress bar
-- Manual dismiss
-- Action buttons
+- Auto-dismiss with progress bar (`duration: 0` keeps a toast until dismissed)
+- Manual dismiss, and Esc dismisses all
+- One action button per toast
 - Pause on hover
-- Queue management
+- At most `maxToasts` on screen; the oldest are dropped
 - 6 position options
-- Full accessibility (WCAG AA)
-- Dark mode support
-- Smooth animations
+- Slide-in animation, off under reduced motion
 
 ## File Structure
 
@@ -56,18 +59,16 @@ src/
 │   ├── ToastContainer.tsx    # Main container component
 │   ├── ToastItem.tsx          # Individual toast card
 │   ├── ToastIcons.tsx         # Type-specific icons
-│   ├── ToastDemo.tsx          # Interactive demo
 │   ├── index.ts               # Barrel export
 │   └── __tests__/
 │       └── ToastSystem.test.tsx
 ├── stores/
-│   └── toastStore.ts          # Global state management
+│   ├── toastStore.ts          # Zustand store + `toast` / `toastStore` helpers
+│   └── toastStore.test.ts
 ├── hooks/
 │   └── useToast.ts            # React hook for toasts
-├── utils/
-│   └── toast.ts               # Utility functions
-└── examples/
-    └── ToastIntegrationExamples.tsx
+└── utils/
+    └── toast.ts               # Utility functions
 ```
 
 ## API
@@ -85,20 +86,27 @@ toast.dismiss(id)
 toast.dismissAll()
 ```
 
+Each creator returns the toast's id. `options` takes `message`, `duration`,
+`action: { label, onClick }`, `dismissible` and `icon`. Outside React, import
+`toast` from `@/stores/toastStore` directly.
+
 ### Utility Functions
 
 ```tsx
-import { showSuccessToast, showErrorToast } from './utils/toast';
+import { showSuccessToast, showErrorToast, showPromiseToast } from '@/utils/toast';
 
 showSuccessToast('Saved!');
-showErrorToast('Failed', error);
+showErrorToast('Failed', error);   // error's message becomes the toast message
 showPromiseToast(promise, { loading, success, error });
 ```
+
+Also `showWarningToast`, `showInfoToast`, `dismissToast(id)` and
+`dismissAllToasts()`.
 
 ### Configuration
 
 ```tsx
-import { toastStore } from './stores/toastStore';
+import { toastStore } from '@/stores/toastStore';
 
 toastStore.updateConfig({
   position: 'top-right',
@@ -151,31 +159,15 @@ await showPromiseToast(uploadFile(), {
 Run tests:
 
 ```bash
-npm test -- Toast
-```
-
-Use demo component for visual testing:
-
-```tsx
-import { ToastDemo } from './components/Toast/ToastDemo';
-
-// Add to your app during development
-<ToastDemo />
+npx vitest run src/components/Toast src/stores/toastStore.test.ts
 ```
 
 ## Accessibility
 
-- ARIA live regions for screen readers
-- Keyboard navigation (Tab, Esc)
-- Focus management
-- Color contrast WCAG AA compliant
-- Reduced motion support
-
-## Browser Support
-
-- Chrome/Edge 90+
-- Firefox 88+
-- Safari 14+
+- The container is a labelled `region` with `aria-live="polite"`; each toast is a `role="status"`
+- The progress bar is a `role="progressbar"`
+- Esc dismisses all toasts
+- Reduced motion turns off the slide-in
 
 ## License
 

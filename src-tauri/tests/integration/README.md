@@ -1,199 +1,57 @@
 # Integration Tests
 
-Comprehensive integration tests for the Tauri Rust backend.
+**Status (2026-10-02): the files in this directory are not compiled.** Cargo
+only builds `tests/*.rs` files as test targets (and `tests/<dir>/main.rs`), and
+no target declares `mod integration;`. So `test_end_to_end_indexing.rs`,
+`test_search_integration.rs`, `test_tag_integration.rs`, `ipc_commands_test.rs`,
+`link_parser_integration_test.rs` and `tag_generator_integration_test.rs` never
+run, and `cargo test --test test_search_integration` fails with "no test target
+named". They also depend on `tests/helpers/`, which is in the same state (see
+its README). Treat them as reference material until someone ports them.
 
-## Test Files
+## Where integration tests actually live
 
-### test_end_to_end_indexing.rs
+Each top-level `src-tauri/tests/*.rs` file is its own test target. The main
+groups:
 
-End-to-end tests for the complete document indexing workflow:
+| Area | Targets |
+|------|---------|
+| Search and retrieval | `hybrid_search_integration_test`, `search_comprehensive_tests`, `test_search_enrichment_service_integration`, `hyde_phase2_tests` |
+| Indexing and extraction | `indexing_comprehensive_tests`, `indexing_output_test`, `extractor_integration_test`, `test_metadata_extraction_integration`, `test_embedding_persistence_integration`, `article_extraction_demo` |
+| Web ingestion | `test_web_ingestion_service_integration` |
+| Downloads | `download_manager_tests`, `download_progress_tests`, `download_redirect_test`, `download_engine_validation_test`, `test_download_helpers` |
+| Commands and plugins | `commands_tests`, `plugins_tests` (includes `tests/plugins/`) |
+| Security and audit | `security_audit_logging_test`, `security_rate_limiting_test`, `security_and_repositories_tests`, `native_keyring_backend_test`, `audit_events_test` |
+| Lifecycle | `shutdown_tests`, `panic_hook_test`, `sidecar_guard_test` |
+| Repositories and services | `tag_repository_test`, `services_comprehensive_tests`, `mock_unit_of_work_examples` |
+| LLM | `inference_unit_tests` (includes `tests/inference_helpers/`) |
+| Live-model evals (all `#[ignore]`) | `conversation_memory_evals`, `learning_studio_evals` |
 
-- Document ingestion and storage
-- Content extraction
-- Chunk generation
-- Embedding creation
-- Batch and concurrent indexing
-- Performance benchmarks
-- Edge cases and error handling
+Compiled shared helpers: `tests/common/` (download helpers, `MockHttpClient`)
+and `tests/inference_helpers/`. Eval fixtures are JSON under
+`tests/fixtures/conversation_memory/`. `tests/fixtures/*.rs`, `tests/mocks/`,
+`tests/patterns/` and `tests/migration/` are not part of any target either.
 
-**Key Tests:**
-- `test_single_document_indexing` - Basic document creation
-- `test_large_document_chunking` - Handling large documents
-- `test_concurrent_document_indexing` - Parallel indexing
-- `test_indexing_performance` - Performance validation
+Most behavior is tested by unit tests next to the code (`#[cfg(test)]` modules
+and `features/*/tests.rs`), usually against an in-memory SQLite pool with
+`sqlx::migrate!("./migrations")` applied.
 
-### test_search_integration.rs
+## Running
 
-Comprehensive search functionality tests:
-
-- Semantic search with embeddings
-- Full-text search (FTS5)
-- Hybrid search (semantic + keyword)
-- Search ranking and relevance
-- Query handling edge cases
-- Performance benchmarks
-
-**Key Tests:**
-- `test_semantic_search_basic` - Basic semantic search
-- `test_full_text_search` - FTS5 keyword search
-- `test_hybrid_search_combination` - Combined search strategies
-- `test_search_performance_many_documents` - Search scalability
-
-### test_tag_integration.rs
-
-Tag management and document-tag relationship tests:
-
-- Tag creation and retrieval
-- Document-tag associations
-- Tag search and filtering
-- Mention extraction and linking
-- Backlinks and relationships
-- Concurrent operations
-
-**Key Tests:**
-- `test_add_multiple_tags_to_document` - Tag associations
-- `test_extract_person_mentions` - Mention parsing
-- `test_mention_backlinks` - Relationship tracking
-- `test_concurrent_tag_creation` - Parallel tag operations
-
-## Test Helpers
-
-All tests use the comprehensive test helper framework located in `tests/helpers/`:
-
-### TestContext
-
-Main test environment providing:
-- In-memory SQLite database
-- Mock embedding service
-- All repository instances
-- Automatic cleanup
-
-**Usage:**
-```rust
-let ctx = TestContext::new().await?;
-let doc = ctx.create_test_document("test.md", "content").await?;
-```
-
-### Factories
-
-Builder-pattern factories for creating test data:
-- `DocumentFactory` - Test documents
-- `ChunkFactory` - Document chunks
-- `EmbeddingFactory` - Embedding vectors
-- `TagFactory` - Tags (via TestContext)
-
-**Usage:**
-```rust
-let doc = DocumentFactory::new()
-    .file_name("custom.md")
-    .content("Custom content")
-    .build();
-```
-
-### Mocks
-
-Mock implementations for external dependencies:
-- `MockEmbedder` - Deterministic embeddings
-- `MockLLMClient` - Predefined LLM responses
-- `MockSearchIndex` - In-memory search
-
-**Usage:**
-```rust
-let embedder = MockEmbedder::new(384);
-let embedding = embedder.embed_text("test").await?;
-```
-
-### Assertions
-
-Domain-specific assertions for clearer tests:
-- `assert_document_exists` - Document validation
-- `assert_chunk_count` - Chunk verification
-- `assert_tag_exists` - Tag validation
-- `assert_embeddings_similar` - Similarity checking
-- `assert_search_contains` - Search result validation
-
-**Usage:**
-```rust
-assert_document_exists(&ctx.doc_repo(), &doc.id).await?;
-assert_embeddings_similar(&emb1, &emb2, 0.9);
-```
-
-## Running Tests
-
-Run all integration tests:
 ```bash
-cargo test --test test_end_to_end_indexing
-cargo test --test test_search_integration
-cargo test --test test_tag_integration
+cd src-tauri
+
+cargo test --lib                                   # unit tests
+cargo test --test hybrid_search_integration_test   # one integration target
+cargo test --tests                                 # every integration target
+cargo test --test learning_studio_evals -- --ignored --nocapture   # opt-in eval
 ```
 
-Run specific test:
-```bash
-cargo test test_single_document_indexing
-```
+The eval targets need a model endpoint; their module docs list the
+`LATTICE_EVAL_*` and `LATTICE_LEARNING_EVAL_*` variables.
 
-Run with output:
-```bash
-cargo test -- --nocapture
-```
-
-## Test Design Principles
-
-1. **Isolated**: Each test has its own database
-2. **Fast**: In-memory databases, mock services
-3. **Deterministic**: Same inputs = same outputs
-4. **Comprehensive**: Cover happy paths, edge cases, errors
-5. **Realistic**: Simulate real-world scenarios
-
-## Test Coverage Goals
-
-- **Documents**: Creation, retrieval, updates, deletion
-- **Chunks**: Generation, storage, retrieval
-- **Embeddings**: Creation, similarity, search
-- **Tags**: CRUD, associations, search
-- **Mentions**: Extraction, types, backlinks
-- **Search**: Semantic, keyword, hybrid, ranking
-- **Performance**: Batch operations, concurrency
-- **Edge Cases**: Empty inputs, special chars, errors
-
-## Adding New Tests
-
-1. Choose appropriate test file based on feature area
-2. Use `TestContext` for setup
-3. Use factories for test data
-4. Use assertions for validation
-5. Add documentation explaining what's being tested
-
-**Example:**
-```rust
-#[tokio::test]
-async fn test_new_feature() -> Result<()> {
-    // Arrange
-    let ctx = TestContext::new().await?;
-    let doc = ctx.create_test_document("test.md", "content").await?;
-
-    // Act
-    let result = perform_operation(&doc).await?;
-
-    // Assert
-    assert_eq!(result.status, "success");
-
-    Ok(())
-}
-```
-
-## Performance Targets
-
-- Single document indexing: < 100ms
-- 100 documents indexing: < 5s
-- Search (100 docs): < 1s
-- Tag association: < 50ms
-- Concurrent operations: No deadlocks
-
-## Maintenance
-
-- Keep tests fast and focused
-- Update mocks when APIs change
-- Document complex test scenarios
-- Remove obsolete tests
-- Maintain test coverage > 60%
+CI (`.github/workflows/ci.yml`) compiles every target (`cargo check
+--all-targets`, `cargo clippy --all-targets`) but only runs
+`cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test`
+and `cargo test --test security_audit_logging_test --test native_keyring_backend_test`,
+plus two opt-in learning-runtime container tests.

@@ -273,15 +273,27 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         // would otherwise end the turn with an error and lose every page and
         // passage it had gathered, so it is offered no tools and told to
         // answer from what it has.
-        let final_round = iteration + 1 == max_tool_rounds;
+        // A window with no room left for another result is the last round too:
+        // calls made now would come back cut to nothing.
+        let window_full = iteration > 0
+            && !window_has_room_for_a_result(
+                llm.max_context_tokens(),
+                chars_in_flight(&native_request.input, &tool_context, &current_prompt)
+                    + tool_schema_chars,
+            );
+        let final_round = iteration + 1 == max_tool_rounds || window_full;
         let round_tools = if final_round { None } else { tools_ref };
-        if final_round && tools_ref.is_some_and(|tools| !tools.is_empty()) {
+        let tools_withdrawn = final_round && tools_ref.is_some_and(|tools| !tools.is_empty());
+        if tools_withdrawn {
             info!(
                 iteration,
-                "Last tool round: asking for the answer without tools"
+                window_full, "Last tool round: asking for the answer without tools"
             );
             withdraw_tools_for_answer(&mut native_request, &mut tool_context);
         }
+        // Offered no tools, a model can still write a call into its text. It is
+        // never run, so it is held back from the bubble as it streams.
+        let leaked_calls = std::sync::Mutex::new(LeakedCallFilter::new(tools_withdrawn));
         if is_cancel_requested(request_id) {
             emit_cancelled_stream(window, conv_id, request_id);
             return Err(cancellation_error());
@@ -317,7 +329,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             "LLM first answer text received"
                         );
                     }
-                    emitter.content(&text)
+                    let shown = leaked_calls
+                        .lock()
+                        .map_or_else(|_| text.clone(), |mut filter| filter.push(&text));
+                    if shown.is_empty() {
+                        return Ok(());
+                    }
+                    emitter.content(&shown)
                 };
                 // A provider-level retry is its own step. It used to overwrite
                 // the answer bubble's text, so a turn that recovered ended up
@@ -459,10 +477,18 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         match chunk_result {
                             Ok(StreamChunk::Content(chunk)) => {
                                 full_response.push_str(&chunk);
-                                if let Err(e) = if native_progress {
+                                let shown = if native_progress {
+                                    String::new()
+                                } else {
+                                    leaked_calls.lock().map_or_else(
+                                        |_| chunk.clone(),
+                                        |mut filter| filter.push(&chunk),
+                                    )
+                                };
+                                if let Err(e) = if shown.is_empty() {
                                     Ok(())
                                 } else {
-                                    emitter.content(&chunk)
+                                    emitter.content(&shown)
                                 } {
                                     error!("Failed to emit stream chunk: {}", e);
                                     return Err(e);
@@ -494,6 +520,28 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             Vec::new()
                         } else {
                             tool_calls
+                        };
+                        // A call written as text is cut out of the answer, and
+                        // the answer says why it stops there rather than ending
+                        // mid-thought for no visible reason.
+                        let response_text = match tools_withdrawn
+                            .then(|| leaked_tool_call_start(&response_text))
+                            .flatten()
+                        {
+                            Some(start) => {
+                                warn!(
+                                    conversation_id = conv_id,
+                                    "Model wrote tool calls as text in the last round; cutting them from the answer"
+                                );
+                                let kept = response_text[..start].trim_end();
+                                emitter.content(OUT_OF_ROUNDS_NOTE)?;
+                                if kept.is_empty() {
+                                    OUT_OF_ROUNDS_NOTE.trim_start().to_string()
+                                } else {
+                                    format!("{kept}{OUT_OF_ROUNDS_NOTE}")
+                                }
+                            }
+                            None => response_text,
                         };
                         timings.llm_stream_ms = timings
                             .llm_stream_ms
@@ -1076,10 +1124,16 @@ async fn run_tool_bounded<T>(
 }
 
 /// Said to the model on the last round, when it is offered no more tools.
-const FINAL_ROUND_INSTRUCTION: &str = "You have used every tool round this turn allows, and no tools are available now. Answer the user's question now from what you have already gathered, and say plainly what you could not find.";
+const FINAL_ROUND_INSTRUCTION: &str = "You have used every tool round this turn allows. No tools are available now, so do not write any tool calls. Answer my question now from what you have already gathered. If you could not read enough to answer fully, say what you covered and what is left, so I can ask you to continue.";
 
 /// Turn the next round into the answering round: no tools on offer, and an
 /// instruction to answer from what the turn already holds.
+///
+/// The instruction is the user's last message, not a system one: llama.cpp
+/// chat templates take one system message, so a late one is merged into the
+/// top of the prompt, tens of thousands of tokens before the model reads its
+/// last tool result. From there it was not seen, and the model went on
+/// writing calls as text.
 fn withdraw_tools_for_answer(
     request: &mut crate::application::ports::llm_port::CompletionRequest,
     transcript: &mut Vec<String>,
@@ -1087,7 +1141,7 @@ fn withdraw_tools_for_answer(
     request.tools.clear();
     request.input.push(
         crate::application::ports::llm_port::CompletionInput::Message {
-            role: "system".into(),
+            role: "user".into(),
             content: FINAL_ROUND_INSTRUCTION.into(),
         },
     );
@@ -1096,13 +1150,98 @@ fn withdraw_tools_for_answer(
 
 /// Model rounds a turn may spend on tool calls, the last of which is kept for
 /// the answer. Deep research has a two-hour budget and branches across many
-/// sources; five rounds would end it long before that budget does.
-pub(super) fn max_tool_rounds(deep_research: bool) -> usize {
+/// sources; five rounds would end it long before that budget does. An
+/// Explorer turn reads a folder file by file, two or three a round, so five
+/// rounds ended a walk through a codebase before it reached the answer.
+pub(super) fn max_tool_rounds(deep_research: bool, explorer: bool) -> usize {
     if deep_research {
         12
+    } else if explorer {
+        10
     } else {
         5
     }
+}
+
+/// Appended where the last round's answer stopped to write a tool call it
+/// could not make. One sentence, so the grounding check can know it whole.
+pub(in crate::features::conversation::chat) const OUT_OF_ROUNDS_NOTE: &str =
+    "\n\n_(Stopped here: the model used every tool round this turn allows before it finished — say \"continue\" to let it keep going.)_";
+
+/// How tool calls look when a model writes them as text: Qwen and Hermes
+/// `<tool_call>`, the XML `<function=` form, Mistral's `[TOOL_CALLS]`, and
+/// the `<|tool_call` special-token spelling.
+const LEAKED_CALL_MARKERS: [&str; 4] = ["<tool_call>", "<function=", "[TOOL_CALLS]", "<|tool_call"];
+
+/// Where the first tool call written as text begins, if there is one.
+fn leaked_tool_call_start(text: &str) -> Option<usize> {
+    LEAKED_CALL_MARKERS
+        .iter()
+        .filter_map(|marker| text.find(marker))
+        .min()
+}
+
+/// Streams the last round's text up to the first tool call written into it,
+/// and nothing after. A chunk can end partway through a marker, so a tail
+/// that could still become one is held until the next chunk settles it.
+struct LeakedCallFilter {
+    active: bool,
+    held: String,
+    stopped: bool,
+}
+
+impl LeakedCallFilter {
+    fn new(active: bool) -> Self {
+        Self {
+            active,
+            held: String::new(),
+            stopped: false,
+        }
+    }
+
+    /// The part of `chunk` that may be shown now.
+    fn push(&mut self, chunk: &str) -> String {
+        if !self.active {
+            return chunk.to_string();
+        }
+        if self.stopped {
+            return String::new();
+        }
+        self.held.push_str(chunk);
+        if let Some(start) = leaked_tool_call_start(&self.held) {
+            self.stopped = true;
+            let shown = self.held[..start].to_string();
+            self.held.clear();
+            return shown;
+        }
+        let keep_from = self.held.len() - partial_marker_suffix_len(&self.held);
+        let shown = self.held[..keep_from].to_string();
+        self.held.drain(..keep_from);
+        shown
+    }
+}
+
+/// Length of the longest tail of `text` that is the start of a marker.
+fn partial_marker_suffix_len(text: &str) -> usize {
+    LEAKED_CALL_MARKERS
+        .iter()
+        .flat_map(|marker| (1..marker.len()).rev().map(move |len| &marker[..len]))
+        .filter(|prefix| text.ends_with(prefix))
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether another tool result could still fit in the window, at the size
+/// below which a result says too little to be worth a round. A provider that
+/// reports no window is never treated as full.
+fn window_has_room_for_a_result(context_tokens: usize, chars_in_flight: usize) -> bool {
+    if context_tokens == 0 {
+        return true;
+    }
+    let window_chars =
+        ((context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize).saturating_mul(CHARS_PER_TOKEN);
+    window_chars.saturating_sub(chars_in_flight) >= MIN_TOOL_RESULT_CHARS
 }
 
 /// The tool definitions as the provider receives them, for budgeting: the
@@ -1621,10 +1760,94 @@ mod tests {
 
     #[test]
     fn deep_research_gets_more_tool_rounds() {
-        assert!(max_tool_rounds(true) > max_tool_rounds(false));
+        assert!(max_tool_rounds(true, false) > max_tool_rounds(false, false));
         assert!(
-            max_tool_rounds(false) >= 2,
+            max_tool_rounds(false, false) >= 2,
             "one round to search, one to answer"
+        );
+    }
+
+    #[test]
+    fn an_explorer_turn_gets_more_rounds_than_a_plain_chat() {
+        assert!(max_tool_rounds(false, true) > max_tool_rounds(false, false));
+        assert!(max_tool_rounds(true, true) >= max_tool_rounds(false, true));
+    }
+
+    /// The instruction has to be the last thing the model reads. As a system
+    /// message, llama.cpp merged it into the top of a 27,000-token prompt.
+    #[test]
+    fn the_answer_instruction_is_the_last_user_message() {
+        use crate::application::ports::llm_port::CompletionRequest;
+        let mut request = CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: "You are helpful.".into(),
+                },
+                CompletionInput::ToolResult {
+                    id: "c1".into(),
+                    output: "file text".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        withdraw_tools_for_answer(&mut request, &mut Vec::new());
+        assert!(matches!(request.input.last(),
+            Some(CompletionInput::Message { role, .. }) if role == "user"));
+    }
+
+    #[test]
+    fn a_tool_call_written_as_text_is_found() {
+        let text = "Now the engine.\n\n<tool_call> <function=list_directory> <parameter=path> src </parameter> </function> </tool_call>";
+        assert_eq!(leaked_tool_call_start(text), text.find("<tool_call>"));
+        assert_eq!(
+            leaked_tool_call_start("<function=read_file>"),
+            Some(0),
+            "the XML form without the wrapper"
+        );
+        assert_eq!(leaked_tool_call_start("Plain answer with a < b."), None);
+    }
+
+    #[test]
+    fn the_stream_stops_at_a_call_split_across_chunks() {
+        let mut filter = LeakedCallFilter::new(true);
+        let mut shown = String::new();
+        for chunk in [
+            "Now the engine. <to",
+            "ol_c",
+            "all> <function=list_directory>",
+            " more",
+        ] {
+            shown.push_str(&filter.push(chunk));
+        }
+        assert_eq!(shown, "Now the engine. ");
+    }
+
+    #[test]
+    fn a_lone_angle_bracket_is_released_once_it_is_not_a_call() {
+        let mut filter = LeakedCallFilter::new(true);
+        let first = filter.push("if a <");
+        let second = filter.push(" b then");
+        assert_eq!(format!("{first}{second}"), "if a < b then");
+    }
+
+    #[test]
+    fn rounds_with_tools_stream_untouched() {
+        let mut filter = LeakedCallFilter::new(false);
+        assert_eq!(filter.push("<tool_call>"), "<tool_call>");
+    }
+
+    #[test]
+    fn a_full_window_has_no_room_for_another_result() {
+        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        assert!(window_has_room_for_a_result(8_192, 0));
+        assert!(!window_has_room_for_a_result(
+            8_192,
+            window_chars - MIN_TOOL_RESULT_CHARS + 1
+        ));
+        assert!(
+            window_has_room_for_a_result(0, usize::MAX),
+            "no window reported"
         );
     }
 

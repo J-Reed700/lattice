@@ -14,11 +14,13 @@
 //!   `find_files`
 //! - `prompt` — the folder block an Explorer turn's prompt carries
 //! - `line_refs` — the `path:10-24` grammar answers use to point at lines
-//! - `repository` — `conversations.explorer_root`
+//! - `repository` — `conversations.explorer_root` and `explorer_folders`
+//! - `folders` — the folders list: rows, threads and each folder's index
 //! - `index` — the open folder's semantic index and `search_folder`
 //! - `plugin::init()` — the `explorer` Tauri plugin
 
 pub mod dto;
+pub mod folders;
 pub mod fs;
 pub mod index;
 pub mod line_refs;

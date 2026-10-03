@@ -456,7 +456,12 @@ fn main() {
                     "explorer_index_close",
                     "explorer_index_status",
                     "explorer_index_rebuild",
-                    "explorer_index_forget",
+                    "explorer_folders_list",
+                    "explorer_folder_rename",
+                    "explorer_folder_set_pinned",
+                    "explorer_folder_set_settings",
+                    "explorer_folder_delete_index",
+                    "explorer_folder_remove",
                 ]),
             )
             .plugin(

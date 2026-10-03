@@ -1,11 +1,13 @@
 # UI Primitives Guide
 
-This guide covers the Tooltip and DatePicker components added to the Lattice desktop app.
+This guide covers the Tooltip and DatePicker components in the Lattice desktop
+app, and indexes the other primitives in `src/components/ui/`.
 
 ## Table of Contents
 
 - [Tooltip Component](#tooltip-component)
 - [DatePicker Component](#datepicker-component)
+- [Other Primitives](#other-primitives)
 - [Integration Examples](#integration-examples)
 - [Best Practices](#best-practices)
 
@@ -15,92 +17,106 @@ This guide covers the Tooltip and DatePicker components added to the Lattice des
 
 ### Overview
 
-The Tooltip component displays contextual information when users hover over or focus on an element. Built with Radix UI's tooltip primitive, it provides excellent accessibility and customization options.
+`src/components/ui/tooltip.tsx` is a thin wrapper over Radix UI's tooltip.
+`Tooltip`, `TooltipTrigger`, `TooltipProvider`, `TooltipPortal` and
+`TooltipArrow` are the Radix parts re-exported as they are; `TooltipContent` is
+the one styled part. There is no `content` prop: a tooltip is composed from its
+parts.
+
+For an icon-only button, use `IconButton` instead (see below): it renders the
+tooltip for you from its `label`.
 
 ### Basic Usage
 
 ```tsx
-import { Tooltip } from '@/components/ui';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui';
 
 function Example() {
   return (
-    <Tooltip content="This is helpful information">
-      <button>Hover me</button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button">Hover me</button>
+      </TooltipTrigger>
+      <TooltipContent>This is helpful information</TooltipContent>
     </Tooltip>
   );
 }
 ```
 
-### Props
+### Parts
 
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `children` | `React.ReactNode` | *required* | The element that triggers the tooltip |
-| `content` | `string \| React.ReactNode` | *required* | Content to display in the tooltip |
-| `side` | `'top' \| 'right' \| 'bottom' \| 'left'` | `'top'` | Preferred side to display tooltip |
-| `delay` | `number` | `200` | Delay in ms before showing tooltip |
-| `disabled` | `boolean` | `false` | Disable the tooltip |
-| `sideOffset` | `number` | `8` | Distance from trigger element in pixels |
+| Part | Notable props | Description |
+|------|---------------|-------------|
+| `Tooltip` | `delayDuration`, `open`, `defaultOpen`, `onOpenChange` | Radix `Root`; holds open state |
+| `TooltipTrigger` | `asChild` | The element that opens the tooltip; use `asChild` so your button is the trigger |
+| `TooltipContent` | `side` (`'top' \| 'right' \| 'bottom' \| 'left'`, default `'top'`), `sideOffset` (default `6`), `align`, `className` | Styled content, rendered in a portal |
+| `TooltipArrow` | | Optional arrow; `TooltipContent` draws none by default |
+
+`TooltipProps` and `TooltipProviderProps` are re-exported from Radix.
 
 ### Advanced Usage
 
-#### With Icon Buttons
+#### Icon Buttons: use IconButton
 
 ```tsx
-import { Tooltip } from '@/components/ui';
+import { IconButton } from '@/components/ui';
 import { Trash2 } from 'lucide-react';
 
 function DeleteButton() {
   return (
-    <Tooltip content="Delete document" side="bottom">
-      <button className="p-2 hover:bg-gray-100 rounded">
-        <Trash2 className="h-4 w-4" />
-      </button>
-    </Tooltip>
+    <IconButton label="Delete document" shortcut="⌫" tooltipSide="bottom" onClick={onDelete}>
+      <Trash2 />
+    </IconButton>
   );
 }
 ```
 
+`IconButton` takes `label` (also its `aria-label`), optional `shortcut` (shown
+as a `.kbd` in the tooltip), `size` (`'sm'` 28px, `'md'` 32px), `active`, and
+`tooltipSide` (default `'bottom'`). Its tooltip opens after 300ms.
+
 #### With Dynamic Content
 
 ```tsx
-<Tooltip content={isOpen ? 'Close panel' : 'Open panel'}>
-  <button onClick={toggle}>
-    {isOpen ? <ChevronUp /> : <ChevronDown />}
-  </button>
+<Tooltip>
+  <TooltipTrigger asChild>
+    <button type="button" onClick={toggle}>
+      {isOpen ? <ChevronUp /> : <ChevronDown />}
+    </button>
+  </TooltipTrigger>
+  <TooltipContent>{isOpen ? 'Close panel' : 'Open panel'}</TooltipContent>
 </Tooltip>
 ```
 
-#### Rich Content Tooltip
+#### Label With Shortcut
 
 ```tsx
-<Tooltip
-  content={
-    <div className="space-y-1">
-      <p className="font-semibold">Keyboard Shortcut</p>
-      <p className="text-sm">Press Cmd+K</p>
-    </div>
-  }
-  side="right"
->
-  <button>Search</button>
+<Tooltip delayDuration={500}>
+  <TooltipTrigger asChild>
+    <button type="button" aria-label="Search">…</button>
+  </TooltipTrigger>
+  <TooltipContent side="right" sideOffset={10}>
+    <span className="flex items-center gap-2">
+      <span>Search</span>
+      <kbd className="kbd">⌘1</kbd>
+    </span>
+  </TooltipContent>
 </Tooltip>
 ```
 
 ### TooltipProvider
 
-Wrap your app (or a section) with `TooltipProvider` to configure global tooltip behavior:
+`src/App.tsx` already wraps the app in one `TooltipProvider` with Radix's
+defaults. Tests that render a tooltip outside `App` need their own provider:
 
 ```tsx
 import { TooltipProvider } from '@/components/ui';
 
-function App() {
-  return (
-    <TooltipProvider delayDuration={200} skipDelayDuration={300}>
-      <YourApp />
-    </TooltipProvider>
-  );
-}
+render(
+  <TooltipProvider>
+    <ComponentUnderTest />
+  </TooltipProvider>
+);
 ```
 
 #### TooltipProvider Props
@@ -108,33 +124,27 @@ function App() {
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `children` | `React.ReactNode` | *required* | Your app content |
-| `delayDuration` | `number` | `200` | Default delay for all tooltips |
+| `delayDuration` | `number` | `700` | Default delay for all tooltips (Radix default) |
 | `skipDelayDuration` | `number` | `300` | Time before skipping delay when moving between tooltips |
 | `disableHoverableContent` | `boolean` | `false` | Prevent hovering over tooltip content |
 
 ### Accessibility Features
 
 - **Keyboard Navigation**: Tooltips appear on focus, dismiss with Escape
-- **Screen Readers**: Content is announced via ARIA attributes
-- **Reduced Motion**: Respects `prefers-reduced-motion` for animations
-- **Touch Devices**: Works on touch with appropriate delays
+- **Screen Readers**: Radix links trigger and content via ARIA attributes
+- **Labels**: A tooltip is not a label; icon-only buttons still need `aria-label` (`IconButton` sets it)
 
 ### Styling
 
-Tooltips use Tailwind classes and support dark mode:
+`TooltipContent` is styled with theme tokens, so it follows light and dark
+without `dark:` variants:
 
-```tsx
-// Dark background with white text (default)
-<Tooltip content="Dark tooltip">
-  <button>Hover</button>
-</Tooltip>
+- `bg-[hsl(var(--surface-overlay))]`, `text-[hsl(var(--text-primary))]`, `text-xs font-medium`
+- `rounded-[6px] px-2 py-1 shadow-lg`, `z-50`
+- `surface-pop` (from `src/index.css`) for the open/close animation
+- `pointer-events-none`: the content can't be clicked or hovered
 
-// The styling is handled internally with:
-// - Dark mode support (dark:bg-gray-800)
-// - Animations (fade-in, zoom-in)
-// - Arrow indicator
-// - Shadow for depth
-```
+Pass `className` to adjust it, e.g. `className="xl:hidden"` on the rail.
 
 ---
 
@@ -142,7 +152,9 @@ Tooltips use Tailwind classes and support dark mode:
 
 ### Overview
 
-The DatePicker component provides an intuitive calendar interface for date selection. Built with react-day-picker and date-fns, it includes keyboard navigation, date constraints, and quick actions.
+The DatePicker component provides a calendar popover for date selection.
+Built with react-day-picker and date-fns, it includes keyboard navigation, date
+constraints, and quick actions. No surface uses it yet.
 
 ### Basic Usage
 
@@ -174,7 +186,7 @@ function Example() {
 | `minDate` | `Date` | - | Minimum selectable date |
 | `maxDate` | `Date` | - | Maximum selectable date |
 | `className` | `string` | `''` | Additional CSS classes |
-| `dateFormat` | `string` | `'MMM dd, yyyy'` | Format for displaying selected date |
+| `dateFormat` | `string` | `'MMM dd, yyyy'` | date-fns format for the selected date |
 
 ### Advanced Usage
 
@@ -182,7 +194,7 @@ function Example() {
 
 ```tsx
 import { DatePicker } from '@/components/ui';
-import { addDays, subDays } from 'date-fns';
+import { addDays } from 'date-fns';
 
 function BookingDatePicker() {
   const [date, setDate] = useState<Date>();
@@ -200,33 +212,17 @@ function BookingDatePicker() {
 }
 ```
 
-#### Search Filters with Date Range
+#### From / To Pair
 
 ```tsx
-function SearchFilters() {
+function DateRangeFilter() {
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
 
   return (
     <div className="flex gap-4">
-      <div>
-        <label className="block text-sm font-medium mb-2">From</label>
-        <DatePicker
-          selected={startDate}
-          onSelect={setStartDate}
-          maxDate={endDate} // End date is the max
-          placeholder="Start date"
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium mb-2">To</label>
-        <DatePicker
-          selected={endDate}
-          onSelect={setEndDate}
-          minDate={startDate} // Start date is the min
-          placeholder="End date"
-        />
-      </div>
+      <DatePicker selected={startDate} onSelect={setStartDate} maxDate={endDate} placeholder="Start date" />
+      <DatePicker selected={endDate} onSelect={setEndDate} minDate={startDate} placeholder="End date" />
     </div>
   );
 }
@@ -241,48 +237,6 @@ function SearchFilters() {
   dateFormat="yyyy-MM-dd" // ISO format
   placeholder="YYYY-MM-DD"
 />
-
-<DatePicker
-  selected={date}
-  onSelect={setDate}
-  dateFormat="MMMM d, yyyy" // Long format: January 1, 2025
-  placeholder="Month Day, Year"
-/>
-```
-
-#### Form Integration
-
-```tsx
-function EventForm() {
-  const [formData, setFormData] = useState({
-    title: '',
-    eventDate: undefined as Date | undefined,
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('Event:', formData);
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Input
-        value={formData.title}
-        onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-        placeholder="Event title"
-      />
-
-      <DatePicker
-        selected={formData.eventDate}
-        onSelect={(date) => setFormData({ ...formData, eventDate: date })}
-        placeholder="Event date"
-        minDate={new Date()}
-      />
-
-      <Button type="submit">Create Event</Button>
-    </form>
-  );
-}
 ```
 
 ### Features
@@ -295,160 +249,79 @@ function EventForm() {
 
 #### Keyboard Navigation
 
-- **Arrow Keys**: Navigate through days
+- **Arrow Keys**: Navigate through days (react-day-picker)
 - **Enter**: Select focused day
 - **Escape**: Close calendar
 - **Tab**: Navigate to action buttons
 
-#### Touch Support
-
-- Optimized for mobile with appropriate touch targets
-- Smooth scrolling and interactions
-- Responsive calendar layout
-
 ### Accessibility Features
 
-- **WCAG AA Compliant**: Proper contrast ratios
-- **Keyboard Accessible**: Full keyboard navigation support
-- **ARIA Labels**: Proper labeling for screen readers
-- **Focus Management**: Visible focus indicators
-- **Click Outside**: Close on outside click
+- **ARIA Labels**: "Choose date", "Clear date", and a labelled calendar dialog
+- **Focus Management**: Visible `ring` focus indicators
+- **Click Outside**: Closes on outside click
 
 ### Styling
 
-The DatePicker includes comprehensive styling with dark mode support:
+Colors come from theme tokens (`--surface`, `--text-primary`, `--ring`, …), so
+the picker follows light and dark without `dark:` variants. Pass `className`
+for layout:
 
 ```tsx
-// The component automatically adapts to your theme
-<DatePicker
-  selected={date}
-  onSelect={setDate}
-  className="w-full" // Add custom classes
-/>
+<DatePicker selected={date} onSelect={setDate} className="w-full" />
 ```
 
-Calendar styling includes:
-- Today's date highlighting
-- Selected date emphasis
-- Disabled date styling
-- Hover states
-- Dark mode variants
+Calendar styling includes today's date, the selected date, disabled dates, and
+hover states.
+
+---
+
+## Other Primitives
+
+From the barrel, `@/components/ui`:
+
+| Export | File | Notes |
+|--------|------|-------|
+| `Button` | `button.tsx` | |
+| `Input` | `input/` | |
+| `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent` | `card.tsx` | |
+| `Switch` | `switch.tsx` | |
+| `Select` | `select.tsx` | Import `SelectTrigger`, `SelectContent`, `SelectItem`, `SelectValue` from `@/components/ui/select` |
+| `Checkbox` | `Checkbox/` | |
+| `Dialog` | `dialog.tsx` | |
+| `Badge` | `badge.tsx` | |
+| `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` | `tabs.tsx` | |
+| `ScrollArea` | `ScrollArea/` | |
+| `PageHeader`, `SectionHeading` | `PageHeader.tsx` | One header per page |
+| `SettingsSection`, `SettingsRow`, `settingsFieldClass`, `settingsTextareaClass` | `SettingsSection.tsx` | Settings layout |
+| `IconButton` | `IconButton.tsx` | Icon-only button with built-in tooltip |
+| `SidebarHeader`, `SidebarSearch`, `SidebarTabs` | `SidebarHeader.tsx` | Sidebar chrome |
+| `Toast`, `ToastContainer`, `useToast` | `Toast/` | Not the app's toasts: those are `src/components/Toast` with `@/hooks/useToast` |
+
+Imported by path, not from the barrel: `popover.tsx` (`Popover`,
+`PopoverTrigger`, `PopoverAnchor`, `PopoverContent`) and `skeleton.tsx` /
+`Skeleton/`.
 
 ---
 
 ## Integration Examples
 
-### 1. Theme Toggle with Tooltips
+### 1. Navigation rail
 
-Location: `src/components/ThemeToggle/ThemeToggle.tsx`
+Location: `src/components/Layout/Layout.tsx`
 
-```tsx
-import { Tooltip } from '../ui';
+Each rail item is a `Tooltip` whose `TooltipContent` (`side="right"`,
+`className="xl:hidden"`) shows the label and its ⌘-number shortcut; on wide
+windows the rail shows labels and the tooltip is hidden.
 
-export function ThemeToggle() {
-  return (
-    <div className="flex gap-1">
-      {options.map((option) => (
-        <Tooltip
-          key={option.value}
-          content={`Switch to ${option.label.toLowerCase()} theme`}
-          side="bottom"
-        >
-          <button onClick={() => setTheme(option.value)}>
-            {option.icon}
-          </button>
-        </Tooltip>
-      ))}
-    </div>
-  );
-}
-```
+### 2. Toolbars and sidebar headers
 
-### 2. Document Viewer Actions with Tooltips
-
-Location: `src/components/DocumentViewer/ViewerHeader.tsx`
+Location: `src/components/FileBrowser/LibraryToolbar.tsx`,
+`src/components/FileBrowser/LibraryRail.tsx`, `src/components/Explorer/ExplorerChat.tsx`
 
 ```tsx
-import { Tooltip } from '../ui';
-import { Download, ExternalLink, X } from 'lucide-react';
-
-export function ViewerHeader() {
-  return (
-    <div className="flex gap-2">
-      <Tooltip content="Show in folder" side="bottom">
-        <button onClick={onDownload}>
-          <Download className="w-5 h-5" />
-        </button>
-      </Tooltip>
-
-      <Tooltip content="Open in external application" side="bottom">
-        <button onClick={onOpenExternal}>
-          <ExternalLink className="w-5 h-5" />
-        </button>
-      </Tooltip>
-
-      <Tooltip content="Close viewer (Esc)" side="bottom">
-        <button onClick={onClose}>
-          <X className="w-5 h-5" />
-        </button>
-      </Tooltip>
-    </div>
-  );
-}
-```
-
-### 3. Settings with Tooltips
-
-Location: `src/components/Settings/tabs/IndexingSettings.tsx`
-
-```tsx
-import { Tooltip } from '../../ui';
-import { Trash2 } from 'lucide-react';
-
-export function IndexingSettings() {
-  return (
-    <div>
-      {folders.map((folder) => (
-        <div key={folder} className="flex justify-between">
-          <span>{folder}</span>
-          <Tooltip content="Remove folder from indexing" side="left">
-            <button onClick={() => removeFolder(folder)}>
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </Tooltip>
-        </div>
-      ))}
-    </div>
-  );
-}
-```
-
-### 4. Search Results Date Filter
-
-```tsx
-import { DatePicker } from '../ui';
-
-function SearchFilters() {
-  const [startDate, setStartDate] = useState<Date>();
-  const [endDate, setEndDate] = useState<Date>();
-
-  return (
-    <div className="flex gap-4">
-      <DatePicker
-        selected={startDate}
-        onSelect={setStartDate}
-        placeholder="From date"
-        maxDate={endDate}
-      />
-      <DatePicker
-        selected={endDate}
-        onSelect={setEndDate}
-        placeholder="To date"
-        minDate={startDate}
-      />
-    </div>
-  );
-}
+<IconButton label={isRailOpen ? 'Hide sidebar' : 'Show sidebar'} onClick={onToggleRail}>
+  <PanelLeft />
+</IconButton>
 ```
 
 ---
@@ -459,7 +332,7 @@ function SearchFilters() {
 
 #### Do:
 
-- Use tooltips for icon-only buttons to clarify their purpose
+- Use `IconButton` for icon-only buttons; it labels and tooltips them together
 - Keep tooltip content concise (1-2 lines)
 - Include keyboard shortcuts in tooltip content when applicable
 - Position tooltips to avoid covering important content
@@ -468,7 +341,7 @@ function SearchFilters() {
 #### Don't:
 
 - Don't use tooltips for essential information users must see
-- Don't put interactive content in tooltips (use Popover instead)
+- Don't put interactive content in tooltips (use Popover instead; `TooltipContent` ignores the pointer)
 - Don't use tooltips on disabled elements (they won't trigger)
 - Don't duplicate button text in tooltip (add additional context instead)
 - Avoid very long tooltip content (consider Dialog or modal)
@@ -480,72 +353,46 @@ function SearchFilters() {
 - Always provide a clear placeholder
 - Set appropriate min/max dates for the context
 - Use consistent date formatting across your app
-- Provide validation feedback for invalid selections
 - Consider timezone implications for your use case
 
 #### Don't:
 
 - Don't forget to handle undefined date (when user clears)
-- Don't use DatePicker for time selection (use separate time picker)
-- Don't make date constraints too restrictive
+- Don't use DatePicker for time selection
 - Don't forget to validate date ranges (start before end)
 - Avoid unclear date formats (prefer readable formats)
 
 ### Performance Considerations
 
-#### Tooltip Optimization
-
 ```tsx
-// Good: Memoize expensive tooltip content
-const tooltipContent = useMemo(() => (
-  <ComplexTooltipContent data={data} />
-), [data]);
-
-<Tooltip content={tooltipContent}>
-  <button>Hover</button>
-</Tooltip>
-
-// Good: Use TooltipProvider at app level for better performance
+// Good: one TooltipProvider at app level (App.tsx already has it)
 <TooltipProvider>
   <App />
 </TooltipProvider>
-```
 
-#### DatePicker Optimization
-
-```tsx
-// Good: Memoize date constraints
+// Good: memoize date constraints
 const minDate = useMemo(() => new Date(), []);
 const maxDate = useMemo(() => addMonths(new Date(), 6), []);
 
-<DatePicker
-  selected={date}
-  onSelect={setDate}
-  minDate={minDate}
-  maxDate={maxDate}
-/>
+<DatePicker selected={date} onSelect={setDate} minDate={minDate} maxDate={maxDate} />
 ```
 
 ---
 
 ## Dependencies
 
-These components require the following packages (already installed):
+These components use the following packages (already installed; see
+`package.json` for exact versions):
 
 ```json
 {
-  "@radix-ui/react-tooltip": "^1.0.7",
-  "react-day-picker": "^8.10.0",
-  "date-fns": "^3.0.0"
+  "@radix-ui/react-tooltip": "^1.2.8",
+  "react-day-picker": "^9.11.1",
+  "date-fns": "^3.6.0"
 }
 ```
 
-### Peer Dependencies
-
-- `react` >= 18.0.0
-- `react-dom` >= 18.0.0
-- `lucide-react` (for icons)
-- `tailwindcss` (for styling)
+Also `react` 19, `lucide-react` for icons, and Tailwind 3 for styling.
 
 ---
 
@@ -553,45 +400,34 @@ These components require the following packages (already installed):
 
 ### Tooltip Not Showing
 
-1. Ensure `TooltipProvider` wraps your component tree
-2. Check that trigger element accepts ref forwarding
-3. Verify tooltip isn't disabled
+1. Ensure a `TooltipProvider` wraps the tree (true in the app; add one in tests)
+2. Use `TooltipTrigger asChild` with an element that forwards refs
+3. Check that `TooltipContent` isn't hidden by a responsive class (`xl:hidden`)
 4. Check z-index conflicts
 
 ### DatePicker Calendar Not Opening
 
-1. Ensure calendar popover isn't clipped by parent overflow
+1. Ensure the calendar isn't clipped by parent overflow
 2. Check z-index of parent containers
-3. Verify click handler isn't prevented
-4. Check for JavaScript errors in console
+3. Verify `disabled` isn't set
 
 ### Style Issues
 
-1. Ensure Tailwind classes are properly configured
+1. Use token classes, not raw colors; theme switching is driven by the `.dark` class (`darkMode: 'selector'` in `tailwind.config.js`)
 2. Check for CSS specificity conflicts
-3. Verify dark mode class is applied to root element
-4. Check for missing Tailwind plugin configurations
 
 ---
 
 ## Additional Resources
 
-- [Radix UI Tooltip Documentation](https://www.radix-ui.com/docs/primitives/components/tooltip)
-- [React Day Picker Documentation](https://react-day-picker.js.org/)
+- [Radix UI Tooltip Documentation](https://www.radix-ui.com/primitives/docs/components/tooltip)
+- [React Day Picker Documentation](https://daypicker.dev/)
 - [date-fns Documentation](https://date-fns.org/)
-- [WCAG Tooltip Guidelines](https://www.w3.org/WAI/WCAG21/Understanding/)
 
 ---
 
 ## Questions or Issues?
 
-If you encounter issues or have questions about these components, please:
-
 1. Check this guide for examples and best practices
 2. Review the component source code in `src/components/ui/`
 3. Consult the official documentation for dependencies
-4. Check existing issues in the project repository
-
----
-
-*Last updated: 2025-01-11*

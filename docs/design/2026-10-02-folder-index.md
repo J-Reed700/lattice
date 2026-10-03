@@ -9,11 +9,13 @@ never says "retry".
 
 - **Its own store, outside `lattice.db`.** One directory per indexed folder:
   `<data_dir>/folder-index/<first 16 hex of sha256(canonical root)>/` holding
-  `chunks.db` (SQLite) and `vectors-<identity>.usearch`. Nothing is written to
-  `lattice.db`, so no migration. Why: backups are `VACUUM INTO` of
+  `chunks.db` (SQLite) and `vectors-<identity>.usearch`. No passage, vector
+  or file row is written to `lattice.db`. Why: backups are `VACUUM INTO` of
   `lattice.db` and would carry a copy of every indexed repo; library chunk
   writes bump `vector_index_state`; and a separate store cannot leak into
-  library search. Same pattern as `summaries-<identity>.usearch`.
+  library search. Same pattern as `summaries-<identity>.usearch`. The one
+  thing `lattice.db` does hold is the folders list (`explorer_folders`, see
+  "Your folders" below): names and pins, not index content.
 - **Indexing starts when a folder is picked.** The Explorer locks the scope
   (see the Explorer doc), so an index exists only for a folder the user chose.
   Reopening a folder resumes its index incrementally.
@@ -25,26 +27,32 @@ never says "retry".
   The Explorer still opens them; only the index is skipped.
 - **Size cap.** If the walk finds more than 20,000 indexable files, stop
   before embedding anything (state `tooLarge`, message with the count). The
-  grep tools still work.
-- **Sub-folders reuse the parent's index.** If the picked root sits inside a
-  folder that already has an index, open that index, walk and watch only the
-  sub-tree, and filter search to that path prefix. A parent picked after a
-  child builds its own index; eviction cleans up the rest.
-- **Bounded on disk.** At most 8 folder indexes (same as the recent-folders
-  list); opening a 9th deletes the least recently opened directory. Each
-  `chunks.db` records its root, identity and last-opened time in a `meta`
-  table, so the registry is the directories themselves.
+  grep tools still work. The count is recorded in the index's `meta`
+  (`too_large`), so a closed folder still lists as too large; a later walk
+  that fits clears it.
+- **A folder's own index first; else the parent's.** A folder whose own
+  index directory exists always opens it. Only a folder without one reuses
+  the deepest enclosing folder's index: open that index, walk and watch only
+  the sub-tree, and filter search to that path prefix. An enclosing index
+  marked too large holds nothing, so it is never reused. (Before 2026-10-02
+  the deepest enclosing index always won, so `~/Code/MusicVST` embedded
+  itself again into `~/Code`'s index once `~/Code` had been opened.)
+- **Nothing deletes an index unless the user asks.** No cap, no eviction:
+  "Delete index" and "Remove…" in the folders list, and "Rebuild index" in
+  the pill, are the only deletes. Each `chunks.db` records its root,
+  identity, last-opened time, `too_large` and `complete` (when a full run
+  last finished) in `meta`, so a closed index can be described without
+  opening it.
 - **Embedding model switch = rebuild.** The vectors file is keyed by the
   embedding identity. On open, if the stored identity differs, drop the old
   vectors file and re-embed (chunks and hashes stay; only vectors are redone).
   No active embedding model: state `unavailable`, Explorer works without.
-- **Forgettable.** The start screen's recent rows get "Forget"; it deletes
-  that folder's index directory and removes the row.
 
 ## Storage (`chunks.db`)
 
 ```sql
-CREATE TABLE meta  (key TEXT PRIMARY KEY, value TEXT NOT NULL);   -- root, identity, last_opened, version
+CREATE TABLE meta  (key TEXT PRIMARY KEY, value TEXT NOT NULL);   -- root, identity, last_opened, version,
+                                                                   -- too_large ("<n>" or "<n>+"), complete (ms)
 CREATE TABLE files (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL,
                     content_hash TEXT NOT NULL, embedded INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE chunks(id INTEGER PRIMARY KEY, path TEXT NOT NULL, start_line INTEGER NOT NULL,
@@ -88,7 +96,35 @@ No new parser dependency. Line-based, structure-aware:
 - Watcher: `notify-debouncer-full` (pattern: `features/vault/watcher.rs`),
   recursive on the walked root, ~1.5 s debounce; changed or removed paths go
   through the same per-file update. Ignored paths are dropped.
-- Status events throttled to at most ~4 per second.
+- Status events throttled to at most ~4 per second (a change of state always
+  goes out at once).
+
+### Progress (as built)
+
+- **Passages, not files.** Files only move when a save marks them (every
+  ~500 passages), so counting files ran ahead of the work and then sat still.
+  The status carries `passagesTotal` / `passagesEmbedded` (chunks of files
+  marked embedded, plus every batch since); passages move after every
+  batch of 16, files at saves as before. Percent is
+  `floor(embedded / total × 100)`, so it never says 100 early.
+- **Time left.** `run::Pace` folds each batch's rate into an average
+  weighted by how long the batch took (weight `1 − e^(−dt/30 s)`), so a
+  pause (a chat turn's query embedding, a save) moves the estimate without
+  throwing it. Nothing is said for the first 10 s of a run (the first
+  batches include loading the model): `passagesPerSecond` and `etaSeconds`
+  are `null` until then, and again once the run settles.
+- **Scanning counts up.** The walk reports the files found every 200, as
+  `filesTotal`, but only once it passes what the status already says, so a
+  rescan does not count down from the last run's number to zero and back.
+- **Logs** (INFO, one line each, full runs only):
+  `Folder index scan finished` (files, new_or_changed, removed,
+  passages_to_embed, elapsed_ms); `Folder index progress` at each tenth
+  (percent, embedded, total, per_second, eta_seconds); `Folder index ready`
+  (files, passages, embedded this run, elapsed_ms, average per_second); and
+  `Folder index paused` when a run is cancelled (embedded, total).
+- **Closing** waits for the batch in flight and a save, which can take a
+  moment on a slow model; "Close folder" says "Closing…" and is disabled
+  until it returns.
 
 ## Search
 
@@ -125,31 +161,114 @@ searches what is indexed and the caller says how far along it is.
 // features/explorer/index/dto.rs (specta, camelCase)
 enum FolderIndexState { Scanning, Indexing, Ready, TooLarge, Refused, Unavailable, Error }
 FolderIndexStatusDto { root: String, indexRoot: String, state: FolderIndexState,
-                       filesTotal: u32, filesIndexed: u32, chunks: u32,
+                       filesTotal: u32, filesIndexed: u32,       // files move at saves
+                       passagesTotal: u32, passagesEmbedded: u32, // passages after every batch
+                       passagesPerSecond: Option<f32>,            // None for the first ~10 s
+                       etaSeconds: Option<u32>,
                        message: Option<String> }
 // indexRoot != root when a parent folder's index is reused.
+
+enum FolderIndexSummaryState { Indexed, Partial, Indexing, NotIndexed, TooLarge, Refused, Error }
+FolderIndexSummaryDto { state, filesTotal, filesIndexed, passagesTotal, passagesEmbedded,
+                        bytes: u64,                  // its own index directory; 0 when none
+                        indexRoot: Option<String>,   // the enclosing folder it reuses
+                        etaSeconds: Option<u32>, message: Option<String> }
+
+// features/explorer/dto.rs
+ExplorerFolderDto     { root, name, pinned, addedAt, lastOpenedAt,   // RFC 3339
+                        exists: bool, threadCount: u32, index: FolderIndexSummaryDto }
+ExplorerFolderListDto { home: Option<String>, folders: Vec<ExplorerFolderDto> }
 ```
 
 | command | args | returns |
 |---|---|---|
-| `explorer_index_open` | `root` | `FolderIndexStatusDto` (starts or resumes; closes any other open folder) |
-| `explorer_index_close` | | `()` |
+| `explorer_index_open` | `root` | `FolderIndexStatusDto` (starts or resumes; closes any other open folder; adds or touches the folder's row) |
+| `explorer_index_close` | | `()` (waits for the batch in flight and a save) |
 | `explorer_index_status` | `root` | `FolderIndexStatusDto` |
 | `explorer_index_rebuild` | `root` | `FolderIndexStatusDto` (wipes this folder's index, starts over) |
-| `explorer_index_forget` | `root` | `()` (closes it if open, deletes its directory) |
+| `explorer_folders_list` | | `ExplorerFolderListDto` (pinned first, then last opened; adopts index directories with no row) |
+| `explorer_folder_rename` | `root, name` | `()` (an empty name goes back to the folder's own) |
+| `explorer_folder_set_pinned` | `root, pinned` | `()` |
+| `explorer_folder_delete_index` | `root` | `()` (its own index only, closed first; the row stays, so the next open rebuilds) |
+| `explorer_folder_remove` | `root, deleteThreads` | `u32` threads deleted (its own index and the row; threads only when asked) |
 
+`explorer_index_forget` is gone; `explorer_folder_delete_index` replaces it.
 Event `explorer-index://status`, payload `FolderIndexStatusDto`.
+
+## Your folders (as built, 2026-10-02)
+
+The start screen's Recent list (localStorage, capped at 8) and the
+manager's eviction past 8 indexes were replaced by one managed list.
+
+- **Table.** `src-tauri/migrations/20261002110000_explorer_folders.sql`:
+  `explorer_folders(root TEXT PK, name, pinned 0/1, added_at, last_opened_at)`,
+  times RFC 3339 UTC to the millisecond so they sort as text.
+  `20261003100000_explorer_folder_settings.sql` adds `instructions` (the
+  folder's system prompt) and `space_id` (NULL is General; a deleted space
+  sets it back to NULL). `explorer_folder_set_settings` writes both and moves
+  the folder's threads into the space in the same transaction, and binding a
+  thread to a folder (`set_conversation_explorer_root`) files it in the
+  folder's space, so a thread never takes the Chat sidebar's space. The
+  chat's prompt precedence is the conversation's own prompt, then the
+  folder's instructions, then the space's prompt, then the global one
+  (`infrastructure/conversation_context.rs`). All SQL is in
+  `features/explorer/repository.rs`; `features/explorer/folders.rs` composes
+  it with the manager and the conversation delete.
+- **Rows.** `explorer_index_open` upserts the row and bumps
+  `last_opened_at` (the persisted root reopened on launch counts). A list
+  read adopts any index directory whose `meta.root` has no row (indexes made
+  before the table), with `last_opened` from its meta.
+- **Index summary.** For the open folder it is the live status; for the
+  rest it is read through a short-lived connection to the index's
+  `chunks.db` (the same as `list_indexes`), without opening it for writing:
+  `partial` when files or passages are left to embed, `notIndexed` when
+  there is nothing and no full run ever finished (`meta.complete`),
+  `indexed` otherwise; `tooLarge` from `meta.too_large`; `refused` from the
+  same rules as opening. `bytes` is the size of the folder's own index
+  directory; a reused sub-folder reports the enclosing root instead.
+- **Delete index** removes only the folder's own directory (closing it
+  first when open). A row that reuses an enclosing index has none, and the
+  enclosing index is left alone.
+- **Remove** deletes the folder's own index and its row. With
+  `deleteThreads`, each of its conversations goes through the app's
+  conversation delete (`conversation::commands::delete_conversation_unmetered`:
+  cancels a running turn, deletes the conversation's attachments, deletes
+  the row so messages cascade, audits), after one rate-limit check for the
+  whole removal. Without it, the threads keep `explorer_root` and come back
+  when the folder is added again.
 
 ## Frontend
 
 - `ExplorerPage` calls `explorerIndexOpen(root)` whenever a root is set
   (including the persisted one on launch); "Close folder" calls
-  `explorerIndexClose()` and then clears the root.
+  `explorerIndexClose()` and then clears the root, showing "Closing…" and
+  disabled while it waits.
 - `explorerStore` holds `indexStatus` for the open root, fed by the command
-  results and the event.
-- Scope bar: a status pill after the path. `Indexing 1,240 / 3,100 files` with
-  a thin progress bar; `Indexed · 3,100 files`; `Too large to index · search
-  uses text matching`; `Not indexed (home folder)`; `No embedding model`;
-  `Index failed` with Retry. The pill opens a small menu with "Rebuild index".
-- Start screen: copy says Lattice indexes the folder for search and the index
-  lives in Lattice's data, not in the folder; recent rows get "Forget".
+  results and the event. It keeps the open root and the thread per folder;
+  the folders list is the backend's, not localStorage.
+- Scope bar pill (`IndexStatusPill`): `Scanning · 1,379 files` (counting up);
+  `Indexing 28% · ~14 min left` with a thin bar driven by passages;
+  `Indexed · 1,379 files`; `Too large to index · search uses text matching`;
+  `Not indexed (home folder)`; `No embedding model`; `Index failed` with
+  Retry. Its panel adds `3,067 of 10,958 passages · 489 of 1,379 files`, the
+  rate (`12 passages/s`), the message, and "Rebuild index". Time left reads
+  `<1 min`, `~3 min`, `~1 h 10 min` (`indexProgress.ts`).
+- Chat column (`ExplorerIndexNotice`, above the composer beside the model
+  notice, only on the open folder's own thread): `Indexing this folder · 28% —
+  search covers what's indexed so far` (or `Scanning this folder · …`). It
+  fades in after ~0.8 s so a quick rescan does not flash it, and goes when
+  the index is ready.
+- Start screen (`ExplorerStart`, `ExplorerFolders`, `useExplorerFolders`):
+  with no folders, the large "Choose a folder…" choice and the explainer;
+  with folders, the choice steps down to a slimmer bar and "Your folders"
+  follows: a header with totals (`4 folders · 182 MB of indexes`), a filter
+  from 7 folders, and one row per folder (name, path with home as `~`, a
+  status chip — `Indexed · 1,379 files`, `Paused at 42%`,
+  `Indexing 28% · ~14 min`, `Not indexed`, `Too large`, `Folder missing`,
+  `Index error` — then threads, index size or `in ~/Code’s index`, and when it
+  was opened). Click opens; a pin toggle; an overflow menu with Rename
+  (inline), Delete index and Remove… (a dialog: `Remove MusicVST from
+  Lattice?`, what is deleted and that the folder on disk is not touched,
+  and an unchecked "Also delete its N chat threads" when N > 0). Missing
+  folders are muted and cannot be opened. Arrow keys move between rows. The
+  list follows `explorer-index://status`, so an indexing row moves live.

@@ -7,17 +7,21 @@
 //! - The filesystem root, the home folder and any ancestor of home are
 //!   refused: the Explorer still opens them, the index does not. So is a
 //!   folder holding Lattice's data, whose index would watch its own writes.
-//! - A folder inside one that already has an index reuses it: the walk and
-//!   the watcher cover only the sub-tree, and search keeps to its prefix.
-//! - At most eight index directories exist; opening a folder that would make
-//!   a ninth deletes the least recently opened one.
+//! - A folder with an index of its own uses it. One without reuses the
+//!   deepest enclosing folder's index, if any: the walk and the watcher cover
+//!   only the sub-tree, and search keeps to its prefix. An enclosing index
+//!   that was too large holds nothing, so it is never reused.
+//! - Nothing deletes an index unless the user asks: "Delete index" and
+//!   "Remove" in the folders list, or a rebuild.
 //! - The vectors file is keyed by the embedding identity. A different model
 //!   drops the vectors and embeds again; chunks and hashes stay.
 
-use super::dto::{FolderIndexState, FolderIndexStatusDto};
+use super::dto::{
+    FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryDto, FolderIndexSummaryState,
+};
 use super::run::{Indexer, Limits, Outcome, StatusCell, StatusEmitter};
 use super::search::FolderSearch;
-use super::store::{self, FolderStore, IndexEntry};
+use super::store::{self, Counts, FolderStore, IndexEntry, TooLarge};
 use super::watcher::{self, Change};
 use crate::application::ports::vector_search_port::VectorSearchPort;
 use crate::application::ports::EmbeddingPort;
@@ -52,8 +56,6 @@ pub struct ManagerConfig {
     /// Canonical home folder; it and its ancestors are never indexed.
     pub home: Option<PathBuf>,
     pub limits: Limits,
-    /// Index directories kept at most.
-    pub max_indexes: usize,
     pub debounce: Duration,
 }
 
@@ -66,7 +68,6 @@ impl ManagerConfig {
             base_dir: data_dir.join("folder-index"),
             home: dirs::home_dir().and_then(|home| std::fs::canonicalize(home).ok()),
             limits: Limits::default(),
-            max_indexes: 8,
             debounce: Duration::from_millis(1_500),
         }
     }
@@ -135,6 +136,61 @@ fn remove_dir(dir: &Path) {
     }
 }
 
+/// The words for a walk that found more files than the cap.
+fn too_large_message(found: TooLarge, cap: usize) -> String {
+    format!(
+        "{}{} files to index; the limit is {}. Search uses text matching.",
+        if found.capped { "More than " } else { "" },
+        group_digits(found.count),
+        group_digits(cap)
+    )
+}
+
+/// A closed index's state from its counts: work left is a pause; nothing at
+/// all is no index, unless a full run finished over an empty folder.
+fn settled_state(counts: &Counts, complete: bool) -> FolderIndexSummaryState {
+    if counts.files_indexed < counts.files_total || counts.passages_embedded < counts.passages_total
+    {
+        FolderIndexSummaryState::Partial
+    } else if counts.files_total == 0 && !complete {
+        FolderIndexSummaryState::NotIndexed
+    } else {
+        FolderIndexSummaryState::Indexed
+    }
+}
+
+/// The open folder's live status as the folders list shows it.
+fn live_summary(status: &FolderIndexStatusDto, own_dir: Option<&Path>) -> FolderIndexSummaryDto {
+    let counts = Counts {
+        files_total: status.files_total,
+        files_indexed: status.files_indexed,
+        passages_total: status.passages_total,
+        passages_embedded: status.passages_embedded,
+    };
+    let state = match status.state {
+        FolderIndexState::Scanning | FolderIndexState::Indexing => {
+            FolderIndexSummaryState::Indexing
+        }
+        FolderIndexState::Ready => FolderIndexSummaryState::Indexed,
+        FolderIndexState::TooLarge => FolderIndexSummaryState::TooLarge,
+        FolderIndexState::Refused => FolderIndexSummaryState::Refused,
+        FolderIndexState::Error => FolderIndexSummaryState::Error,
+        // No model to embed with: what is on disk is all there is.
+        FolderIndexState::Unavailable => settled_state(&counts, true),
+    };
+    FolderIndexSummaryDto {
+        state,
+        files_total: counts.files_total,
+        files_indexed: counts.files_indexed,
+        passages_total: counts.passages_total,
+        passages_embedded: counts.passages_embedded,
+        bytes: own_dir.map_or(0, store::dir_bytes),
+        index_root: (status.index_root != status.root).then(|| status.index_root.clone()),
+        eta_seconds: status.eta_seconds,
+        message: status.message.clone(),
+    }
+}
+
 /// Removes every vectors file (and its key map and manifest) in `dir`.
 fn remove_vector_files(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -187,12 +243,17 @@ impl FolderIndexManager {
         }
     }
 
-    /// The index a folder uses: an existing one whose root holds it (the
-    /// deepest, when several do), else its own.
+    /// The index a folder uses, as `(index root, directory)`: its own when it
+    /// has one; else the deepest enclosing folder's that holds anything;
+    /// else its own, to be made.
     fn choose_index(&self, root: &Path, indexes: &[IndexEntry]) -> (PathBuf, PathBuf) {
         let own = store::index_dir(&self.config.base_dir, root);
+        if indexes.iter().any(|entry| entry.dir == own) {
+            return (root.to_path_buf(), own);
+        }
         let parent = indexes
             .iter()
+            .filter(|entry| !entry.too_large)
             .filter_map(|entry| {
                 let parent = entry.root.as_deref()?;
                 (parent != root && root.starts_with(parent) && parent.is_dir())
@@ -202,17 +263,10 @@ impl FolderIndexManager {
         parent.unwrap_or_else(|| (root.to_path_buf(), own))
     }
 
-    /// Deletes the least recently opened index directories until `keep` and
-    /// the rest fit in `max_indexes`.
-    fn evict(&self, indexes: &[IndexEntry], keep: &Path) {
-        let mut others: Vec<&IndexEntry> =
-            indexes.iter().filter(|entry| entry.dir != keep).collect();
-        others.sort_by_key(|entry| entry.last_opened);
-        let room = self.config.max_indexes.saturating_sub(1);
-        let excess = others.len().saturating_sub(room);
-        for entry in others.into_iter().take(excess) {
-            remove_dir(&entry.dir);
-        }
+    /// Every index directory on disk with the root its meta records: the
+    /// folders list reads it once per listing.
+    pub async fn index_dirs(&self) -> Vec<IndexEntry> {
+        store::list_indexes(&self.config.base_dir).await
     }
 
     /// Opens `root`'s index and starts (or resumes) indexing it, closing any
@@ -271,7 +325,6 @@ impl FolderIndexManager {
         let indexes = store::list_indexes(&self.config.base_dir).await;
         let (index_root, dir) = self.choose_index(&root, &indexes);
         let prefix = relative_below(&index_root, &root).unwrap_or_default();
-        self.evict(&indexes, &dir);
         if wipe && prefix.is_empty() {
             remove_dir(&dir);
         }
@@ -295,7 +348,8 @@ impl FolderIndexManager {
         );
         initial.files_total = counts.files_total;
         initial.files_indexed = counts.files_indexed;
-        initial.chunks = counts.chunks;
+        initial.passages_total = counts.passages_total;
+        initial.passages_embedded = counts.passages_embedded;
         let status = Arc::new(StatusCell::new(initial, Arc::clone(&self.emit)));
         status.announce();
 
@@ -378,8 +432,74 @@ impl FolderIndexManager {
         );
         status.files_total = counts.files_total;
         status.files_indexed = counts.files_indexed;
-        status.chunks = counts.chunks;
+        status.passages_total = counts.passages_total;
+        status.passages_embedded = counts.passages_embedded;
         Ok(status)
+    }
+
+    /// What each of `roots`' index holds, for the folders list: the live
+    /// status for the open folder, what is on disk for the rest. `indexes`
+    /// is the directory listing, read once for the lot.
+    pub async fn summaries(
+        &self,
+        roots: &[PathBuf],
+        indexes: &[IndexEntry],
+    ) -> Vec<FolderIndexSummaryDto> {
+        let live = {
+            let slot = self.open.lock().await;
+            slot.as_ref().map(|current| {
+                let own = current.dir.clone().filter(|_| current.prefix.is_empty());
+                (current.root.clone(), own, current.status.get())
+            })
+        };
+        let mut summaries = Vec::with_capacity(roots.len());
+        for root in roots {
+            summaries.push(match &live {
+                Some((open, own, status)) if open == root => live_summary(status, own.as_deref()),
+                _ => self.summary_on_disk(root, indexes).await,
+            });
+        }
+        summaries
+    }
+
+    /// A closed folder's index, read from disk without opening it.
+    async fn summary_on_disk(&self, root: &Path, indexes: &[IndexEntry]) -> FolderIndexSummaryDto {
+        let mut summary = FolderIndexSummaryDto::new(FolderIndexSummaryState::NotIndexed);
+        if let Some(reason) = self.refusal(root) {
+            summary.state = FolderIndexSummaryState::Refused;
+            summary.message = Some(reason.to_string());
+            return summary;
+        }
+        let (index_root, dir) = self.choose_index(root, indexes);
+        let prefix = relative_below(&index_root, root).unwrap_or_default();
+        if prefix.is_empty() {
+            summary.bytes = store::dir_bytes(&dir);
+        } else {
+            summary.index_root = Some(root_string(&index_root));
+        }
+        match store::inspect(&dir, &prefix).await {
+            Ok(None) => {}
+            Ok(Some(snapshot)) => match snapshot.too_large.filter(|_| prefix.is_empty()) {
+                Some(found) => {
+                    summary.state = FolderIndexSummaryState::TooLarge;
+                    summary.files_total = u32::try_from(found.count).unwrap_or(u32::MAX);
+                    summary.message = Some(too_large_message(found, self.config.limits.max_files));
+                }
+                None => {
+                    let counts = snapshot.counts;
+                    summary.state = settled_state(&counts, snapshot.complete);
+                    summary.files_total = counts.files_total;
+                    summary.files_indexed = counts.files_indexed;
+                    summary.passages_total = counts.passages_total;
+                    summary.passages_embedded = counts.passages_embedded;
+                }
+            },
+            Err(error) => {
+                summary.state = FolderIndexSummaryState::Error;
+                summary.message = Some(error.to_string());
+            }
+        }
+        summary
     }
 
     /// Wipes `root`'s index and starts it over. A sub-folder that reuses a
@@ -393,10 +513,11 @@ impl FolderIndexManager {
         self.open_into(&mut slot, scope, true).await
     }
 
-    /// Deletes `root`'s index directory, closing it first if it is open. The
-    /// folder may be gone from disk by now, so a root that no longer resolves
-    /// is taken as given.
-    pub async fn forget(&self, root: &str) -> Result<()> {
+    /// Deletes `root`'s own index directory, closing it first if it is open.
+    /// A folder that reuses an enclosing folder's index has none of its own,
+    /// and the enclosing one is left alone. The folder may be gone from disk
+    /// by now, so a root that no longer resolves is taken as given.
+    pub async fn delete_index(&self, root: &str) -> Result<()> {
         let root = Scope::open(root)
             .map(|scope| scope.root().to_path_buf())
             .unwrap_or_else(|_| PathBuf::from(root.trim()));
@@ -498,6 +619,8 @@ impl FolderJob {
         self.status.update(|status| {
             status.state = FolderIndexState::Error;
             status.message = Some(error.to_string());
+            status.passages_per_second = None;
+            status.eta_seconds = None;
         });
     }
 
@@ -606,22 +729,28 @@ impl FolderJob {
                 self.status.update(|status| {
                     status.state = FolderIndexState::Ready;
                     status.message = None;
+                    status.passages_per_second = None;
+                    status.eta_seconds = None;
                 });
                 true
             }
-            Ok(Outcome::Cancelled) => false,
+            Ok(Outcome::Cancelled) => {
+                let status = self.status.get();
+                info!(
+                    root = %self.walk_root.display(),
+                    embedded = status.passages_embedded,
+                    total = status.passages_total,
+                    "Folder index paused"
+                );
+                false
+            }
             Ok(Outcome::TooLarge { count, capped }) => {
-                let cap = self.limits.max_files;
+                let message = too_large_message(TooLarge { count, capped }, self.limits.max_files);
                 self.status.update(|status| {
                     status.state = FolderIndexState::TooLarge;
                     status.files_total = u32::try_from(count).unwrap_or(u32::MAX);
                     status.files_indexed = 0;
-                    status.message = Some(format!(
-                        "{}{} files to index; the limit is {}. Search uses text matching.",
-                        if capped { "More than " } else { "" },
-                        group_digits(count),
-                        group_digits(cap)
-                    ));
+                    status.message = Some(message);
                 });
                 false
             }

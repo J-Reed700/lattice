@@ -9,6 +9,8 @@ import { useConversationsStore } from '@/stores/conversationsStore';
 import { useExplorerStore } from '@/stores/explorerStore';
 import type { Conversation } from '@/types/conversation';
 
+import { GENERAL_SPACE_ID } from './useExplorerFolders';
+
 /** Under the list prefix, so every list invalidation refreshes it too. */
 const threadsKey = (root: string) => [...conversationKeys.lists, 'explorer', root] as const;
 
@@ -67,7 +69,9 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
     setCreating(true);
     setError(null);
     try {
-      const id = await createConversation(threadTitle(rootName));
+      // Made in General, never the Chat sidebar's space: binding it to the
+      // folder files it in the folder's own space.
+      const id = await createConversation(threadTitle(rootName), GENERAL_SPACE_ID);
       const bound = await VaultAPI.setConversationExplorerRoot(id, root);
       if (!bound.ok) throw new Error(bound.error);
       // The create response predates the binding; the send path reads it.
@@ -79,6 +83,8 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
         return created ? [created, ...(current ?? []).filter((item) => item.id !== id)] : current;
       });
       rememberThread(root, id);
+      // The binding moved it into the folder's space after the create.
+      void queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) });
       await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

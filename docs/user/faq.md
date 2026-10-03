@@ -1,614 +1,275 @@
-# Frequently Asked Questions (FAQ)
+# Frequently Asked Questions
 
-Quick answers to common questions about Recall/Vault.
+Short answers about Lattice. For step-by-step fixes, see [Troubleshooting](troubleshooting.md).
 
 ## Table of Contents
 
-- [General Questions](#general-questions)
-- [Privacy & Security](#privacy--security)
-- [Features & Capabilities](#features--capabilities)
-- [Performance & Limits](#performance--limits)
-- [Comparisons](#comparisons)
-- [Licensing & Usage](#licensing--usage)
+- [General](#general)
+- [Privacy and security](#privacy-and-security)
+- [Features](#features)
+- [Backups, export and sync](#backups-export-and-sync)
+- [Limits and performance](#limits-and-performance)
+- [Technical](#technical)
+- [Getting help](#getting-help)
 
 ---
 
-## General Questions
+## General
 
-### What is Recall/Vault?
+### What is Lattice?
 
-Recall/Vault is a local-first personal knowledge management system that indexes your documents, files, and notes for instant semantic search. It runs entirely on your computer, keeping your data private and accessible offline.
+Lattice is a local-first desktop knowledge base. You import files and web pages. Lattice indexes them on your computer, so you can search them by keyword and by meaning and ask questions in Chat. Every answer cites the passages it came from.
 
-### How does it work?
+Around that core are:
 
-1. **Watch Folders:** You configure folders to monitor
-2. **Automatic Indexing:** Files are automatically indexed when added or changed
-3. **Semantic Search:** Content is analyzed using AI embeddings for intelligent search
-4. **Instant Results:** Search across all indexed content in milliseconds
+- a Journal for notes and daily pages
+- References for sources you collect
+- Explorer, for chatting about a folder on disk such as a code project
+- Studio, for learning programs and flashcards
 
-### What file types are supported?
+### What file types can I import?
 
-Currently supported formats:
-- **Text:** `.txt`, `.md` (Markdown)
-- **Documents:** `.pdf`, `.docx`
-- **Web:** `.html`
+- **Documents:** `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.rtf`, `.odt`, `.xlsx`, `.pptx`
+- **Web pages:** `.html`, `.htm`, or a URL (one at a time, or a list) from the Import page
+- **Data and config:** `.csv`, `.tsv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.conf`, `.config`, `.sql`, `.graphql`, `.gql`
+- **Code:**
+  - Rust, JavaScript and TypeScript (including `.jsx` and `.tsx`)
+  - CSS, Sass and Less
+  - Python, C and C++, Go
+  - Java, Kotlin, Scala, Clojure
+  - Ruby, PHP, Swift, R, Objective-C, Elixir, Erlang
+  - shell scripts (`.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.bat`, `.cmd`)
+- **Audio:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`, `.wma`. Audio is transcribed on your computer, and the transcript becomes a searchable document. This needs a transcription model from the model catalog.
 
-Planned support:
-- Images (with OCR): `.jpg`, `.png`
-- Presentations: `.pptx`
-- Spreadsheets: `.xlsx`
-- Code files: `.js`, `.py`, `.rs`, etc.
+Not supported: images, older Office formats (`.doc`, `.xls`, `.ppt`) and e-books. Lattice has no OCR, so pages of a scanned PDF that are only images are skipped.
 
 ### Is it free?
 
-Yes, Recall/Vault is open-source software released under the MIT license. You can use it for free, including for commercial purposes.
+Yes. Lattice is released under the MIT License (see the `LICENSE` file). You can use it, change it and redistribute it under that license.
 
 ### Does it work offline?
 
-Yes, completely! All indexing and search happens locally on your computer. No internet connection required.
+Yes, once your models are downloaded. Importing, indexing, search, local chat, notes and backups all run on your computer. See [What leaves my computer?](#what-leaves-my-computer) for the things that do use the network.
 
-### What platforms are supported?
+### Which systems does it run on?
 
-- **Windows:** Windows 11, x64 (Intel/AMD processors).
-- **macOS:** macOS 13.3 and later, Apple Silicon; Intel support is being
-  qualified and uses CPU inference.
-- **Linux:** Ubuntu 24.04 LTS, x64.
+Windows 11 (x64), macOS 13.3 or later on Apple Silicon, and Ubuntu 24.04 LTS (x64). An Intel Mac build is being qualified and runs models on the CPU. See [platform support](../development/platform-support.md).
 
-These are the release targets. Intel Mac availability requires completion of
-the [platform qualification checks](../development/platform-support.md).
-Windows ARM and mobile devices are outside the initial support scope.
+### How much disk space and memory does it need?
 
-### How much disk space does it need?
-
-- **Application:** ~100MB
-- **Database:** Varies by indexed content
-  - Approximately 10-20% of original file sizes
-  - 10GB of documents = ~1-2GB database
-- **Minimum:** 500MB free space
-- **Recommended:** 5GB+ for typical usage
-
-### How much RAM does it need?
-
-- **Minimum:** 4GB system RAM
-- **Recommended:** 8GB+ for large document collections
-- **Typical usage:** 200-500MB when idle, 500MB-1GB when indexing
+Most of the space goes to models. On first run, Lattice suggests a chat model and an embedding model that fit your machine's memory and graphics hardware. It shows the total download size and checks that you have the space before downloading. Expect several GB. Your library adds a copy of each imported file plus its search index.
 
 ---
 
-## Privacy & Security
+## Privacy and security
 
 ### Is my data private?
 
-**Yes, completely.** Everything runs locally on your computer:
-- No cloud services required
-- No data sent to external servers
-- No telemetry or tracking
-- No account or registration needed
+Your documents, notes, conversations and indexes are stored on your computer. There's no account and no telemetry. Local models run on your computer.
+
+### What leaves my computer?
+
+Only these things, and only when you use them:
+
+- **Model downloads** from Hugging Face. If you save a Hugging Face token, it's sent to Hugging Face with your downloads.
+- **URL imports.** Lattice fetches the page you asked for.
+- **Web search and Wikipedia** in Chat. These run only when you turn them on for a turn (`/web`, `/wiki`, or their chips). Web search queries go to DuckDuckGo and the pages it finds. Wikipedia queries go to wikipedia.org.
+- **Cloud models.** If you set the chat provider to OpenAI or Anthropic, your prompts and the passages retrieved from your library are sent to that provider.
+- **Your own servers.** A llama.cpp or Ollama server you point Lattice at, and any custom tools you add in **Settings > AI > Tools**.
+- **Update checks**, only when you click **Check for updates**.
+
+**Settings > General > Privacy** has switches for anonymous usage statistics and crash reports. Both are off by default, and this version doesn't send either. Crash reports are only written to the `crashes/` folder in Lattice's app data.
 
 ### Where is my data stored?
 
-All data is stored locally:
+In Lattice's app data folder: `~/Library/Application Support/tech.lattice.app/` on macOS, `%APPDATA%\tech.lattice.app\` on Windows, and `~/.local/share/tech.lattice.app/` on Linux. A few things live elsewhere:
 
-**Windows:**
-- Database: `%LOCALAPPDATA%\Recall\Vault\vault.db`
-- Config: `%LOCALAPPDATA%\Recall\Vault\config.json`
-- Logs: `%LOCALAPPDATA%\Recall\Vault\logs`
+- Downloaded models are in `~/.cache/lattice/models/`.
+- Lattice's copies of imported files are in `~/.lattice/files/`.
+- Log files are in a separate `lattice/logs` folder.
 
-**macOS:**
-- Database: `~/Library/Application Support/Recall/Vault/vault.db`
-- Config: `~/Library/Application Support/Recall/Vault/config.json`
-- Logs: `~/Library/Logs/Recall/Vault`
+The full table is in [Troubleshooting](troubleshooting.md#where-lattice-keeps-things).
 
-**Linux:**
-- Database: `~/.local/share/recall-vault/vault.db`
-- Config: `~/.config/recall-vault/config.json`
-- Logs: `~/.local/share/recall-vault/logs`
+### Is the database encrypted?
 
-### Can I encrypt my database?
+The local database isn't encrypted. It's protected by your user account's file permissions. To protect it at rest, turn on full-disk encryption (FileVault, BitLocker or LUKS).
 
-Database encryption is planned for a future release. Currently:
-- Database stored unencrypted on disk
-- Relies on OS-level encryption (BitLocker, FileVault, LUKS)
-- Store database on encrypted drive for protection
+Off-device backup archives *are* encrypted, and API keys for cloud providers are kept in your system keychain, not in a file.
 
-### Does it send any data to the internet?
+### Is it safe to import sensitive documents?
 
-No, with one exception:
-- **Update checks:** Optional check for new versions (can be disabled)
-- **Everything else:** Runs completely offline
-
-### Is it safe to index sensitive documents?
-
-Yes, because:
-- All processing happens locally
-- No cloud services involved
-- No data leaves your computer
-- You control all data
-
-**Best practices:**
-- Use full-disk encryption (BitLocker, FileVault, LUKS)
-- Set strong OS password
-- Regular backups to secure location
-- Don't index on shared computers
-
-### Can other users on my computer see my indexed data?
-
-Database files use standard OS permissions:
-- Only accessible by your user account (by default)
-- Other admin users may have access (OS limitation)
-- Use OS-level permissions to restrict access
-
-### What permissions does the app need?
-
-**Required:**
-- Read access to folders you want to index
-- Write access to database location
-- Local network (for internal components only)
-
-**NOT required:**
-- Internet access (except optional update checks)
-- System administrator privileges
-- Camera, microphone, or other sensors
+Imported documents are processed on your computer and stay there, unless you choose a cloud chat provider or turn on web search. Even then, only a turn's question and the passages chosen for it are sent, not your library. Use full-disk encryption, and keep your backups somewhere you trust.
 
 ---
 
-## Features & Capabilities
+## Features
 
-### What is semantic search?
+### How does search work?
 
-Unlike traditional keyword search, semantic search understands **meaning**:
-- "meeting notes from last week" finds relevant notes even without exact words
-- "python tutorial" finds programming guides, how-tos, docs
-- Handles synonyms, related concepts automatically
+The Search page (⌘1) has three modes:
 
-It uses AI embeddings to understand context and relationships between words.
+- **Keyword** matches the words you type.
+- **Semantic** matches meaning, using an embedding model on your computer.
+- **Hybrid**, the default, blends the two.
 
-### Can it search inside PDFs?
+Hybrid finds a document about "the offsite" even when you search for "team retreat", and still ranks exact matches well.
 
-Yes! The app extracts text from PDFs and indexes the content. You can search:
-- Text-based PDFs (created digitally)
-- Scanned PDFs (OCR support planned)
+### Can Chat search the web?
 
-**Limitations:**
-- Password-protected PDFs not supported
-- Max file size: 50MB
-- Image-only PDFs need OCR (coming soon)
+Yes, when you ask it to:
 
-### Does it support OCR (Optical Character Recognition)?
-
-Not yet, but it's planned. Future releases will:
-- Extract text from images
-- Process scanned documents
-- Index screenshots with text
-
-**Workaround:** Use online OCR to convert scanned PDFs to text-based PDFs.
-
-### Can I search by date, file type, or other filters?
-
-Yes! Supported filters:
-- **Date:** `after:2024-01-01`, `before:2024-12-31`
-- **File type:** `type:pdf`, `type:docx`, `type:txt`
-- **Tags:** `tag:work`, `tag:personal` (requires tagging)
-- **Folder:** `folder:/path/to/folder`
-
-Combine filters: `type:pdf after:2024-01-01 tag:work`
-
-### Can I organize documents with tags?
-
-Yes! Tag system features:
-- Manual tagging
-- Search by tag
-- Filter by tag
-- Tag hierarchies (planned)
+- `/web` lets an answer search the web.
+- `/wiki` searches Wikipedia.
+- `/deep` turns on deep research, which runs several rounds of searching and reading. It's slower.
+- `/docs` makes every answer search your documents.
 
 ### Does a chat remember what I told it earlier?
 
-Partly, and it is worth knowing exactly how much.
+Partly, and it's worth knowing exactly how much.
 
-A long conversation eventually will not fit in the model's context window, so older messages stop being sent. To stop requirements getting lost that way, turn on **Settings > AI > Chat > Remember requirements in a conversation**. Lattice then reads the older part of the conversation and records the constraints, decisions, goals and preferences it finds, each one stored with the exact quotation from your message that it came from. The required items are added to every later prompt in that conversation.
+A long conversation eventually won't fit in the model's context window, so older messages stop being sent. To keep requirements from getting lost that way, Lattice reads the older part of the conversation and records the constraints, decisions, goals and preferences it finds. It stores each one with the exact quotation from your message that it came from, and adds the required items to every later prompt in that conversation. This is on by default. The switch is **Remember requirements in a conversation** in **Settings > AI > Chat**.
 
-What this does **not** do is remember everything you said. Finding those items is itself a model step, and it can miss things or read them the wrong way. What Lattice can promise is narrower and more useful: anything it *did* record is traceable to words you actually wrote, and it will not quietly drop a requirement it already recorded. Open **Show conversation memory** from the command palette to see every item and the quotation behind it, and to see when it is unsure about one.
+This doesn't remember everything you said. Finding those items is itself a model step, and it can miss things or misread them. What Lattice does promise:
 
-Your original messages are never changed, deleted or rewritten by this. They stay in the conversation and stay searchable, and the chat can look back through them when a question needs it. If you edit or delete a message, anything Lattice had recorded from it stops being quoted — a deleted passage does not come back through the memory view.
+- Anything it recorded can be traced to words you actually wrote.
+- It won't quietly drop a requirement it already recorded.
 
-`/compact` does the same work on demand instead of waiting.
+To see every item, the quotation behind it, and any items it's unsure about, choose **Show conversation memory** from the command palette (⌘K).
+
+Your original messages are never changed, deleted or rewritten. They stay in the conversation, stay searchable, and the chat can look back through them when a question needs it. If you edit or delete a message, anything recorded from it stops being quoted.
+
+`/compact` folds older messages into a summary on demand. **Continue in new chat** in a conversation's menu starts a fresh conversation from a summary of the current one.
+
+### Can I keep work and personal material apart?
+
+Yes, with spaces. Create them in **Settings > General > Spaces**. A conversation in a space searches only the documents in that space.
+
+### Can I chat about a folder of code?
+
+Yes, in Explorer (⌘6). Choose a folder and it stays open as the scope until you close it. On the left you browse the files in a read-only viewer. On the right is a chat that can list, read and search the files in that folder, and that points at the exact lines it's talking about. Click a reference to open the file at those lines.
+
+Explorer never changes your files. Its search index lives in Lattice's app data, not in the folder.
+
+### Can I use my own models?
+
+Yes:
+
+- Download models from the catalog in **Settings > AI > Models**.
+- Point Lattice at folders of `.gguf` files under **External model folders** on the same page.
+- Set the chat provider to a llama.cpp server or Ollama you run yourself.
+- Use OpenAI or Anthropic with your own API key.
+
+Each downloaded model can take one or more roles in **Settings > AI > Downloaded**: Chat, Utility (a small fast model for query planning and routing) or Embedding.
+
+### Does it support OCR?
+
+No. Pages of a scanned PDF that are only images are skipped, and the rest of the document is imported. Run scans through an OCR tool before importing them.
+
+### Can I get my notes as plain files?
+
+Yes. Turn on **Mirror notes to disk** in **Settings > General > Vault**, and Lattice writes your notes as Markdown files in `~/Lattice` (or a folder you choose). **Watch for external edits** brings changes you make in other editors back into Lattice.
+
+### Does it support languages other than English?
+
+Lattice stores and displays any Unicode text. How well searching by meaning works depends on the embedding model:
+
+- **Qwen3 Embedding 0.6B**, the default on machines with a supported GPU, is multilingual.
+- **all-MiniLM-L6-v2**, the default otherwise, is mainly English.
+
+Keyword search handles English word forms (for example "running" matches "run"). Other languages are matched on the words as written.
+
+---
+
+## Backups, export and sync
 
 ### Does it sync across devices?
 
-Not currently. Cloud sync is planned for future releases.
-
-**Do not put Lattice's data folder inside Dropbox, iCloud Drive, OneDrive, or Google Drive.**
-Sync clients copy the live database while Lattice is writing to it, which corrupts it.
-Lattice warns you in Settings > Vault > Backups if its data folder is inside a synced folder.
-
-To keep an off-device copy, use encrypted backup instead (see below).
+No. Don't put Lattice's data folder inside Dropbox, iCloud Drive, OneDrive or Google Drive. Sync apps copy the database while Lattice is writing to it, which can corrupt it. If the data folder is inside a synced folder, Lattice warns you in **Settings > General > Vault**. To keep a copy off your computer, use off-device backup.
 
 ### How do I protect my library if my drive fails?
 
-Turn on **Off-device backup** in Settings > Vault > Backups:
+Turn on off-device backup in **Settings > General > Vault**:
 
-1. Write down the 24-word recovery code Lattice shows you, and confirm three of the words.
-   The recovery code is the only way back in if you forget your passphrase. Lattice cannot reset it.
-2. Optionally set a passphrase.
-3. Choose a folder. Pick a folder your cloud storage app syncs, a NAS, or a USB drive.
+1. Click **Set up encrypted backup**.
+2. Write down the 24-word recovery code Lattice shows you, and confirm three of the words. The recovery code is the only way back in if you forget your passphrase. Lattice can't reset it.
+3. Optionally set a passphrase.
+4. Choose a folder: one your cloud storage app syncs, a NAS, or a USB drive.
 
-Lattice then writes one encrypted `.lattice-backup` file per scheduled backup into a `Lattice Backups` subfolder and keeps the newest few.
-Each file contains your notes, conversations, tags, study decks, imported source files, vault, and settings.
-Search vectors are left out and rebuilt after a restore.
+Lattice then writes one encrypted `.lattice-backup` file about once a day while it's running, into a `Lattice Backups` folder inside the folder you chose. **Back up now** writes one immediately. It keeps the newest five archives, and you can change that with **Archives to keep**.
 
-To restore on a new computer, open Settings > Vault > Backups, choose **Restore from file**, and enter your passphrase or recovery code.
-If the backup file is still only in the cloud, Lattice asks your sync app to download it first.
+Each archive contains:
+
+- your database: notes, journal, conversations, references, flashcards and Studio work
+- the files you imported
+- your mirrored notes folder
+- your settings
+
+Search indexes are left out and rebuilt after a restore.
+
+**To restore**, choose **Restore from file** and enter the archive's passphrase or recovery code. On a new computer, set up off-device backup first: **Restore from file** appears once it's set up. If the archive is still only in the cloud, open it in your sync app so it downloads, then retry.
+
+The **Backups** list on the same page is different. **Back up now** there saves a copy of the database only, inside Lattice's app data folder. It protects against mistakes, not against losing the drive.
 
 ### Can I export my data?
 
-Yes! Export options:
-- **Search results:** CSV, JSON, Markdown
-- **Full library:** encrypted backup archive (`.lattice-backup`)
-- **Local database snapshot:** Settings > Vault > Backups > Back up now
-- **Settings:** JSON export
+- **Conversations and journals:** Markdown or JSON, from **Export** in **Settings > General > Vault**. Files go to the `exports/` folder in Lattice's app data.
+- **One conversation:** **Copy as Markdown** in its menu.
+- **Notes as files:** turn on **Mirror notes to disk** (see above).
+- **Settings:** **Export** and **Import** at the bottom of the Settings sidebar save and load a JSON file.
+- **Everything:** an off-device backup archive.
 
-### Can I share search results?
+### Can I import from Evernote, Notion, OneNote or Obsidian?
 
-You can export and share:
-- List of matching documents
-- File paths and metadata
-- Snippets and excerpts
-
-**Cannot share:**
-- Full document content (privacy/copyright)
-- Database itself (large, machine-specific)
-
-### Does it support multiple languages?
-
-Yes! Indexing and search work with:
-- English (optimized)
-- Most European languages
-- Unicode text
-
-**Limitations:**
-- Right-to-left languages may have display issues
-- Some non-Latin scripts less accurate
-- Language-specific features (stemming) English-focused
+There are no direct importers. Export from the other app to Markdown, HTML, PDF or Word (`.docx`), then import the files on the Import page (⌘I) or with **Add folder** in the command palette (⌘K).
 
 ---
 
-## Performance & Limits
+## Limits and performance
 
-### How many files can it index?
+### What's the largest file I can import?
 
-Tested with:
-- **100,000+ documents:** Works well with adequate RAM
-- **1 million+ documents:** Possible but slower searches
-- **No hard limit:** Depends on system resources
+50 MB per file. Larger files are rejected. Split them or save a smaller copy.
 
-**Performance factors:**
-- Available RAM
-- Disk speed (SSD recommended)
-- Document sizes
-- Search complexity
+### How many documents can it handle?
 
-### How long does initial indexing take?
+There's no fixed limit. Indexing time and disk use grow with your library.
 
-Approximate times:
-- **1,000 documents:** 5-10 minutes
-- **10,000 documents:** 1-2 hours
-- **100,000 documents:** 12-24 hours
+### Why is chat slow on my computer?
 
-**Factors:**
-- File sizes
-- File types (PDFs slower than TXT)
-- System performance
-- First-time vs. incremental
+Local models are fastest on a GPU: Metal on Apple Silicon, Vulkan on Windows and Linux. Without one, Lattice runs the model on the CPU, which is much slower. Use a smaller chat model, or run a llama.cpp server on a faster machine and point Lattice at it. See [Chat is slow](troubleshooting.md#chat-is-slow).
 
-### What's the maximum file size?
+### Does Lattice watch folders for new files?
 
-**Hard limit:** 50MB per file
-
-Files larger than 50MB are automatically skipped to prevent:
-- Out of memory errors
-- Excessive processing time
-- Database bloat
-
-**Workaround:** Split large files into smaller chunks.
-
-### How fast is search?
-
-Typical search times:
-- **Small collections (1k-10k docs):** <100ms
-- **Medium collections (10k-100k docs):** 100-500ms
-- **Large collections (100k+ docs):** 500ms-2s
-
-**Factors affecting speed:**
-- Database size
-- Query complexity
-- Available RAM
-- Background indexing
-
-### Can I limit CPU/memory usage?
-
-Yes! Settings → Performance:
-- **Indexing threads:** Reduce for lower CPU usage (default: 4)
-- **Batch size:** Smaller batches = less memory
-- **Indexing schedule:** Index during idle time only
-- **Background throttling:** Reduce priority when app not focused
-
-### Why is indexing slow?
-
-Common causes:
-1. **Large files:** 50MB files take time to process
-2. **Many files:** 100,000+ files need time
-3. **Complex documents:** PDFs with images, complex formatting
-4. **Limited resources:** Low RAM or CPU
-5. **Background tasks:** Other apps competing for resources
-
-See [Troubleshooting - Slow Indexing](troubleshooting.md#slow-indexing)
+Not in this version. The **Watched folders** list in **Settings > General > Indexing** doesn't scan folders or pick up new files. Import new files yourself. Explorer is different: while a folder is open there, its index is updated as its files change.
 
 ---
 
-## Comparisons
+## Technical
 
-### How is this different from Windows Search / Spotlight?
+### What's it built with?
 
-| Feature | Recall/Vault | Windows/Mac Search |
-|---------|-------------|-------------------|
-| **Semantic search** | Yes | No (keyword only) |
-| **Full document indexing** | Yes | Partial |
-| **Privacy** | 100% local | May use cloud |
-| **File type support** | Text, PDF, DOCX | Limited |
-| **Search accuracy** | AI-powered | Basic matching |
-| **Customization** | Full control | Limited |
+Tauri 2, with a Rust backend and a React and TypeScript interface. Data is stored in SQLite (`lattice.db`), with SQLite full-text search for keywords and a USearch vector index for meaning.
 
-### How is this different from Evernote / Notion?
+### Which AI components does it use?
 
-| Feature | Recall/Vault | Evernote/Notion |
-|---------|-------------|-----------------|
-| **Storage** | Local files | Cloud |
-| **Privacy** | Complete | Depends on service |
-| **Cost** | Free | Subscription |
-| **Offline** | Full support | Limited |
-| **File formats** | Any supported type | Import only |
-| **Lock-in** | None (your files) | Proprietary format |
+- **Chat:** GGUF models run by a llama.cpp `llama-server` engine that ships inside Lattice. The engine runs on your computer and is reachable only from it. It can also use a llama.cpp or Ollama server, OpenAI or Anthropic.
+- **Embeddings:** Qwen3 Embedding 0.6B or all-MiniLM-L6-v2, running inside Lattice.
+- **Optional:** a reranker model that rescores search results, and Whisper models for transcribing audio.
 
-### How is this different from DevonThink?
+### Do I need to install Python, Ollama or anything else?
 
-| Feature | Recall/Vault | DevonThink |
-|---------|-------------|------------|
-| **Platform** | Win/Mac/Linux | Mac only |
-| **Cost** | Free | Paid |
-| **Technology** | AI embeddings | Traditional indexing |
-| **Open source** | Yes | No |
-| **Customization** | High | High |
+No. Everything Lattice needs ships with it. Ollama and external llama.cpp servers are optional.
 
-### How is this different from Obsidian?
+### Is there an API, CLI or browser extension?
 
-| Feature | Recall/Vault | Obsidian |
-|---------|-------------|----------|
-| **Purpose** | Search existing files | Create and link notes |
-| **File watching** | Automatic | Manual |
-| **Search type** | Semantic | Text-based |
-| **Note-taking** | View only | Full editor |
-| **Use case** | Index existing docs | Create knowledge base |
-
-**Best approach:** Use both!
-- Obsidian for active note-taking
-- Recall/Vault to search all notes + other documents
+No. Lattice has no command-line tool, no REST API, no plugin system and no browser extension. Chat can call HTTP endpoints you add as custom tools in **Settings > AI > Tools**. See [Advanced Features](advanced-features.md#custom-tools).
 
 ---
 
-## Licensing & Usage
+## Getting help
 
-### Can I use it commercially?
+- [Troubleshooting](troubleshooting.md): fixes for common problems, and how to report a bug
+- [Error Messages and Codes](error-codes.md): what an error code means
+- [User Manual](user-manual.md): how each part of Lattice works
 
-Yes! MIT license allows:
-- Personal use
-- Commercial use
-- Modification
-- Distribution
-
-**No restrictions on:**
-- Company size
-- Revenue
-- Number of users
-- Deployment type
-
-### Can I modify the source code?
-
-Yes! It's open source (MIT license):
-- View and modify source code
-- Create custom versions
-- Contribute improvements
-- Fork the project
-
-### Do I need to credit the authors?
-
-Not required for use, but appreciated:
-- MIT license only requires including license text in distributions
-- Attribution not required for personal use
-- Credit welcome in projects using the code
-
-### Can I distribute my modified version?
-
-Yes! You can:
-- Distribute modified versions
-- Use different name
-- Charge for your version (if you want)
-
-**Requirements:**
-- Include original MIT license text
-- Indicate what you changed (recommended)
-
-### Is there enterprise support?
-
-Community support only (currently):
-- GitHub Issues
-- Community forum
-- Documentation
-
-Enterprise support may be available in future:
-- Priority bug fixes
-- Custom features
-- Training and onboarding
-- SLA guarantees
-
-### Can I sponsor the project?
-
-Yes! Sponsorship helps:
-- Faster development
-- Better documentation
-- More features
-- Long-term sustainability
-
-Check project page for sponsorship options.
-
----
-
-## Technical Questions
-
-### What database does it use?
-
-**SQLite** with extensions:
-- **FTS5:** Full-text search
-- **pgvector-style:** Vector embeddings (custom implementation)
-- **JSON support:** Metadata storage
-
-### What AI models does it use?
-
-**Embedding model:** sentence-transformers (local)
-- Runs entirely on your machine
-- No API calls
-- No internet needed
-- ~500MB model download (one-time)
-
-### Does it require Python?
-
-No! The app is self-contained:
-- All dependencies bundled
-- Python bridge for AI features (internal)
-- No manual Python installation needed
-
-### What's the technology stack?
-
-- **Frontend:** React, TypeScript, Tailwind CSS
-- **Backend:** Rust (Tauri framework)
-- **Database:** SQLite
-- **Search:** Custom hybrid search (keyword + semantic)
-- **AI:** Local embedding models
-
-### Can I use my own AI models?
-
-Not currently, but planned:
-- OpenAI API integration
-- Local LLM support (Ollama)
-- Custom model endpoints
-
-### Is there an API?
-
-Not yet. Planned features:
-- REST API for integration
-- CLI for automation
-- Plugin system
-
----
-
-## Troubleshooting
-
-### Where can I find help?
-
-1. **[Troubleshooting Guide](troubleshooting.md)** - Step-by-step solutions
-2. **[Error Codes](error-codes.md)** - Error reference
-3. **GitHub Issues** - Report bugs
-4. **Community Forum** - Ask questions
-
-### How do I report a bug?
-
-See [When to Report a Bug](troubleshooting.md#when-to-report-a-bug)
-
-### How do I request a feature?
-
-1. Check existing feature requests
-2. Create GitHub issue with "Feature Request" label
-3. Describe use case and benefit
-4. Community votes on requests
-
-### Where are the logs?
-
-See [Log File Locations](troubleshooting.md#when-to-report-a-bug)
-
----
-
-## Migration & Import
-
-### Can I import from Evernote?
-
-Not directly. Workaround:
-1. Export Evernote notebooks as HTML/PDF
-2. Save to folder
-3. Add folder to Recall/Vault watch folders
-
-### Can I import from Notion?
-
-Yes! Similar process:
-1. Export Notion workspace (Markdown format)
-2. Save exported files to folder
-3. Add folder to watch folders
-
-### Can I import from DevonThink?
-
-Yes! DevonThink stores files in database:
-1. Export documents from DevonThink
-2. Save to regular folder structure
-3. Index with Recall/Vault
-
-### Can I import from OneNote?
-
-Not directly. OneNote uses proprietary format:
-1. Export notebooks as PDF or Word
-2. Save to folder
-3. Add folder to Recall/Vault
-
----
-
-## Future Features
-
-### What features are planned?
-
-**Near-term:**
-- OCR for images and scanned documents
-- Cloud sync across devices
-- Mobile apps (iOS, Android)
-- Browser extension for web clipping
-- More file formats (XLSX, PPTX, code files)
-
-**Long-term:**
-- AI-powered summarization
-- Automatic tagging and categorization
-- Knowledge graph visualization
-- Collaborative features
-- Plugin system
-
-### How can I influence the roadmap?
-
-1. **Vote on feature requests** (GitHub discussions)
-2. **Submit feature ideas** (GitHub issues)
-3. **Contribute code** (Pull requests)
-4. **Sponsor development** (Accelerate specific features)
-
-### When will [feature X] be available?
-
-Check project roadmap:
-- GitHub milestones
-- Project board
-- Discussions forum
-
-No fixed timelines - community-driven development.
-
----
-
-## Still have questions?
-
-- **[Troubleshooting Guide](troubleshooting.md)** - Common issues
-- **[Error Codes](error-codes.md)** - Error reference
-- **GitHub Discussions** - Community Q&A
-- **GitHub Issues** - Bug reports and feature requests
-
-Can't find your answer? Ask in community discussions!
+Lattice keeps a log of recent errors in **Settings > General > Logs**, and you can export it to attach to a bug report.

@@ -7,8 +7,14 @@ These Playwright tests exercise the production renderer bundle through real rout
 ```sh
 npm run type-check:e2e
 npm run lint:e2e
-npm run test:learning:e2e
+npm run test:e2e
 ```
+
+`npm run test:e2e` runs every `e2e/*.spec.ts` on the `web-smoke` (Chromium) and
+`webkit-smoke` projects. Playwright builds its own renderer into
+`e2e-results/renderer` and serves it on port 4173 with `--strictPort`, so keep
+that port free; it never reuses a running dev server. `npm run test:learning:e2e`
+runs only `e2e/learning-studio.spec.ts`.
 
 For an interactive inspector with time travel, DOM snapshots, locators, and manual
 step execution, run `npm run test:learning:e2e:ui`. Component-level interaction
@@ -30,11 +36,16 @@ re-import, recall-card versioning, scheduler switching, review, and duplicate
 confirmation. It asserts durable fixture state after the interactions and runs the
 same workflow at desktop and 390px widths in both browser engines.
 
-The app-shell suite separately verifies that Studio opens through the production
-navigation, renders a complete active course, preserves an in-progress quick-check
-answer across check types and workspace tabs, and exposes saved attempt history.
-This keeps route and shell integration coverage independent from the larger strict
-Studio fixture.
+The app-shell suite (`e2e/app-shell.spec.ts`) covers the rest of the shell:
+navigation and Settings, PDF import and reopening, library collections, theme
+startup and contrast, native quit, chat sidebar and spaces, provider
+connections and errors, the model catalog, bulk import and deletion, and
+flashcard decks inside Studio. It separately verifies that Studio opens through
+the production navigation, renders a complete active course, preserves an
+in-progress quick-check answer across check types and workspace tabs, and
+exposes saved attempt history. This keeps route and shell integration coverage
+independent from the larger strict Studio fixture. Explorer has no browser
+journey yet; its renderer tests live in `src/components/Explorer/__tests__/`.
 
 To retain full-page screenshots from a successful focused run:
 

@@ -5,10 +5,11 @@
 //! into `lattice.db`: backups copy that file whole and would carry every
 //! indexed repository, and a separate store cannot leak into library search.
 //!
-//! The directories are the registry. Each `chunks.db` records its root, the
-//! embedding identity its vectors were made with and when it was last opened,
-//! so finding a parent's index or the least recently used one is a read of at
-//! most a handful of small databases.
+//! Each `chunks.db` records its root, the embedding identity its vectors were
+//! made with, when it was last opened, and what its last run found (too many
+//! files, or finished), so a closed folder can be described and a parent's
+//! index found by reading a handful of small databases. The folders list in
+//! `lattice.db` names the folders; these directories hold what each index is.
 
 use super::chunker::Chunk;
 use crate::shared::{AppError, Result};
@@ -26,6 +27,12 @@ const SCHEMA_VERSION: &str = "1";
 pub const META_ROOT: &str = "root";
 pub const META_IDENTITY: &str = "identity";
 pub const META_LAST_OPENED: &str = "last_opened";
+/// The last walk found more files than the cap: `"<count>"`, or
+/// `"<count>+"` when it stopped counting. Cleared by a walk that fits.
+pub const META_TOO_LARGE: &str = "too_large";
+/// When a full run last finished, so an index with nothing pending reads as
+/// done rather than never run.
+pub const META_COMPLETE: &str = "complete";
 const META_VERSION: &str = "version";
 
 /// `AUTOINCREMENT` so a chunk id is never handed out twice: the vectors file
@@ -124,7 +131,60 @@ pub struct ChunkRow {
 pub struct Counts {
     pub files_total: u32,
     pub files_indexed: u32,
-    pub chunks: u32,
+    pub passages_total: u32,
+    /// Passages of files marked embedded: in the saved vectors file.
+    pub passages_embedded: u32,
+}
+
+/// What a too-large walk found, as [`META_TOO_LARGE`] records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TooLarge {
+    pub count: usize,
+    /// The walk stopped counting at `count`.
+    pub capped: bool,
+}
+
+impl TooLarge {
+    pub fn encode(&self) -> String {
+        format!("{}{}", self.count, if self.capped { "+" } else { "" })
+    }
+
+    pub fn decode(value: &str) -> Option<Self> {
+        let count = value.trim_end_matches('+').parse().ok()?;
+        Some(Self {
+            count,
+            capped: value.ends_with('+'),
+        })
+    }
+}
+
+/// Files and passages under `prefix`. Every chunk has its file's row (both
+/// are written in one transaction), so the join drops nothing.
+async fn read_counts(
+    connection: &mut SqliteConnection,
+    prefix: &str,
+) -> std::result::Result<Counts, sqlx::Error> {
+    let files = sqlx::query(&format!(
+        "SELECT COUNT(*) AS total, COALESCE(SUM(embedded), 0) AS indexed FROM files WHERE {UNDER}"
+    ))
+    .bind(prefix)
+    .fetch_one(&mut *connection)
+    .await?;
+    let passages = sqlx::query(
+        "SELECT COUNT(*) AS total, COALESCE(SUM(f.embedded), 0) AS embedded
+         FROM chunks c JOIN files f ON f.path = c.path
+         WHERE (?1 = '' OR c.path = ?1 OR substr(c.path, 1, length(?1) + 1) = ?1 || '/')",
+    )
+    .bind(prefix)
+    .fetch_one(&mut *connection)
+    .await?;
+    let as_u32 = |value: i64| u32::try_from(value).unwrap_or(u32::MAX);
+    Ok(Counts {
+        files_total: as_u32(files.get("total")),
+        files_indexed: as_u32(files.get("indexed")),
+        passages_total: as_u32(passages.get("total")),
+        passages_embedded: as_u32(passages.get("embedded")),
+    })
 }
 
 pub struct FolderStore {
@@ -179,6 +239,15 @@ impl FolderStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(db_error("read meta"))
+    }
+
+    pub async fn delete_meta(&self, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(db_error("write meta"))
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
@@ -386,24 +455,10 @@ impl FolderStore {
     }
 
     pub async fn counts(&self, prefix: &str) -> Result<Counts> {
-        let files = sqlx::query(&format!(
-            "SELECT COUNT(*) AS total, COALESCE(SUM(embedded), 0) AS indexed FROM files WHERE {UNDER}"
-        ))
-        .bind(prefix)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db_error("count files"))?;
-        let chunks: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM chunks WHERE {UNDER}"))
-            .bind(prefix)
-            .fetch_one(&self.pool)
+        let mut connection = self.pool.acquire().await.map_err(db_error("count"))?;
+        read_counts(&mut connection, prefix)
             .await
-            .map_err(db_error("count chunks"))?;
-        let as_u32 = |value: i64| u32::try_from(value).unwrap_or(u32::MAX);
-        Ok(Counts {
-            files_total: as_u32(files.get("total")),
-            files_indexed: as_u32(files.get("indexed")),
-            chunks: as_u32(chunks),
-        })
+            .map_err(db_error("count files and passages"))
     }
 
     /// Whether anything under `prefix` has been chunked.
@@ -466,7 +521,10 @@ pub struct IndexEntry {
     pub dir: PathBuf,
     /// `None` for a directory whose `chunks.db` is missing or unreadable.
     pub root: Option<PathBuf>,
+    /// Milliseconds since the epoch; 0 when never recorded.
     pub last_opened: i64,
+    /// Its last walk found too many files, so it holds nothing to reuse.
+    pub too_large: bool,
 }
 
 /// Every index directory under `base`. Each `chunks.db` is read through a
@@ -481,17 +539,30 @@ pub async fn list_indexes(base: &Path) -> Vec<IndexEntry> {
         if !dir.is_dir() {
             continue;
         }
-        let (root, last_opened) = read_registry_meta(&dir).await.unwrap_or((None, 0));
+        let meta = match connect(&dir).await {
+            Some(mut connection) => {
+                let meta = read_meta(&mut connection).await;
+                let _ = connection.close().await;
+                meta.unwrap_or_default()
+            }
+            None => HashMap::new(),
+        };
         indexes.push(IndexEntry {
             dir,
-            root,
-            last_opened,
+            root: meta.get(META_ROOT).map(PathBuf::from),
+            last_opened: meta
+                .get(META_LAST_OPENED)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+            too_large: meta.contains_key(META_TOO_LARGE),
         });
     }
     indexes
 }
 
-async fn read_registry_meta(dir: &Path) -> Option<(Option<PathBuf>, i64)> {
+/// A short-lived connection to `dir`'s `chunks.db`; `None` when it has none
+/// or it will not open.
+async fn connect(dir: &Path) -> Option<SqliteConnection> {
     let db = dir.join(DB_FILE);
     if !db.exists() {
         return None;
@@ -499,24 +570,68 @@ async fn read_registry_meta(dir: &Path) -> Option<(Option<PathBuf>, i64)> {
     let options = SqliteConnectOptions::new()
         .filename(&db)
         .busy_timeout(Duration::from_secs(2));
-    let mut connection = SqliteConnection::connect_with(&options).await.ok()?;
-    let rows = sqlx::query("SELECT key, value FROM meta WHERE key IN (?, ?)")
-        .bind(META_ROOT)
-        .bind(META_LAST_OPENED)
-        .fetch_all(&mut connection)
-        .await
-        .ok();
-    let _ = connection.close().await;
-    let mut root = None;
-    let mut last_opened = 0;
-    for row in rows? {
-        let key: String = row.get("key");
-        let value: String = row.get("value");
-        match key.as_str() {
-            META_ROOT => root = Some(PathBuf::from(value)),
-            META_LAST_OPENED => last_opened = value.parse().unwrap_or(0),
-            _ => {}
-        }
+    SqliteConnection::connect_with(&options).await.ok()
+}
+
+async fn read_meta(
+    connection: &mut SqliteConnection,
+) -> std::result::Result<HashMap<String, String>, sqlx::Error> {
+    let rows = sqlx::query("SELECT key, value FROM meta")
+        .fetch_all(&mut *connection)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get("key"), row.get("value")))
+        .collect())
+}
+
+/// What one index directory holds under a prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Snapshot {
+    pub counts: Counts,
+    pub too_large: Option<TooLarge>,
+    /// A full run has finished at least once.
+    pub complete: bool,
+}
+
+/// Reads `dir`'s index under `prefix` without opening it for writing: a
+/// short-lived connection, so an open folder's pool and run are untouched.
+/// `Ok(None)` when the directory has no `chunks.db`.
+pub async fn inspect(dir: &Path, prefix: &str) -> Result<Option<Snapshot>> {
+    if !dir.join(DB_FILE).exists() {
+        return Ok(None);
     }
-    Some((root, last_opened))
+    let mut connection = connect(dir).await.ok_or_else(|| {
+        AppError::Database(format!(
+            "Folder index: could not open {}",
+            dir.join(DB_FILE).display()
+        ))
+    })?;
+    let read = async {
+        let meta = read_meta(&mut connection).await?;
+        let counts = read_counts(&mut connection, prefix).await?;
+        Ok::<_, sqlx::Error>(Snapshot {
+            counts,
+            too_large: meta
+                .get(META_TOO_LARGE)
+                .and_then(|value| TooLarge::decode(value)),
+            complete: meta.contains_key(META_COMPLETE),
+        })
+    }
+    .await;
+    let _ = connection.close().await;
+    read.map(Some).map_err(db_error("read the index"))
+}
+
+/// Bytes on disk of the files directly in `dir`: `chunks.db` with its WAL,
+/// and the vectors files. 0 when it does not exist.
+pub fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| entry.ok()?.metadata().ok())
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
+        .sum()
 }

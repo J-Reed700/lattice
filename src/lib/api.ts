@@ -303,7 +303,12 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   explorer_index_close: { domain: 'explorer', command: 'explorer_index_close' },
   explorer_index_status: { domain: 'explorer', command: 'explorer_index_status' },
   explorer_index_rebuild: { domain: 'explorer', command: 'explorer_index_rebuild' },
-  explorer_index_forget: { domain: 'explorer', command: 'explorer_index_forget' },
+  explorer_folders_list: { domain: 'explorer', command: 'explorer_folders_list' },
+  explorer_folder_rename: { domain: 'explorer', command: 'explorer_folder_rename' },
+  explorer_folder_set_pinned: { domain: 'explorer', command: 'explorer_folder_set_pinned' },
+  explorer_folder_set_settings: { domain: 'explorer', command: 'explorer_folder_set_settings' },
+  explorer_folder_delete_index: { domain: 'explorer', command: 'explorer_folder_delete_index' },
+  explorer_folder_remove: { domain: 'explorer', command: 'explorer_folder_remove' },
 
   // Compare domain
   list_study_decks: { domain: 'study', command: 'list_study_decks' },
@@ -2004,8 +2009,23 @@ const VaultAPI = {
   explorerIndexStatus: (root: string): Promise<ApiResult<Wire.FolderIndexStatusDto>> => apiCall('explorer_index_status', { root }),
   /** Wipes the folder's index and builds it again. */
   explorerIndexRebuild: (root: string): Promise<ApiResult<Wire.FolderIndexStatusDto>> => apiCall('explorer_index_rebuild', { root }),
-  /** Deletes the folder's index from Lattice's data. */
-  explorerIndexForget: (root: string): Promise<ApiResult<void>> => apiCall('explorer_index_forget', { root }),
+  /** The folders picked in the Explorer, pinned first, each with its threads and index. */
+  explorerFoldersList: (): Promise<ApiResult<Wire.ExplorerFolderListDto>> => apiCall('explorer_folders_list'),
+  /** Renames a folder in the list; an empty name goes back to the folder's own. */
+  explorerFolderRename: (root: string, name: string): Promise<ApiResult<void>> => apiCall('explorer_folder_rename', { root, name }),
+  explorerFolderSetPinned: (root: string, pinned: boolean): Promise<ApiResult<void>> =>
+    apiCall('explorer_folder_set_pinned', { root, pinned }),
+  /**
+   * Sets a folder's system prompt (empty for none) and the space its threads
+   * belong to. Its threads move to that space; returns how many moved.
+   */
+  explorerFolderSetSettings: (root: string, instructions: string, spaceId: string): Promise<ApiResult<number>> =>
+    apiCall('explorer_folder_set_settings', { root, instructions, spaceId }),
+  /** Deletes the folder's own index and keeps it listed; the next open builds it again. */
+  explorerFolderDeleteIndex: (root: string): Promise<ApiResult<void>> => apiCall('explorer_folder_delete_index', { root }),
+  /** Removes a folder and its own index from the list; with `deleteThreads`, its threads too. */
+  explorerFolderRemove: (root: string, deleteThreads: boolean): Promise<ApiResult<number>> =>
+    apiCall('explorer_folder_remove', { root, deleteThreads }),
 
   listLearningPrograms: (): Promise<ApiResult<Wire.LearningProgramSummaryDto[]>> => apiCall('list_learning_programs'),
   getLearningPlan: (id: string): Promise<ApiResult<Wire.LearningPlanDto>> => apiCall('get_learning_plan', { id }),

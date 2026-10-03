@@ -3,16 +3,15 @@
  *
  * One store for the page and for the chat code that has to know what the
  * Explorer shows (the send path reads the focus, answers reveal references).
- * The folder, the recent folders and the thread last used per folder survive
- * a restart; what is expanded, open and selected belongs to the session.
+ * The open folder and the thread last used per folder survive a restart;
+ * what is expanded, open and selected belongs to the session. The folders
+ * picked before are the backend's list, not kept here.
  */
 
 import { create } from 'zustand';
 
 const ROOT_KEY = 'explorer.root';
-const RECENT_KEY = 'explorer.recentRoots';
 const THREADS_KEY = 'explorer.threadByRoot';
-const MAX_RECENT = 8;
 
 /** Lines of a file, 1-based and inclusive, as the backend's `ExplorerLineRangeDto`. */
 export interface ExplorerLineRange {
@@ -38,6 +37,8 @@ export type FolderIndexState = 'scanning' | 'indexing' | 'ready' | 'tooLarge' | 
 /**
  * The open folder's search index, as the backend's `FolderIndexStatusDto`.
  * `indexRoot` differs from `root` when a parent folder's index is reused.
+ * Passages move after every embedded batch, files when a save marks them;
+ * the rate and time left stay null until a run has ~10 s behind it.
  */
 export interface FolderIndexStatus {
   root: string;
@@ -45,7 +46,10 @@ export interface FolderIndexStatus {
   state: FolderIndexState;
   filesTotal: number;
   filesIndexed: number;
-  chunks: number;
+  passagesTotal: number;
+  passagesEmbedded: number;
+  passagesPerSecond: number | null;
+  etaSeconds: number | null;
   message: string | null;
 }
 
@@ -58,10 +62,13 @@ export interface ExplorerHighlight {
 
 export interface ExplorerState {
   root: ExplorerRoot | null;
-  recentRoots: ExplorerRoot[];
   /** Directories open in the tree, as scope-relative paths. */
   expanded: ReadonlySet<string>;
   openPath: string | null;
+  /** Files opened before the one on screen, the most recent last. */
+  back: readonly string[];
+  /** Files left by going back, the next one last. */
+  forward: readonly string[];
   /** Lines the reader picked in the gutter; sent with the next turn. */
   selection: ExplorerLineRange | null;
   /** Lines an answer pointed at. */
@@ -81,14 +88,18 @@ export interface ExplorerState {
   toggleExpanded: (_path: string) => void;
   setExpanded: (_path: string, _open: boolean) => void;
   openFile: (_path: string) => void;
+  /** Reopen the file before this one, as a browser's Back does. */
+  goBack: () => void;
+  /** Reopen the file Back left, until another file is opened. */
+  goForward: () => void;
   setSelection: (_range: ExplorerLineRange | null) => void;
   /** Open a file and light up the lines a line reference names. */
   reveal: (_path: string, _range: ExplorerLineRange) => void;
   rememberThread: (_root: string, _conversationId: string) => void;
+  /** Forgets which thread a folder last used: its threads were deleted. */
+  forgetThread: (_root: string) => void;
   /** Takes an index status from a command or an event; one for another root is dropped. */
   setIndexStatus: (_status: FolderIndexStatus | null, _fromEvent?: boolean) => void;
-  /** Drops a folder from the recent list (its index is deleted separately). */
-  forgetRecent: (_root: string) => void;
 }
 
 function read<T>(key: string, fallback: T): T {
@@ -115,13 +126,31 @@ function ancestors(path: string): string[] {
   return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
 }
 
+/** `expanded` with the folders above `path` open, or the same set when they already are. */
+function withAncestors(expanded: ReadonlySet<string>, path: string): ReadonlySet<string> {
+  const missing = ancestors(path).filter((dir) => !expanded.has(dir));
+  return missing.length ? new Set([...expanded, ...missing]) : expanded;
+}
+
+/** How many files Back remembers. */
+const HISTORY_LIMIT = 50;
+
+/** Leaving the open file for another: it goes on the Back list, and Forward is spent. */
+function leaving(state: ExplorerState): Pick<ExplorerState, 'back' | 'forward'> {
+  return {
+    back: state.openPath ? [...state.back, state.openPath].slice(-HISTORY_LIMIT) : state.back,
+    forward: [],
+  };
+}
+
 let nonce = 0;
 
 export const useExplorerStore = create<ExplorerState>((set, get) => ({
   root: read<ExplorerRoot | null>(ROOT_KEY, null),
-  recentRoots: read<ExplorerRoot[]>(RECENT_KEY, []),
   expanded: new Set<string>(),
   openPath: null,
+  back: [],
+  forward: [],
   selection: null,
   highlight: null,
   threadByRoot: read<Record<string, string>>(THREADS_KEY, {}),
@@ -130,13 +159,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
   setRoot: (root) => {
     if (root?.root === get().root?.root) return;
-    const recentRoots = root
-      ? [root, ...get().recentRoots.filter((item) => item.root !== root.root)].slice(0, MAX_RECENT)
-      : get().recentRoots;
     write(ROOT_KEY, root);
-    write(RECENT_KEY, recentRoots);
     // Paths are relative to the root, so nothing about the old view carries over.
-    set({ root, recentRoots, expanded: new Set(), openPath: null, selection: null, highlight: null, indexStatus: null });
+    set({ root, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, indexStatus: null });
   },
 
   toggleExpanded: (path) => {
@@ -156,7 +181,35 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
   openFile: (path) => {
     if (get().openPath === path) return;
-    set({ openPath: path, selection: null, highlight: null });
+    set({ ...leaving(get()), openPath: path, selection: null, highlight: null });
+  },
+
+  goBack: () => {
+    const { back, forward, openPath, expanded } = get();
+    const path = back[back.length - 1];
+    if (!path) return;
+    set({
+      back: back.slice(0, -1),
+      forward: openPath ? [...forward, openPath] : forward,
+      openPath: path,
+      expanded: withAncestors(expanded, path),
+      selection: null,
+      highlight: null,
+    });
+  },
+
+  goForward: () => {
+    const { back, forward, openPath, expanded } = get();
+    const path = forward[forward.length - 1];
+    if (!path) return;
+    set({
+      back: openPath ? [...back, openPath] : back,
+      forward: forward.slice(0, -1),
+      openPath: path,
+      expanded: withAncestors(expanded, path),
+      selection: null,
+      highlight: null,
+    });
   },
 
   setSelection: (selection) => set({ selection }),
@@ -168,7 +221,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({
       expanded,
       // A selection belongs to the file it was made in.
-      ...(get().openPath === path ? {} : { openPath: path, selection: null }),
+      ...(get().openPath === path ? {} : { ...leaving(get()), openPath: path, selection: null }),
       highlight: { path, range, nonce },
     });
   },
@@ -180,15 +233,16 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({ threadByRoot });
   },
 
+  forgetThread: (root) => {
+    if (!(root in get().threadByRoot)) return;
+    const threadByRoot = Object.fromEntries(Object.entries(get().threadByRoot).filter(([key]) => key !== root));
+    write(THREADS_KEY, threadByRoot);
+    set({ threadByRoot });
+  },
+
   setIndexStatus: (indexStatus, fromEvent = false) => {
     if (indexStatus && indexStatus.root !== get().root?.root) return;
     set(fromEvent ? { indexStatus, indexEvents: get().indexEvents + 1 } : { indexStatus });
-  },
-
-  forgetRecent: (root) => {
-    const recentRoots = get().recentRoots.filter((item) => item.root !== root);
-    write(RECENT_KEY, recentRoots);
-    set({ recentRoots });
   },
 }));
 

@@ -1,27 +1,7 @@
-/* The Explorer's file view. Same code palette as the Studio lab editor, so
-   code reads the same wherever the app shows it. */
+/* The Explorer's file view. The code palette is the app's shared one
+   (lib/code/code.css); this view sits on the page itself. */
 .explorer-code {
   --code-bg: hsl(var(--bg));
-  --code-fg: hsl(var(--text-primary));
-  --code-gutter-fg: hsl(var(--text-muted));
-  --code-selection: hsl(var(--accent) / 0.2);
-  --code-keyword: #7241b8;
-  --code-function: #165d9c;
-  --code-type: #15735b;
-  --code-string: #a34822;
-  --code-number: #9b4e91;
-  --code-comment: hsl(var(--text-muted));
-  --code-punctuation: #627080;
-}
-
-:root[data-theme='dark'] .explorer-code,
-.dark .explorer-code {
-  --code-keyword: #c9a5ff;
-  --code-function: #8fc5ff;
-  --code-type: #86d6b8;
-  --code-string: #f3b27d;
-  --code-number: #e6a8dc;
-  --code-punctuation: #a5b4c3;
 }
 
 .explorer-code .cm-editor {
@@ -37,6 +17,25 @@
 .explorer-code .cm-explorer-highlight {
   background: hsl(var(--accent) / 0.12);
   box-shadow: inset 2px 0 0 hsl(var(--accent));
+}
+
+/* The chat column's indexing line comes in after a beat, so the quick rescan
+   of a folder that is already indexed does not flash it. */
+.explorer-index-notice {
+  animation: explorer-notice-in var(--duration-slow) var(--ease-out) 800ms both;
+}
+@keyframes explorer-notice-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .explorer-index-notice {
+    animation: none;
+  }
 }
 
 /* The split handles between the three columns. The grab area is wider than

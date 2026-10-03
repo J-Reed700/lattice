@@ -11,6 +11,9 @@ pub struct LinkedConversationSource {
 
 #[async_trait::async_trait]
 pub trait ConversationContextPort: Send + Sync {
+    /// The prompt the conversation's surroundings give it: an Explorer
+    /// thread's folder instructions when the folder has some, otherwise its
+    /// space's prompt. A conversation's own prompt still wins over either.
     async fn space_prompt(&self, conversation_id: &str) -> Result<Option<String>>;
     /// Return the most recently added sources first, up to the requested limit.
     async fn linked_sources(

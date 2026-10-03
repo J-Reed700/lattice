@@ -1,6 +1,7 @@
 # api-rust (Sync Service Scaffold)
 
-Rust scaffold for Recall's sync backend.
+Rust scaffold for Lattice's optional sync backend. The desktop app does not
+call it yet.
 
 ## What is implemented
 
@@ -48,7 +49,9 @@ multi-tenant identity provider.
 
 3. Ensure Postgres is running and `DATABASE_URL` points to it.
 
-`HOST` defaults to `127.0.0.1`. Set `CORS_ALLOWED_ORIGINS` to a comma-separated
+`HOST` defaults to `127.0.0.1` and `PORT` to `8080`. `MAX_DB_CONNECTIONS`
+(default `20`) sizes the pool, and `RUN_MIGRATIONS` (default on) applies
+`migrations/` at startup. Set `CORS_ALLOWED_ORIGINS` to a comma-separated
 list of exact application origins when needed; wildcard origins are rejected.
 The example lists the local development and Tauri origins. Binding to a
 non-loopback address is an explicit deployment choice and should be paired

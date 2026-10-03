@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Explorer** (`/explorer`, ⌘6): a folder from disk beside a chat
+  - Pick a folder once; the tree, the viewer and the model's tools stay inside it until you close it
+  - Back and forward through the files opened (‹ › above the file, ⌘[ and ⌘])
+  - Folder settings: each folder has its own system prompt and space (General by default), from its ⋯ menu or the scope bar. Its threads live in that space, which sets the library they search; changing it moves them. Migration `20261003100000_explorer_folder_settings.sql`
+  - Read-only code viewer with line selection, syntax highlighting for about 45 languages (C and C++, Markdown with highlighted code fences, CMake, shell and more) loaded on demand, code folding, bracket matching and ⌘F find; the Studio lab editor shares the same language registry and colours
+  - Explorer threads read the folder (`list_directory`, `read_file`, `search_files`, `find_files`, `search_folder`), can still search the web and the library, and answer with `path:10-24` line references that open in the viewer
+  - Per-folder semantic index under `<data_dir>/folder-index/`, outside `lattice.db`: passages in SQLite with FTS5 plus a vector file, dense and BM25 results fused by reciprocal rank, kept current by a file watcher
+  - Index progress in passages, percent and time left, in the scope bar, above the chat composer and in the log
+  - **Your folders** on the start screen: every opened folder with its index status, size, threads and last-opened time; pin, rename, delete index, and remove (optionally with the folder's threads). No index is deleted unless you ask
+  - Migration `20261002100000_conversation_explorer_root.sql` binds a conversation to its folder through `conversations.explorer_root`; `20261002110000_explorer_folders.sql` keeps the folder list
+- **Learning Studio** (`/studio`, ⌘7): programs built from your sources with curriculum, practice, sandboxed labs, assessment evidence, a canvas, portability packs and Recall
+  - Lab edits save durably with revision conflicts and recovery, in a multi-language code editor
+  - Studio navigation grouped into five tabs
+
+### Changed
+- **Study left the rail**: flashcard decks moved into Learning Studio; the `study` backend stays and powers Recall
+  - Explorer took Study's ⌘6 slot
+- Startup JavaScript is back under the 1,050,000-byte budget checked by `scripts/check-initial-js-budget.mjs`: icon, date and command-menu code now loads with the page that uses it
+- Learning Studio's library text read moved behind a repository so the repository-barrier and layer-boundary checks pass
+
 ### Fixed
+- **Chat answers that stopped mid-thought with raw `<tool_call>` text**
+  - The last round's "answer now, no tools" instruction went in as a system message, which llama.cpp merges into the top of the prompt, so the model never read it and kept writing calls as text. It is now the last user message
+  - A call written as text in the last round is cut from the answer, which ends with a note that the turn ran out of tool rounds and can be continued
+  - Explorer turns get 10 tool rounds instead of 5, and a turn whose context window is full answers at once rather than spending rounds on results with no room left
 - **CRITICAL**: Fixed FTS5 trigger bug causing duplicate search results
   - FTS5 now properly aggregates chunks into document-level entries (one entry per document)
   - Search results no longer contain duplicate document IDs

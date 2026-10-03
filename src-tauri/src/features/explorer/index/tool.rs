@@ -72,9 +72,9 @@ pub fn progress_note(search: &FolderSearch) -> Option<String> {
     )
     .then(|| {
         format!(
-            "[The folder index is still being built ({} of {} files so far), so a passage may be missing.]",
-            group_digits(status.files_indexed as usize),
-            group_digits(status.files_total as usize)
+            "[The folder index is still being built ({}% of {} passages so far), so a passage may be missing.]",
+            status.percent(),
+            group_digits(status.passages_total as usize)
         )
     })
 }

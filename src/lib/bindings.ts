@@ -56,7 +56,8 @@ async setConversationExplorerRoot(conversationId: string, root: string | null) :
 },
 /**
  * Opens the folder's index and starts or resumes indexing it. Any other
- * open folder is closed first.
+ * open folder is closed first. The folder joins the folders list, or moves
+ * up it.
  */
 async explorerIndexOpen(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
     try {
@@ -97,11 +98,68 @@ async explorerIndexRebuild(root: string) : Promise<Result<FolderIndexStatusDto, 
 }
 },
 /**
- * Deletes the folder's index directory, closing it first if it is open.
+ * The folders list: pinned first, then the most recently opened, each with
+ * its threads and what its index holds.
  */
-async explorerIndexForget(root: string) : Promise<Result<null, ApiError>> {
+async explorerFoldersList() : Promise<Result<ExplorerFolderListDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_index_forget", { root }) };
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folders_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Renames a folder in the list; an empty name goes back to its own.
+ */
+async explorerFolderRename(root: string, name: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_rename", { root, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerFolderSetPinned(root: string, pinned: boolean) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_pinned", { root, pinned }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets a folder's system prompt and the space its threads belong to; an
+ * empty prompt is none, and General is the default space. The folder's
+ * threads move to the space. Returns how many threads moved.
+ */
+async explorerFolderSetSettings(root: string, instructions: string, spaceId: string) : Promise<Result<number, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_settings", { root, instructions, spaceId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes the folder's own index, closing it first if it is open. The
+ * folder stays listed, and the next open builds the index again.
+ */
+async explorerFolderDeleteIndex(root: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_delete_index", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a folder from the list with its own index; with
+ * `delete_threads`, its threads too. Returns how many threads were deleted.
+ */
+async explorerFolderRemove(root: string, deleteThreads: boolean) : Promise<Result<number, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_remove", { root, deleteThreads }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5597,6 +5655,44 @@ text: string | null; lineCount: number; sizeBytes: number; language: string | nu
  */
 export type ExplorerFocusDto = { openPath: string | null; selection: ExplorerLineRangeDto | null }
 /**
+ * One folder in the Explorer's folders list.
+ */
+export type ExplorerFolderDto = { root: string;
+/**
+ * The display name; the folder's own name unless renamed.
+ */
+name: string; pinned: boolean;
+/**
+ * RFC 3339.
+ */
+addedAt: string;
+/**
+ * RFC 3339.
+ */
+lastOpenedAt: string;
+/**
+ * The folder is still on disk.
+ */
+exists: boolean;
+/**
+ * Explorer threads bound to this folder.
+ */
+threadCount: number; index: FolderIndexSummaryDto;
+/**
+ * The folder's system prompt; `None` when it has none and its space's
+ * prompt applies.
+ */
+instructions: string | null;
+/**
+ * The space its threads belong to; General unless one was chosen.
+ */
+spaceId: string }
+/**
+ * The folders list, with the home folder so paths under it can be shown
+ * as `~/…`.
+ */
+export type ExplorerFolderListDto = { home: string | null; folders: ExplorerFolderDto[] }
+/**
  * 1-based, inclusive.
  */
 export type ExplorerLineRangeDto = { startLine: number; endLine: number }
@@ -5724,8 +5820,63 @@ export type FolderIndexState =
 /**
  * The index of one open folder. `index_root` differs from `root` when the
  * folder sits inside one that already has an index and that index is reused.
+ *
+ * Files move when a save lands (a file counts once all its passages are in
+ * the saved vectors file); passages move after every embedded batch, so
+ * progress is told in passages.
  */
-export type FolderIndexStatusDto = { root: string; indexRoot: string; state: FolderIndexState; filesTotal: number; filesIndexed: number; chunks: number; message: string | null }
+export type FolderIndexStatusDto = { root: string; indexRoot: string; state: FolderIndexState;
+/**
+ * While scanning, the files found so far.
+ */
+filesTotal: number; filesIndexed: number; passagesTotal: number; passagesEmbedded: number;
+/**
+ * Passages embedded per second, smoothed; `None` until a run has
+ * enough behind it to say.
+ */
+passagesPerSecond: number | null;
+/**
+ * Seconds left at that rate; `None` when there is no rate yet.
+ */
+etaSeconds: number | null; message: string | null }
+/**
+ * One folder's index for the folders list. For the open folder it is the
+ * live status; for the rest, what the index on disk holds.
+ */
+export type FolderIndexSummaryDto = { state: FolderIndexSummaryState; filesTotal: number; filesIndexed: number; passagesTotal: number; passagesEmbedded: number;
+/**
+ * Bytes on disk of the folder's own index directory; 0 when it has none.
+ */
+bytes: number;
+/**
+ * The enclosing folder whose index this one reuses; `None` when it uses
+ * its own.
+ */
+indexRoot: string | null;
+/**
+ * While indexing: seconds left, when known.
+ */
+etaSeconds: number | null; message: string | null }
+/**
+ * What a folder's index holds, as the folders list shows it.
+ */
+export type FolderIndexSummaryState =
+/**
+ * Its last full run finished and everything found is embedded.
+ */
+"indexed" |
+/**
+ * Some of it is embedded: a run was stopped before it finished.
+ */
+"partial" |
+/**
+ * Open now and building; the numbers are live.
+ */
+"indexing" |
+/**
+ * No index yet.
+ */
+"notIndexed" | "tooLarge" | "refused" | "error"
 export type ForkConversationRequestDto = { conversationId: string;
 /**
  * Copy messages up to and including this id. `None` copies everything.

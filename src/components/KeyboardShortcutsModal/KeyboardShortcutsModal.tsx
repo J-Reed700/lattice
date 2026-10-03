@@ -72,6 +72,14 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         { keys: [cmd, '\\'], description: 'Hide or show the sidebar' },
       ],
     },
+    {
+      title: 'Explorer',
+      shortcuts: [
+        { keys: [cmd, 'F'], description: 'Find in the open file' },
+        { keys: [cmd, '['], description: 'Back to the previous file' },
+        { keys: [cmd, ']'], description: 'Forward to the next file' },
+      ],
+    },
   ];
 
   return (

@@ -1,960 +1,466 @@
-# Vault User Manual
+# Lattice User Manual
 
-This comprehensive guide covers everything you need to know to use Vault effectively.
+A guide to each part of Lattice. If you haven't installed it yet, start with
+[Getting Started](getting-started.md).
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Understanding the Interface](#understanding-the-interface)
-- [File Management](#file-management)
-- [Search Functionality](#search-functionality)
-- [Watch Folders and Auto-Indexing](#watch-folders-and-auto-indexing)
-- [Settings and Configuration](#settings-and-configuration)
-- [Export and Backup](#export-and-backup)
-- [Storage Management](#storage-management)
-- [Tips and Best Practices](#tips-and-best-practices)
+1. [Key Ideas](#key-ideas)
+2. [Getting Around](#getting-around)
+3. [Keyboard Shortcuts](#keyboard-shortcuts)
+4. [Importing](#importing)
+5. [Home](#home)
+6. [Search](#search)
+7. [Library](#library)
+8. [Chat](#chat)
+9. [Journal](#journal)
+10. [References](#references)
+11. [Explorer](#explorer)
+12. [Studio](#studio)
+13. [Compare](#compare)
+14. [Settings](#settings)
+15. [Backup, Restore and Export](#backup-restore-and-export)
+16. [Where Your Data Lives](#where-your-data-lives)
+17. [Getting More Help](#getting-more-help)
 
-## Overview
+---
 
-Vault is your personal knowledge recall system that makes all your files searchable using AI-powered semantic search. Unlike traditional file search that only matches keywords, Vault understands the meaning and context of your queries.
+## Key Ideas
 
-### Key Concepts
+- **Library**: the documents and web pages you've imported. Lattice keeps its
+  own copy of each imported file, so moving or deleting the original doesn't
+  break anything.
+- **Index**: when you import something, Lattice extracts its text, splits it
+  into passages, and stores both the words (for keyword search) and an
+  embedding of each passage (for search by meaning).
+- **Models**: a chat model writes answers and an embedding model powers search
+  by meaning. Both run on your computer unless you choose a remote provider.
+- **Spaces**: groups of related conversations. Documents can be imported
+  straight into a space.
+- **Citations**: chat answers, flashcards and comparison tables point back to
+  the passages they came from.
 
-**Indexing**
-The process of analyzing your files and creating a searchable database. Vault extracts text, generates AI embeddings, and stores metadata about each file.
+---
 
-**Embeddings**
-Numerical representations of text that capture meaning. Vault uses these to find files that are conceptually similar to your search query, even if they don't contain the exact words.
+## Getting Around
 
-**Semantic Search**
-Search by meaning rather than exact keywords. For example, searching for "vacation photos" will find images even if they're labeled "holiday pictures."
+The rail on the left of the window holds the main surfaces:
 
-**Watch Folders**
-Folders that Vault monitors for changes. When you add, modify, or delete files, Vault automatically updates the index.
+| Surface | Shortcut | What it's for |
+| --- | --- | --- |
+| Home | ⌘0 | What's in your library, today's journal, and conversations to pick back up |
+| Search | ⌘1 | Find a document by keyword or meaning |
+| Library | ⌘2 | Browse, organise and manage everything you've imported |
+| Journal | ⌘3 | Dated pages for notes, captures and syntheses |
+| Chat | ⌘4 | Ask questions and get answers with citations |
+| References | ⌘5 | Passages you've saved |
+| Explorer | ⌘6 | A folder on disk next to a chat that can read it |
+| Studio | ⌘7 | Learning programs and flashcards |
+| Import | ⌘I | Add files and web pages |
+| Settings | ⌘, | Models, search, backups and everything else |
 
-## Understanding the Interface
+On Windows and Linux, use **Ctrl** wherever this manual says **⌘**.
 
-Vault's interface is designed to be clean and intuitive. Here's a tour of the main components:
+**Command palette (⌘K).** Type to jump to a document, a recent search or any
+surface, start a new conversation or journal entry, add files, add a folder or
+a web page, or open the list of keyboard shortcuts.
 
-**Screenshot placeholder:** *Full Vault window with labeled interface elements*
+**Quick capture (⌘⇧N).** Type a thought and press **Enter**; it is added to
+today's page in your journal. If your clipboard holds a link and you haven't
+typed anything, Quick capture offers to import that page instead.
 
-### Main Window Components
+---
 
-**1. Search Bar (Top Center)**
-- Primary way to search your indexed files
-- Auto-complete suggestions appear as you type
-- Press Enter to search or Escape to clear
-
-**2. Search Mode Selector (Top Left)**
-- Switch between Semantic, Keyword, and Hybrid search
-- Each mode has different strengths (see [Search Functionality](#search-functionality))
-
-**3. Settings Button (Top Right)**
-- Gear icon opens the settings panel
-- Keyboard shortcut: `Ctrl+,` (Windows/Linux) or `Cmd+,` (macOS)
-
-**4. Results Area (Center)**
-- Displays search results in a scrollable list
-- Shows file preview, name, location, and relevance score
-- Click any result to see details or open the file
-
-**5. Filter Panel (Right Sidebar)**
-- Filter results by file type, date range, size, and tags
-- Collapsible to maximize results space
-
-**6. Status Bar (Bottom)**
-- Shows indexing progress
-- Displays number of indexed files
-- Shows storage usage
-
-### Keyboard Shortcuts
-
-Master these shortcuts for faster workflow:
+## Keyboard Shortcuts
 
 | Shortcut | Action |
-|----------|--------|
-| `Ctrl/Cmd + K` | Focus search bar |
-| `Ctrl/Cmd + ,` | Open settings |
-| `Ctrl/Cmd + F` | Toggle filter panel |
-| `Ctrl/Cmd + N` | Index new folder |
-| `Ctrl/Cmd + R` | Refresh index |
-| `Ctrl/Cmd + E` | Export results |
-| `Ctrl/Cmd + B` | Create backup |
-| `Escape` | Clear search or close dialog |
-| `Enter` | Open selected file |
-| `Ctrl/Cmd + Enter` | Open in system explorer |
-| `↑/↓` | Navigate results |
-| `Tab` | Cycle through result actions |
-
-**Screenshot placeholder:** *Keyboard shortcuts reference card*
-
-## File Management
-
-Vault helps you organize, find, and manage your files efficiently.
-
-### Adding Files to the Index
-
-There are several ways to add files to Vault:
-
-**Method 1: Add a Folder**
-1. Open Settings > Indexing
-2. Click "+ Add Folder"
-3. Select the folder to index
-4. Choose indexing options:
-   - **Recursive:** Include all subfolders
-   - **Auto-index:** Automatically update when files change
-5. Click "Start Indexing"
-
-**Method 2: Drag and Drop**
-1. Drag a folder from your file explorer
-2. Drop it onto the Vault window
-3. Confirm indexing options
-4. Indexing starts automatically
-
-**Method 3: Context Menu (Windows/macOS)**
-1. Right-click a folder in your file explorer
-2. Select "Index with Vault" from the context menu
-3. Vault opens and starts indexing
-
-**Screenshot placeholder:** *Add Folder dialog showing folder selection and options*
-
-### Supported File Types
-
-Vault can index and search these file formats:
-
-**Documents**
-- Text files (`.txt`, `.md`, `.log`)
-- Microsoft Office (`.docx`, `.xlsx`, `.pptx`)
-- PDF documents (`.pdf`)
-- Rich text (`.rtf`)
-- OpenDocument (`.odt`, `.ods`, `.odp`)
-
-**Images**
-- Common formats (`.jpg`, `.png`, `.gif`, `.bmp`, `.webp`)
-- RAW formats (`.cr2`, `.nef`, `.arw`)
-- Metadata and EXIF data extraction
-
-**Code and Development**
-- Source code (`.js`, `.py`, `.java`, `.cpp`, `.rs`, etc.)
-- Configuration files (`.json`, `.yaml`, `.toml`, `.xml`)
-- Markup languages (`.html`, `.css`, `.svg`)
-
-**Other Formats**
-- Archives (`.zip`, `.tar`, `.gz`) - file list only
-- Email files (`.eml`, `.msg`)
-- Ebooks (`.epub`, `.mobi`)
-
-**Screenshot placeholder:** *File types settings showing checkboxes for supported formats*
-
-### Viewing and Opening Files
-
-**View File Details**
-1. Click a search result
-2. Details panel shows:
-   - Full file path
-   - File size and type
-   - Creation and modification dates
-   - Preview of content
-   - Related files (if any)
-
-**Open File**
-- Click "Open" button to open in default application
-- Or double-click the result
-- Or press Enter when result is selected
-
-**Show in Folder**
-- Click "Show in Folder" to reveal in file explorer
-- Or press `Ctrl/Cmd + Enter`
-
-**Quick Preview**
-- Hover over a result for 1 second to see quick preview
-- Works for text files and images
-- Press `Space` to toggle full preview
-
-**Screenshot placeholder:** *File details panel showing metadata and preview*
-
-### File Operations
+| --- | --- |
+| ⌘K | Command palette |
+| ⌘N | New conversation or journal entry |
+| ⌘⇧N | Quick capture |
+| ⌘, | Settings |
+| Esc | Close the open dialog or panel |
+| ⌘0 to ⌘7 | Home, Search, Library, Journal, Chat, References, Explorer, Studio |
+| ⌘I | Import |
+| Enter | Send a chat message |
+| Shift+Enter | New line in a chat message |
+| ⌘⇧K | Find in conversations and references (in Chat) |
+| ⌘\ | Hide or show the sidebar (Chat, Journal, References) |
+| ⌘F | Find in the open file (in Explorer) |
+| ⌘[ / ⌘] | Back to the previous file / forward to the next (in Explorer) |
 
-**Copy File Path**
-1. Right-click a search result
-2. Select "Copy Path"
-3. Path is copied to clipboard
+The same list is available from the command palette under **Keyboard
+shortcuts**.
 
-**Copy Content**
-1. Right-click a search result
-2. Select "Copy Content"
-3. File's text content is copied to clipboard
+---
 
-**Tag Files**
-1. Select one or more results
-2. Click "Add Tag" button
-3. Create new tags or select existing ones
-4. Tags appear on files and are searchable
+## Importing
 
-**Remove from Index**
-1. Right-click a search result
-2. Select "Remove from Index"
-3. Confirm removal
-4. File is no longer searchable (but not deleted from disk)
+Open **Import** with **⌘I**. It has four tabs:
 
-**Screenshot placeholder:** *Right-click context menu showing file operations*
+- **URL**: import one web page.
+- **URLs**: import several pages, one per line.
+- **Files**: drop files onto the page or click **choose files**.
+- **History**: past imports, including any that failed and why.
 
-## Search Functionality
+Imports can go straight into a **space** or a **collection**. For a manual or
+book split across several files or pages, you can give them a shared source
+title and edition so they're treated as one source.
 
-Vault offers three powerful search modes to help you find exactly what you need.
+Other ways in:
 
-### Search Modes
+- **Add folder** in the command palette (⌘K) imports every supported file in a
+  folder and its sub-folders.
+- Drop files onto a chat to attach them to that conversation.
+- Quick capture can import a link from your clipboard.
 
-**Semantic Search (Recommended)**
-
-Searches by meaning and context, not just exact words.
+Importing needs an embedding model. If you see "embedding model is not ready",
+install one in **Settings > AI > Models** and choose **Set as Embedding** on it
+under **Settings > AI > Downloaded**.
+
+### Supported file types
+
+- **Documents**: PDF, Word (`.docx`), OpenDocument text (`.odt`), RTF, Excel
+  (`.xlsx`), PowerPoint (`.pptx`), plain text, Markdown
+- **Web**: HTML files, and web pages imported by URL
+- **Data**: CSV, TSV, JSON, XML, YAML, INI and config files, SQL, GraphQL
+- **Code**: most common languages, including Python, JavaScript, TypeScript,
+  Rust, Go, C and C++, Java, Kotlin, Scala, Swift, Ruby, PHP, R, Elixir, Erlang,
+  Clojure, CSS and shell scripts
+
+Images, audio, video, archives and executables can't be imported. Lattice
+doesn't run OCR, so a scanned PDF needs a text layer before its text can be
+searched.
+
+---
 
-**Best for:**
-- Natural language queries
-- Finding conceptually similar content
-- When you don't know exact keywords
-
-**Examples:**
-```
-"document about marketing strategy"
-"photos from summer vacation"
-"meeting notes with project deadlines"
-"code for user authentication"
-```
-
-**How it works:**
-1. Vault converts your query into an AI embedding
-2. Compares it to embeddings of all indexed files
-3. Returns files with similar meaning
-
-**Screenshot placeholder:** *Semantic search results showing relevant files without exact keyword matches*
+## Home
+
+Home (⌘0) is a summary of your library and your recent work: what's been
+indexed recently, today's journal entry, what you've saved, and conversations
+worth continuing. If Lattice can't work out a number, it leaves that tile out
+rather than showing zero.
 
-**Keyword Search**
-
-Searches for exact word matches with boolean operators.
-
-**Best for:**
-- Finding specific terms or phrases
-- Precise technical searches
-- When you know exact keywords
-
-**Examples:**
-```
-"annual report"                    (exact phrase in quotes)
-marketing AND strategy             (both words must appear)
-vacation OR holiday                (either word)
-project NOT archived               (exclude a word)
-filename:budget                    (search in filename only)
-type:pdf                          (filter by file type)
-```
-
-**Boolean Operators:**
-- `AND` - Both terms must appear
-- `OR` - Either term can appear
-- `NOT` - Exclude term
-- `"quotes"` - Exact phrase match
-- `*` - Wildcard character
-
-**Screenshot placeholder:** *Keyword search with boolean operators in search bar*
-
-**Hybrid Search**
-
-Combines semantic and keyword search for best results.
-
-**Best for:**
-- Complex queries
-- When you want comprehensive results
-- Balancing precision and recall
-
-**How it works:**
-1. Runs both semantic and keyword searches
-2. Combines results using smart ranking
-3. Deduplicates and sorts by relevance
-
-**Configuration:**
-- Settings > Search > Hybrid Search Weight
-- Adjust slider to favor semantic (left) or keyword (right) results
-- Default: 50/50 balance
-
-**Screenshot placeholder:** *Hybrid search settings with weight adjustment slider*
-
-### Search Filters
-
-Narrow your results using powerful filters:
-
-**File Type Filter**
-- Select one or more file types (Documents, Images, Code, etc.)
-- Only results matching selected types appear
-- Click "All Types" to reset
-
-**Date Range Filter**
-- **Modified:** When file was last changed
-- **Created:** When file was created
-- **Indexed:** When file was added to Vault
-- Presets: Today, This Week, This Month, This Year, Custom
-- Custom range: Pick start and end dates
-
-**Size Filter**
-- Tiny: < 10 KB
-- Small: 10 KB - 100 KB
-- Medium: 100 KB - 1 MB
-- Large: 1 MB - 10 MB
-- Huge: > 10 MB
-- Custom: Specify exact range
-
-**Location Filter**
-- Filter by parent folder
-- Useful when you know general location
-- Shows folder tree of indexed locations
-
-**Tag Filter**
-- Filter by tags you've created
-- Multiple tags = show files with ANY selected tag
-- "All tags" mode = show files with ALL selected tags
-
-**Screenshot placeholder:** *Filter sidebar showing all filter options*
-
-### Search Tips and Tricks
-
-**Use Natural Language**
-```
-Good: "photos of birthday party last summer"
-Better than: "birthday party summer photos"
-```
-
-**Be Specific When Needed**
-```
-Too broad: "document"
-Better: "project proposal for Smith account"
-```
-
-**Combine Filters**
-```
-Query: "marketing"
-+ Type: PDF
-+ Date: Last 3 months
-= Recent marketing PDFs
-```
-
-**Use Tags for Organization**
-```
-Tag files as: Important, Work, Personal, Archive
-Then filter by tags to quickly find categories
-```
-
-**Search File Names vs Content**
-```
-filename:report      (searches only filenames)
-content:analysis     (searches only file content)
-```
-
-**Save Common Searches**
-1. Perform a search with filters
-2. Click "Save Search" button
-3. Give it a name
-4. Access from "Saved Searches" dropdown
-
-**Screenshot placeholder:** *Saved searches dropdown showing frequently used searches*
-
-## Watch Folders and Auto-Indexing
-
-Watch folders automatically keep your index up-to-date as files change.
-
-### Setting Up Watch Folders
-
-**Add a Watch Folder**
-1. Settings > Indexing > Watch Folders
-2. Click "+ Add Watch Folder"
-3. Select folder to monitor
-4. Configure options:
-   - **Recursive:** Monitor subfolders
-   - **Auto-index new files:** Automatically index new files
-   - **Update on changes:** Re-index modified files
-   - **Remove deleted files:** Remove deleted files from index
-
-**Screenshot placeholder:** *Watch folder configuration dialog*
-
-### Watch Folder Behavior
-
-**When files are added:**
-- Automatically indexed within 10 seconds
-- Notification appears when indexing completes
-- File immediately becomes searchable
-
-**When files are modified:**
-- Detected within 10 seconds
-- Re-indexed to update content
-- Search index updated with new content
-
-**When files are deleted:**
-- Automatically removed from index
-- No longer appears in search results
-- Database space reclaimed
-
-**When files are moved:**
-- Treated as delete + add
-- Path updated in database
-- Maintains tags and metadata
-
-### Managing Watch Folders
-
-**View All Watch Folders**
-- Settings > Indexing > Watch Folders
-- Shows list of all monitored folders
-- Display includes:
-  - Folder path
-  - Number of indexed files
-  - Last scan time
-  - Status (active/paused)
-
-**Pause/Resume Watching**
-- Click pause icon next to folder
-- Pausing stops file monitoring
-- Resume to restart monitoring
-
-**Remove Watch Folder**
-- Click trash icon next to folder
-- Confirms before removing
-- Options:
-  - **Keep indexed files:** Files stay in index
-  - **Remove indexed files:** Files removed from index
-
-**Rescan Folder**
-- Click refresh icon next to folder
-- Forces full re-scan
-- Useful after manual file changes
-
-**Screenshot placeholder:** *Watch folders list showing multiple folders with status indicators*
-
-### Watch Folder Performance
-
-**Performance Impact:**
-- Minimal CPU usage during idle
-- Brief CPU spike when changes detected
-- Memory usage: ~10 MB per 1,000 watched files
-
-**Optimization Tips:**
-- Exclude temporary folders (Downloads, Temp)
-- Use exclude patterns for node_modules, .git, etc.
-- Limit to folders that actually change
-- Consider manual indexing for static archives
-
-### Exclude Patterns
-
-Prevent certain files from being indexed:
-
-**Common Patterns:**
-```
-*.tmp                    (temporary files)
-*.log                    (log files)
-node_modules             (Node.js dependencies)
-.git                     (Git repository data)
-.DS_Store                (macOS system files)
-Thumbs.db                (Windows thumbnails)
-~*                       (Microsoft Office temp files)
-```
-
-**Pattern Syntax:**
-- `*` matches any characters
-- `?` matches single character
-- Use folder names without slashes
-- Case-insensitive on Windows/macOS
-
-**Configure Exclude Patterns:**
-1. Settings > Indexing > Exclude Patterns
-2. Click "+ Add Pattern"
-3. Enter pattern
-4. Click "Test Pattern" to see what it matches
-5. Save
-
-**Screenshot placeholder:** *Exclude patterns settings with pattern tester*
-
-## Settings and Configuration
-
-Customize Vault to work exactly how you want.
-
-### General Settings
-
-**Appearance**
-- **Theme:** Light, Dark, or System
-- **Font size:** 12-18pt (default: 14pt)
-- **Animations:** Enable/disable UI animations
-- **Compact mode:** Reduce spacing for more results
-
-**Startup**
-- **Launch on system startup:** Start Vault when computer boots
-- **Start minimized:** Launch to system tray
-- **Check for updates:** Automatically check for new versions
-
-**Language**
-- Select interface language
-- Currently supported: English (more coming soon)
-
-**Screenshot placeholder:** *General settings panel showing appearance and startup options*
-
-### Indexing Settings
-
-**Performance**
-- **Batch size:** Files processed simultaneously (16-64, default: 32)
-- **Thread count:** CPU threads for indexing (1-16, auto-detect recommended)
-- **Index priority:** Background, Normal, or High
-- **Max file size:** Skip files larger than specified size (default: 100 MB)
-
-**Content Extraction**
-- **Extract text from images (OCR):** Enable/disable OCR (requires additional setup)
-- **Process metadata:** Extract EXIF, ID3, and other metadata
-- **Generate thumbnails:** Create image previews (uses storage)
-- **Deep content analysis:** More thorough but slower indexing
-
-**File Types**
-- Check/uncheck file types to index
-- Add custom file extensions
-- Configure type-specific settings
-
-**Screenshot placeholder:** *Indexing settings showing performance sliders and file type checkboxes*
-
-### Search Settings
-
-**Relevance**
-- **Similarity threshold:** Minimum score for results (0-100, default: 60)
-- **Max results:** Maximum results to return (10-1000, default: 50)
-- **Results per page:** Results shown before pagination (10-100, default: 25)
-
-**Hybrid Search**
-- **Enable hybrid search:** Combine semantic and keyword
-- **Semantic weight:** Importance of semantic results (0-100%, default: 50%)
-- **Keyword weight:** Importance of keyword results (0-100%, default: 50%)
-
-**Reranking**
-- **Enable reranking:** Re-sort results for better relevance (slower)
-- **Reranking model:** Choose reranking algorithm
-
-**Cache**
-- **Enable search cache:** Remember recent searches for speed
-- **Cache size:** Number of searches to remember (10-1000, default: 100)
-- **Cache TTL:** How long to keep cached results (1-60 min, default: 15)
-
-**Screenshot placeholder:** *Search settings with relevance sliders*
-
-### Privacy and Security
-
-**Data Privacy**
-- **Location:** All data stored locally (no cloud)
-- **Analytics:** Vault collects zero telemetry or usage data
-- **Updates:** Update checks only (no data sent)
-
-**File Access**
-- **Read-only mode:** Vault never modifies your original files
-- **Sandboxed paths:** Vault only accesses configured folders
-- **Permission verification:** Confirms access before indexing
-
-**Database Security**
-- **Encryption:** Enable database encryption (requires password)
-- **Password protection:** Lock Vault with password
-- **Auto-lock:** Lock after inactivity period
-
-**Screenshot placeholder:** *Security settings showing encryption and password options*
-
-### Advanced Settings
-
-**Database**
-- **Database location:** Path to vault.db file
-- **Database size:** Current size of index
-- **Optimize database:** Reclaim space and improve performance
-- **Verify database:** Check for corruption
-- **Reset database:** Delete all indexed data (cannot be undone!)
-
-**Models**
-- **Model location:** Path to AI models
-- **Embedding model:** Choose text embedding model
-- **Re-download models:** Force re-download if corrupted
-- **Model cache:** Clear model cache to free space
-
-**Logging**
-- **Enable logging:** Write application logs
-- **Log level:** Error, Warning, Info, Debug, Trace
-- **Log location:** Path to log files
-- **Max log size:** Rotate logs after size limit
-
-**Experimental**
-- **Beta features:** Enable experimental functionality
-- **Developer mode:** Show debug information
-- **Verbose logging:** Detailed logging for troubleshooting
-
-**Screenshot placeholder:** *Advanced settings showing database and model options*
-
-## Export and Backup
-
-Protect your data and share your knowledge.
-
-### Creating Backups
-
-**Automatic Backups**
-1. Settings > Backup > Auto Backup
-2. Enable automatic backups
-3. Configure schedule:
-   - Daily, Weekly, or Monthly
-   - Specific time of day
-   - Retention: How many backups to keep
-4. Choose backup location
-5. Enable compression to save space
-
-**Manual Backup**
-1. Click "Backup" button in toolbar
-2. Or Settings > Backup > Create Backup Now
-3. Choose backup location
-4. Select what to backup:
-   - **Database only:** Index data (fast, small)
-   - **Database + models:** Include AI models
-   - **Full backup:** Database + models + config
-5. Click "Create Backup"
-
-**Screenshot placeholder:** *Backup creation dialog with options*
-
-**Backup Contents:**
-- `vault.db` - Your complete file index
-- `config.json` - All settings and preferences
-- `models/` - AI model files (optional)
-- `backups.json` - Backup metadata
-
-### Restoring from Backup
-
-**Restore Process:**
-1. Settings > Backup > Restore Backup
-2. Click "Browse" and select backup file
-3. Review backup information:
-   - Creation date
-   - Number of indexed files
-   - Database size
-   - Vault version
-4. Click "Restore"
-5. Vault restarts with restored data
-
-**Warning:** Restoring replaces all current data. Create a backup first!
-
-**Screenshot placeholder:** *Restore backup dialog showing backup information*
-
-### Exporting Data
-
-Export your index in various formats for use in other applications.
-
-**Export Formats:**
-
-**Markdown Export**
-- One .md file per indexed document
-- Preserves text content and metadata
-- Useful for notes apps (Obsidian, Notion)
-- Maintains folder structure
-
-**JSON Export**
-- Complete database export
-- Includes all metadata and embeddings
-- Useful for programmatic access
-- Can be re-imported later
-
-**CSV Export**
-- Spreadsheet-friendly format
-- File list with metadata
-- Good for inventory or analysis
-- No content, just metadata
-
-**HTML Export**
-- Static web page for each file
-- Browsable in any web browser
-- Includes search functionality
-- Self-contained archive
-
-**Screenshot placeholder:** *Export dialog showing format options*
-
-**Export Process:**
-1. Settings > Export > Export Data
-2. Choose export format
-3. Select what to export:
-   - All indexed files
-   - Current search results
-   - Specific folders
-   - Tagged files
-4. Choose destination folder
-5. Click "Export"
-6. Progress bar shows export status
-
-### Importing Data
-
-**Import from Other Apps:**
-
-**Obsidian Vault**
-- Imports markdown files and attachments
-- Preserves folder structure
-- Converts wiki links to tags
-
-**Notion Export**
-- Imports exported Notion pages
-- Handles nested pages
-- Converts databases to tags
-
-**Roam Research**
-- Imports JSON export
-- Converts block references
-- Creates tags from page links
-
-**Screenshot placeholder:** *Import dialog showing source application options*
-
-**Import Process:**
-1. Settings > Import > Import Data
-2. Select source application
-3. Browse to export file/folder
-4. Configure import options:
-   - Preserve tags
-   - Convert links
-   - Create folders
-5. Click "Import"
-6. Review imported items
-
-## Storage Management
-
-Monitor and optimize your storage usage.
-
-### Storage Dashboard
-
-View storage statistics:
-
-**Database Size**
-- Total database size
-- Documents metadata: X MB
-- Text chunks: X MB
-- Embeddings: X MB (largest component)
-- Images and thumbnails: X MB
-
-**Indexed Content**
-- Total files indexed: X,XXX
-- Total text content: X GB
-- Average file size: X KB
-- Largest file: filename (X MB)
-
-**Breakdown by Type**
-- Documents: XX%
-- Images: XX%
-- Code: XX%
-- Other: XX%
-
-**Screenshot placeholder:** *Storage dashboard showing size breakdown with charts*
-
-### Optimizing Storage
-
-**Reduce Database Size:**
-
-1. **Remove Unused Files**
-   - Review indexed folders
-   - Remove folders you no longer need
-   - Files are removed from index
-
-2. **Exclude Large Files**
-   - Settings > Indexing > Max File Size
-   - Set limit (e.g., 50 MB)
-   - Large files won't be indexed
-
-3. **Disable Thumbnails**
-   - Settings > Indexing > Generate Thumbnails
-   - Uncheck to save space
-   - Reduces image storage by 30-50%
-
-4. **Optimize Database**
-   - Settings > Advanced > Optimize Database
-   - Reclaims unused space
-   - Rebuilds indexes for efficiency
-   - Run monthly for best performance
-
-5. **Clean Cache**
-   - Settings > Advanced > Clear Cache
-   - Removes search cache
-   - Removes temporary files
-   - Safe to do anytime
-
-**Screenshot placeholder:** *Optimize database dialog showing space to be reclaimed*
-
-### Storage Limits
-
-**Recommended Limits:**
-- **Small library:** < 10,000 files, < 1 GB database
-- **Medium library:** 10,000 - 100,000 files, 1-10 GB database
-- **Large library:** 100,000 - 1,000,000 files, 10-100 GB database
-
-**Performance Impact:**
-- Up to 100,000 files: No noticeable slowdown
-- 100,000 - 500,000 files: Slightly longer searches (100-500ms)
-- 500,000+ files: Consider multiple Vault instances
-
-**Disk Space Requirements:**
-- Average: 50-100 KB per document (including embeddings)
-- Text documents: 10-30 KB
-- Images with thumbnails: 100-200 KB
-- Large PDFs: 200-500 KB
-
-## Tips and Best Practices
-
-### Organizing Your Files
-
-**Use Descriptive Filenames**
-```
-Good: 2024-Q3-Marketing-Report.pdf
-Bad:  report.pdf
-```
-Even with semantic search, good filenames help.
-
-**Create a Folder Structure**
-```
-Documents/
-  Work/
-    Projects/
-    Meetings/
-  Personal/
-    Finance/
-    Health/
-```
-Organized folders make filtering easier.
-
-**Tag Strategically**
-- Use tags for cross-cutting categories
-- Examples: Important, Todo, Archive, Reference
-- Don't over-tag (3-5 tags per file maximum)
-
-**Screenshot placeholder:** *Well-organized file tree with logical folder structure*
-
-### Optimizing Search
-
-**Start Broad, Then Narrow**
-1. Begin with general query
-2. Review results
-3. Add filters to narrow down
-4. Refine query if needed
-
-**Use the Right Search Mode**
-- **Semantic:** For conceptual searches
-- **Keyword:** For exact terms
-- **Hybrid:** When unsure
-
-**Learn from Results**
-- Notice what works
-- Adjust query based on results
-- Save successful searches
-
-**Regular Maintenance**
-- Review and remove outdated files
-- Update tags periodically
-- Clean up duplicate files
-
-### Performance Tips
-
-**Faster Indexing**
-- Close other applications
-- Use SSD instead of HDD
-- Increase batch size (Settings > Indexing)
-- Disable deep content analysis for speed
-
-**Faster Searches**
-- Enable search cache
-- Use filters to reduce result set
-- Lower max results setting
-- Close filter panel when not needed
-
-**Reduce Memory Usage**
-- Limit number of watch folders
-- Disable thumbnail generation
-- Lower results per page
-- Close Vault when not in use
-
-**Screenshot placeholder:** *Performance settings optimized for speed*
-
-### Privacy Best Practices
-
-**Sensitive Information**
-- Don't index folders with passwords or private keys
-- Use exclude patterns for sensitive files
-- Consider encrypting database for extra security
-
-**Shared Computers**
-- Enable password protection
-- Set auto-lock timeout
-- Create backups to encrypted drive
-
-**Before Sharing**
-- Check what's indexed
-- Review search history (if feature enabled)
-- Clear cache before sharing computer
-
-### Common Workflows
-
-**Morning Routine**
-1. Launch Vault
-2. Check indexing status
-3. Review files added yesterday
-4. Tag important items
-
-**Research Workflow**
-1. Search for topic
-2. Open relevant files
-3. Tag as "Research - [Project Name]"
-4. Export results as reference list
-
-**Cleanup Workflow**
-1. Search for old files (Date: > 1 year ago)
-2. Review results
-3. Remove or archive unneeded files
-4. Tag keepers appropriately
-
-**Backup Workflow**
-1. Weekly: Create manual backup
-2. Monthly: Verify backup integrity
-3. Quarterly: Clean old backups
-4. Yearly: Export important data
-
-**Screenshot placeholder:** *Workflow diagram showing common usage patterns*
-
-## Frequently Asked Questions
-
-**Q: How many files can Vault handle?**
-A: Vault can index millions of files, but performance is best with under 100,000 files per instance.
-
-**Q: Does Vault work offline?**
-A: Yes, completely! Vault works entirely offline after initial model download.
-
-**Q: Does Vault modify my files?**
-A: No, Vault is read-only. It never changes your original files.
-
-**Q: Where is my data stored?**
-A: All data is stored locally in your system's app data folder. See [First Launch](#first-launch) for exact locations.
-
-**Q: Can I use Vault on multiple computers?**
-A: Yes, but you need separate installations. Sync features are planned for future versions.
-
-**Q: Why is indexing slow?**
-A: Indexing is CPU-intensive because it generates AI embeddings. Larger files take longer. This is normal.
-
-**Q: Can I search inside ZIP files?**
-A: Vault indexes the file list in archives but not the content of compressed files.
-
-**Q: How do I uninstall Vault?**
-A: Use your system's uninstaller. To remove all data, also delete the app data folder.
-
-**Q: Is my data private?**
-A: Yes. Vault collects zero telemetry and never sends data anywhere. Everything stays on your computer.
-
-**Q: Can I index network drives?**
-A: Yes, but it's slower. Local drives are recommended for best performance.
+---
+
+## Search
+
+Search (⌘1) finds documents in your library. Pick a mode under the search box:
+
+- **Hybrid** (default): exact keywords and meaning combined.
+- **Semantic**: by meaning, so "notes about the offsite" can find a document
+  that never uses the word "offsite".
+- **Keyword**: exact words only.
+
+Results update as you type. Open a result to read the document. Retrieval
+options such as reranking, maximum results and the similarity threshold are in
+**Settings > Search**.
+
+---
+
+## Library
+
+Library (⌘2) is everything you've imported.
+
+- **Views**: list, grid or tree. Sort by name, date or length, and filter by
+  type or by where it came from (local files or the web).
+- **Side rail**: collections, folders, saved searches, sources, and **Themes**,
+  which groups your documents by topic.
+- **Collections**: add documents with **Add to collection…** and manage them
+  from the rail.
+- **Document actions** (right-click a document): view it in Lattice, open it in
+  your system viewer, show it in its folder, copy its path, ask about it in
+  Chat, rename, reindex, add to or remove from a collection, remove it from the
+  index, or delete it.
+- **Related**: shows documents connected to the selected one, what's similar,
+  and the conversations that cite it.
+- **Select several** documents to delete them together or to
+  [compare](#compare) them.
+
+Deleting a document removes it and its passages from Lattice. Your original file
+is never touched; Lattice only deletes its own copy once nothing uses it.
+
+---
+
+## Chat
+
+Chat (⌘4) answers questions using your library, and can also use the web,
+Wikipedia, or the model's own knowledge.
+
+### Conversations and spaces
+
+The sidebar lists your conversations. Filter them by **All**, **Starred**,
+**Pinned**, **Archived** or **Referenced**. Open the **…** menu on a
+conversation to:
+
+- copy it as Markdown,
+- save it to the journal,
+- synthesize it into a journal entry, or
+- continue it in a new chat that starts from a summary.
+
+Choose a **space** to see only that space's conversations. Open the spaces
+panel in the sidebar to create a space, give it an accent colour, or archive
+it. You can also create spaces in **Settings > Spaces**.
+
+### Asking
+
+Type a question and press **Enter**. Choices for each turn sit under the
+message box, and you can also type `/` to set them:
+
+| Command | What it does |
+| --- | --- |
+| `/docs` | Search your documents for every answer |
+| `/web` | Let the answer search the web |
+| `/wiki` | Search and summarise Wikipedia |
+| `/deep` | Deep research: multi-step research across sources (slower) |
+| `/auto` | Let Lattice decide whether this is a new topic or a follow-up |
+| `/followup` | Keep every turn on the current topic |
+| `/query` | Always search sources before answering |
+| `/compact` | Fold older messages into a summary |
+
+Type `@` and part of a document's name to point the question at that document.
+Drop files onto the chat to attach them to the conversation.
+
+### Reading an answer
+
+- Numbered citations link to the passages used. Hover to preview a passage;
+  click to open the source.
+- With **Verify responses** on (in **Settings > AI > Prompts**, on by default),
+  Lattice checks claims against the passages they cite and marks which ones it
+  could and couldn't verify.
+- A turn record shows what was searched and which sources were pulled in.
+
+### Message actions
+
+On a message you can copy, edit and resend, regenerate, try the question with
+another model, branch the conversation from that point, add it to your
+references, add it to the journal, or delete it.
+
+### Memory
+
+With **Remember requirements in a conversation** on (the default, in
+**Settings > AI > Chat**), Lattice records the constraints, decisions and goals
+you state, with the words they came from, and keeps them in view for later
+turns. The conversation's memory panel shows what it has kept.
+
+---
+
+## Journal
+
+Journal (⌘3) holds pages of notes. You can keep more than one journal and switch
+between them.
+
+- Create a page with **New page**, or use the calendar to go to a date.
+- Quick capture (⌘⇧N) adds to today's page, creating it if needed.
+- The side panel shows the conversation, highlights and sources behind a page.
+- **Synthesize the past week** or **Synthesize pinned entries** to have a summary
+  written for you, with sources.
+- **Ask in Chat, filed under this journal** starts a conversation linked to the
+  journal.
+
+To keep plain Markdown copies of your notes outside Lattice, turn on
+**Mirror notes to disk** in **Settings > Vault**. Notes go to `~/Lattice` unless
+you choose another folder. Turn on **Watch for external edits** to bring
+changes made in another editor back into Lattice (takes effect after a
+restart).
+
+---
+
+## References
+
+References (⌘5) collects passages you've saved: answers and passages from Chat,
+passages from documents, and captures. Filter by origin (**From documents**,
+**From Chat**, **From Journal**, **Captured**), search them, add a note, copy
+them, or jump back to where they came from.
+
+Save a chat answer here with **Add to references** on the message.
+
+---
+
+## Explorer
+
+Explorer (⌘6) puts a folder from your disk on the left and a chat on the right.
+
+1. Click **Choose a folder…** and pick a folder, or open one from **Your
+   folders** on the start screen.
+2. Browse the tree and open files in a read-only viewer. It colours the syntax
+   of about 45 languages (C and C++, Rust, TypeScript, Python, Markdown,
+   CMake, shell and more), folds blocks from the gutter, and finds text in the
+   open file with ⌘F. The ‹ › buttons above the file (or ⌘[ and ⌘]) step back
+   and forward through the files you've opened, line links included.
+3. Ask about the folder in the chat. The chat can list, read and search files
+   inside the folder, and when it mentions lines (for example
+   `src/main.rs:10-24`) they appear as links that open the file and highlight
+   those lines.
+4. Click line numbers in the viewer to send those lines with your next message.
+
+The folder is locked once it's open: the chat can't read outside it. To work
+somewhere else, choose **Close folder** and pick another one.
+
+Each folder has its own threads, listed in Explorer's thread switcher. Explorer
+threads don't appear in Chat's sidebar.
+
+**Folder index.** When you open a folder, Lattice also builds a search index for
+it in the background so the chat can find code by meaning, not only by exact
+text. The pill beside the folder's path shows how far it has got and the time
+left (for example "Indexing 28% · ~14 min left"); click it for the counts and
+**Rebuild index**. While it builds, a line above the chat composer says so, and
+search covers what is indexed so far. The index is kept separately from
+your library (in the `folder-index` folder of your data folder) and isn't
+included in backups. It follows changes to files while the folder is open, and
+picks up where it left off when you reopen the folder. A folder inside one
+that already has an index uses that index. Lattice doesn't index your home
+folder itself, the root of your disk, or folders with more than 20,000 files;
+Explorer still works in those, just without the index. Indexing needs an
+embedding model.
+
+**Your folders.** Every folder you open stays on the start screen until you
+remove it. Each row shows the folder's index (Indexed, Paused at a percentage,
+Not indexed, Too large, or Folder missing when it has moved), how many threads
+it has, the index's size and when you last opened it. Pin a folder to keep it
+at the top; the **⋯** menu has **Rename**, **Settings…**, **Delete index**
+(frees the space; the next open builds it again) and **Remove…**, which deletes
+the index and asks whether to delete the folder's threads too. Nothing in the
+folder on disk is changed, and Lattice never deletes an index unless you ask.
+
+**Folder settings.** Each folder has its own **system prompt** and **space**,
+set from **Settings…** in its **⋯** menu or the sliders button beside **Close
+folder**. The system prompt is used in every chat about the folder in place of
+the space's prompt (leave it empty to use the space's). The space decides which
+library documents the folder's chat can search when you turn library search on,
+and which space memory it reads. Folders start in **General**; changing the
+space moves the folder's existing threads with it. The folder's own search
+index belongs to the folder, whatever space it's in.
+
+---
+
+## Studio
+
+Studio (⌘7) builds learning programs from material you trust.
+
+- **Programs.** Describe what you want to learn and what you already know,
+  choose up to eight library documents or add reference URLs, and Studio drafts
+  an outline for you to review before it prepares any lessons. Each program has
+  lessons, practice, assessments, recall cards, a notebook and a canvas, and
+  your progress is saved on this device.
+- **Flashcards.** Make a deck from up to three documents, optionally with a
+  topic and a learning goal. Lattice writes the questions from your documents,
+  each with its source. Review them as flashcards; your results and next review
+  dates are saved.
+
+---
+
+## Compare
+
+Compare builds a table across several documents. Select two or more documents in
+the Library and choose **Compare**, then name up to six columns (for example
+"method, sample size, finding"). Each cell is answered from that document with a
+citation, or marked "not stated" if the document doesn't say. You can save the
+table to your journal.
+
+---
+
+## Settings
+
+Open Settings with **⌘,**. The buttons at the bottom of the tab list
+**Export** your settings to a JSON file, **Import** them from one, or
+**Reset all** to defaults.
+
+### General
+
+- **Search**: retrieval options, including reranking, a corrective retry when
+  the first search comes back thin, document summaries, how vectors are stored,
+  maximum results, the similarity threshold, and the keyword/meaning balance.
+- **Indexing**: indexing options and a list of folders and exclude patterns.
+  Lattice doesn't watch these folders for new files; use Import or **Add
+  folder** to bring files in.
+- **Vault**: the Markdown mirror of your notes (see [Journal](#journal)), plus
+  [backups and export](#backup-restore-and-export).
+- **Spaces**: create spaces and see the ones you have.
+- **Display**: light, dark or system theme, and the app version.
+- **Privacy**: switches for anonymous usage statistics and crash reports. Both
+  are off by default, and Lattice doesn't currently send either anywhere.
+- **Logs**: recent log messages; search them, filter by severity, or clear them.
+
+### AI
+
+- **Chat**: the chat provider (**Auto**, **Local only**, **Ollama**,
+  **llama.cpp**, **OpenAI** or **Anthropic**), connection details and API keys,
+  the active chat, embedding and utility models, and conversation memory.
+- **Models**: the model catalog, which shows how well each model fits your
+  computer and downloads it; external folders where you keep your own GGUF
+  models; and a Hugging Face token for gated downloads.
+- **Downloaded**: installed models. **Set as Chat**, **Set as Embedding** or
+  **Set as Utility** to put one to work, or delete it.
+- **Prompts**: prompt templates and answer verification.
+- **Tuning**: context window, maximum tokens, stall timeout, repeat penalty,
+  follow-up routing and related options.
+- **Tools**: the built-in tools a chat can use, plus your own search tools that
+  call an HTTP endpoint.
+
+---
+
+## Backup, Restore and Export
+
+All of this is in **Settings > Vault**.
+
+### Backups on this computer
+
+**Back up now** saves a copy of your database to the `backups` folder in your
+data folder. Earlier backups are listed with **Restore**. Restoring replaces
+everything indexed since that backup, and you need to quit and reopen Lattice
+afterwards. These backups contain the database only, not your imported files or
+models.
+
+### Encrypted off-device backup
+
+**Set up encrypted backup** writes an encrypted archive (`.lattice-backup`) to a
+folder you choose, such as a folder synced by your cloud storage service. Setup
+takes five steps:
+
+1. Start setup.
+2. Write down the 24-word recovery code.
+3. Confirm you saved it.
+4. Optionally add a passphrase as a second way in.
+5. Choose the folder.
+
+Each archive holds your database, imported files, mirrored notes and settings,
+but not models. Once set up, Lattice writes an archive daily and when you press
+**Back up now**, and deletes the oldest ones beyond **Archives to keep**.
+
+To restore, choose **Restore from file**, pick an archive and unlock it with the
+recovery code or passphrase, then quit and reopen Lattice. Keep the recovery
+code safe: Lattice never stores it and can't replace it.
+
+### Export
+
+**Export conversations and journals** as Markdown files or a JSON file. They're
+written to the `exports` folder in your data folder. To copy a single
+conversation, use **Copy conversation as Markdown** from its menu in Chat.
+
+---
+
+## Where Your Data Lives
+
+| What | macOS | Windows | Ubuntu |
+| --- | --- | --- | --- |
+| Data folder: database (`lattice.db`), settings, backups, exports, Explorer folder indexes | `~/Library/Application Support/tech.lattice.app/` | `%APPDATA%\tech.lattice.app\` | `~/.local/share/tech.lattice.app/` |
+| Copies of imported files | `~/.lattice/files/` | `%USERPROFILE%\.lattice\files\` | `~/.lattice/files/` |
+| Downloaded models | `~/.cache/lattice/models/` | `%USERPROFILE%\.cache\lattice\models\` | `~/.cache/lattice/models/` |
+| Logs (one file per day, about a week kept) | `~/Library/Application Support/lattice/logs/` | `%LOCALAPPDATA%\lattice\logs\` | `~/.local/share/lattice/logs/` |
+| Markdown mirror of notes (if turned on) | `~/Lattice/` | `%USERPROFILE%\Lattice\` | `~/Lattice/` |
+
+Lattice is pre-release and doesn't migrate data from earlier pre-release builds.
+If a new build can't open your database, quit Lattice, move `lattice.db` aside,
+and start again; then restore what you need from an export or backup.
 
 ---
 
 ## Getting More Help
 
-**Resources:**
-- [Getting Started Guide](getting-started.md) - Installation and setup
-- [Advanced Features](advanced-features.md) - Power user features
-- [GitHub Issues](https://github.com/yourusername/vault/issues) - Bug reports and feature requests
-- [Discussions](https://github.com/yourusername/vault/discussions) - Community support
-
-**Contributing:**
-- Report bugs and request features on GitHub
-- Share your workflows and tips
-- Help improve documentation
-
-Happy searching with Vault!
+- [Getting Started](getting-started.md): installation and first launch
+- [Advanced Features](advanced-features.md): deeper detail for power users
+- [Troubleshooting](troubleshooting.md): fixes for common problems
+- [FAQ](faq.md): short answers
+- [Error Codes](error-codes.md): what error messages mean
+- [GitHub Issues](https://github.com/J-Reed700/lattice/issues): report a problem

@@ -39,6 +39,7 @@ import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarm
 import { toast } from '../../stores/toastStore';
 import { resolveChatModel } from '../../utils/chatModelSelection';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
+import { ExplorerIndexNotice } from '../Explorer/ExplorerIndexNotice';
 import { ExplorerSelectionChip } from '../Explorer/ExplorerSelectionChip';
 
 import type { CompactionRecord, CustomToolSettings, SpaceDocument, ToolPreferences } from '../../types';
@@ -1301,6 +1302,7 @@ export function ChatPanel() {
           warmupPhase={chatWarmupPhase}
           retrievalUnavailableReason={retrievalUnavailableReason}
         />
+        <ExplorerIndexNotice />
 
         <form onSubmit={handleSubmit} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
           {/* One object: the page you write on, with its tools along the bottom edge. */}

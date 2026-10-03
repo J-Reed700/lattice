@@ -1,38 +1,10 @@
+/* The lab editor's surface. The code palette is the app's shared one
+   (lib/code/code.css). */
 .learning-code-editor {
   --code-bg: hsl(var(--surface));
-  --code-panel: hsl(var(--surface-raised));
-  --code-control: hsl(var(--surface));
-  --code-fg: hsl(var(--text-primary));
   --code-gutter-bg: hsl(var(--surface-raised));
-  --code-gutter-fg: hsl(var(--text-muted));
-  --code-gutter-active: hsl(var(--text-secondary));
-  --code-divider: hsl(var(--border-subtle));
-  --code-active-line: hsl(var(--accent) / 0.045);
-  --code-selection: hsl(var(--accent) / 0.2);
-  --code-caret: hsl(var(--accent));
-  --code-match-bg: hsl(var(--accent) / 0.16);
-  --code-match-fg: hsl(var(--text-primary));
-  --code-invalid: #b42318;
-  --code-keyword: #7241b8;
-  --code-identifier: hsl(var(--text-primary));
-  --code-function: #165d9c;
-  --code-type: #15735b;
-  --code-string: #a34822;
-  --code-number: #9b4e91;
-  --code-comment: hsl(var(--text-muted));
-  --code-punctuation: #627080;
+  --code-keyword-weight: 600;
   color: hsl(var(--text-primary));
-}
-
-:root[data-theme='dark'] .learning-code-editor,
-.dark .learning-code-editor {
-  --code-invalid: #ff8a84;
-  --code-keyword: #c9a5ff;
-  --code-function: #8fc5ff;
-  --code-type: #86d6b8;
-  --code-string: #f3b27d;
-  --code-number: #e6a8dc;
-  --code-punctuation: #a5b4c3;
 }
 
 .learning-code-editor__dot {

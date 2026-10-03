@@ -1,0 +1,176 @@
+/* The code palette, shared by every CodeMirror view in the app (the Explorer
+   file view, the Studio lab editor). A view sets only what its surface needs,
+   e.g. its own `--code-bg`, on its wrapper. Contrast is at least 4.5:1 on the
+   page and on a referenced line. */
+:root {
+  --code-bg: hsl(var(--bg));
+  --code-fg: hsl(var(--text-primary));
+  --code-panel: hsl(var(--surface-raised));
+  --code-control: hsl(var(--surface));
+  --code-divider: hsl(var(--border-subtle));
+  --code-gutter-fg: hsl(var(--text-muted));
+  --code-gutter-active: hsl(var(--text-secondary));
+  --code-active-line: hsl(var(--accent) / 0.045);
+  --code-selection: hsl(var(--accent) / 0.2);
+  --code-caret: hsl(var(--accent));
+  --code-match-bg: hsl(var(--accent) / 0.16);
+  --code-match-fg: hsl(var(--text-primary));
+
+  --code-identifier: hsl(var(--text-primary));
+  --code-keyword: #7241b8;
+  --code-keyword-weight: 400;
+  --code-function: #165d9c;
+  --code-type: #15735b;
+  --code-property: #0b6576;
+  --code-tag: #a62d5e;
+  --code-string: #a34822;
+  --code-number: #91438a;
+  --code-regexp: #b0302a;
+  --code-escape: #0b6576;
+  --code-meta: #6e6200;
+  --code-comment: hsl(var(--text-muted));
+  --code-punctuation: #56657a;
+  --code-heading: #165d9c;
+  --code-link: #0b6576;
+  --code-inserted: hsl(var(--success-fg));
+  --code-deleted: hsl(var(--danger-fg));
+  --code-changed: hsl(var(--warning-fg));
+  --code-invalid: #b42318;
+}
+
+.dark,
+[data-theme='dark'] {
+  --code-keyword: #c9a5ff;
+  --code-function: #8fc5ff;
+  --code-type: #86d6b8;
+  --code-property: #74c7d8;
+  --code-tag: #f29bb5;
+  --code-string: #f3b27d;
+  --code-number: #e6a8dc;
+  --code-regexp: #ff9e8f;
+  --code-escape: #74c7d8;
+  --code-meta: #d6c86a;
+  --code-punctuation: #a5b4c3;
+  --code-heading: #8fc5ff;
+  --code-link: #74c7d8;
+  --code-invalid: #ff8a84;
+}
+
+/* The find bar of a read-only view (findPanel.ts): one row, app controls. */
+.cm-find {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 6px 0 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: hsl(var(--text-secondary));
+}
+
+.cm-find-field {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 300px;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0 4px 0 8px;
+  border: 1px solid hsl(var(--border-default));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--surface));
+  box-shadow: var(--shadow-control);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.cm-find-field:focus-within {
+  border-color: hsl(var(--accent) / 0.6);
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.14);
+}
+
+.cm-find-field[data-invalid] {
+  border-color: hsl(var(--danger) / 0.7);
+}
+
+.cm-find-field > svg {
+  flex: none;
+  color: hsl(var(--text-muted));
+}
+
+.cm-find-input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: hsl(var(--text-primary));
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.cm-find-input::placeholder {
+  color: hsl(var(--text-muted));
+  font-family: var(--font-sans);
+}
+
+.cm-find-count {
+  flex: none;
+  min-width: 64px;
+  padding: 0 6px;
+  color: hsl(var(--text-muted));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cm-find-count[data-empty] {
+  color: hsl(var(--danger-fg));
+}
+
+.cm-find-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: hsl(var(--text-tertiary));
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.cm-find-button:hover:not(:disabled) {
+  color: hsl(var(--text-primary));
+  background: hsl(var(--text-primary) / 0.07);
+}
+
+.cm-find-button:disabled {
+  opacity: 0.4;
+}
+
+.cm-find-button[aria-pressed='true'] {
+  color: hsl(var(--accent));
+  background: hsl(var(--accent) / 0.12);
+}
+
+.cm-find-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+.cm-find-rule {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: hsl(var(--border-default));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-find-field,
+  .cm-find-button {
+    transition: none;
+  }
+}

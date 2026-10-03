@@ -1234,7 +1234,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     &recorder,
                     memory_turn.as_ref().map(|turn| &turn.plan),
                     response_token_budget(max_tokens),
-                    tool_loop::max_tool_rounds(search_flags.deep_research_mode),
+                    tool_loop::max_tool_rounds(search_flags.deep_research_mode, explorer.is_some()),
                 )
                 .await
                 {

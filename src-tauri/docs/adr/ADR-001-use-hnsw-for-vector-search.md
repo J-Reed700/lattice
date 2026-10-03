@@ -4,6 +4,8 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
+Status (2026-10-02): HNSW stands, but the crate is superseded - the code uses `usearch` 2.x (cosine, M=32, ef_construction/ef_search 256, optional i8 quantization), persisted as `<app data>/usearch-<generation>.usearch` files with SQLite holding only metadata, not a BLOB; `search/hnsw_index.rs` and `instant-distance` are gone. See `src-tauri/src/features/search/engine/vector_search/usearch_index.rs`.
+
 ## Context
 
 The Lattice desktop application requires efficient Approximate Nearest Neighbor (ANN) search to find semantically similar documents based on vector embeddings. Key requirements include:
@@ -151,7 +153,7 @@ Based on initial testing with 10,000 documents (384-dim vectors):
 | Index build | ~500ms | 0ms |
 | Search (k=10) | ~2ms | ~8ms |
 | Memory | ~19MB | ~15MB |
-| Lattice@10 | 96% | 100% |
+| Recall@10 | 96% | 100% |
 
 **Scaling expectations** (extrapolated):
 - 100K docs: ~5ms search, ~190MB memory

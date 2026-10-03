@@ -1,393 +1,205 @@
-# Getting Started with Vault
+# Getting Started with Lattice
 
-Welcome! This guide will help you install Vault and get searching in just a few minutes.
+This guide covers installing Lattice, setting up its AI models on first launch,
+and a short first session.
 
 ## Table of Contents
 
-- [System Requirements](#system-requirements)
-- [Installation](#installation)
-  - [Windows](#windows)
-  - [macOS](#macos)
-  - [Linux](#linux)
-- [First Launch](#first-launch)
-- [Quick Start Tutorial](#quick-start-tutorial)
-- [Troubleshooting](#troubleshooting)
-
-## System Requirements
-
-Before installing Vault, make sure your system meets these requirements:
-
-### Minimum Requirements
-- **Operating System:** Windows 10+, macOS 10.15+, or Linux (Ubuntu 20.04+)
-- **RAM:** 4 GB (8 GB recommended)
-- **Storage:** 500 MB for application + space for your indexed files
-- **Processor:** 64-bit processor (Intel or ARM)
-
-### Recommended Requirements
-- **RAM:** 8 GB or more
-- **Storage:** SSD for better performance
-- **Processor:** Multi-core processor for faster indexing
-
-**Note:** Vault works entirely offline and does not require an internet connection after installation.
-
-## Installation
-
-Download the latest version of Vault for your operating system:
-
-### Windows
-
-1. **Download the Installer**
-   - Visit the [Vault releases page](https://github.com/yourusername/vault/releases)
-   - Download `Vault-Setup-x.x.x.exe`
-
-2. **Run the Installer**
-   - Double-click the downloaded file
-   - If Windows SmartScreen appears, click "More info" then "Run anyway"
-   - Follow the installation wizard
-   - Choose installation location (default is recommended)
-
-3. **Launch Vault**
-   - Vault will appear in your Start Menu
-   - Double-click the Vault icon to launch
-
-**Screenshot placeholder:** *Windows installer wizard showing installation progress*
-
-### macOS
-
-1. **Download the Application**
-   - Visit the [Vault releases page](https://github.com/yourusername/vault/releases)
-   - Download `Vault-x.x.x.dmg`
-
-2. **Install Vault**
-   - Open the downloaded DMG file
-   - Drag the Vault icon to your Applications folder
-   - Eject the DMG
-
-3. **First Launch**
-   - Open Vault from Applications
-   - If macOS says "Vault cannot be opened," right-click and select "Open"
-   - Click "Open" in the security dialog
-
-**Screenshot placeholder:** *macOS drag-to-install interface*
-
-### Linux
-
-#### Option 1: AppImage (Recommended)
-
-1. **Download and Prepare**
-   ```bash
-   # Download the AppImage
-   wget https://github.com/yourusername/vault/releases/download/v0.1.0/Vault-x.x.x.AppImage
-
-   # Make it executable
-   chmod +x Vault-x.x.x.AppImage
-   ```
-
-2. **Run Vault**
-   ```bash
-   ./Vault-x.x.x.AppImage
-   ```
-
-#### Option 2: Debian/Ubuntu (DEB package)
-
-```bash
-# Download the DEB file
-wget https://github.com/yourusername/vault/releases/download/v0.1.0/vault_x.x.x_amd64.deb
-
-# Install
-sudo dpkg -i vault_x.x.x_amd64.deb
-
-# Fix dependencies if needed
-sudo apt-get install -f
-```
-
-#### Option 3: RPM-based (Fedora, CentOS, RHEL)
-
-```bash
-# Download the RPM file
-wget https://github.com/yourusername/vault/releases/download/v0.1.0/vault-x.x.x.x86_64.rpm
-
-# Install
-sudo rpm -i vault-x.x.x.x86_64.rpm
-```
-
-**Screenshot placeholder:** *Linux desktop showing Vault application icon*
-
-## First Launch
-
-When you first open Vault, you'll see the welcome screen. Here's what to expect:
-
-### Welcome Screen
-
-The welcome screen introduces you to Vault and prepares the application for first use.
-
-**What happens during first launch:**
-1. **Database Creation** - Vault creates a local database to store your file index
-2. **Model Download** - Downloads AI models for semantic search (about 100 MB)
-3. **Configuration Setup** - Creates default settings
-
-**Screenshot placeholder:** *Welcome screen with "Welcome to Vault" message and setup progress*
-
-**Note:** The first launch may take 2-3 minutes to download models. This only happens once.
-
-### Model Download Progress
-
-You'll see a progress indicator while AI models are being downloaded:
-
-- **Text Embedding Model** (~90 MB) - For semantic search
-- **Configuration Files** (~10 MB) - For text processing
-
-**Screenshot placeholder:** *Model download screen showing progress bars*
-
-**Tip:** You can use Vault while models download, but AI-powered features will be unavailable until download completes.
-
-### Database Location
-
-Vault stores its database in your system's standard application data folder:
-
-- **Windows:** `C:\Users\YourName\AppData\Roaming\com.vault.app\`
-- **macOS:** `~/Library/Application Support/com.vault.app/`
-- **Linux:** `~/.local/share/com.vault.app/`
-
-This folder contains:
-- `vault.db` - Your file index database
-- `config.json` - Application settings
-- `models/` - Downloaded AI models
-
-## Quick Start Tutorial
-
-Follow this 5-minute tutorial to index your first folder and perform your first search.
-
-### Step 1: Add Your First Folder
-
-1. **Open Settings**
-   - Click the gear icon in the top-right corner
-   - Or press `Ctrl+,` (Windows/Linux) or `Cmd+,` (macOS)
-
-2. **Navigate to Indexing Tab**
-   - Click "Indexing" in the left sidebar
-
-3. **Add a Folder**
-   - Click the "+ Add Folder" button
-   - Browse to a folder you want to index (start with something small like Documents)
-   - Select the folder and click "Select Folder"
-
-4. **Configure Options**
-   - **Recursive indexing:** Check to include subfolders (recommended)
-   - **Auto-index:** Check to automatically update when files change
-
-5. **Start Indexing**
-   - Click "Start Indexing"
-   - Watch the progress bar as Vault processes your files
-
-**Screenshot placeholder:** *Settings window showing the "Add Folder" dialog with folder browser*
-
-**Tip:** Start with a small folder (100-500 files) for your first try. You can add more folders later.
-
-### Step 2: Wait for Indexing to Complete
-
-The indexing panel shows real-time progress:
-
-- **Files processed:** Number of files indexed
-- **Files remaining:** Files left to process
-- **Current file:** The file being processed right now
-- **Estimated time:** How long until completion
-
-**What's happening behind the scenes:**
-1. Vault scans all files in the folder
-2. Extracts text content from each file
-3. Generates AI embeddings for semantic search
-4. Stores everything in the local database
-
-**Screenshot placeholder:** *Indexing progress panel showing files being processed with progress bar*
-
-**Processing speed:** Expect about 50-100 files per minute depending on your computer's speed.
-
-### Step 3: Perform Your First Search
-
-Once indexing completes:
-
-1. **Enter a Search Query**
-   - Click the search bar at the top
-   - Type what you're looking for (e.g., "project proposal from last month")
-   - Press Enter or click the search icon
-
-2. **View Results**
-   - Results appear instantly, sorted by relevance
-   - Each result shows:
-     - File name and type
-     - Matching content snippet
-     - File location and date
-     - Relevance score
-
-3. **Open a File**
-   - Click on any result to see more details
-   - Click "Open" to open the file in its default application
-   - Click "Show in Folder" to reveal it in your file explorer
-
-**Screenshot placeholder:** *Search results showing multiple files with relevance scores and snippets*
-
-### Step 4: Try Different Search Types
-
-Vault supports multiple search modes:
-
-**Semantic Search (Default)**
-```
-"document about marketing strategy"
-"photos from my vacation"
-"meeting notes with John"
-```
-Understands meaning and context, finds similar concepts.
-
-**Keyword Search**
-```
-"exact phrase in quotes"
-project AND proposal
-marketing OR advertising
-```
-Finds exact word matches, supports boolean operators.
-
-**Hybrid Search**
-Combines both methods for best results. Enable in Settings > Search.
-
-**Screenshot placeholder:** *Search bar with search mode dropdown showing semantic/keyword/hybrid options*
-
-### Congratulations!
-
-You've successfully:
-- Installed Vault
-- Indexed your first folder
-- Performed semantic searches
-- Opened files from search results
-
-**Next steps:**
-- Add more folders to expand your searchable content
-- Explore advanced search features
-- Set up auto-indexing for watch folders
-- Customize settings to your preferences
-
-## Troubleshooting
-
-### Installation Issues
-
-**Windows: "Windows Protected Your PC" warning**
-- Click "More info"
-- Click "Run anyway"
-- This appears because Vault is not yet code-signed (coming soon)
-
-**macOS: "Vault cannot be opened"**
-- Right-click the Vault app
-- Select "Open" from the menu
-- Click "Open" in the dialog
-- This only needs to be done once
-
-**Linux: Missing dependencies**
-```bash
-# For Ubuntu/Debian
-sudo apt-get install libwebkit2gtk-4.0-37 libgtk-3-0
-
-# For Fedora
-sudo dnf install webkit2gtk3 gtk3
-```
-
-### First Launch Issues
-
-**Model download fails**
-- **Check internet connection** - Models require a one-time download
-- **Retry download** - Settings > Advanced > Re-download Models
-- **Manual download** - Download models separately and place in models folder
-
-**Database creation fails**
-- **Check disk space** - Ensure you have at least 100 MB free
-- **Check permissions** - Make sure you can write to the app data folder
-- **Reset database** - Settings > Advanced > Reset Database (warning: deletes all indexed data)
-
-### Indexing Issues
-
-**Indexing is very slow**
-- **Large files** - Big PDFs or images take longer to process
-- **Disk speed** - SSD is much faster than HDD
-- **System resources** - Close other applications to free up RAM
-- **Reduce batch size** - Settings > Indexing > Batch Size (try 16 instead of 32)
-
-**Some files not being indexed**
-- **Unsupported format** - Check Settings > Indexing > File Types for supported formats
-- **File permissions** - Ensure Vault can read the files
-- **Excluded patterns** - Check Settings > Indexing > Excluded Patterns
-
-**Indexing errors on specific files**
-- **Corrupted files** - Some files may be damaged
-- **Locked files** - Files in use by other applications
-- **Very large files** - Files over 100 MB may time out (configurable)
-
-### Search Issues
-
-**No search results**
-- **Wait for indexing** - Ensure indexing completed successfully
-- **Check indexed folders** - Settings > Indexing to verify folders are added
-- **Try different queries** - Use simpler or more specific terms
-- **Database corruption** - Settings > Advanced > Verify Database
-
-**Incorrect results**
-- **Try hybrid search** - Combines semantic and keyword matching
-- **Adjust similarity threshold** - Settings > Search > Similarity Threshold
-- **Use keyword search** - For exact matches, switch to keyword mode
-
-**Search is slow**
-- **Large database** - With 100,000+ files, searches may take a few seconds
-- **Optimize database** - Settings > Advanced > Optimize Database
-- **Clear cache** - Settings > Advanced > Clear Search Cache
-
-### Performance Issues
-
-**High CPU usage**
-- **During indexing** - This is normal; indexing is CPU-intensive
-- **During idle** - Check if file watcher is detecting many changes
-- **Constant high usage** - Check Settings > General > Auto-index (disable if not needed)
-
-**High memory usage**
-- **Large files** - Processing big PDFs requires more RAM
-- **Many results** - Displaying thousands of results uses memory
-- **Restart Vault** - Closes the app and clears memory
-
-**Application not responding**
-- **Wait** - Large operations may take time
-- **Check task manager** - Verify Vault is actually running
-- **Force quit** - Last resort: close and restart (may lose unsaved changes)
-
-### Getting More Help
-
-If you're still experiencing issues:
-
-1. **Check the logs**
-   - Settings > Advanced > Open Logs Folder
-   - Look for error messages in the latest log file
-
-2. **Search existing issues**
-   - Visit [GitHub Issues](https://github.com/yourusername/vault/issues)
-   - Search for similar problems
-
-3. **Create a new issue**
-   - Include your operating system and version
-   - Describe what you were doing when the problem occurred
-   - Attach relevant log files
-   - Include screenshots if helpful
-
-4. **Community support**
-   - Join the [discussions forum](https://github.com/yourusername/vault/discussions)
-   - Ask questions and share tips
-
-## Next Steps
-
-Now that you have Vault installed and working:
-
-- **Read the [User Manual](user-manual.md)** - Learn about all features in depth
-- **Explore [Advanced Features](advanced-features.md)** - Unlock power user capabilities
-- **Customize your settings** - Make Vault work the way you want
-- **Add more folders** - Expand your searchable knowledge base
-
-Happy searching!
+1. [Supported Systems](#supported-systems)
+2. [Installation](#installation)
+3. [First Launch](#first-launch)
+4. [Your First Session](#your-first-session)
+5. [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data)
+6. [Uninstalling](#uninstalling)
+7. [If Something Goes Wrong](#if-something-goes-wrong)
+8. [Next Steps](#next-steps)
 
 ---
 
-**Need help?** Check the [User Manual](user-manual.md) or visit our [support page](https://github.com/yourusername/vault/discussions).
+## Supported Systems
+
+Lattice is built for:
+
+- **Windows 11** (x64)
+- **macOS 13.3 or later** on Apple Silicon. A separate Intel Mac build is being
+  qualified; Intel Macs run models on the CPU, so expect slower answers than on
+  Apple Silicon.
+- **Ubuntu 24.04 LTS** (x64)
+
+Other Linux distributions, ARM Windows and ARM Linux are not supported.
+
+**Disk space:** models take several gigabytes. The setup dialog on first launch
+shows the exact download size and warns you if there isn't enough free space.
+
+**Memory:** Lattice suggests a chat model sized to your computer's RAM. More
+memory lets you run larger models.
+
+---
+
+## Installation
+
+Lattice is pre-release. Get the installer for your platform from whoever
+distributes your build.
+
+### Windows
+
+Run the installer (`.msi` or setup `.exe`) and follow the prompts, then start
+Lattice from the Start menu. Pre-release builds are not code-signed, so Windows
+SmartScreen may warn you; choose **More info > Run anyway** if you trust the
+source.
+
+### macOS
+
+1. Open the `.dmg` and drag **Lattice** to **Applications**. Apple Silicon and
+   Intel Macs use different builds; pick the one for your Mac.
+2. Open Lattice from Applications.
+3. Pre-release builds are not notarized. If macOS says it can't verify the app,
+   open **System Settings > Privacy & Security** and choose **Open Anyway**.
+
+### Ubuntu 24.04
+
+Install the `.deb` package:
+
+```bash
+sudo apt install ./Lattice_*_amd64.deb
+```
+
+Or use the AppImage:
+
+```bash
+chmod +x Lattice_*.AppImage
+./Lattice_*.AppImage
+```
+
+---
+
+## First Launch
+
+### Set up AI
+
+If no models are installed yet, Lattice opens a **Set up AI** dialog. It checks
+your hardware and offers two models that fit it:
+
+- a **chat** model, which writes answers, and
+- an **embedding** model, which turns text into vectors for search by meaning.
+
+The dialog shows each model's size and the total. Choose:
+
+- **Install** to download both in the background. You can keep using the app
+  while they download.
+- **Choose models** to pick your own in Settings. Model downloads are under
+  **Settings > AI > Models**.
+- **Not now** to skip. The dialog won't come back, but you can install models
+  any time from **Settings > AI > Models**.
+
+Importing and indexing need the embedding model, so install at least that one
+before you import. Chat needs a chat model, or a provider you configure under
+**Settings > AI > Chat**.
+
+After the models download, Lattice runs offline. It uses the network only when
+you import a web page, turn on web or Wikipedia search in a chat, browse or
+download models, check for updates, or use a remote provider or custom tool you
+set up.
+
+---
+
+## Your First Session
+
+### 1. Import some documents
+
+Press **⌘I** (**Ctrl+I** on Windows and Linux) to open **Import**:
+
+- **Files**: drop files onto the page, or click **choose files**.
+- **URL** / **URLs**: import one web page, or several, one per line.
+- **History**: see past imports and any that failed.
+
+Lattice copies each file into its own library, extracts the text and indexes it.
+To import a whole folder, open the command palette (**⌘K**) and choose
+**Add folder**.
+
+PDF, Word (`.docx`), text, Markdown and many code and data formats are
+supported. See [Supported file types](user-manual.md#supported-file-types).
+
+### 2. Search
+
+Press **⌘1** for **Search** and type what you remember. **Hybrid** (the default)
+combines exact keywords with meaning; **Semantic** and **Keyword** use one or the
+other. You can also press **⌘K** from anywhere to jump to a document.
+
+### 3. Ask a question
+
+Press **⌘4** for **Chat**, type a question and press **Enter**. Answers cite the
+passages they used; hover a citation to see the passage and click it to open the
+source.
+
+### 4. Keep a thought
+
+Press **⌘⇧N** for **Quick capture**, type a note and press **Enter**. It is added
+to today's page in your **Journal** (**⌘3**).
+
+### 5. Look around
+
+- **Library** (**⌘2**) lists everything you've imported.
+- **Explorer** (**⌘6**) opens a folder on disk next to a chat that can read it.
+- **Studio** (**⌘7**) builds learning programs and holds your flashcards.
+
+The [User Manual](user-manual.md) covers each of these.
+
+---
+
+## Where Lattice Keeps Your Data
+
+| What | macOS | Windows | Ubuntu |
+| --- | --- | --- | --- |
+| Database, settings, backups, exports, Explorer folder indexes | `~/Library/Application Support/tech.lattice.app/` | `%APPDATA%\tech.lattice.app\` | `~/.local/share/tech.lattice.app/` |
+| Copies of imported files | `~/.lattice/files/` | `%USERPROFILE%\.lattice\files\` | `~/.lattice/files/` |
+| Downloaded models | `~/.cache/lattice/models/` | `%USERPROFILE%\.cache\lattice\models\` | `~/.cache/lattice/models/` |
+| Logs | `~/Library/Application Support/lattice/logs/` | `%LOCALAPPDATA%\lattice\logs\` | `~/.local/share/lattice/logs/` |
+
+The database file is `lattice.db`. If you turn on **Mirror notes to disk** in
+**Settings > Vault**, your notes are also written as Markdown files to a folder
+you choose (`~/Lattice` by default).
+
+---
+
+## Uninstalling
+
+1. Quit Lattice.
+2. Remove the app: drag it from Applications to the Trash (macOS), use
+   **Settings > Apps** (Windows), or run `sudo apt remove lattice` (Ubuntu
+   `.deb`) or delete the AppImage.
+3. To remove your data as well, delete the folders listed in
+   [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data). Back up or
+   export first if you want to keep anything.
+
+---
+
+## If Something Goes Wrong
+
+- **The setup dialog says there isn't enough disk.** Free up space, then install
+  models from **Settings > AI > Models**.
+- **A model download failed.** Try it again from **Settings > AI > Models**.
+  Gated models on Hugging Face need a token, which you can add in the
+  **Hugging Face** section of the same page.
+- **Chat says there's no model.** In **Settings > AI > Downloaded**, choose
+  **Set as Chat** on a downloaded chat model, and check the provider under
+  **Settings > AI > Chat**.
+- **Import says the embedding model is not ready.** Install an embedding model
+  in **Settings > AI > Models**, choose **Set as Embedding** on it under
+  **Settings > AI > Downloaded**, then import again.
+- **Search finds nothing.** Check that your import finished in
+  **Import > History**.
+- **The app won't start because the database won't open.** Quit Lattice, move
+  `lattice.db` out of the data folder (keep it in case you need it), and start
+  again with a fresh database. Don't delete the models folder; it has nothing to
+  do with database problems.
+
+For more, see the [Troubleshooting](troubleshooting.md) guide and the
+[FAQ](faq.md). **Settings > Logs** shows recent log messages.
+
+---
+
+## Next Steps
+
+- [User Manual](user-manual.md): every part of the app in detail.
+- [Advanced Features](advanced-features.md): deeper options for power users.

@@ -3,6 +3,7 @@
 //! Paths inside a scope are relative, `/`-separated, with no leading `./`;
 //! `""` is the root itself. Roots on the wire are canonical absolute paths.
 
+use super::index::dto::FolderIndexSummaryDto;
 use serde::{Deserialize, Serialize};
 
 /// A folder the user chose, after canonicalisation.
@@ -93,4 +94,37 @@ pub struct ExplorerLineRangeDto {
 pub struct ExplorerFocusDto {
     pub open_path: Option<String>,
     pub selection: Option<ExplorerLineRangeDto>,
+}
+
+/// One folder in the Explorer's folders list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorerFolderDto {
+    pub root: String,
+    /// The display name; the folder's own name unless renamed.
+    pub name: String,
+    pub pinned: bool,
+    /// RFC 3339.
+    pub added_at: String,
+    /// RFC 3339.
+    pub last_opened_at: String,
+    /// The folder is still on disk.
+    pub exists: bool,
+    /// Explorer threads bound to this folder.
+    pub thread_count: u32,
+    pub index: FolderIndexSummaryDto,
+    /// The folder's system prompt; `None` when it has none and its space's
+    /// prompt applies.
+    pub instructions: Option<String>,
+    /// The space its threads belong to; General unless one was chosen.
+    pub space_id: String,
+}
+
+/// The folders list, with the home folder so paths under it can be shown
+/// as `~/…`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorerFolderListDto {
+    pub home: Option<String>,
+    pub folders: Vec<ExplorerFolderDto>,
 }

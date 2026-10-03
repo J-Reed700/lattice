@@ -5,15 +5,19 @@ import { RotateCcw } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { FolderIndexStatus } from '@/stores/explorerStore';
 
-const count = (value: number) => value.toLocaleString('en-US');
+import { count, formatEta, formatRate, indexPercent } from './indexProgress';
 
 /** The pill's words for an index status. Exported for tests. */
 export function describeIndexStatus(status: FolderIndexStatus): string {
   switch (status.state) {
     case 'scanning':
-      return 'Scanning files…';
-    case 'indexing':
-      return `Indexing ${count(status.filesIndexed)} / ${count(status.filesTotal)} files`;
+      return status.filesTotal > 0 ? `Scanning · ${count(status.filesTotal)} files` : 'Scanning files…';
+    case 'indexing': {
+      const percent = indexPercent(status.passagesEmbedded, status.passagesTotal);
+      return status.etaSeconds === null
+        ? `Indexing ${percent}%`
+        : `Indexing ${percent}% · ${formatEta(status.etaSeconds)} left`;
+    }
     case 'ready':
       return `Indexed · ${count(status.filesTotal)} files`;
     case 'tooLarge':
@@ -27,6 +31,13 @@ export function describeIndexStatus(status: FolderIndexStatus): string {
   }
 }
 
+/** "3,067 of 10,958 passages · 489 of 1,379 files", once there is anything to count. */
+export function describeIndexCounts(status: FolderIndexStatus): string | null {
+  if (status.passagesTotal === 0 && status.filesTotal === 0) return null;
+  if (status.state === 'tooLarge' || status.state === 'refused') return null;
+  return `${count(status.passagesEmbedded)} of ${count(status.passagesTotal)} passages · ${count(status.filesIndexed)} of ${count(status.filesTotal)} files`;
+}
+
 export interface IndexStatusPillProps {
   status: FolderIndexStatus;
   onRebuild: () => void;
@@ -35,15 +46,17 @@ export interface IndexStatusPillProps {
 
 /**
  * Where the folder's search index stands, after the path in the scope bar.
- * While it builds, a thin bar under the words shows how far; the pill opens a
- * small menu with "Rebuild index". A failed index offers Retry beside it.
+ * While it builds, a thin bar under the words shows how many passages are in;
+ * the pill opens a small panel with the counts, the rate and "Rebuild index".
+ * A failed index offers Retry beside it.
  */
 export function IndexStatusPill({ status, onRebuild, onRetry }: IndexStatusPillProps) {
   const [open, setOpen] = useState(false);
   const label = describeIndexStatus(status);
+  const counts = describeIndexCounts(status);
   const busy = status.state === 'scanning' || status.state === 'indexing';
   const failed = status.state === 'error';
-  const progress = status.filesTotal > 0 ? Math.min(1, status.filesIndexed / status.filesTotal) : 0;
+  const progress = indexPercent(status.passagesEmbedded, status.passagesTotal);
 
   return (
     <div className="flex shrink-0 items-center gap-1.5">
@@ -53,14 +66,14 @@ export function IndexStatusPill({ status, onRebuild, onRetry }: IndexStatusPillP
             type="button"
             aria-label={`Folder index: ${label}`}
             data-state-index={status.state}
-            className={`relative inline-flex h-6 max-w-[17rem] items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)] ${
+            className={`relative inline-flex h-6 max-w-[17rem] items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] tabular-nums transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)] ${
               failed ? 'border-[hsl(var(--danger)/0.4)] text-[hsl(var(--danger))]' : 'border-border-subtle text-text-secondary'
             }`}
           >
             <span className="truncate">{label}</span>
             {status.state === 'indexing' && (
               <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[2px] bg-[hsl(var(--text-primary)/0.06)]">
-                <span className="block h-full bg-accent transition-[width] duration-300" style={{ width: `${Math.round(progress * 100)}%` }} />
+                <span className="block h-full bg-accent transition-[width] duration-300" style={{ width: `${progress}%` }} />
               </span>
             )}
             {status.state === 'scanning' && (
@@ -68,9 +81,13 @@ export function IndexStatusPill({ status, onRebuild, onRetry }: IndexStatusPillP
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-72 p-2">
+        <PopoverContent align="end" className="w-80 p-2">
           <div className="px-2 py-1.5">
             <p className="text-[12.5px] text-text-primary">{label}</p>
+            {counts && <p className="mt-1 text-[12px] tabular-nums leading-5 text-text-secondary">{counts}</p>}
+            {status.state === 'indexing' && status.passagesPerSecond !== null && (
+              <p className="text-[12px] tabular-nums leading-5 text-text-secondary">{formatRate(status.passagesPerSecond)}</p>
+            )}
             {status.message && <p className="mt-1 text-[12px] leading-5 text-text-secondary">{status.message}</p>}
             {status.indexRoot !== status.root && (
               <p className="mt-1 text-[12px] leading-5 text-text-secondary">Uses the index of {status.indexRoot}.</p>

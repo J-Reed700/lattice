@@ -1,5 +1,18 @@
 # API Versioning Policy
 
+> **Status (2026-10-02): not built; nothing here applies to the current code.**
+> Lattice has no HTTP API: there are no `/api/v1` routes, version headers,
+> deprecation headers, plugin API or `RECALL_API_*` variables. The frontend
+> talks to the Rust backend only through Tauri IPC commands, which ship in the
+> same app build as the UI and change in lockstep with it. That contract is
+> enforced by generated bindings, not versions: `src/lib/bindings.ts` comes from
+> `npm run bindings:generate` (checked in CI with `bindings:check`), and
+> `npm run contracts:check` / `contracts:commands` check the IPC types and the
+> command inventory. Lattice is pre-release with no legacy compatibility; the
+> database schema evolves by new dated sqlx migrations applied at startup
+> (`src-tauri/migrations/`). Keep this page only as a policy draft for a future
+> external API.
+
 **Version**: 1.0
 **Last Updated**: 2025-11-14
 **Current API Version**: v1

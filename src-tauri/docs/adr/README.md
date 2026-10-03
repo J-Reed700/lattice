@@ -21,8 +21,8 @@ Each ADR follows this structure:
 ### Core Infrastructure
 
 - [ADR-001: Use HNSW for Vector Search](./ADR-001-use-hnsw-for-vector-search.md)
-  - Decision to use Hierarchical Navigable Small World graphs via `instant-distance` for ANN search
-  - Status: **Accepted**
+  - Decision to use Hierarchical Navigable Small World graphs for ANN search (originally via `instant-distance`)
+  - Status: **Accepted**; the crate was replaced by `usearch` (see the 2026-10-02 note in the ADR)
 
 - [ADR-002: Use SQLite for Metadata Storage](./ADR-002-sqlite-for-metadata-storage.md)
   - Decision to use SQLite (via SQLx) as the embedded database for local-first storage
@@ -30,7 +30,7 @@ Each ADR follows this structure:
 
 - [ADR-003: Use ONNX Runtime for Embeddings](./ADR-003-onnx-runtime-for-embeddings.md)
   - Decision to use ONNX Runtime for local embedding generation with quantized models
-  - Status: **Accepted**
+  - Status: **Superseded** - embeddings and reranking run on Candle; `ort` was removed
 
 ### Application Architecture
 
@@ -127,9 +127,9 @@ Don't write an ADR for:
 
 ## Related Documentation
 
-- [Tauri Architecture](../architecture.md)
-- [Contribution guide](../../../../../CONTRIBUTING.md)
-- [Backend README](../../../README.md)
+- [Rust architecture](../../../docs/RUST_ARCHITECTURE.md)
+- [Contribution guide](../../../CONTRIBUTING.md)
+- [Project README](../../../README.md)
 
 ## References
 
@@ -138,4 +138,4 @@ Don't write an ADR for:
 
 ---
 
-**Last Updated**: 2025-11-15
+**Last Updated**: 2026-10-02

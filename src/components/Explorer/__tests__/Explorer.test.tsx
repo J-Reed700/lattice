@@ -91,3 +91,51 @@ describe('ExplorerTree', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });
+
+describe('explorerStore back and forward', () => {
+  beforeEach(() => useExplorerStore.setState({ expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null }));
+
+  it('steps back and forward through the files opened', () => {
+    const store = useExplorerStore.getState();
+    store.openFile('a.rs');
+    store.openFile('src/b.rs');
+    store.openFile('c.rs');
+
+    useExplorerStore.getState().goBack();
+    expect(useExplorerStore.getState().openPath).toBe('src/b.rs');
+    expect(useExplorerStore.getState().expanded.has('src')).toBe(true);
+    useExplorerStore.getState().goBack();
+    expect(useExplorerStore.getState().openPath).toBe('a.rs');
+    useExplorerStore.getState().goBack();
+    expect(useExplorerStore.getState().openPath).toBe('a.rs');
+
+    useExplorerStore.getState().goForward();
+    useExplorerStore.getState().goForward();
+    expect(useExplorerStore.getState().openPath).toBe('c.rs');
+    expect(useExplorerStore.getState().forward).toEqual([]);
+  });
+
+  it('drops the forward files when another file is opened', () => {
+    const store = useExplorerStore.getState();
+    store.openFile('a.rs');
+    store.openFile('b.rs');
+    useExplorerStore.getState().goBack();
+    useExplorerStore.getState().openFile('c.rs');
+    expect(useExplorerStore.getState().forward).toEqual([]);
+    expect(useExplorerStore.getState().back).toEqual(['a.rs']);
+  });
+
+  it('remembers the file a line link left', () => {
+    useExplorerStore.getState().openFile('a.rs');
+    useExplorerStore.getState().reveal('b.rs', { startLine: 1, endLine: 2 });
+    useExplorerStore.getState().goBack();
+    expect(useExplorerStore.getState().openPath).toBe('a.rs');
+  });
+
+  it('starts over in a new folder', () => {
+    useExplorerStore.getState().openFile('a.rs');
+    useExplorerStore.getState().openFile('b.rs');
+    useExplorerStore.getState().setRoot({ root: '/elsewhere', name: 'elsewhere' });
+    expect(useExplorerStore.getState().back).toEqual([]);
+  });
+});
