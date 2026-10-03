@@ -47,10 +47,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'The lab draft could not be saved.';
 }
 function isConflict(error: unknown) {
-  return /revision|conflict|changed since|stale/i.test(errorMessage(error));
+  return /revision|conflict|changed|stale/i.test(errorMessage(error));
 }
 function sameFiles(a: LearningLabFile[] | null, b: LearningLabFile[]) {
-  return Boolean(a && a.length === b.length && a.every((file, index) => file.path === b[index]?.path && file.content === b[index]?.content));
+  return Boolean(a?.length === b.length && a?.every((file, index) => file.path === b[index]?.path && file.content === b[index]?.content));
 }
 function cloneFiles(files: LearningLabFile[]) { return files.map(({ path, content }) => ({ path, content })); }
 function mergeSaved(starter: LearningLabFile[], saved: LearningLabFile[], changedPaths: Set<string>) {
@@ -101,8 +101,7 @@ export function useLearningLabDraft({
     if (context.loadState === 'ready' && !force) return Promise.resolve();
     const token = ++context.loadToken;
     context.loadState = 'loading'; context.error = null; refresh();
-    let promise!: Promise<void>;
-    promise = (async () => {
+    const promise = (async () => {
       try {
         const draft = unwrap(await VaultAPI.getLearningPracticalDraft({
           programId: context.programId, activityId: context.activityId, activityRevision: context.activityRevision,
@@ -114,6 +113,8 @@ export function useLearningLabDraft({
           context.files = mergeSaved(context.files.length ? context.files : starter, draft.files, context.changedPaths);
           context.savedFiles = cloneFiles(draft.files);
           context.revision = draft.draftRevision;
+          const acknowledged = new Map(draft.files.map((file) => [file.path, file.content]));
+          context.changedPaths = new Set(context.files.filter((file) => acknowledged.get(file.path) !== file.content).map((file) => file.path));
           context.loadState = 'ready';
           context.saveState = sameFiles(context.savedFiles, context.files) ? 'saved' : 'dirty';
           context.error = null;
@@ -121,7 +122,7 @@ export function useLearningLabDraft({
       } catch (error) {
         if (context.loadToken === token) { context.loadState = 'error'; context.saveState = 'error'; context.error = errorMessage(error); }
       } finally {
-        if (context.loadPromise === promise) context.loadPromise = null;
+        if (context.loadToken === token) context.loadPromise = null;
         refresh();
       }
     })();
@@ -165,6 +166,8 @@ export function useLearningLabDraft({
           context.revision = saved.draftRevision;
           context.savedFiles = cloneFiles(operation.files);
           context.operation = null;
+          const acknowledged = new Map(operation.files.map((file) => [file.path, file.content]));
+          context.changedPaths = new Set(context.files.filter((file) => acknowledged.get(file.path) !== file.content).map((file) => file.path));
           if (!sameFiles(context.savedFiles, context.files)) {
             context.saveState = 'dirty';
             continue;
@@ -201,7 +204,7 @@ export function useLearningLabDraft({
   }, [current, starterSignature, load, drainContext]);
 
   useEffect(() => {
-    if (!current || current.loadState !== 'ready' || sameFiles(current.savedFiles, current.files) || current.saveState !== 'dirty') return;
+    if (current?.loadState !== 'ready' || sameFiles(current.savedFiles, current.files) || current.saveState !== 'dirty') return;
     if (current.timer) window.clearTimeout(current.timer);
     current.timer = window.setTimeout(() => { current.timer = null; void drainContext(current); }, AUTOSAVE_DELAY_MS);
     return () => { if (current.timer) { window.clearTimeout(current.timer); current.timer = null; } };
@@ -231,9 +234,13 @@ export function useLearningLabDraft({
     const index = context.files.findIndex((file) => file.path === path);
     if (index < 0 || context.files[index].content === content) return;
     context.files = context.files.map((file, fileIndex) => fileIndex === index ? { ...file, content } : file);
-    context.changedPaths.add(path);
+    if (context.savedFiles?.find((file) => file.path === path)?.content === content) context.changedPaths.delete(path);
+    else context.changedPaths.add(path);
     context.editCounter += 1; context.editVersions.set(path, context.editCounter);
-    if (context.loadState === 'ready' && context.saveState !== 'conflict') context.saveState = 'dirty';
+    if (context.loadState === 'ready' && context.saveState !== 'conflict') {
+      if (!context.operation && !context.inFlight && sameFiles(context.savedFiles, context.files)) context.saveState = 'saved';
+      else context.saveState = 'dirty';
+    }
     if (context.saveState !== 'conflict') context.error = null;
     refresh();
   }, [refresh]);
@@ -286,8 +293,9 @@ export function useLearningLabDraft({
       current.revision = latest.draftRevision;
       current.operation = null;
       current.files = mergeSaved(current.files, latest.files, editsAfterAction);
-      current.changedPaths = editsAfterAction;
-      current.saveState = editsAfterAction.size ? 'dirty' : 'saved';
+      const acknowledged = new Map(latest.files.map((file) => [file.path, file.content]));
+      current.changedPaths = new Set(current.files.filter((file) => acknowledged.get(file.path) !== file.content).map((file) => file.path));
+      current.saveState = current.changedPaths.size ? 'dirty' : 'saved';
       current.error = null; refresh();
       return true;
     } catch (error) {

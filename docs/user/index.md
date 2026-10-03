@@ -1,103 +1,45 @@
-# Vault User Documentation
+# Lattice User Documentation
 
-Welcome to Vault, your personal knowledge recall system! Vault helps you find anything on your computer instantly using powerful semantic search.
+Lattice is a local-first desktop knowledge base. You import documents and web
+pages, and Lattice indexes them on your computer so you can search them by
+keyword and by meaning, ask questions in a chat that cites its sources, keep a
+journal, save passages as references, work through a folder of code, and build
+learning programs with flashcards.
 
-## What is Vault?
-
-Vault is a desktop application that indexes your files, documents, and screenshots, making them searchable using natural language. Instead of remembering where you saved something, just describe what you're looking for and Vault will find it.
-
-**Key Features:**
-- **Semantic Search** - Search by meaning, not just keywords
-- **Local-First** - All your data stays on your computer
-- **Auto-Indexing** - Automatically monitors folders for changes
-- **Multi-Format Support** - Works with PDFs, documents, images, and more
-- **AI-Powered** - Uses machine learning for intelligent search
-- **Privacy-Focused** - No cloud required, zero data collection
+**What to expect:**
+- **Local by default.** Indexing and embeddings run on your machine. Chat uses a
+  local model through a bundled llama.cpp server unless you choose another
+  provider (Ollama, a llama.cpp server you run yourself, OpenAI or Anthropic).
+- **No account.** Your library, conversations and journal live in a database on
+  your computer.
+- **Answers with citations.** Chat answers point back to the passages they came
+  from, and you can open the source from the citation.
+- **Pre-release.** Lattice does not migrate data from earlier pre-release
+  builds. Keep a backup or export before you update.
 
 ## Documentation Guide
 
-### For New Users
-
-Start here to get Vault up and running:
-
-1. **[Getting Started Guide](getting-started.md)**
-   - System requirements
-   - Installation instructions for Windows, macOS, and Linux
-   - First-time setup wizard
-   - Quick 5-minute tutorial
-   - Troubleshooting common issues
-
-### For Regular Use
-
-Learn how to use Vault's features effectively:
-
-2. **[User Manual](user-manual.md)**
-   - Understanding the interface
-   - Adding and managing folders
-   - Searching your files
-   - File management operations
-   - Settings and preferences
-   - Export and backup
-
-### For Power Users
-
-Unlock advanced capabilities:
-
-3. **[Advanced Features](advanced-features.md)**
-   - Search modes (semantic, keyword, hybrid)
-   - AI-powered Q&A system
-   - OCR and document processing
-   - Performance optimization
-   - Security and privacy settings
-   - Integration options
-
-### Troubleshooting & Support
-
-When you need help solving problems:
-
-4. **[Troubleshooting Guide](troubleshooting.md)**
-   - Installation issues
-   - Performance problems
-   - Functionality issues
-   - Data issues
-   - Platform-specific solutions
-
-5. **[Frequently Asked Questions (FAQ)](faq.md)**
-   - General questions
-   - Privacy and security
-   - Features and capabilities
-   - Performance and limits
-   - Comparisons with other tools
-
-6. **[Error Codes Reference](error-codes.md)**
-   - Complete error code catalog
-   - Error messages explained
-   - Solutions for each error
-   - When to report bugs
-
-## Quick Links
-
-- **Need help?** Start with the [Troubleshooting Guide](troubleshooting.md) or [FAQ](faq.md)
-- **Error message?** Look it up in the [Error Codes Reference](error-codes.md)
-- **Want to report a bug?** See the [GitHub Issues](https://github.com/yourusername/vault/issues)
-- **Looking for developer docs?** See the [Technical Documentation](../../README.md)
+1. **[Getting Started](getting-started.md)**: supported systems, installing,
+   first launch and model setup, and a short first session.
+2. **[User Manual](user-manual.md)**: each part of the app (Home, Search,
+   Library, Journal, Chat, References, Explorer, Studio, Import), keyboard
+   shortcuts, settings, backup and export, and where your data is stored.
+3. **[Advanced Features](advanced-features.md)**: deeper detail for power users.
+4. **[Troubleshooting](troubleshooting.md)**: fixes for common problems.
+5. **[FAQ](faq.md)**: short answers to common questions.
+6. **[Error Codes](error-codes.md)**: what error messages mean.
 
 ## Getting Help
 
-If you're stuck:
+1. Check the [FAQ](faq.md) and the [Troubleshooting](troubleshooting.md) guide.
+2. Look at **Settings > Logs**, which shows recent log messages you can search
+   and filter by severity.
+3. Report a problem on [GitHub Issues](https://github.com/J-Reed700/lattice/issues)
+   with your operating system, what you did, what happened, and any relevant
+   log lines.
 
-1. **Check the [FAQ](faq.md)** - Quick answers to common questions
-2. **Use the [Troubleshooting Guide](troubleshooting.md)** - Step-by-step solutions
-3. **Look up error codes** in the [Error Codes Reference](error-codes.md)
-4. **Search existing GitHub issues** - Someone may have had the same problem
-5. **Create a new issue** with details about your problem
-
-## Version Information
-
-This documentation is for Vault version 0.1.0 and later.
-
-Last updated: November 2025
+Developer documentation starts at the repository [README](../../README.md).
 
 ---
 
-**Ready to get started?** Head to the [Getting Started Guide](getting-started.md) to install Vault and index your first folder!
+**New here?** Start with [Getting Started](getting-started.md).

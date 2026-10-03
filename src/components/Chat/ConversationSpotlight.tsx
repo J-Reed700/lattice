@@ -103,7 +103,8 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
         conversationsResult.ok
           ? (Array.isArray(conversationsResult.data)
             ? []
-            : conversationsResult.data.conversations)
+            // Explorer threads open in the Explorer, never in Chat.
+            : conversationsResult.data.conversations.filter((conversation) => !conversation.explorerRoot))
           : []
       );
 

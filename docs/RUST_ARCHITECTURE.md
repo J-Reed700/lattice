@@ -35,7 +35,7 @@ belong to their respective adapters, not the sync contracts.
   `FromRow` columns, serialized DTO fields) carry a targeted `#[allow]` with a
   reason comment.
 - Ignored tests always carry a reason string; the remaining ignores are
-  environment-gated (OS keyring, network, downloaded models, Ollama).
+  environment-gated (OS keyring, network, downloaded models, Ollama, Docker).
 
 ## Runtime ownership
 
@@ -81,7 +81,7 @@ belong to their respective adapters, not the sync contracts.
 - `features/conversation/plugin_impl.rs` is the command facade. Existing IPC names,
   request shapes, error mapping, and generated binding imports are preserved.
 - The existing `ConversationRepository` owns workspace persistence through
-  `repository/workspace/{journals,spaces,memberships,sources,state,bookmarks,explorer}`.
+  `repository/workspace/{journals,spaces,memberships,sources,state,bookmarks,explorer,retrieval}`.
   These modules receive repository data rather than a DI container. Multi-statement
   operations retain their transactions, and missing/foreign IDs retain their errors.
 - Branching and synthesis orchestration are separate workflow modules. Public
@@ -171,8 +171,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   starters). Restore leaves `shared::constants::REEMBED_MARKER_FILE` in the app
   data directory; search startup clears it once vector coverage is complete.
 - The schema starts with `20260916000000_init_schema.sql` and evolves through
-  additive migrations. Preserve existing libraries; verify migrations against
-  temporary databases rather than deleting a user's database.
+  dated migrations beside it (see the migration rules below).
 
 ## Library blobs
 
@@ -195,14 +194,65 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   from `SELECT DISTINCT checksum FROM documents` read out of the snapshot
   itself, so the tar and the manifest always agree, and orphans never travel.
 
+## Explorer and folder indexes
+
+- `features/explorer` is the `explorer` plugin: a folder on disk beside a
+  chat. The folder is read live and never imported into the library. Every
+  path resolves through `scope::Scope`, which confines it to the chosen root;
+  `fs` lists, reads, searches and finds with size bounds and `.gitignore`
+  awareness. Design: `docs/design/2026-10-02-explorer.md`.
+- An Explorer thread is an ordinary conversation whose `explorer_root` column
+  is set (migration `20261002100000_conversation_explorer_root.sql`);
+  `explorer/repository.rs` is the only writer of that column. The thread's
+  model gets the folder block from `prompt.rs` and read-only tools confined to
+  the root (`list_directory`, `read_file`, `search_files`, `find_files`, and
+  `search_folder` from the index). Answers point at lines with the
+  `path:10-24` grammar parsed in `line_refs.rs`.
+- `explorer/index` keeps a semantic index per folder under
+  `<data_dir>/folder-index/`: a `chunks.db` and a vectors file keyed by the
+  embedding identity. The index lives outside `lattice.db`, so backups do not
+  carry it; it is rebuilt from the folder. A watcher follows edits while the
+  folder is open, and status reaches the renderer on the
+  `explorer-index://status` event (passages, percent, rate and ETA). A
+  folder uses its own index when it has one, else the deepest enclosing
+  index, limited to its sub-tree. Nothing evicts an index; only the user
+  deletes one. Design: `docs/design/2026-10-02-folder-index.md`.
+- The folder list is the `explorer_folders` table in `lattice.db`
+  (migration `20261002110000_explorer_folders.sql`, SQL in
+  `explorer/repository.rs`, assembly in `explorer/folders.rs`). Opening an
+  index upserts the folder's row, and listing adopts index directories that
+  have no row. Removing a folder with its threads deletes them through the
+  conversation plugin's normal delete path. Each row also holds the folder's
+  system prompt and space (`20261003100000_explorer_folder_settings.sql`):
+  its threads live in that space, General by default, and its prompt stands
+  in for the space's.
+
+## Learning Studio and flashcards
+
+- `features/learning` is the `learning` plugin behind the Studio surface:
+  programs, curriculum, sources, practice, practical labs, assessment
+  evidence, canvas, portability packs and Recall. Its tables come from the
+  `learning_*` migrations dated `20260930020000` onward. Design:
+  `docs/design/2026-09-30-learning-studio.md`; test evidence:
+  `docs/development/learning-studio-verification.md`.
+- Lab code runs without a host shell: embedded language providers
+  (`embedded_runtime.rs`; CPython as a WASI guest in `python_runtime.rs`) or
+  fixed container presets (`runtime_catalog.rs`, `lab_runtime.rs`). Portability packs are stored under
+  `<data_dir>/learning-packs/`.
+- Flashcards are the `study` plugin (`features/study`, `study_*` tables). It
+  has no surface of its own; the renderer shows decks inside Learning Studio,
+  and Recall schedules its cards through `study_cards` and
+  `study::schedule`.
+
 ## Command registration and schema invariants
 
 These are enforced by generators, scripts, and the database rather than by the
 Rust compiler, so they are the parts that bite a newcomer.
 
-- Registering a Tauri command takes five separate edits: the `_impl` in the
-  feature's `plugin_impl.rs`, the handler and `invoke_handler` entry in
-  `plugin.rs`, the command name in `src-tauri/build.rs` under
+- Registering a Tauri command takes five separate edits: the
+  `#[tauri::command]` function (conversation keeps the bodies as `_impl`
+  functions in `plugin_impl.rs`), its `generate_handler!` entry in the
+  feature's `plugin.rs`, the command name in `src-tauri/build.rs` under
   `InlinedPlugin::commands`, the matching `<feature>:allow-<command>` permission
   in `capabilities/main.json`, and the specta/TypeScript binding. Missing any one
   of the five is not a compile error — the ACL rejects the command at runtime.
@@ -220,7 +270,7 @@ Rust compiler, so they are the parts that bite a newcomer.
 - Two conversation-memory invariants live in SQLite triggers, not in callers.
   `trg_conversation_transcript_revision_{ai,au,ad}` bump
   `conversations.transcript_revision` on every message insert, update, and
-  delete. `trg_conversation_memory_invalidate_{au,ad}` and
+  delete. `trg_conversation_memory_invalidate_{au,bd}` and
   `trg_conversation_memory_vectors_invalidate_au` invalidate derived memory when
   source content changes or a message disappears. They are triggers precisely so
   correctness does not depend on a caller remembering: a new write path gets the
@@ -230,8 +280,15 @@ Rust compiler, so they are the parts that bite a newcomer.
   commit states the pair it read; a mismatch fails the commit and the run retries
   from a fresh snapshot instead of overwriting a newer ledger. Re-running the
   same operation id does not apply a second time.
-- Add schema changes as migrations under `src-tauri/migrations`. Existing
-  migrations are immutable once used by a library; do not reset user databases.
+- Add each schema change as a new dated migration,
+  `src-tauri/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit one that has been
+  applied, the squashed init file included: sqlx stores a checksum of every
+  applied migration and startup refuses a database whose history changed. A
+  column added by `ALTER TABLE` goes only in the new file, never also in the
+  init schema, or fresh databases fail. Lattice is pre-release and carries no
+  compatibility code for old local data; a development database that predates
+  a breaking change is deleted, not repaired. The app never resets a database
+  on its own.
 - Tests run the real migration through `sqlx::migrate!("./migrations")`. Two
   hand-rolled test schemas existed and had drifted from it, hiding trigger
   behavior and column defaults from exactly the tests that depended on them;
@@ -243,7 +300,9 @@ Rust compiler, so they are the parts that bite a newcomer.
 bash scripts/check-rust-layer-boundaries.sh
 bash scripts/check-repository-barrier.sh
 python3 scripts/check-tauri-command-inventory.py
+python3 scripts/check-sql-contracts.py
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
+cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
 cargo check --manifest-path src-tauri/Cargo.toml --all-targets

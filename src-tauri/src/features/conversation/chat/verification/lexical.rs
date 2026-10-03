@@ -311,18 +311,31 @@ fn is_claim_candidate(sentence: &str) -> bool {
     if s.ends_with('?') {
         return false;
     }
-    // The app's own line, appended when the model hit its output limit. The
-    // splitter stops at its full stop, so compare the words, not the wrapper —
-    // and the emphasis around it is gone by now, so match either form.
-    let note = super::super::tool_loop::CUT_SHORT_NOTE
-        .trim()
-        .trim_start_matches('_')
-        .trim_start_matches('(')
-        .trim_end_matches('_')
-        .trim_end_matches(')');
-    if s.trim_start_matches('_')
-        .trim_start_matches('(')
-        .starts_with(note)
+    // A sentence that points at lines in an Explorer folder (`src/main.rs:10`)
+    // is about the file on the user's screen, not about the retrieved
+    // passages, so judging it against them can only produce a false verdict.
+    if crate::features::explorer::line_refs::contains_line_reference(s) {
+        return false;
+    }
+    // The app's own lines, appended when the model hit its output limit or ran
+    // out of tool rounds. The splitter stops at a full stop, so compare the
+    // words, not the wrapper — and the emphasis around them is gone by now, so
+    // match either form.
+    let app_note = |note: &'static str| {
+        note.trim()
+            .trim_start_matches('_')
+            .trim_start_matches('(')
+            .trim_end_matches('_')
+            .trim_end_matches(')')
+            .trim_end_matches('.')
+    };
+    let unwrapped = s.trim_start_matches('_').trim_start_matches('(');
+    if [
+        super::super::tool_loop::CUT_SHORT_NOTE,
+        super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
+    ]
+    .into_iter()
+    .any(|note| unwrapped.starts_with(app_note(note)))
     {
         return false;
     }
@@ -795,6 +808,22 @@ mod tests {
     }
 
     #[test]
+    fn the_out_of_rounds_note_is_not_a_claim() {
+        let answer = format!(
+            "Bush beans mature within sixty days in shallow window boxes [1].{}",
+            super::super::super::tool_loop::OUT_OF_ROUNDS_NOTE
+        );
+        let claims = lexical_pass(
+            &answer,
+            &[source(
+                "Bush beans mature within sixty days and grow well in shallow window boxes.",
+            )],
+        );
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].supported);
+    }
+
+    #[test]
     fn citation_index_selects_the_referenced_source() {
         let claims = lexical_pass(
             "Blueberry anthocyanins support vascular function and endothelial health [2].",
@@ -963,5 +992,21 @@ mod tests {
             ..plain
         };
         assert!(needs_judge(&weak));
+    }
+
+    /// Explorer answers point at lines in the folder. Those sentences are
+    /// about the file on screen, so the sources this turn retrieved cannot
+    /// judge them, even when one happens to share their words.
+    #[test]
+    fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
+        let passage =
+            source("The main function prints a greeting and exits with status zero after setup.");
+        let claims = lexical_pass(
+            "The main function prints a greeting and exits with status zero, see `src/main.rs:1-3` [1]. \
+             The main function prints a greeting and exits with status zero after setup [1].",
+            std::slice::from_ref(&passage),
+        );
+        assert_eq!(claims.len(), 1, "{claims:?}");
+        assert!(!claims[0].sentence.contains("src/main.rs"));
     }
 }

@@ -883,14 +883,30 @@ pub async fn delete_conversation_impl(
     conversation_id: String,
 ) -> Result<()> {
     // 1. Rate limiting
+    check_delete_rate_limit(container).await?;
+    delete_conversation_unmetered(container, conversation_id).await
+}
+
+/// The rate limit one user-initiated delete spends. A caller that deletes
+/// several conversations for one action (removing an Explorer folder with
+/// its threads) checks it once, then deletes each with
+/// [`delete_conversation_unmetered`].
+pub async fn check_delete_rate_limit(container: &Container) -> Result<()> {
     container
         .security_context()
         .rate_limiters()
         .llm_question
         .check_rate_limit("delete_conversation")
         .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))
+}
 
+/// Everything a conversation delete does after the rate limit: stops its
+/// turn, deletes its attachments, removes it (messages cascade) and audits.
+pub async fn delete_conversation_unmetered(
+    container: &Container,
+    conversation_id: String,
+) -> Result<()> {
     // A turn already generating for this conversation should not continue
     // producing work after the user deletes it. Vector indexing is a separate
     // detached task; its final write checks the source rows atomically.

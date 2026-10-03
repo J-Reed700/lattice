@@ -782,29 +782,21 @@ pub async fn add_learning_document_source(
     repo.preflight_new_source(&request.program_id, &request.source_id, &request.version_id)
         .await
         .map_err(ApiError::from)?;
-    let rows = sqlx::query("SELECT d.file_name,substr(c.content,1,64001) content FROM documents d JOIN text_chunks c ON c.document_id=d.id WHERE d.id=? ORDER BY c.chunk_index LIMIT 128")
-        .bind(&request.document_id).fetch_all(container.db_pool()).await.map_err(|e| ApiError::from(crate::shared::error::AppError::Database(e.to_string())))?;
-    if rows.is_empty() {
+    let Some((title, chunks)) = repo
+        .library_document_text(&request.document_id)
+        .await
+        .map_err(ApiError::from)?
+    else {
         return Err(ApiError::from(
             crate::shared::error::AppError::InvalidInput(
                 "The selected document has no indexed text yet. Let its import finish first."
                     .into(),
             ),
         ));
-    }
-    let title: String = rows
-        .first()
-        .map(|row| sqlx::Row::get(row, "file_name"))
-        .ok_or_else(|| {
-            ApiError::from(crate::shared::error::AppError::InvalidInput(
-                "The selected document has no indexed text yet. Let its import finish first."
-                    .into(),
-            ))
-        })?;
+    };
     let mut text = String::new();
-    let mut truncated = rows.len() == 128;
-    for row in &rows {
-        let chunk = sqlx::Row::get::<String, _>(row, "content");
+    let mut truncated = chunks.len() == super::source_library::LIBRARY_CAPTURE_CHUNKS;
+    for chunk in &chunks {
         let remaining = 64_001_usize.saturating_sub(text.chars().count());
         if remaining == 0 {
             truncated = true;

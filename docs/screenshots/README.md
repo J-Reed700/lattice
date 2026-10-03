@@ -11,7 +11,8 @@ show the app doing something.
 | `dashboard.png` | The Home page: the document/folder/storage tiles, recent documents, and a resumable conversation. |
 | `search.png` | A search with results, showing the highlighted match and the file it came from. |
 | `chat.png` | A chat answer with its source citations visible, and the retrieval trace open if it fits. |
-| `study.png` | A flashcard review session with the card's source citation shown. |
+| `studio.png` | Studio's Flashcards section mid-review, with the card's source citation shown. |
+| `explorer.png` | Explorer with a folder open: the tree, a file in the viewer, and a chat about that folder with citations. |
 | `neighborhood.png` | A document open with the "Related" panel: backlinks, similar documents, and where it's cited. |
 | `settings.png` | Settings with the model catalog or local model roles, showing a downloaded model. |
 

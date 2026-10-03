@@ -1,4 +1,4 @@
-# Recall — Aesthetic Guide
+# Lattice — Aesthetic Guide
 
 Strategic north star for all visual decisions. No tokens, no code. This doc defines the DNA.
 
@@ -6,7 +6,7 @@ Strategic north star for all visual decisions. No tokens, no code. This doc defi
 
 ## 1. Product soul
 
-Recall is a local-first tool for thought: a private index of the files, notes, and conversations that make up a person's working memory. It is an instrument, not a destination. The aesthetic must therefore recede — the interface is a lens onto the user's own material, and the user's material is what should look good. Recall is closer to a well-made text editor or a code IDE than to a SaaS dashboard: calm, legible, high-density when asked, quiet when idle, and trustworthy because it never performs.
+Lattice is a local-first tool for thought: a private index of the files, notes, and conversations that make up a person's working memory. It is an instrument, not a destination. The aesthetic must therefore recede — the interface is a lens onto the user's own material, and the user's material is what should look good. Lattice is closer to a well-made text editor or a code IDE than to a SaaS dashboard: calm, legible, high-density when asked, quiet when idle, and trustworthy because it never performs.
 
 ---
 
@@ -26,9 +26,9 @@ Shared DNA distilled from Linear, Notion, Vercel, Arc, and Things 3.
 
 ## 3. What we are NOT
 
-The current app violates nearly every principle above. These are the specific sins we are correcting, drawn from what is shipping in `index.css`, `themes.css`, `tailwind.config.js`, and the Dashboard/Chat components today:
+The app once violated nearly every principle above. These are the specific sins the token rebuild removed from `src/index.css`, `src/styles/themes.css` (since deleted), `tailwind.config.js`, and the Dashboard/Chat components. None of them may come back:
 
-- **No rainbow accent system.** We are retiring `--accent-purple`, `--accent-pink`, `--accent-orange`, `--accent-emerald` as general-purpose palette entries. One accent. Semantic colors (success/warning/error) exist but are muted and used only for state.
+- **No rainbow accent system.** `--accent-purple`, `--accent-pink`, `--accent-orange`, `--accent-emerald` are retired as general-purpose palette entries. One accent. Semantic colors (success/warning/error) exist but are muted and used only for state.
 - **No gradient text.** The `bg-gradient-to-r from-sky-400 via-purple-400 to-sky-400 bg-clip-text` "Welcome back" headline and any `gradient-text-*` utility is gone. Headlines are a single color with deliberate weight.
 - **No glow.** `--shadow-glow`, `.glow`, `.glow-hover`, `animate-glow-pulse`, the sky-blue ring halos on focus — all removed. Focus rings are a crisp single-color outline.
 - **No `backdrop-blur` as decoration.** `.glass`, `.glass-strong`, `.glass-modal`, `.glass-navigation`, `.glass-subtle` are not an aesthetic — they are a last resort for a specific problem (an element over unpredictable content). Default surfaces are opaque.
@@ -37,8 +37,8 @@ The current app violates nearly every principle above. These are the specific si
 - **No shimmer loading, no `glow-pulse`, no staggered `fadeInUp` cascades** on every screen mount. Skeletons are flat blocks. Content appears; it does not perform an entrance.
 - **No tinted card backgrounds per-action.** The Dashboard's `from-[var(--accent-primary)]/5`, `from-[var(--success)]/10`, `from-[var(--warning)]/10` per-button treatment is retired. Buttons are neutral. Color is earned by state, not decoration.
 - **No gradient mesh backgrounds.** `--gradient-mesh` radial-gradient washes behind pages are gone. The canvas is one flat, well-tuned neutral.
-- **No two parallel token systems.** Today we run `hsl(var(--background))` (shadcn) *and* `--bg-primary: #ffffff` (themes.css) *and* raw Tailwind `sky/purple/orange` classes simultaneously. Phase 2 collapses this to one source of truth. Until then, authors should treat the shadcn tokens as authoritative and stop reaching for the others.
-- **No `console.log` left in render paths.** Unrelated to aesthetic, but it's in `Dashboard.tsx` and it signals the overall lack of discipline we're correcting.
+- **No two parallel token systems.** We used to run `hsl(var(--background))` (shadcn) *and* `--bg-primary: #ffffff` (themes.css) *and* raw Tailwind `sky/purple/orange` classes simultaneously. There is now one source of truth: the HSL-channel variables in `src/index.css`, exposed as Tailwind colors by `tailwind.config.js` (see `TOKENS-SPEC.md`). Don't reach for raw Tailwind palette classes.
+- **No `console.log` left in render paths.** Unrelated to aesthetic, but one used to sit in `Dashboard.tsx`, and it signals the overall lack of discipline we're correcting.
 
 ---
 
@@ -56,7 +56,7 @@ Five adjectives, chosen to resolve the tension between the references:
 
 Dark mode is the primary design target. Light mode is a derivation.
 
-Recall is a thinking tool, used for long sessions, often in low light, frequently alongside a code editor or terminal. The dominant reference apps all design dark-first (Linear, Vercel, Arc) or achieve their signature look through it. Designing dark-first forces discipline around contrast, depth, and accent restraint — mistakes are louder in dark mode, and anything that survives translates cleanly to light. Light mode will be derived, tuned, and shipped — but it is not where decisions are made.
+Lattice is a thinking tool, used for long sessions, often in low light, frequently alongside a code editor or terminal. The dominant reference apps all design dark-first (Linear, Vercel, Arc) or achieve their signature look through it. Designing dark-first forces discipline around contrast, depth, and accent restraint — mistakes are louder in dark mode, and anything that survives translates cleanly to light. Light mode will be derived, tuned, and shipped — but it is not where decisions are made.
 
 ---
 

@@ -3855,6 +3855,198 @@
           "markdownDescription": "Denies the initialize_models command without any pre-configured scope."
         },
         {
+          "description": "Enables the explorer_folder_delete_index command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-delete-index",
+          "markdownDescription": "Enables the explorer_folder_delete_index command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_folder_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-remove",
+          "markdownDescription": "Enables the explorer_folder_remove command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_folder_rename command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-rename",
+          "markdownDescription": "Enables the explorer_folder_rename command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_folder_set_pinned command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-set-pinned",
+          "markdownDescription": "Enables the explorer_folder_set_pinned command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_folder_set_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-set-settings",
+          "markdownDescription": "Enables the explorer_folder_set_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_folders_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folders-list",
+          "markdownDescription": "Enables the explorer_folders_list command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_index_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-index-close",
+          "markdownDescription": "Enables the explorer_index_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_index_forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-index-forget",
+          "markdownDescription": "Enables the explorer_index_forget command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_index_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-index-open",
+          "markdownDescription": "Enables the explorer_index_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_index_rebuild command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-index-rebuild",
+          "markdownDescription": "Enables the explorer_index_rebuild command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_index_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-index-status",
+          "markdownDescription": "Enables the explorer_index_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-list-dir",
+          "markdownDescription": "Enables the explorer_list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_read_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-read-file",
+          "markdownDescription": "Enables the explorer_read_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_resolve_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-resolve-root",
+          "markdownDescription": "Enables the explorer_resolve_root command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_search command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-search",
+          "markdownDescription": "Enables the explorer_search command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_conversation_explorer_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-set-conversation-explorer-root",
+          "markdownDescription": "Enables the set_conversation_explorer_root command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_delete_index command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-delete-index",
+          "markdownDescription": "Denies the explorer_folder_delete_index command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-remove",
+          "markdownDescription": "Denies the explorer_folder_remove command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_rename command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-rename",
+          "markdownDescription": "Denies the explorer_folder_rename command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_set_pinned command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-set-pinned",
+          "markdownDescription": "Denies the explorer_folder_set_pinned command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_set_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-set-settings",
+          "markdownDescription": "Denies the explorer_folder_set_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folders_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folders-list",
+          "markdownDescription": "Denies the explorer_folders_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_index_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-index-close",
+          "markdownDescription": "Denies the explorer_index_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_index_forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-index-forget",
+          "markdownDescription": "Denies the explorer_index_forget command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_index_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-index-open",
+          "markdownDescription": "Denies the explorer_index_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_index_rebuild command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-index-rebuild",
+          "markdownDescription": "Denies the explorer_index_rebuild command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_index_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-index-status",
+          "markdownDescription": "Denies the explorer_index_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-list-dir",
+          "markdownDescription": "Denies the explorer_list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_read_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-read-file",
+          "markdownDescription": "Denies the explorer_read_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_resolve_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-resolve-root",
+          "markdownDescription": "Denies the explorer_resolve_root command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_search command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-search",
+          "markdownDescription": "Denies the explorer_search command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_conversation_explorer_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-set-conversation-explorer-root",
+          "markdownDescription": "Denies the set_conversation_explorer_root command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_and_resolve_links command without any pre-configured scope.",
           "type": "string",
           "const": "extraction:allow-extract-and-resolve-links",

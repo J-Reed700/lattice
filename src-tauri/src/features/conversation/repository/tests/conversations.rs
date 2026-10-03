@@ -391,3 +391,57 @@ async fn test_count_and_exists() {
     assert!(repo.exists(&conversation.id.to_string()).await.unwrap());
     assert!(!repo.exists("non-existent").await.unwrap());
 }
+
+/// An Explorer thread's folder is stored on the row and comes back on every
+/// projection the frontend lists or opens it through; clearing it unbinds.
+#[tokio::test]
+async fn the_explorer_root_round_trips_through_the_conversation_projections() {
+    use crate::features::conversation::space_dto::ListConversationsExplorerQueryDto;
+    use crate::features::explorer::repository::{conversation_root, set_conversation_root};
+
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let conversation = repo
+        .create_conversation("Folder", "model", None)
+        .await
+        .unwrap();
+    let id = conversation.id.to_string();
+
+    set_conversation_root(&pool, &id, Some("/Users/me/Code/project"))
+        .await
+        .unwrap();
+    assert_eq!(
+        conversation_root(&pool, &id).await.unwrap().as_deref(),
+        Some("/Users/me/Code/project")
+    );
+    let projected = repo.project_conversation(&conversation).await.unwrap();
+    assert_eq!(
+        projected.explorer_root.as_deref(),
+        Some("/Users/me/Code/project")
+    );
+    let listed = repo
+        .list_conversations_explorer(ListConversationsExplorerQueryDto {
+            space_id: None,
+            query: None,
+            saved_only: None,
+            bookmarked_only: None,
+            pinned_only: None,
+            has_message_bookmarks: None,
+            include_archived: None,
+            limit: None,
+            offset: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        listed.conversations[0].explorer_root.as_deref(),
+        Some("/Users/me/Code/project")
+    );
+
+    set_conversation_root(&pool, &id, None).await.unwrap();
+    assert_eq!(conversation_root(&pool, &id).await.unwrap(), None);
+    assert!(set_conversation_root(&pool, "missing", Some("/x"))
+        .await
+        .is_err());
+}

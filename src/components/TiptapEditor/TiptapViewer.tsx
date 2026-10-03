@@ -6,6 +6,7 @@ import { Markdown } from 'tiptap-markdown';
 import { createExtensions } from './extensions';
 import { CitationMarks, citationMarksKey } from './extensions/citationMarks';
 import { ClaimMarks, claimMarksKey, type ClaimMark } from './extensions/claimMarks';
+import { CodeRefMarks, codeRefMarksKey } from './extensions/codeRefMarks';
 import { getMarkdownFromEditor } from './markdownStorage';
 
 import './tiptap.css';
@@ -18,6 +19,8 @@ export interface TiptapViewerProps {
   citationNumbers?: readonly number[];
   /** Checked sentences of this answer. When given, each is drawn with its verdict. */
   claims?: readonly ClaimMark[];
+  /** Draw `path:line` inline code as line-reference chips (Explorer conversations). */
+  codeRefs?: boolean;
 }
 
 const NO_CLAIMS: readonly ClaimMark[] = [];
@@ -33,11 +36,13 @@ export function TiptapViewer({
   onWikilinkClick,
   citationNumbers,
   claims,
+  codeRefs = false,
 }: TiptapViewerProps) {
   // Read through a ref so sources that arrive after the text still light up.
   const citationNumbersRef = useRef<readonly number[]>(citationNumbers ?? []);
   const citationSignature = (citationNumbers ?? []).join(',');
   const claimsRef = useRef<readonly ClaimMark[]>(claims ?? NO_CLAIMS);
+  const codeRefsRef = useRef(codeRefs);
 
   const editor = useEditor({
     extensions: [
@@ -46,6 +51,7 @@ export function TiptapViewer({
         isCitation: (number) => citationNumbersRef.current.includes(number),
       }),
       ClaimMarks.configure({ getClaims: () => claimsRef.current }),
+      CodeRefMarks.configure({ isEnabled: () => codeRefsRef.current }),
       Markdown.configure({
         html: false,
         transformPastedText: false,
@@ -85,6 +91,13 @@ export function TiptapViewer({
     if (previous.length === 0 && claimsRef.current.length === 0) return;
     editor.view.dispatch(editor.state.tr.setMeta(claimMarksKey, true));
   }, [editor, claims]);
+
+  useEffect(() => {
+    if (codeRefsRef.current === codeRefs) return;
+    codeRefsRef.current = codeRefs;
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dispatch(editor.state.tr.setMeta(codeRefMarksKey, codeRefs));
+  }, [editor, codeRefs]);
 
   if (!editor) return null;
 

@@ -10,13 +10,15 @@ hairline rows.
 ```
 FileBrowser              shell: PageHeader + toolbar + rail + main + dialogs
 ├── LibraryToolbar       search · source tabs · sort · group-by-date · rail toggle
-├── LibraryRail          Folders / Collections / Saved searches / Sources
+├── LibraryRail          Folders / Collections / Themes / Saved searches / Sources
+├── TypeFacets           the clickable type-count line under the scope heading
 ├── SelectionBar         shown only while ≥1 document is selected
 ├── CollectionDialogs    add selected files, choose collection members, rename
 ├── ListView             flat hairline rows (virtualized)
 ├── TreeView             the same rows, arranged by folder (virtualized)
 ├── GridView             hairline tiles (virtualized)
 ├── CorpusRow            the one row component: checkbox · icon · name · meta
+├── FileIcon             the per-type document icon
 ├── ContextMenu          right-click actions + space membership
 ├── RenameDialog         rename a document
 ├── SavedSearchNameDialog rename a saved search
@@ -25,7 +27,8 @@ FileBrowser              shell: PageHeader + toolbar + rail + main + dialogs
 
 `docMeta.ts` holds the shared document predicates and the meta-line formatter
 (`9,800 words · 1h ago · PDF`). `hooks/useCorpusIdentity.ts` produces the corpus
-readout — one muted line of type counts under the scope heading.
+readout — the type counts `TypeFacets` renders as one muted line under the scope
+heading. `contentSearchCache.ts` bounds the file text held for content search.
 
 ## Organizing documents
 
@@ -43,6 +46,8 @@ readout — one muted line of type counts under the scope heading.
 Documents come from `useLibraryDocumentsQuery()` (React Query over
 `list_all_documents`), sorted and filtered by pure functions exported from
 `stores/fileBrowserStore.ts`. Indexed folders come from `useIndexedFoldersQuery()`.
+Collections, including snapshots, are stored in SQLite and read through
+`useCustomCollectionsQuery()`; `useCustomCollectionActions()` holds the writes.
 
 The Zustand store holds UI-only state: view mode, sort, search, source filter,
 grouping, selection, context-menu position, and the current **scope**:
@@ -51,17 +56,19 @@ grouping, selection, context-menu position, and the current **scope**:
 type LibraryScope =
   | { kind: 'all' }
   | { kind: 'folder'; path: string }
-  | { kind: 'collection'; id: string };
+  | { kind: 'collection'; id: string }
+  | { kind: 'theme'; id: string };   // one cluster from the latest themes run
 ```
 
-Collections, snapshots, saved searches, and client-side source connections are
-persisted to `localStorage` by the store (pre-existing behaviour).
+Saved searches and client-side source connections are persisted to
+`localStorage` by the store.
 
 ## Conventions
 
 - Tokens only (`bg-surface`, `text-text-muted`, `border-border-subtle`, …).
 - No badges, no pills, no cards, no sentence explaining a control.
-- Row: `h-14`, hover `bg-surface`, selected `bg-surface-raised`, hairline below.
+- Row: `ROW_HEIGHT` (56px), hover `row-hover`, selected `bg-accent-muted`; no
+  per-row border.
 - The checkbox column is always reserved and only becomes visible on hover or
   when a selection is active.
 

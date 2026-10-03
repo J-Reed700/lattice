@@ -80,6 +80,11 @@ pub struct ConversationDto {
     /// The parent's message the branch was taken at, when one was named.
     /// `None` means the whole thread was copied.
     pub forked_from_message_id: Option<String>,
+
+    /// The folder an Explorer thread is bound to, as a canonical absolute
+    /// path. Set only on Explorer threads; Chat leaves them out of its list
+    /// so a thread is never continued without its folder.
+    pub explorer_root: Option<String>,
 }
 
 /// Conversation message representation.
@@ -338,6 +343,7 @@ mod tests {
             compaction: None,
             forked_from_conversation_id: None,
             forked_from_message_id: None,
+            explorer_root: None,
         };
 
         let json = serde_json::to_string(&conversation).unwrap();

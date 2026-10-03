@@ -4,6 +4,8 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
+Status (2026-10-02): the IDs live in `src-tauri/src/shared/domain_types.rs` (`DocumentId`, `TagId`, `ChunkId`, `MentionId`, `ConversationId`, plus `TagName` and `ValidatedFilePath`). They derive only `derive_more::Display`; `From`/`Into`/`AsRef`/`Deref` are not derived, and the `define_id!` macro and `crate::ids` module below were never built.
+
 ## Context
 
 The Lattice desktop application handles multiple domain entities with unique identifiers:

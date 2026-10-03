@@ -1,5 +1,15 @@
 # Test Helpers
 
+**Status (2026-10-02): this module is not compiled.** No test target declares
+`mod helpers;` (Cargo builds only top-level `tests/*.rs` files), so nothing below
+runs, and `mod.rs` would not build as-is: it declares `pub mod
+dependency_builder;`, which has no file. Its only users are the equally
+uncompiled files in `tests/integration/`. For helpers that do compile, use
+`tests/common/` (download helpers, `MockHttpClient`) and
+`tests/inference_helpers/`; most tests build an in-memory pool with
+`sqlx::migrate!("./migrations")` directly. The rest of this page describes the
+module as written.
+
 Comprehensive helper utilities for integration testing of the Tauri Rust backend.
 
 ## Overview
@@ -12,9 +22,10 @@ This module provides reusable test infrastructure for writing clean, maintainabl
 helpers/
 ├── mod.rs           # Main module with TestContext
 ├── factories.rs     # Test data factories
-├── mocks.rs        # Mock implementations
-├── assertions.rs   # Custom assertions
-└── README.md       # This file
+├── mocks.rs         # Mock implementations
+├── assertions.rs    # Custom assertions
+├── llm_helpers.rs   # LLM test helpers
+└── README.md        # This file
 ```
 
 ## Core Components

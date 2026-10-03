@@ -1,38 +1,10 @@
+/* The lab editor's surface. The code palette is the app's shared one
+   (lib/code/code.css). */
 .learning-code-editor {
   --code-bg: hsl(var(--surface));
-  --code-panel: hsl(var(--surface-raised));
-  --code-control: hsl(var(--surface));
-  --code-fg: hsl(var(--text-primary));
   --code-gutter-bg: hsl(var(--surface-raised));
-  --code-gutter-fg: hsl(var(--text-muted));
-  --code-gutter-active: hsl(var(--text-secondary));
-  --code-divider: hsl(var(--border-subtle));
-  --code-active-line: hsl(var(--accent) / 0.045);
-  --code-selection: hsl(var(--accent) / 0.2);
-  --code-caret: hsl(var(--accent));
-  --code-match-bg: hsl(var(--accent) / 0.16);
-  --code-match-fg: hsl(var(--text-primary));
-  --code-invalid: #b42318;
-  --code-keyword: #7241b8;
-  --code-identifier: hsl(var(--text-primary));
-  --code-function: #165d9c;
-  --code-type: #15735b;
-  --code-string: #a34822;
-  --code-number: #9b4e91;
-  --code-comment: hsl(var(--text-muted));
-  --code-punctuation: #627080;
+  --code-keyword-weight: 600;
   color: hsl(var(--text-primary));
-}
-
-:root[data-theme='dark'] .learning-code-editor,
-.dark .learning-code-editor {
-  --code-invalid: #ff8a84;
-  --code-keyword: #c9a5ff;
-  --code-function: #8fc5ff;
-  --code-type: #86d6b8;
-  --code-string: #f3b27d;
-  --code-number: #e6a8dc;
-  --code-punctuation: #a5b4c3;
 }
 
 .learning-code-editor__dot {
@@ -79,6 +51,81 @@
 
 .learning-code-editor .cm-editor.cm-focused .cm-cursor {
   visibility: visible;
+}
+
+.learning-code-editor .cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.learning-code-editor .cm-search br {
+  display: none;
+}
+
+.learning-code-editor .cm-search .cm-textfield {
+  box-sizing: border-box;
+  width: auto;
+  min-width: min(100%, 176px);
+  min-height: 34px;
+  flex: 1 1 176px;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 7px;
+  padding: 6px 9px;
+  font: inherit;
+}
+
+.learning-code-editor .cm-search button {
+  min-height: 34px;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 7px;
+  padding: 5px 10px;
+  font: inherit;
+  color: var(--code-fg) !important;
+  background-color: var(--code-control) !important;
+  background-image: none !important;
+  cursor: pointer;
+}
+
+.learning-code-editor .cm-search button:hover {
+  border-color: hsl(var(--accent) / 0.5);
+  color: var(--code-fg) !important;
+  background-color: hsl(var(--accent) / 0.12) !important;
+  background-image: none !important;
+}
+
+.learning-code-editor .cm-search input:focus-visible,
+.learning-code-editor .cm-search button:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+}
+
+.learning-code-editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  color: hsl(var(--text-secondary));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.learning-code-editor .cm-search input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: hsl(var(--accent));
+}
+
+.learning-code-editor .cm-search [name='close'] {
+  min-width: 34px;
+  padding: 4px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 @media (max-width: 640px) {

@@ -127,7 +127,9 @@ export default defineConfig({
           if (packageName === 'lowlight' || packageName === 'highlight.js') return 'syntax-languages';
           if (packageName === 'mammoth') return 'docx-renderer';
           if (packageName === 'dompurify') return 'sanitizer';
-          if (['lucide-react', 'date-fns', 'cmdk'].includes(packageName)) return 'ui-components';
+          // lucide-react, date-fns and cmdk stay unassigned: grouped, every icon
+          // and helper any lazy page uses was loaded at startup. Unassigned,
+          // each lands beside the pages that import it.
           if (packageName.startsWith('@radix-ui/')) return 'radix-ui';
           if (packageName.startsWith('@tauri-apps/')) return 'tauri';
           if (packageName === '@tanstack/react-virtual') return 'virtualization';

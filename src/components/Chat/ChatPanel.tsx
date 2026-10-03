@@ -39,6 +39,8 @@ import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarm
 import { toast } from '../../stores/toastStore';
 import { resolveChatModel } from '../../utils/chatModelSelection';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
+import { ExplorerIndexNotice } from '../Explorer/ExplorerIndexNotice';
+import { ExplorerSelectionChip } from '../Explorer/ExplorerSelectionChip';
 
 import type { CompactionRecord, CustomToolSettings, SpaceDocument, ToolPreferences } from '../../types';
 import type { SuggestItem } from './composer/ComposerSuggest';
@@ -1300,10 +1302,12 @@ export function ChatPanel() {
           warmupPhase={chatWarmupPhase}
           retrievalUnavailableReason={retrievalUnavailableReason}
         />
+        <ExplorerIndexNotice />
 
         <form onSubmit={handleSubmit} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
           {/* One object: the page you write on, with its tools along the bottom edge. */}
           <div className="rounded-2xl bg-surface shadow-sheet transition-shadow duration-base focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.16)]">
+            <ExplorerSelectionChip />
             <FocusChips
               documents={focusDocuments}
               onRemove={(documentId) =>

@@ -391,9 +391,19 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
         .save_draft(&request, "changed-payload")
         .await
         .is_err());
+    let mut newer = request.clone();
+    newer.operation_id = id();
+    newer.expected_draft_revision = 1;
+    newer.files[0].content = "newer version".into();
+    let latest = repository.save_draft(&newer, "draft-payload-two").await?;
+    assert_eq!(latest.draft_revision, 2);
+    assert_eq!(
+        repository.save_draft(&request, "draft-payload-one").await?,
+        saved
+    );
     assert_eq!(
         repository.get_draft(&scope).await?.files[0].content,
-        "Learner's durable answer"
+        "newer version"
     );
 
     let mut stale = request.clone();
@@ -406,7 +416,7 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
 
     let mut hidden = request.clone();
     hidden.operation_id = id();
-    hidden.expected_draft_revision = 1;
+    hidden.expected_draft_revision = 2;
     hidden.files.push(LearningLabFile {
         path: "checks/evaluate.txt".into(),
         content: "private evaluator fixture".into(),
@@ -414,7 +424,7 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
     assert!(repository.save_draft(&hidden, "hidden-file").await.is_err());
     let mut traversal = request.clone();
     traversal.operation_id = id();
-    traversal.expected_draft_revision = 1;
+    traversal.expected_draft_revision = 2;
     traversal.files[0].path = "../answer.txt".into();
     assert!(repository
         .save_draft(&traversal, "path-traversal")
@@ -464,7 +474,7 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(db)?;
+        .map_err(|error| AppError::Database(error.to_string()))?;
     let (pool, program_id, lesson_id, _) = fixture_on_pool(pool).await?;
     let repository = LearningPracticalRepository::new(pool.clone());
     let programs = LearningRepository::new(pool.clone());

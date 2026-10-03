@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { createBrowserRouter, Navigate } from 'react-router';
 
 import {
+  ExplorerSectionErrorBoundary,
   FilesSectionErrorBoundary,
   QASectionErrorBoundary,
   SearchSectionErrorBoundary,
@@ -21,7 +22,7 @@ const ChatView = lazy(() => import('./components/Chat').then((m) => ({ default: 
 const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ default: m.IngestHub })));
 const JournalWorkspace = lazy(() => import('./components/Journal').then((m) => ({ default: m.JournalWorkspace })));
 const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then((m) => ({ default: m.ReferenceInbox })));
-const StudyPage = lazy(() => import('./components/Study').then((m) => ({ default: m.StudyPage })));
+const ExplorerPage = lazy(() => import('./components/Explorer').then((m) => ({ default: m.ExplorerPage })));
 const LearningStudioPage = lazy(() => import('./components/LearningStudio').then((m) => ({ default: m.LearningStudioPage })));
 const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
 const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
@@ -89,7 +90,10 @@ export const router = createBrowserRouter([
           { path: 'journals', element: <Page id="journals"><JournalWorkspace /></Page> },
           { path: 'daily', element: <Navigate to="/journals" replace /> },
           { path: 'references', element: <Page id="references"><ReferenceInbox /></Page> },
-          { path: 'study', element: <Page id="study"><StudyPage /></Page> },
+          {
+            path: 'explorer',
+            element: <Page id="explorer" boundary={ExplorerSectionErrorBoundary}><ExplorerPage /></Page>,
+          },
           { path: 'studio', element: <Page id="studio" boundary={StudioSectionErrorBoundary}><LearningStudioPage /></Page> },
           { path: 'compare', element: <Page id="compare"><ComparePage /></Page> },
           {

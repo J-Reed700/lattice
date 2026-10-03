@@ -102,6 +102,14 @@ export function QASectionErrorBoundary({ children }: { children: React.ReactNode
   );
 }
 
+export function ExplorerSectionErrorBoundary({ children }: { children: React.ReactNode }) {
+  return (
+    <SectionErrorBoundary sectionName="Explorer">
+      {children}
+    </SectionErrorBoundary>
+  );
+}
+
 export function SettingsSectionErrorBoundary({ children }: { children: React.ReactNode }) {
   return (
     <SectionErrorBoundary sectionName="Settings">

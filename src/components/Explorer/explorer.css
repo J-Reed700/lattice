@@ -1,0 +1,74 @@
+/* The Explorer's file view. The code palette is the app's shared one
+   (lib/code/code.css); this view sits on the page itself. */
+.explorer-code {
+  --code-bg: hsl(var(--bg));
+}
+
+.explorer-code .cm-editor {
+  height: 100%;
+}
+
+/* Lines the reader picked: quiet, they already know which. */
+.explorer-code .cm-explorer-selected {
+  background: hsl(var(--text-primary) / 0.06);
+}
+
+/* Lines an answer pointed at: the accent, with a rule down the edge. */
+.explorer-code .cm-explorer-highlight {
+  background: hsl(var(--accent) / 0.12);
+  box-shadow: inset 2px 0 0 hsl(var(--accent));
+}
+
+/* The chat column's indexing line comes in after a beat, so the quick rescan
+   of a folder that is already indexed does not flash it. */
+.explorer-index-notice {
+  animation: explorer-notice-in var(--duration-slow) var(--ease-out) 800ms both;
+}
+@keyframes explorer-notice-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .explorer-index-notice {
+    animation: none;
+  }
+}
+
+/* The split handles between the three columns. The grab area is wider than
+   the line it draws, so the edge is easy to catch. */
+.explorer-split {
+  position: relative;
+  z-index: 1;
+  width: 0;
+  flex: 0 0 auto;
+}
+.explorer-split > div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.explorer-split > div::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.explorer-split > div:hover::after,
+.explorer-split > div:focus-visible::after,
+.explorer-split > div[data-dragging]::after {
+  background: hsl(var(--accent) / 0.75);
+}

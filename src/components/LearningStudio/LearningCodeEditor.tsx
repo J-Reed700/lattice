@@ -1,25 +1,21 @@
 import { useLayoutEffect, useRef } from 'react';
 
 import { indentWithTab, redo, undo } from '@codemirror/commands';
-import { javascript } from '@codemirror/lang-javascript';
-import { json } from '@codemirror/lang-json';
-import { python } from '@codemirror/lang-python';
-import { rust } from '@codemirror/lang-rust';
-import { bracketMatching, HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
+import { bracketMatching, indentUnit } from '@codemirror/language';
 import { openSearchPanel } from '@codemirror/search';
 import { Annotation, EditorState, Prec, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { tags as t } from '@lezer/highlight';
-import { csharp } from '@replit/codemirror-lang-csharp';
 import { basicSetup } from 'codemirror';
 import { Search } from 'lucide-react';
 
-import type { Extension } from '@codemirror/state';
+import { codeHighlighting } from '@/lib/code/highlight';
+import { PLAIN_TEXT_LABEL, resolveLanguage, type CodeLanguage } from '@/lib/code/languages';
+import { fillLanguageSlot, languageSlot } from '@/lib/code/languageSlot';
 
 import './learningCodeEditor.css';
 
 export interface LearningCodeEditorProps {
-  /** The active file path. Its extension selects the language mode. */
+  /** The active file path. Its name or extension selects the language. */
   path: string;
   /** The parent-owned file contents. */
   value: string;
@@ -31,45 +27,13 @@ export interface LearningCodeEditorProps {
   ariaLabel?: string;
   /** Minimum editor height in pixels or CSS units. */
   minHeight?: number | string;
+  /** Hides the component path label when a parent file tab already identifies the file. */
+  showPath?: boolean;
   /** Runs when the learner presses Mod-Enter (Cmd-Enter on macOS). */
   onRunShortcut?: () => void;
 }
 
-type LanguageMode = {
-  label: string;
-  extension: Extension;
-};
-
-const plainTextMode: LanguageMode = { label: 'Plain text', extension: [] };
-
-function languageForPath(path: string): LanguageMode {
-  const extension = path.split(/[?#]/, 1)[0]?.split('.').pop()?.toLowerCase() ?? '';
-  if (['cs', 'csx'].includes(extension)) return { label: 'C#', extension: csharp() };
-  if (extension === 'rs') return { label: 'Rust', extension: rust() };
-  if (['js', 'mjs', 'cjs', 'jsx'].includes(extension)) {
-    return { label: extension === 'jsx' ? 'JSX' : 'JavaScript', extension: javascript({ jsx: extension === 'jsx' }) };
-  }
-  if (['ts', 'mts', 'cts', 'tsx'].includes(extension)) {
-    return { label: extension === 'tsx' ? 'TSX' : 'TypeScript', extension: javascript({ typescript: true, jsx: extension === 'tsx' }) };
-  }
-  if (extension === 'py') return { label: 'Python', extension: python() };
-  if (extension === 'json') return { label: 'JSON', extension: json() };
-  return plainTextMode;
-}
-
 const externalDocumentSync = Annotation.define<boolean>();
-
-const codeHighlighting = syntaxHighlighting(HighlightStyle.define([
-  { tag: t.keyword, color: 'var(--code-keyword)', fontWeight: '600' },
-  { tag: [t.name, t.variableName], color: 'var(--code-identifier)' },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: 'var(--code-function)' },
-  { tag: [t.typeName, t.className, t.namespace], color: 'var(--code-type)' },
-  { tag: [t.string, t.special(t.string)], color: 'var(--code-string)' },
-  { tag: [t.number, t.bool, t.null], color: 'var(--code-number)' },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: 'var(--code-comment)', fontStyle: 'italic' },
-  { tag: [t.operator, t.punctuation, t.bracket], color: 'var(--code-punctuation)' },
-  { tag: t.invalid, color: 'var(--code-invalid)', textDecoration: 'underline wavy' },
-]));
 
 const editorTheme = EditorView.theme({
   '&': {
@@ -101,12 +65,12 @@ const editorTheme = EditorView.theme({
   '.cm-tooltip': { color: 'var(--code-fg)', backgroundColor: 'var(--code-panel)', borderColor: 'var(--code-divider)' },
   '&.cm-focused': { outline: 'none' },
   '&.cm-focused .cm-content': { outline: 'none' },
-}, { dark: false });
+});
 
-function buildExtensions(mode: LanguageMode, readOnly: boolean, onChange: (value: string) => void, ariaLabel: string, onRunShortcut?: () => void) {
+function buildExtensions(language: CodeLanguage | null, readOnly: boolean, onChange: (value: string) => void, ariaLabel: string, onRunShortcut?: () => void) {
   return [
     basicSetup,
-    mode.extension,
+    languageSlot(language),
     codeHighlighting,
     editorTheme,
     indentUnit.of('  '),
@@ -144,6 +108,7 @@ export function LearningCodeEditor({
   readOnly = false,
   ariaLabel,
   minHeight = 300,
+  showPath = true,
   onRunShortcut,
 }: LearningCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -152,8 +117,8 @@ export function LearningCodeEditor({
   const activePathRef = useRef(path);
   const activeAriaLabelRef = useRef(ariaLabel);
   const pathGenerationRef = useRef(0);
-  const activeMode = languageForPath(path);
-  const modeRef = useRef(activeMode);
+  const activeLanguage = resolveLanguage(path);
+  const languageRef = useRef(activeLanguage);
   const readOnlyRef = useRef(readOnly);
 
   latestPropsRef.current = { onChange, onRunShortcut, ariaLabel };
@@ -165,7 +130,7 @@ export function LearningCodeEditor({
     const state = EditorState.create({
       doc: value,
       extensions: buildExtensions(
-        activeMode,
+        activeLanguage,
         readOnly,
         (nextValue) => {
           if (pathGenerationRef.current === 0) latestPropsRef.current.onChange(nextValue);
@@ -178,8 +143,9 @@ export function LearningCodeEditor({
     viewRef.current = view;
     activePathRef.current = path;
     activeAriaLabelRef.current = ariaLabel;
-    modeRef.current = activeMode;
+    languageRef.current = activeLanguage;
     readOnlyRef.current = readOnly;
+    fillLanguageSlot(view, activeLanguage, () => viewRef.current === view && languageRef.current === activeLanguage);
 
     return () => {
       view.destroy();
@@ -195,7 +161,7 @@ export function LearningCodeEditor({
     if (!view) return;
 
     const pathChanged = activePathRef.current !== path;
-    const modeChanged = modeRef.current.label !== activeMode.label;
+    const languageChanged = languageRef.current !== activeLanguage;
     const readOnlyChanged = readOnlyRef.current !== readOnly;
     const ariaLabelChanged = activeAriaLabelRef.current !== ariaLabel;
     const latestValue = view.state.doc.toString();
@@ -207,7 +173,7 @@ export function LearningCodeEditor({
       view.setState(EditorState.create({
         doc: value,
         extensions: buildExtensions(
-          activeMode,
+          activeLanguage,
           readOnly,
           (nextValue) => {
             if (pathGenerationRef.current === generation) latestPropsRef.current.onChange(nextValue);
@@ -217,10 +183,10 @@ export function LearningCodeEditor({
         ),
       }));
     } else {
-      if (modeChanged || readOnlyChanged || ariaLabelChanged) {
+      if (languageChanged || readOnlyChanged || ariaLabelChanged) {
         const generation = pathGenerationRef.current;
         view.dispatch({ effects: StateEffect.reconfigure.of(buildExtensions(
-        activeMode,
+        activeLanguage,
         readOnly,
         (nextValue) => {
           if (pathGenerationRef.current === generation) latestPropsRef.current.onChange(nextValue);
@@ -240,22 +206,26 @@ export function LearningCodeEditor({
 
     activePathRef.current = path;
     activeAriaLabelRef.current = ariaLabel;
-    modeRef.current = activeMode;
+    languageRef.current = activeLanguage;
     readOnlyRef.current = readOnly;
-  }, [activeMode, ariaLabel, path, readOnly, value]);
+    // A rebuilt state starts without a grammar that is still loading.
+    if (pathChanged || languageChanged || readOnlyChanged || ariaLabelChanged) {
+      fillLanguageSlot(view, activeLanguage, () => viewRef.current === view && languageRef.current === activeLanguage);
+    }
+  }, [activeLanguage, ariaLabel, path, readOnly, value]);
 
   return (
     <section className="learning-code-editor min-w-0 overflow-hidden rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] shadow-sm" aria-label={`${path} editor`}>
-      <header className="learning-code-editor__toolbar flex min-h-10 items-center justify-between gap-3 border-b border-[hsl(var(--border-subtle))] px-3 sm:px-4">
+      <header className="learning-code-editor__toolbar flex min-h-11 items-center justify-between gap-3 border-b border-[hsl(var(--border-subtle))] px-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="learning-code-editor__dot" aria-hidden="true" />
-          <span className="truncate font-mono text-[11px] text-[hsl(var(--text-secondary))]" title={path}>{path || 'Untitled'}</span>
-          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[.12em]">{activeMode.label}</span>
-          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-[9px] font-semibold uppercase tracking-[.12em]">Read only</span>}
+          {showPath && <span className="truncate font-mono text-xs text-[hsl(var(--text-secondary))]" title={path}>{path || 'Untitled'}</span>}
+          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[.12em]">{activeLanguage?.label ?? PLAIN_TEXT_LABEL}</span>
+          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-[11px] font-semibold uppercase tracking-[.12em]">Read only</span>}
         </div>
         <button
           type="button"
-          className="learning-code-editor__find inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[10px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="learning-code-editor__find inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-label="Find in code"
           title="Find in code (⌘/Ctrl+F)"
           onClick={() => {
@@ -266,7 +236,7 @@ export function LearningCodeEditor({
         >
           <Search size={13} aria-hidden="true" />
           <span className="hidden sm:inline">Find</span>
-          <kbd className="hidden rounded border px-1 py-0.5 font-mono text-[9px] sm:inline">⌘F</kbd>
+          <kbd className="hidden rounded border px-1 py-0.5 font-mono text-[11px] sm:inline">⌘F</kbd>
         </button>
       </header>
       <div
@@ -276,7 +246,7 @@ export function LearningCodeEditor({
       >
         <div ref={hostRef} />
       </div>
-      <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-1.5 text-[9px] text-[hsl(var(--text-muted))] sm:px-4">
+      <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-2 text-[11px] text-[hsl(var(--text-muted))] sm:px-4">
         <span>{readOnly ? 'Read-only file' : 'Tab indents · ⌘/Ctrl+Z undo · ⌘/Ctrl+F find'}</span>
         {!readOnly && <span>Press Esc, then Tab to move focus</span>}
       </footer>

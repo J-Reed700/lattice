@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 
-import { useGenerateConversationStudyDeck } from '@/components/Study/useStudy';
+import { useGenerateConversationFlashcardDeck } from '@/components/LearningStudio/flashcards/useFlashcards';
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -61,7 +61,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   const prefersReducedMotion = useReducedMotion();
   const {
     spaces,
-    conversations,
+    conversations: allConversations,
     activeConversationId,
     isLoading,
     selectConversation,
@@ -71,6 +71,11 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     setConversationPinned,
     setConversationArchived,
   } = useConversationsStore();
+  // Explorer threads live in the Explorer, beside their folder.
+  const conversations = useMemo(
+    () => allConversations.filter((conversation) => !conversation.explorerRoot),
+    [allConversations]
+  );
   const { journals } = useJournalsQuery();
   const forkLineage = useForkLineage(conversations);
   const { synthesizeConversationToJournal, synthesizingConversationId, continueConversationInNewChat, continuingConversationId } = synthesis;
@@ -80,7 +85,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     copyingConversationId,
     savingConversationId,
   } = exportActions;
-  const generateStudyDeck = useGenerateConversationStudyDeck();
+  const generateStudyDeck = useGenerateConversationFlashcardDeck();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);

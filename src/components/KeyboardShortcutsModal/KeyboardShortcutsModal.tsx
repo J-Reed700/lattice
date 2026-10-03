@@ -58,7 +58,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         { keys: [cmd, '3'], description: 'Journal' },
         { keys: [cmd, '4'], description: 'Chat' },
         { keys: [cmd, '5'], description: 'References' },
-        { keys: [cmd, '6'], description: 'Study' },
+        { keys: [cmd, '6'], description: 'Explorer' },
         { keys: [cmd, '7'], description: 'Studio' },
         { keys: [cmd, 'I'], description: 'Import' },
       ],
@@ -70,6 +70,14 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         { keys: [shift, 'Enter'], description: 'New line' },
         { keys: [cmd, shift, 'K'], description: 'Find in conversations and references' },
         { keys: [cmd, '\\'], description: 'Hide or show the sidebar' },
+      ],
+    },
+    {
+      title: 'Explorer',
+      shortcuts: [
+        { keys: [cmd, 'F'], description: 'Find in the open file' },
+        { keys: [cmd, '['], description: 'Back to the previous file' },
+        { keys: [cmd, ']'], description: 'Forward to the next file' },
       ],
     },
   ];

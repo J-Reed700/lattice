@@ -5,8 +5,8 @@ import {
   Bookmark,
   Command,
   LibraryBig,
-  GraduationCap,
   BookOpenCheck,
+  FolderTree,
   Home,
   Layers3,
   MessageCircle,
@@ -34,7 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
  * 800px minimum width, so there is no mobile breakpoint to serve.
  */
 
-type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'study' | 'studio' | 'ingest' | 'settings';
+type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'explorer' | 'studio' | 'ingest' | 'settings';
 
 interface NavItem {
   view: View;
@@ -53,7 +53,7 @@ const PRIMARY_NAV: NavItem[] = [
   { view: 'journals', label: 'Journal', shortcut: '⌘3', icon: <NotebookPen className={ICON_CLASS} strokeWidth={STROKE} /> },
   { view: 'chat', label: 'Chat', shortcut: '⌘4', icon: <MessageCircle className={ICON_CLASS} strokeWidth={STROKE} /> },
   { view: 'references', label: 'References', shortcut: '⌘5', icon: <Bookmark className={ICON_CLASS} strokeWidth={STROKE} /> },
-  { view: 'study', label: 'Study', shortcut: '⌘6', icon: <GraduationCap className={ICON_CLASS} strokeWidth={STROKE} /> },
+  { view: 'explorer', label: 'Explorer', shortcut: '⌘6', icon: <FolderTree className={ICON_CLASS} strokeWidth={STROKE} /> },
   { view: 'studio', label: 'Studio', shortcut: '⌘7', icon: <BookOpenCheck className={ICON_CLASS} strokeWidth={STROKE} /> },
 ];
 

@@ -51,10 +51,26 @@ Provide a modern, low-latency, citation-grounded architecture for Recall that:
   - there is no resolvable recent document.
 - Clarify responses for no-recent-document scenarios use generic guidance instead of "previous document".
 
+## Where It Lives
+
+- Router: `src-tauri/src/infrastructure/services/router.rs` (`RouterService`,
+  actions `use_last_document` / `new_search` / `clarify`).
+- Gate: `resolve_router_decision` in
+  `src-tauri/src/features/conversation/chat.rs`. Besides the cases above, it
+  skips the router for closed-book turns, forced web search, and Explorer turns
+  the user did not point at the library. A turn's record keeps the router's
+  decision only when the router actually ran (`chat/turn_record.rs`).
+- Settings: `llm.router` (`RouterSettingsDto` in
+  `src-tauri/src/application/contracts/settings.rs`; default `enabled: false`,
+  model `phi-3.5-mini-instruct-q4_k_m`, 350 ms timeout). Validation in
+  `features/settings/repository.rs` warns rather than fails when it is off.
+- Retrieval: `src-tauri/src/features/conversation/chat/retrieval/`; grounding
+  checks: `chat/verification/`.
+
 ## Future Phases
 
 1. Add explicit policy telemetry
-- Emit metrics for fallback reason (`no_recent_doc`, `low_confidence`, `router_disabled`).
+- Emit metrics for fallback reason (`no_recent_doc`, `low_confidence`, `router_disabled`). Not built yet.
 
 2. Improve confidence policy
 - Use calibrated thresholds from offline evaluation datasets.
@@ -64,3 +80,4 @@ Provide a modern, low-latency, citation-grounded architecture for Recall that:
 
 4. Continuous eval
 - Track groundedness, citation precision, abstention quality, latency, and cost per answer.
+- Offline harnesses exist (`scripts/rag_eval.py`, `scripts/chat_rag_eval.py`, datasets in `evals/`); nothing runs them continuously.

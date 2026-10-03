@@ -293,6 +293,23 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   update_passage_reference: { domain: 'references', command: 'update_passage_reference' },
   delete_passage_reference: { domain: 'references', command: 'delete_passage_reference' },
 
+  // Explorer domain: a folder on disk, read live beside a chat
+  explorer_resolve_root: { domain: 'explorer', command: 'explorer_resolve_root' },
+  explorer_list_dir: { domain: 'explorer', command: 'explorer_list_dir' },
+  explorer_read_file: { domain: 'explorer', command: 'explorer_read_file' },
+  explorer_search: { domain: 'explorer', command: 'explorer_search' },
+  set_conversation_explorer_root: { domain: 'explorer', command: 'set_conversation_explorer_root' },
+  explorer_index_open: { domain: 'explorer', command: 'explorer_index_open' },
+  explorer_index_close: { domain: 'explorer', command: 'explorer_index_close' },
+  explorer_index_status: { domain: 'explorer', command: 'explorer_index_status' },
+  explorer_index_rebuild: { domain: 'explorer', command: 'explorer_index_rebuild' },
+  explorer_folders_list: { domain: 'explorer', command: 'explorer_folders_list' },
+  explorer_folder_rename: { domain: 'explorer', command: 'explorer_folder_rename' },
+  explorer_folder_set_pinned: { domain: 'explorer', command: 'explorer_folder_set_pinned' },
+  explorer_folder_set_settings: { domain: 'explorer', command: 'explorer_folder_set_settings' },
+  explorer_folder_delete_index: { domain: 'explorer', command: 'explorer_folder_delete_index' },
+  explorer_folder_remove: { domain: 'explorer', command: 'explorer_folder_remove' },
+
   // Compare domain
   list_study_decks: { domain: 'study', command: 'list_study_decks' },
   get_study_deck: { domain: 'study', command: 'get_study_deck' },
@@ -1965,6 +1982,50 @@ const VaultAPI = {
   reviewStudyCard: (request: Wire.ReviewStudyCardRequestDto): Promise<ApiResult<Wire.StudyCardDto>> => apiCall('review_study_card', { request }),
   updateStudyCard: (request: Wire.UpdateStudyCardRequestDto): Promise<ApiResult<void>> => apiCall('update_study_card', { request }),
   deleteStudyDeck: (id: string): Promise<ApiResult<void>> => apiCall('delete_study_deck', { id }),
+
+  /** Canonicalises a folder the user picked; it must be an existing directory. */
+  explorerResolveRoot: (path: string): Promise<ApiResult<Wire.ExplorerRootDto>> => apiCall('explorer_resolve_root', { path }),
+  /** One level of a directory under `root`; `path` is relative, `""` is the root. */
+  explorerListDir: (root: string, path: string): Promise<ApiResult<Wire.ExplorerListingDto>> => apiCall('explorer_list_dir', { root, path }),
+  explorerReadFile: (root: string, path: string): Promise<ApiResult<Wire.ExplorerFileDto>> => apiCall('explorer_read_file', { root, path }),
+  explorerSearch: (
+    root: string,
+    query: string,
+    options: { regex?: boolean; pathPrefix?: string | null; maxResults?: number | null } = {}
+  ): Promise<ApiResult<Wire.ExplorerSearchResultDto>> => apiCall('explorer_search', {
+    root,
+    query,
+    regex: options.regex ?? false,
+    pathPrefix: options.pathPrefix ?? null,
+    maxResults: options.maxResults ?? null,
+  }),
+  /** Binds a conversation to a folder; `null` unbinds it. */
+  setConversationExplorerRoot: (conversationId: string, root: string | null): Promise<ApiResult<void>> =>
+    apiCall('set_conversation_explorer_root', { conversationId, root }),
+  /** Opens the folder's search index and starts or resumes indexing; closes any other. */
+  explorerIndexOpen: (root: string): Promise<ApiResult<Wire.FolderIndexStatusDto>> => apiCall('explorer_index_open', { root }),
+  /** Closes the open folder's index (watcher, indexing, database). */
+  explorerIndexClose: (): Promise<ApiResult<void>> => apiCall('explorer_index_close'),
+  explorerIndexStatus: (root: string): Promise<ApiResult<Wire.FolderIndexStatusDto>> => apiCall('explorer_index_status', { root }),
+  /** Wipes the folder's index and builds it again. */
+  explorerIndexRebuild: (root: string): Promise<ApiResult<Wire.FolderIndexStatusDto>> => apiCall('explorer_index_rebuild', { root }),
+  /** The folders picked in the Explorer, pinned first, each with its threads and index. */
+  explorerFoldersList: (): Promise<ApiResult<Wire.ExplorerFolderListDto>> => apiCall('explorer_folders_list'),
+  /** Renames a folder in the list; an empty name goes back to the folder's own. */
+  explorerFolderRename: (root: string, name: string): Promise<ApiResult<void>> => apiCall('explorer_folder_rename', { root, name }),
+  explorerFolderSetPinned: (root: string, pinned: boolean): Promise<ApiResult<void>> =>
+    apiCall('explorer_folder_set_pinned', { root, pinned }),
+  /**
+   * Sets a folder's system prompt (empty for none) and the space its threads
+   * belong to. Its threads move to that space; returns how many moved.
+   */
+  explorerFolderSetSettings: (root: string, instructions: string, spaceId: string): Promise<ApiResult<number>> =>
+    apiCall('explorer_folder_set_settings', { root, instructions, spaceId }),
+  /** Deletes the folder's own index and keeps it listed; the next open builds it again. */
+  explorerFolderDeleteIndex: (root: string): Promise<ApiResult<void>> => apiCall('explorer_folder_delete_index', { root }),
+  /** Removes a folder and its own index from the list; with `deleteThreads`, its threads too. */
+  explorerFolderRemove: (root: string, deleteThreads: boolean): Promise<ApiResult<number>> =>
+    apiCall('explorer_folder_remove', { root, deleteThreads }),
 
   listLearningPrograms: (): Promise<ApiResult<Wire.LearningProgramSummaryDto[]>> => apiCall('list_learning_programs'),
   getLearningPlan: (id: string): Promise<ApiResult<Wire.LearningPlanDto>> => apiCall('get_learning_plan', { id }),

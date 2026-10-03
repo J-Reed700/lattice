@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
+import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
 test.beforeEach(async ({ page }) => {
@@ -683,7 +684,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
   expect(errors).toEqual([]);
 });
 
-test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
+test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
   await page.addInitScript(settings => {
     const source = { chunkId: 'biology-chunk', documentId: 'biology', fileName: 'biology.md', filePath: '/library/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' };
     const original = {
@@ -702,6 +703,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
         return settings;
       }
       if (command === 'plugin:health|initialize_database') return undefined;
+      if (command === 'plugin:learning|list_learning_programs') return [];
       if (command === 'plugin:download|list_downloads' || command === 'plugin:batch|get_batch_history') return [];
       if (command === 'plugin:file|list_all_documents') return [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }];
       if (command === 'plugin:file|read_file_content') {
@@ -740,8 +742,8 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   }, makeAppSettings());
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
-  await page.goto('/study');
-  await expect(page.getByRole('button', { name: 'Study', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.goto('/studio');
+  await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByText('Put what you learn into practice.')).toBeVisible();
   await page.getByRole('button', { name: 'New deck', exact: true }).click();
   await page.getByLabel('Deck title').fill('Biology review');
@@ -752,13 +754,13 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   await page.screenshot({ path: '/tmp/lattice-study-new-dark.png' });
   await page.getByRole('button', { name: 'Generate deck' }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Study', exact: true }).click();
+  await page.getByRole('button', { name: 'Studio', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Generating 2 questions' })).toBeVisible();
   await expect(page.getByText('Put what you learn into practice.')).toHaveCount(0);
   await page.screenshot({ path: '/tmp/lattice-study-background-dark.png' });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.evaluate(() => window.dispatchEvent(new Event('test:finish-generation')));
-  await page.getByRole('button', { name: 'Study', exact: true }).click();
+  await page.getByRole('button', { name: 'Studio', exact: true }).click();
   await page.getByRole('button').filter({ hasText: 'Biology review' }).click();
   await expect(page.getByRole('heading', { name: 'Biology review', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Review due (2)' }).click();
@@ -1088,6 +1090,8 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces'].includes(command)) return [];
       if (command === 'plugin:learning|list_learning_programs') return [program.summary];
       if (command === 'plugin:learning|get_learning_program') return program;
+      if (command === 'plugin:learning|get_learning_memory') return { programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, schedulerVersion: 'fixture' };
+      if (command === 'plugin:learning|get_learning_practice_workspace') return { programId: program.summary.id, sessions: [] };
       throw new Error(`Unsupported Learning Studio fixture command: ${command}`);
     };
   }, makeAppSettings());
@@ -1098,19 +1102,19 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
   await expect(page.getByRole('button', { name: 'Studio', exact: true })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: /Production reasoning after an AI-heavy year/ }).click();
   await expect(page.getByRole('heading', { name: 'Production reasoning after an AI-heavy year' })).toBeVisible();
-  await expect(page.getByText('Module journey', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Module', { exact: true })).toHaveValue('module-1');
   const moduleWorkspace = page.getByRole('navigation', { name: 'Module workspace' });
   await expect(moduleWorkspace).toBeVisible();
-  await expect(moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(moduleWorkspace.getByRole('tab', { name: 'Lessons', exact: true })).toHaveAttribute('aria-selected', 'true');
 
-  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  await openStudioSection(page, 'Quick checks');
   const quickCheckType = page.getByRole('group', { name: 'Quick check type' });
   await expect(quickCheckType.getByRole('button', { name: 'practice', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('radio', { name: 'Use a stable operation identifier' }).click();
   await quickCheckType.getByRole('button', { name: 'quiz', exact: true }).click();
   await quickCheckType.getByRole('button', { name: 'practice', exact: true }).click();
-  await moduleWorkspace.getByRole('button', { name: 'Lessons', exact: true }).click();
-  await moduleWorkspace.getByRole('button', { name: 'Quick checks', exact: true }).click();
+  await openStudioSection(page, 'Lessons');
+  await openStudioSection(page, 'Quick checks');
   await expect(page.getByRole('radio', { name: 'Use a stable operation identifier' })).toBeChecked();
 
   await quickCheckType.getByRole('button', { name: 'History (1)', exact: true }).click();

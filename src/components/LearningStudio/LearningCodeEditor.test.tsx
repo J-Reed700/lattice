@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { language } from '@codemirror/language';
+import { EditorView } from '@codemirror/view';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -82,6 +84,45 @@ describe('LearningCodeEditor', () => {
     await user.keyboard('{Control>}z{/Control}');
     expect(editorElement()).toHaveTextContent('{"ready": true}');
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('selects JavaScript, JSX, TSX, Markdown, and plain text modes from the active file path', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<LearningCodeEditor path="app.js" value="const value = 1;" onChange={onChange} />);
+    expect(screen.getByText('JavaScript')).toBeInTheDocument();
+
+    for (const [path, language] of [['view.jsx', 'JSX'], ['view.tsx', 'TSX'], ['notes.md', 'Markdown'], ['notes.txt', 'Plain text']] as const) {
+      rerender(<LearningCodeEditor path={path} value="const value = 1;" onChange={onChange} />);
+      expect(screen.getByText(language)).toBeInTheDocument();
+    }
+  });
+
+  it('colors the file once its grammar loads, in the same editor and with its undo history', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<LearningCodeEditor path="scripts/build.sh" value='echo "$HOME"' onChange={onChange} />);
+    const mounted = editorElement()!;
+    const view = EditorView.findFromDOM(mounted)!;
+    expect(screen.getByText('Shell')).toBeInTheDocument();
+    mounted.focus();
+    await user.keyboard('#');
+
+    await waitFor(() => expect(view.state.facet(language)?.name).toBe('shell'));
+    expect(editorElement()).toBe(mounted);
+    await user.keyboard('{Control>}z{/Control}');
+    expect(onChange).toHaveBeenLastCalledWith('echo "$HOME"');
+  });
+
+  it('indents with Tab and documents the Escape then Tab focus exit', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<><LearningCodeEditor path="main.js" value="run();" onChange={onChange} /><button type="button">Continue</button></>);
+    const editor = editorElement();
+    editor?.focus();
+
+    await user.keyboard('{Tab}');
+    expect(onChange).toHaveBeenLastCalledWith('  run();');
+    expect(screen.getByText('Press Esc, then Tab to move focus')).toBeInTheDocument();
   });
 
   it('keeps read-only contents non-editable and labels the editing surface accessibly', async () => {

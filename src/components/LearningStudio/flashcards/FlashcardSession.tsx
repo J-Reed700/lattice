@@ -5,11 +5,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import type { StudyCardDto, StudyRating } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
-import { StudySource } from './StudySource';
-import { useReviewStudyCard } from './useStudy';
+import { FlashcardSource } from './FlashcardSource';
+import { useReviewFlashcard } from './useFlashcards';
 
-export type StudyMode = 'flashcard' | 'quiz';
-export function StudySession({ cards, mode, title, onClose }: { cards: StudyCardDto[]; mode: StudyMode; title: string; onClose: () => void }) {
+export type FlashcardMode = 'flashcard' | 'quiz';
+export function FlashcardSession({ cards, mode, title, onClose }: { cards: StudyCardDto[]; mode: FlashcardMode; title: string; onClose: () => void }) {
   const sessionCards = mode === 'quiz' ? cards.filter(card => (card.format ?? 'multiple_choice') === 'multiple_choice' && card.options.length > 0) : cards;
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -17,7 +17,7 @@ export function StudySession({ cards, mode, title, onClose }: { cards: StudyCard
   const [correctCount, setCorrectCount] = useState(0);
   const [missed, setMissed] = useState<string[]>([]);
   const reviewAttempt = useRef<{ signature: string; id: string } | null>(null);
-  const review = useReviewStudyCard();
+  const review = useReviewFlashcard();
   const card = sessionCards[index];
   const next = () => { setIndex(i => i + 1); setSelected(null); setRevealed(false); reviewAttempt.current = null; review.reset(); };
   const grade = (rating: StudyRating) => {
@@ -62,7 +62,7 @@ export function StudySession({ cards, mode, title, onClose }: { cards: StudyCard
       <h3 className="mb-3 text-sm font-medium text-text-secondary">{mode === 'quiz' ? selected === card.correctIndex ? 'Correct' : 'Review this answer' : 'Answer'}</h3>
       {mode === 'flashcard' && <p className="mb-4 text-lg leading-relaxed text-text-primary">{card.answer}</p>}
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{card.explanation}</p>
-      <StudySource sources={card.citations?.length ? card.citations : [card.source]} />
+      <FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} />
     </div>}
     {review.isError && <p role="alert" className="mt-4 text-sm text-danger-fg">Couldn’t save this review: {review.error.message}</p>}
     <div className="mt-8 flex flex-wrap justify-end gap-2">

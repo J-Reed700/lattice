@@ -370,6 +370,7 @@ impl ConversationRepository {
             c.archived_at,
             c.forked_from_conversation_id,
             c.forked_from_message_id,
+            c.explorer_root,
             (
                 SELECT m.content
                 FROM conversation_messages m
@@ -461,6 +462,7 @@ impl ConversationRepository {
                 compaction: None,
                 forked_from_conversation_id: row.forked_from_conversation_id,
                 forked_from_message_id: row.forked_from_message_id,
+                explorer_root: row.explorer_root,
             })
             .collect::<Vec<_>>();
 

@@ -90,6 +90,21 @@ fn main() {
     #[rustfmt::skip]
     let builder =
         tauri_specta::Builder::<tauri::Wry>::new().commands(tauri_specta::collect_commands![
+            lattice::features::explorer::plugin::explorer_resolve_root,
+            lattice::features::explorer::plugin::explorer_list_dir,
+            lattice::features::explorer::plugin::explorer_read_file,
+            lattice::features::explorer::plugin::explorer_search,
+            lattice::features::explorer::plugin::set_conversation_explorer_root,
+            lattice::features::explorer::plugin::explorer_index_open::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_index_close::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_index_status::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_index_rebuild::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_folders_list::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_folder_rename,
+            lattice::features::explorer::plugin::explorer_folder_set_pinned,
+            lattice::features::explorer::plugin::explorer_folder_set_settings,
+            lattice::features::explorer::plugin::explorer_folder_delete_index::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_folder_remove::<tauri::Wry>,
             lattice::features::study::plugin::list_study_decks,
             lattice::features::study::plugin::get_study_deck,
             lattice::features::study::plugin::generate_study_deck,

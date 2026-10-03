@@ -22,6 +22,7 @@ pub(super) struct ConversationExplorerRow {
     pub(super) last_message_preview: Option<String>,
     pub(super) forked_from_conversation_id: Option<String>,
     pub(super) forked_from_message_id: Option<String>,
+    pub(super) explorer_root: Option<String>,
 }
 pub(super) fn build_fts_query(raw: &str) -> Option<String> {
     let terms = raw
@@ -75,6 +76,7 @@ impl ConversationRepository {
             c.archived_at,
             c.forked_from_conversation_id,
             c.forked_from_message_id,
+            c.explorer_root,
             (
                 SELECT m.content
                 FROM conversation_messages m
@@ -183,6 +185,7 @@ impl ConversationRepository {
                 compaction: None,
                 forked_from_conversation_id: row.forked_from_conversation_id,
                 forked_from_message_id: row.forked_from_message_id,
+                explorer_root: row.explorer_root,
             })
             .collect::<Vec<_>>();
 

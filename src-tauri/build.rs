@@ -445,6 +445,26 @@ fn main() {
                 ]),
             )
             .plugin(
+                "explorer",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "explorer_resolve_root",
+                    "explorer_list_dir",
+                    "explorer_read_file",
+                    "explorer_search",
+                    "set_conversation_explorer_root",
+                    "explorer_index_open",
+                    "explorer_index_close",
+                    "explorer_index_status",
+                    "explorer_index_rebuild",
+                    "explorer_folders_list",
+                    "explorer_folder_rename",
+                    "explorer_folder_set_pinned",
+                    "explorer_folder_set_settings",
+                    "explorer_folder_delete_index",
+                    "explorer_folder_remove",
+                ]),
+            )
+            .plugin(
                 "study",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "list_study_decks",

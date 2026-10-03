@@ -4,6 +4,8 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
+Status (2026-10-02): decision stands (Tauri 2.11, React 19, Vite). The snippets below are illustrative and partly Tauri 1-shaped: the real config is `src-tauri/tauri.conf.json` (identifier `tech.lattice.app`), permissions are Tauri 2 capabilities in `src-tauri/capabilities/main.json` (there is no allowlist), commands are grouped into one Tauri plugin per feature and registered by `src-tauri/src/plugins/mod.rs`, bindings are generated to `src/lib/bindings.ts` by the `export_bindings` binary (`npm run bindings:generate`), there is no system tray or Tauri updater (update checks query GitHub Releases in `features/updates/`), and `tauri-plugin-single-instance` allows one running instance.
+
 ## Context
 
 Lattice requires a **cross-platform desktop application** that provides:
@@ -109,24 +111,30 @@ const results = await invoke<SearchResult[]>('search_documents', {
 #### Project Structure
 
 ```
-src/
-├── src/                    # React frontend
-│   ├── components/        # UI components
-│   ├── hooks/            # Custom hooks
-│   ├── stores/           # Zustand state
-│   ├── types/            # TypeScript types
-│   └── main.tsx          # Entry point
-├── src-tauri/            # Rust backend
+lattice/
+├── src/                      # React frontend
+│   ├── components/          # UI components
+│   ├── hooks/               # Custom hooks
+│   ├── stores/              # Zustand state
+│   ├── lib/bindings.ts      # Generated IPC bindings
+│   ├── types/               # TypeScript types
+│   └── main.tsx             # Entry point
+├── src-tauri/               # Rust backend
 │   ├── src/
-│   │   ├── commands/     # IPC command handlers
-│   │   ├── db/          # SQLite layer
-│   │   ├── search/      # Vector search
-│   │   ├── models/      # ONNX models
-│   │   └── main.rs      # Tauri app setup
-│   ├── Cargo.toml       # Rust dependencies
-│   └── tauri.conf.json  # Tauri config
-├── package.json         # npm dependencies
-└── vite.config.ts       # Vite config
+│   │   ├── features/        # One vertical slice per feature (commands, plugin.rs, use cases)
+│   │   ├── plugins/mod.rs   # Registers every feature plugin
+│   │   ├── domain/          # Entities, value objects, ports
+│   │   ├── application/     # Contracts, ports, services
+│   │   ├── infrastructure/  # Persistence, setup, observability, adapters
+│   │   ├── interfaces/di/   # DI container
+│   │   ├── shared/          # Errors, shared types, utilities
+│   │   └── main.rs          # Tauri app setup
+│   ├── migrations/          # sqlx migrations
+│   ├── capabilities/        # Tauri 2 permissions
+│   ├── Cargo.toml           # Rust dependencies
+│   └── tauri.conf.json      # Tauri config
+├── package.json             # npm dependencies
+└── vite.config.ts           # Vite config
 ```
 
 ## Consequences
@@ -288,14 +296,14 @@ struct SearchResult {
 fn main() {
     ts::export(
         collect_types![search_documents],
-        "./src/bindings.ts"
+        "../src/lib/bindings.ts"  // today: src/export_bindings.rs, run via `npm run bindings:generate`
     ).unwrap();
 }
 ```
 
 ```typescript
 // Auto-generated types
-import { search_documents } from './bindings';
+import { search_documents } from '@/lib/bindings';
 
 const results = await search_documents({ query: "test", limit: 10 });
 // results is typed as SearchResult[]

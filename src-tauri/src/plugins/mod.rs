@@ -35,6 +35,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::web::plugin::init(),
         // Final domains
         crate::features::conversation::plugin::init(),
+        crate::features::explorer::plugin::init(),
         crate::features::download::plugin::init(),
         crate::features::batch::plugin::init(),
         crate::features::backup::plugin::init(),

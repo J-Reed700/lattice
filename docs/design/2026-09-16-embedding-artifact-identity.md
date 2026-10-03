@@ -1,6 +1,6 @@
 # Embedding artifact identity: hash on activation, never on launch
 
-Status: implemented (2026-09-16, uncommitted). See section 7 for where the build
+Status: implemented (2026-09-16, since merged). See section 7 for where the build
 differs from this brief.
 Branch: `architecture-refactor`. Crate: `src-tauri/`. Frontend untouched.
 

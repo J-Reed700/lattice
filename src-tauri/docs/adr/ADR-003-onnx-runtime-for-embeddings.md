@@ -4,6 +4,8 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
+Status (2026-10-02): superseded - `ort` (and fastembed) were removed; embeddings and the reranker run on Candle (`candle-*` 0.10, Metal on macOS with CPU fallback) from safetensors/PyTorch checkpoints, and the chat LLM runs in the bundled `llama-server` sidecar. See `src-tauri/src/features/embedding/candle_service.rs` and `src-tauri/src/features/search/engine/reranker.rs`.
+
 ## Context
 
 The Lattice desktop application requires **local embedding generation** to convert text documents into semantic vectors for similarity search. This is a core capability that must work:

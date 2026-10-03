@@ -10,6 +10,161 @@
 
 
 export const commands = {
+async explorerResolveRoot(path: string) : Promise<Result<ExplorerRootDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_resolve_root", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerListDir(root: string, path: string) : Promise<Result<ExplorerListingDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_list_dir", { root, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerReadFile(root: string, path: string) : Promise<Result<ExplorerFileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_read_file", { root, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerSearch(root: string, query: string, regex: boolean, pathPrefix: string | null, maxResults: number | null) : Promise<Result<ExplorerSearchResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_search", { root, query, regex, pathPrefix, maxResults }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Binds a conversation to a folder (stored canonical) or, with `None`,
+ * unbinds it.
+ */
+async setConversationExplorerRoot(conversationId: string, root: string | null) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_conversation_explorer_root", { conversationId, root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the folder's index and starts or resumes indexing it. Any other
+ * open folder is closed first. The folder joins the folders list, or moves
+ * up it.
+ */
+async explorerIndexOpen(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_open", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Closes the open folder's index: its watcher, task and database.
+ */
+async explorerIndexClose() : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_close") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerIndexStatus(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_status", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wipes the folder's index and starts over.
+ */
+async explorerIndexRebuild(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_index_rebuild", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The folders list: pinned first, then the most recently opened, each with
+ * its threads and what its index holds.
+ */
+async explorerFoldersList() : Promise<Result<ExplorerFolderListDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folders_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Renames a folder in the list; an empty name goes back to its own.
+ */
+async explorerFolderRename(root: string, name: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_rename", { root, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async explorerFolderSetPinned(root: string, pinned: boolean) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_pinned", { root, pinned }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets a folder's system prompt and the space its threads belong to; an
+ * empty prompt is none, and General is the default space. The folder's
+ * threads move to the space. Returns how many threads moved.
+ */
+async explorerFolderSetSettings(root: string, instructions: string, spaceId: string) : Promise<Result<number, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_settings", { root, instructions, spaceId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes the folder's own index, closing it first if it is open. The
+ * folder stays listed, and the next open builds the index again.
+ */
+async explorerFolderDeleteIndex(root: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_delete_index", { root }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a folder from the list with its own index; with
+ * `delete_threads`, its threads too. Returns how many threads were deleted.
+ */
+async explorerFolderRemove(root: string, deleteThreads: boolean) : Promise<Result<number, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_remove", { root, deleteThreads }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_study_decks") };
@@ -669,6 +824,22 @@ async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promi
 async getLearningPracticalWorkspace(programId: string) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_workspace", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLearningPracticalDraft(request: GetLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticalDraft(request: SaveLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_learning_practical_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4865,7 +5036,13 @@ forkedFromConversationId: string | null;
  * The parent's message the branch was taken at, when one was named.
  * `None` means the whole thread was copied.
  */
-forkedFromMessageId: string | null }
+forkedFromMessageId: string | null;
+/**
+ * The folder an Explorer thread is bound to, as a canonical absolute
+ * path. Set only on Explorer threads; Chat leaves them out of its list
+ * so a thread is never continued without its folder.
+ */
+explorerRoot: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
@@ -5456,6 +5633,96 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type ExplorerEntryDto = { name: string; path: string; kind: ExplorerEntryKind;
+/**
+ * Bytes on disk; `None` for directories.
+ */
+size: number | null;
+/**
+ * Matched by `.gitignore` (or sits inside something that is). The tree
+ * shows these dimmed; search and the model's tools leave them out.
+ */
+ignored: boolean }
+export type ExplorerEntryKind = "directory" | "file"
+export type ExplorerFileDto = { root: string; path: string;
+/**
+ * `None` when the file is binary or over the size cap.
+ */
+text: string | null; lineCount: number; sizeBytes: number; language: string | null; binary: boolean; tooLarge: boolean }
+/**
+ * What the user is looking at when they send: the open file and the
+ * selected lines. Rides along on each Explorer turn.
+ */
+export type ExplorerFocusDto = { openPath: string | null; selection: ExplorerLineRangeDto | null }
+/**
+ * One folder in the Explorer's folders list.
+ */
+export type ExplorerFolderDto = { root: string;
+/**
+ * The display name; the folder's own name unless renamed.
+ */
+name: string; pinned: boolean;
+/**
+ * RFC 3339.
+ */
+addedAt: string;
+/**
+ * RFC 3339.
+ */
+lastOpenedAt: string;
+/**
+ * The folder is still on disk.
+ */
+exists: boolean;
+/**
+ * Explorer threads bound to this folder.
+ */
+threadCount: number; index: FolderIndexSummaryDto;
+/**
+ * The folder's system prompt; `None` when it has none and its space's
+ * prompt applies.
+ */
+instructions: string | null;
+/**
+ * The space its threads belong to; General unless one was chosen.
+ */
+spaceId: string }
+/**
+ * The folders list, with the home folder so paths under it can be shown
+ * as `~/…`.
+ */
+export type ExplorerFolderListDto = { home: string | null; folders: ExplorerFolderDto[] }
+/**
+ * 1-based, inclusive.
+ */
+export type ExplorerLineRangeDto = { startLine: number; endLine: number }
+/**
+ * One level of a directory: directories first, then files, each sorted
+ * case-insensitively.
+ */
+export type ExplorerListingDto = { root: string; path: string; entries: ExplorerEntryDto[] }
+/**
+ * A folder the user chose, after canonicalisation.
+ */
+export type ExplorerRootDto = { root: string;
+/**
+ * The folder's own name, for the scope bar.
+ */
+name: string }
+export type ExplorerSearchMatchDto = { path: string;
+/**
+ * 1-based.
+ */
+line: number;
+/**
+ * 1-based, in characters.
+ */
+column: number; preview: string }
+export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
+/**
+ * A bound was hit (results, files, bytes or time), so there may be more.
+ */
+truncated: boolean; filesScanned: number }
 export type ExportCsvRequestDto = { outputPath: string }
 export type ExportHtmlRequestDto = { outputDir: string }
 export type ExportJsonRequestDto = {
@@ -5525,6 +5792,91 @@ path: string }
  */
 export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * Where the open folder's index stands.
+ */
+export type FolderIndexState =
+/**
+ * Walking the folder and comparing it with what is already indexed.
+ */
+"scanning" |
+/**
+ * Embedding the files that are new or changed.
+ */
+"indexing" | "ready" |
+/**
+ * More indexable files than the cap; nothing was embedded.
+ */
+"tooLarge" |
+/**
+ * The filesystem root, the home folder or an ancestor of it, or a
+ * folder that holds Lattice's own data.
+ */
+"refused" |
+/**
+ * No active embedding model.
+ */
+"unavailable" | "error"
+/**
+ * The index of one open folder. `index_root` differs from `root` when the
+ * folder sits inside one that already has an index and that index is reused.
+ *
+ * Files move when a save lands (a file counts once all its passages are in
+ * the saved vectors file); passages move after every embedded batch, so
+ * progress is told in passages.
+ */
+export type FolderIndexStatusDto = { root: string; indexRoot: string; state: FolderIndexState;
+/**
+ * While scanning, the files found so far.
+ */
+filesTotal: number; filesIndexed: number; passagesTotal: number; passagesEmbedded: number;
+/**
+ * Passages embedded per second, smoothed; `None` until a run has
+ * enough behind it to say.
+ */
+passagesPerSecond: number | null;
+/**
+ * Seconds left at that rate; `None` when there is no rate yet.
+ */
+etaSeconds: number | null; message: string | null }
+/**
+ * One folder's index for the folders list. For the open folder it is the
+ * live status; for the rest, what the index on disk holds.
+ */
+export type FolderIndexSummaryDto = { state: FolderIndexSummaryState; filesTotal: number; filesIndexed: number; passagesTotal: number; passagesEmbedded: number;
+/**
+ * Bytes on disk of the folder's own index directory; 0 when it has none.
+ */
+bytes: number;
+/**
+ * The enclosing folder whose index this one reuses; `None` when it uses
+ * its own.
+ */
+indexRoot: string | null;
+/**
+ * While indexing: seconds left, when known.
+ */
+etaSeconds: number | null; message: string | null }
+/**
+ * What a folder's index holds, as the folders list shows it.
+ */
+export type FolderIndexSummaryState =
+/**
+ * Its last full run finished and everything found is embedded.
+ */
+"indexed" |
+/**
+ * Some of it is embedded: a run was stopped before it finished.
+ */
+"partial" |
+/**
+ * Open now and building; the numbers are live.
+ */
+"indexing" |
+/**
+ * No index yet.
+ */
+"notIndexed" | "tooLarge" | "refused" | "error"
 export type ForkConversationRequestDto = { conversationId: string;
 /**
  * Copy messages up to and including this id. `None` copies everything.
@@ -5677,6 +6029,7 @@ export type GetConversationResponseDto = {
  * The conversation (if found)
  */
 conversation: ConversationDto | null }
+export type GetLearningPracticalDraftRequestDto = { programId: string; activityId: string; activityRevision: number }
 export type GetLearningSourceVersionRequestDto = { programId: string; sourceId: string; versionId: string }
 export type GetMentionsForDocumentResultDto = { documentId: string; mentions: MentionWithContextDto[]; count: number }
 export type HealthStatus = { status: string; database: boolean; embedding_model: boolean; llm: boolean; timestamp: string }
@@ -6087,6 +6440,10 @@ export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_rev
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
 export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
+/**
+ * Learner-owned starter files for one immutable practical activity revision.
+ */
+export type LearningPracticalDraftDto = { programId: string; activityId: string; activityRevision: number; draftRevision: number; files: LearningLabFile[]; updatedAt: number | null }
 export type LearningPracticalFileDto = { path: string; role: LearningPracticalPublicFileRole; content: string; contentSha256: string; editable: boolean }
 export type LearningPracticalPublicFileRole = "starter" | "reference"
 export type LearningPracticalRunDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; status: LearningPracticalRunStatus; builtinRuntime?: LearningBuiltinRuntime | null; engine: LearningContainerEngine | null; imageId: string | null; learnerFiles: LearningLabFile[]; stdout: string; stderr: string; outputTruncated: boolean; exitCode: number | null; durationMs: number | null; checks: LearningPracticalCheckResultDto[]; createdAt: number; completedAt: number | null }
@@ -6950,6 +7307,7 @@ clarifyPromptTemplate: string }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
+export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
@@ -7611,7 +7969,13 @@ export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; de
  * them; ids from outside it are dropped. See `focus_scope` in the
  * retrieval pipeline.
  */
-focusDocumentIds?: string[] | null }
+focusDocumentIds?: string[] | null;
+/**
+ * The file open in Explorer and its selected lines, sent with each turn
+ * of an Explorer conversation. Resolved against the conversation's stored
+ * folder; ignored when it has none, and dropped when it does not resolve.
+ */
+explorerFocus?: ExplorerFocusDto | null }
 /**
  * The transcript of one audio file.
  */

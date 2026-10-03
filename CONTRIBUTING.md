@@ -5,8 +5,8 @@ behavioral changes, and avoid committing local reports or work-session notes.
 
 ## Setup
 
-Install Node.js 20 or newer, a current Rust toolchain, and the platform
-prerequisites listed by Tauri. Then run:
+Install Node.js 20.19+ or 22.12+ (CI uses 24), a current Rust toolchain, and
+the platform prerequisites listed by Tauri. Then run:
 
 ```bash
 npm ci
@@ -30,12 +30,23 @@ Keep one representation for each domain concept. Rust DTOs exported over IPC
 must be reflected in the generated TypeScript bindings rather than duplicated
 by hand.
 
-When adding a Tauri command, update all four integration points:
+When adding a Tauri command, update all five integration points:
 
 1. The `#[tauri::command]` implementation.
 2. The feature's `tauri::generate_handler!` registration.
 3. The command list in `src-tauri/build.rs`.
 4. The permission entry in `src-tauri/capabilities/main.json`.
+5. The command list in `src-tauri/src/export_bindings.rs`, then
+   `npm run bindings:generate`.
+
+Missing step 3 or 4 still compiles and is rejected at runtime;
+`npm run contracts:commands` catches it.
+
+Schema changes go in a new dated migration,
+`src-tauri/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit a migration that
+has been applied, including the squashed `20260916000000_init_schema.sql`;
+sqlx checksums applied migrations and startup refuses a changed history.
+Lattice is pre-release, so don't add compatibility code for old local data.
 
 ## Before opening a pull request
 
@@ -52,6 +63,15 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 python3 scripts/check-sql-contracts.py
+python3 scripts/check-tauri-command-inventory.py
+```
+
+If you add a dependency or a route to the startup path, build the renderer
+and run the initial-JavaScript budget check CI enforces:
+
+```bash
+npx vite build
+node scripts/check-initial-js-budget.mjs dist
 ```
 
 If an IPC contract changes, also run:

@@ -5,13 +5,13 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import type { StudyCardDto } from '@/lib/bindings';
 
-import { useUpdateStudyCard } from './useStudy';
+import { useUpdateFlashcard } from './useFlashcards';
 
-export function EditStudyCard({ card, onClose }: { card: StudyCardDto; onClose: () => void }) {
+export function EditFlashcard({ card, onClose }: { card: StudyCardDto; onClose: () => void }) {
   const [question, setQuestion] = useState(card.question);
   const [answer, setAnswer] = useState(card.answer);
   const [explanation, setExplanation] = useState(card.explanation);
-  const update = useUpdateStudyCard();
+  const update = useUpdateFlashcard();
   return <Dialog open onOpenChange={open => { if (!open && !update.isPending) onClose(); }}>
     <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
       <DialogTitle>Edit card</DialogTitle>

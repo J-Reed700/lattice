@@ -1,6 +1,6 @@
 # Encrypted backup archive (Phase 1 of cloud durability)
 
-Status: implemented, 2026-09-16 (uncommitted on `architecture-refactor`). Research and rationale:
+Status: implemented, 2026-09-16 (on `architecture-refactor`, since merged). Research and rationale:
 `docs/research/2026-09-16-cloud-durability/README.md`.
 
 ## Goal

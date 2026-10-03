@@ -1,13 +1,13 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading } from '@/components/ui/PageHeader';
 
-import { useDismissStudyGeneration, useGenerateConversationStudyDeck, useGenerateStudyDeck, useStudyGenerations } from './useStudy';
+import { useDismissFlashcardGeneration, useGenerateConversationFlashcardDeck, useGenerateFlashcardDeck, useFlashcardGenerations } from './useFlashcards';
 
-export function StudyGenerations() {
-  const generations = useStudyGenerations();
-  const generate = useGenerateStudyDeck();
-  const generateConversation = useGenerateConversationStudyDeck();
-  const dismiss = useDismissStudyGeneration();
+export function FlashcardGenerations() {
+  const generations = useFlashcardGenerations();
+  const generate = useGenerateFlashcardDeck();
+  const generateConversation = useGenerateConversationFlashcardDeck();
+  const dismiss = useDismissFlashcardGeneration();
   if (!generations.length) return null;
   const busy = generations.some(item => item.status === 'pending');
   return <section className="mb-8" aria-label="Deck generation">

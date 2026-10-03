@@ -4,6 +4,8 @@
 
 **Accepted** - Implemented in Phase 1 (2025-11-15)
 
+Status (2026-10-02): decision stands. Current details: `sqlx` 0.8, a pool of up to 5 connections (busy timeout 5 s, WAL, `synchronous=NORMAL`, 20 MB cache) in `src-tauri/src/infrastructure/persistence/database/connection.rs`; migrations are applied at startup by `initialize_database` (`database/init.rs`), not by `sqlx-cli`; vectors live in USearch files beside `lattice.db`, not in SQLite (see ADR-001). Explorer's per-folder index uses its own SQLite file per folder (`<app data>/folder-index/<folder>/chunks.db`, `src-tauri/src/features/explorer/index/store.rs`), outside `lattice.db`; the list of folders (`explorer_folders`) is in `lattice.db`.
+
 ## Context
 
 The Lattice desktop application is a **local-first** personal knowledge management system that needs to persist:
@@ -31,7 +33,7 @@ We will use **SQLite** as the embedded database, accessed via the **SQLx** async
 ### Implementation Details
 
 - **SQLite version**: 3.35+ (bundled via `rusqlite` or `libsqlite3-sys`)
-- **Rust interface**: `sqlx` v0.7 with compile-time query verification
+- **Rust interface**: `sqlx` v0.7 with compile-time query verification (0.8 today)
 - **Connection pool**: Single-threaded pool with `max_connections=1` (SQLite limitation with WAL mode)
 - **Journal mode**: **WAL (Write-Ahead Logging)** for better concurrency
 - **Foreign keys**: Enabled by default for referential integrity
@@ -277,14 +279,18 @@ sqlx migrate add create_documents_table
 sqlx migrate run --database-url sqlite:lattice.db
 ```
 
-Migration files in `src-tauri/migrations/`. Lattice is pre-release with no legacy
-database support, so the historical chain was squashed into one canonical
-schema migration; existing development databases are deleted rather than
-upgraded:
+Migration files in `src-tauri/migrations/`, embedded with `sqlx::migrate!` and
+applied on startup. Lattice is pre-release with no legacy database support: the
+historical chain was squashed into `20260916000000_init_schema.sql`, and
+existing development databases are deleted rather than upgraded. Every later
+schema change goes in a new dated migration; the init file is never edited:
 ```
 migrations/
-└── 20260916000000_init_schema.sql
+├── 20260916000000_init_schema.sql      # squashed baseline, never edited
+└── <YYYYMMDDHHMMSS>_<change>.sql       # one new dated file per schema change
 ```
+`python3 scripts/check-sql-contracts.py` (run in CI) checks SQL in the code
+against this schema.
 
 ### Backup Strategy
 
