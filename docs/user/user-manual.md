@@ -315,7 +315,10 @@ left (for example "Indexing 28% · ~14 min left"); click it for the counts and
 search covers what is indexed so far. The index is kept separately from
 your library (in the `folder-index` folder of your data folder) and isn't
 included in backups. It follows changes to files while the folder is open, and
-picks up where it left off when you reopen the folder. A folder inside one
+picks up where it left off when you reopen the folder. Once the open folder's
+index is finished, Lattice also finishes any paused folder's index in the
+background, the most recently opened first, one at a time; opening a folder
+pauses that until the new folder's index is done. A folder inside one
 that already has an index uses that index. Lattice doesn't index your home
 folder itself, the root of your disk, or folders with more than 20,000 files;
 Explorer still works in those, just without the index. Indexing needs an
