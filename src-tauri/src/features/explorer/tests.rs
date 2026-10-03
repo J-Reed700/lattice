@@ -495,3 +495,52 @@ mod model_tools {
         );
     }
 }
+
+/// What a line reference in an answer meant, when it is not a path as written.
+#[test]
+fn a_cited_path_is_located_by_its_ending_then_by_its_name() {
+    let (dir, scope) = fixture();
+    write(dir.path(), "contracts/effect_api.hpp", b"// api\n");
+    write(
+        dir.path(),
+        "modules/engine/include/util.rs",
+        b"// another util\n",
+    );
+
+    // As written, when it is there.
+    assert_eq!(
+        fs::locate_file(&scope, "src/main.rs").unwrap(),
+        ["src/main.rs"]
+    );
+    assert_eq!(
+        fs::locate_file(&scope, "./src/main.rs").unwrap(),
+        ["src/main.rs"]
+    );
+    let absolute = format!("{}/src/main.rs", scope.root_string());
+    assert_eq!(fs::locate_file(&scope, &absolute).unwrap(), ["src/main.rs"]);
+
+    // The name alone, or a path that lost its first folders.
+    assert_eq!(
+        fs::locate_file(&scope, "effect_api.hpp").unwrap(),
+        ["contracts/effect_api.hpp"]
+    );
+    assert_eq!(
+        fs::locate_file(&scope, "lib/util.rs").unwrap(),
+        ["src/lib/util.rs", "modules/engine/include/util.rs"],
+        "a path ending outranks a name match, whatever the length"
+    );
+    assert_eq!(
+        fs::locate_file(&scope, "UTIL.RS").unwrap(),
+        ["src/lib/util.rs", "modules/engine/include/util.rs"],
+        "shortest first, case ignored"
+    );
+
+    // A wrong folder still finds the file by name; ignored files never match.
+    assert_eq!(
+        fs::locate_file(&scope, "engine/effect_api.hpp").unwrap(),
+        ["contracts/effect_api.hpp"]
+    );
+    assert!(fs::locate_file(&scope, "out.rs").unwrap().is_empty());
+    assert!(fs::locate_file(&scope, "missing.cpp").unwrap().is_empty());
+    assert!(fs::locate_file(&scope, "  ").unwrap().is_empty());
+}

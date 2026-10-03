@@ -450,6 +450,7 @@ fn main() {
                     "explorer_resolve_root",
                     "explorer_list_dir",
                     "explorer_read_file",
+                    "explorer_locate_file",
                     "explorer_search",
                     "set_conversation_explorer_root",
                     "explorer_index_open",
