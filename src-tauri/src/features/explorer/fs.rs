@@ -409,6 +409,64 @@ pub fn find_files_with_bounds(
     Ok(found)
 }
 
+/// Most files a reference that names no exact path is matched to.
+const MAX_LOCATED: usize = 20;
+
+/// The files a path written in an answer most likely means.
+///
+/// A model that has read `contracts/effect_api.hpp` often cites it as
+/// `effect_api.hpp:12`, or with the folder's absolute path. The path itself
+/// wins when it is a file in the folder. Otherwise the files whose relative
+/// path ends with it, segment by segment, come first, then any file with the
+/// same name; each group shortest path first, case ignored. Empty when
+/// nothing in the folder matches.
+pub fn locate_file(scope: &Scope, path: &str) -> Result<Vec<String>> {
+    let root = format!("{}/", scope.root_string().trim_end_matches('/'));
+    let wanted = path.trim();
+    let wanted = wanted.strip_prefix(root.as_str()).unwrap_or(wanted);
+    let wanted = wanted.trim_start_matches("./").trim_start_matches('/');
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Ok(found) = scope.resolve(wanted) {
+        if found.canonical.is_file() {
+            return Ok(vec![found.relative]);
+        }
+    }
+
+    let wanted = wanted.to_lowercase();
+    let suffix = format!("/{wanted}");
+    let name = wanted.rsplit('/').next().unwrap_or(&wanted).to_string();
+    let name_suffix = format!("/{name}");
+    let deadline = Instant::now() + WalkBounds::default().time_budget;
+    let mut visited = 0usize;
+    let (mut by_path, mut by_name) = (Vec::new(), Vec::new());
+    walk_files(scope, None, |file| {
+        visited += 1;
+        if visited > WalkBounds::default().max_files || Instant::now() >= deadline {
+            return false;
+        }
+        let Some(relative) = scope.relative_of(file) else {
+            return true;
+        };
+        let lower = relative.to_lowercase();
+        if lower == wanted || lower.ends_with(&suffix) {
+            by_path.push(relative);
+        } else if lower == name || lower.ends_with(&name_suffix) {
+            by_name.push(relative);
+        }
+        true
+    });
+    let shortest_first = |paths: &mut Vec<String>| {
+        paths.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    };
+    shortest_first(&mut by_path);
+    shortest_first(&mut by_name);
+    by_path.extend(by_name);
+    by_path.truncate(MAX_LOCATED);
+    Ok(by_path)
+}
+
 type PathMatcher = Box<dyn Fn(&str) -> bool>;
 
 fn name_matcher(pattern: &str) -> Result<PathMatcher> {

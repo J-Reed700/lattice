@@ -143,6 +143,7 @@ impl Rig {
                 save_every: 8,
             },
             debounce: Duration::from_millis(100),
+            background: false,
         }
     }
 
@@ -150,7 +151,7 @@ impl Rig {
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
-    ) -> FolderIndexManager {
+    ) -> Arc<FolderIndexManager> {
         let events = Arc::clone(&self.events);
         FolderIndexManager::new(
             config,
@@ -159,7 +160,7 @@ impl Rig {
         )
     }
 
-    fn manager(&self, embedder: &Arc<FakeEmbedder>) -> FolderIndexManager {
+    fn manager(&self, embedder: &Arc<FakeEmbedder>) -> Arc<FolderIndexManager> {
         self.manager_with(self.config(), Some(Arc::clone(embedder)))
     }
 
@@ -1172,6 +1173,184 @@ mod model {
             &FolderPassages::default(),
         );
         assert!(!empty.contains("Passages from the folder"));
+        manager.close().await;
+    }
+}
+
+mod background {
+    use super::*;
+
+    fn background_manager(rig: &Rig, embedder: &Arc<FakeEmbedder>) -> Arc<FolderIndexManager> {
+        let config = ManagerConfig {
+            background: true,
+            ..rig.config()
+        };
+        rig.manager_with(config, Some(Arc::clone(embedder)))
+    }
+
+    fn many_files(rig: &Rig, name: &str, count: usize) -> PathBuf {
+        let files: Vec<(String, String)> = (0..count)
+            .map(|n| {
+                (
+                    format!("src/m{n:02}.rs"),
+                    format!("pub fn item_{n}() {{}}\n"),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        rig.project(name, &refs)
+    }
+
+    /// Opens `root` and moves on after a few batches, leaving it paused.
+    async fn pause_part_way(manager: &FolderIndexManager, embedder: &FakeEmbedder, root: &Path) {
+        embedder.delay_ms.store(40, Ordering::SeqCst);
+        embedder.forget_calls();
+        manager.open(&text(root)).await.unwrap();
+        for _ in 0..500 {
+            if embedder.batches.load(Ordering::SeqCst) >= 3 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        manager.close().await;
+        assert!(
+            embedder.embedded().len() < 40,
+            "the run should have been stopped part-way"
+        );
+    }
+
+    /// The newest status the app was told for `root`, once it is `state`.
+    async fn told(rig: &Rig, root: &Path, state: FolderIndexState) -> FolderIndexStatusDto {
+        let root = text(root);
+        for _ in 0..1_000 {
+            let found = rig
+                .events
+                .lock()
+                .iter()
+                .rev()
+                .find(|status| status.root == root)
+                .filter(|status| status.state == state)
+                .cloned();
+            if let Some(status) = found {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("{root} never became {state:?}");
+    }
+
+    async fn summary_of(manager: &FolderIndexManager, root: &Path) -> FolderIndexSummaryState {
+        let indexes = manager.index_dirs().await;
+        manager.summaries(&[root.to_path_buf()], &indexes).await[0].state
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_paused_folder_finishes_once_the_open_one_is_done() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = background_manager(&rig, &embedder);
+        let slow = many_files(&rig, "slow", 40);
+        let quick = rig.project("quick", &[("src/retry.rs", RETRY_RS)]);
+        pause_part_way(&manager, &embedder, &slow).await;
+        assert_eq!(
+            summary_of(&manager, &slow).await,
+            FolderIndexSummaryState::Partial
+        );
+
+        embedder.delay_ms.store(0, Ordering::SeqCst);
+        let status = open_settled(&manager, &quick).await;
+        assert_eq!(status.state, FolderIndexState::Ready);
+
+        let finished = told(&rig, &slow, FolderIndexState::Ready).await;
+        assert_eq!(finished.files_indexed, 40);
+        assert_eq!(finished.passages_embedded, finished.passages_total);
+        // The folder picked stays open, and the paused one's turn was not an
+        // open: it does not jump ahead of it in the list.
+        let open = manager.status(&text(&quick)).await.unwrap();
+        assert_eq!(open.state, FolderIndexState::Ready);
+        let indexes = manager.index_dirs().await;
+        let opened = |root: &Path| {
+            indexes
+                .iter()
+                .find(|entry| entry.root.as_deref() == Some(root))
+                .map(|entry| entry.last_opened)
+                .unwrap()
+        };
+        assert!(opened(&quick) > opened(&slow));
+
+        // With nothing left paused, the finished index is closed.
+        for _ in 0..500 {
+            if manager.background().await.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(manager.background().await.is_none());
+        assert_eq!(
+            summary_of(&manager, &slow).await,
+            FolderIndexSummaryState::Indexed
+        );
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn opening_a_folder_stops_the_background_until_its_run_is_done() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = background_manager(&rig, &embedder);
+        let slow = many_files(&rig, "slow", 40);
+        let quick = rig.project("quick", &[("src/retry.rs", RETRY_RS)]);
+        let other = rig.project("other", &[("src/parser.rs", PARSER_RS)]);
+        pause_part_way(&manager, &embedder, &slow).await;
+
+        // Slow enough that the background is still at it when a folder opens.
+        embedder.delay_ms.store(100, Ordering::SeqCst);
+        open_settled(&manager, &quick).await;
+        told(&rig, &slow, FolderIndexState::Indexing).await;
+        assert!(manager.background().await.is_some());
+
+        manager.open(&text(&other)).await.unwrap();
+        assert!(
+            manager.background().await.is_none(),
+            "the folder being opened goes first"
+        );
+        assert_eq!(
+            summary_of(&manager, &slow).await,
+            FolderIndexSummaryState::Partial
+        );
+
+        embedder.delay_ms.store(0, Ordering::SeqCst);
+        assert_eq!(manager.settled().await.state, FolderIndexState::Ready);
+        let finished = told(&rig, &slow, FolderIndexState::Ready).await;
+        assert_eq!(finished.files_indexed, 40);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nothing_resumes_while_the_open_folder_is_still_indexing() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = background_manager(&rig, &embedder);
+        let slow = many_files(&rig, "slow", 40);
+        let busy = many_files(&rig, "busy", 40);
+        pause_part_way(&manager, &embedder, &slow).await;
+        rig.events.lock().clear();
+
+        embedder.delay_ms.store(40, Ordering::SeqCst);
+        manager.open(&text(&busy)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(manager.background().await.is_none());
+        let slow_root = text(&slow);
+        assert!(
+            !rig.events
+                .lock()
+                .iter()
+                .any(|status| status.root == slow_root),
+            "the paused folder waits for the open one"
+        );
         manager.close().await;
     }
 }

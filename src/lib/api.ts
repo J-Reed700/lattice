@@ -297,6 +297,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   explorer_resolve_root: { domain: 'explorer', command: 'explorer_resolve_root' },
   explorer_list_dir: { domain: 'explorer', command: 'explorer_list_dir' },
   explorer_read_file: { domain: 'explorer', command: 'explorer_read_file' },
+  explorer_locate_file: { domain: 'explorer', command: 'explorer_locate_file' },
   explorer_search: { domain: 'explorer', command: 'explorer_search' },
   set_conversation_explorer_root: { domain: 'explorer', command: 'set_conversation_explorer_root' },
   explorer_index_open: { domain: 'explorer', command: 'explorer_index_open' },
@@ -1988,6 +1989,8 @@ const VaultAPI = {
   /** One level of a directory under `root`; `path` is relative, `""` is the root. */
   explorerListDir: (root: string, path: string): Promise<ApiResult<Wire.ExplorerListingDto>> => apiCall('explorer_list_dir', { root, path }),
   explorerReadFile: (root: string, path: string): Promise<ApiResult<Wire.ExplorerFileDto>> => apiCall('explorer_read_file', { root, path }),
+  /** Files a path from an answer most likely means: itself, else by path ending, else by name. */
+  explorerLocateFile: (root: string, path: string): Promise<ApiResult<string[]>> => apiCall('explorer_locate_file', { root, path }),
   explorerSearch: (
     root: string,
     query: string,

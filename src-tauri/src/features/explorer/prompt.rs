@@ -189,7 +189,7 @@ fn rules(tools_offered: bool, folder_search: bool) -> String {
     format!(
         "How to answer about the folder:\n\
          - {reading}\n\
-         - Point at lines with a line reference written as inline code: the path relative to the folder root, a colon, and 1-based line numbers, like `src/main.rs:10-24`, or `src/main.rs:12` for one line. The user sees each one as a link that opens the file at those lines. Only reference lines you have actually seen.\n\
+         - Point at lines with a line reference written as inline code: the whole path from the folder root (never the file name alone), a colon, and 1-based line numbers, like `src/main.rs:10-24`, or `src/main.rs:12` for one line. The user sees each one as a link that opens the file at those lines. Only reference lines you have actually seen.\n\
          - The folder is what the user is looking at. Their library and the web are outside knowledge: cite those with bracket numbers like [1] only when numbered passages from them appear in this message, and never use bracket numbers for the folder."
     )
 }

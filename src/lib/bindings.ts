@@ -34,6 +34,19 @@ async explorerReadFile(root: string, path: string) : Promise<Result<ExplorerFile
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The files in the folder a path from an answer most likely means: the path
+ * itself when it exists, else files whose path ends with it, else files of
+ * the same name. Empty when none match.
+ */
+async explorerLocateFile(root: string, path: string) : Promise<Result<string[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_locate_file", { root, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async explorerSearch(root: string, query: string, regex: boolean, pathPrefix: string | null, maxResults: number | null) : Promise<Result<ExplorerSearchResultDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("explorer_search", { root, query, regex, pathPrefix, maxResults }) };

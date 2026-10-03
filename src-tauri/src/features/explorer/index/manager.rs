@@ -4,6 +4,11 @@
 //! One folder is open at a time. Opening another closes the previous one's
 //! watcher, task and SQLite pool; leaving the Explorer page does not.
 //!
+//! - Once the open folder's run finishes, a folder whose index was stopped
+//!   part-way (the list's "Paused") finishes in the background: the most
+//!   recently opened first, one at a time, each run once, with no watcher.
+//!   Opening or rebuilding a folder stops it, so the folder being looked at
+//!   goes first; the next finished run resumes it.
 //! - The filesystem root, the home folder and any ancestor of home are
 //!   refused: the Explorer still opens them, the index does not. So is a
 //!   folder holding Lattice's data, whose index would watch its own writes.
@@ -32,7 +37,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -57,6 +62,8 @@ pub struct ManagerConfig {
     pub home: Option<PathBuf>,
     pub limits: Limits,
     pub debounce: Duration,
+    /// Finish paused folders while the open one has nothing to do.
+    pub background: bool,
 }
 
 impl ManagerConfig {
@@ -69,8 +76,19 @@ impl ManagerConfig {
             home: dirs::home_dir().and_then(|home| std::fs::canonicalize(home).ok()),
             limits: Limits::default(),
             debounce: Duration::from_millis(1_500),
+            background: true,
         }
     }
+}
+
+/// Why a folder's index is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// The folder open in the Explorer: watched once its first run is done.
+    Open,
+    /// A paused folder finishing while the open one is idle: one run, no
+    /// watcher, and it does not count as opening the folder.
+    Background,
 }
 
 /// What a search needs once the embedder has loaded.
@@ -93,6 +111,14 @@ struct OpenFolder {
 }
 
 impl OpenFolder {
+    /// Walking or embedding.
+    fn running(&self) -> bool {
+        matches!(
+            self.status.get().state,
+            FolderIndexState::Scanning | FolderIndexState::Indexing
+        )
+    }
+
     /// Stops the task (it saves what it has embedded first) and closes the
     /// pool.
     async fn shut(mut self) {
@@ -106,11 +132,40 @@ impl OpenFolder {
     }
 }
 
+/// The indexes running now, under one lock so the open folder and the
+/// background never hold the same index.
+#[derive(Default)]
+struct Slots {
+    open: Option<OpenFolder>,
+    /// A paused folder finishing behind the open one.
+    background: Option<OpenFolder>,
+    /// Index directories the background has run since a folder was last
+    /// opened, so none is run twice.
+    resumed: HashSet<PathBuf>,
+    /// Nothing paused was left when the background last looked.
+    exhausted: bool,
+}
+
+impl Slots {
+    /// A folder is being opened: it goes first, and once it settles every
+    /// paused folder may be resumed again.
+    async fn make_way(&mut self) {
+        if let Some(background) = self.background.take() {
+            info!(root = %background.root.display(), "Background folder index paused");
+            background.shut().await;
+        }
+        self.resumed.clear();
+        self.exhausted = false;
+    }
+}
+
 pub struct FolderIndexManager {
     config: ManagerConfig,
     embedders: Arc<dyn EmbedderSource>,
     emit: StatusEmitter,
-    open: tokio::sync::Mutex<Option<OpenFolder>>,
+    slots: tokio::sync::Mutex<Slots>,
+    /// Handed to each run, so one that finishes can start the background.
+    me: Weak<FolderIndexManager>,
 }
 
 /// The `path` of `inner` below `outer`, `/`-separated; `""` when equal.
@@ -208,13 +263,14 @@ impl FolderIndexManager {
         config: ManagerConfig,
         embedders: Arc<dyn EmbedderSource>,
         emit: StatusEmitter,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|me| Self {
             config,
             embedders,
             emit,
-            open: tokio::sync::Mutex::new(None),
-        }
+            slots: tokio::sync::Mutex::new(Slots::default()),
+            me: me.clone(),
+        })
     }
 
     pub fn config(&self) -> &ManagerConfig {
@@ -274,8 +330,8 @@ impl FolderIndexManager {
     /// changes nothing.
     pub async fn open(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
-        let mut slot = self.open.lock().await;
-        if let Some(current) = slot.as_ref() {
+        let mut slots = self.slots.lock().await;
+        if let Some(current) = slots.open.as_ref() {
             // Opening a failed folder again is the retry; any other state of
             // the same folder is left running.
             let retry = matches!(
@@ -286,10 +342,11 @@ impl FolderIndexManager {
                 return Ok(current.status.get());
             }
         }
-        if let Some(previous) = slot.take() {
+        slots.make_way().await;
+        if let Some(previous) = slots.open.take() {
             previous.shut().await;
         }
-        self.open_into(&mut slot, scope, false).await
+        self.open_into(&mut slots.open, scope, false).await
     }
 
     async fn open_into(
@@ -328,18 +385,41 @@ impl FolderIndexManager {
         if wipe && prefix.is_empty() {
             remove_dir(&dir);
         }
+        let folder = self
+            .start(root, index_root, dir, prefix, wipe, Role::Open)
+            .await?;
+        let snapshot = folder.status.get();
+        info!(root = %folder.root.display(), index_root = %snapshot.index_root, "Folder index opened");
+        *slot = Some(folder);
+        Ok(snapshot)
+    }
+
+    /// Opens the index in `dir` and starts a run over `root` in it.
+    async fn start(
+        &self,
+        root: PathBuf,
+        index_root: PathBuf,
+        dir: PathBuf,
+        prefix: String,
+        wipe: bool,
+        role: Role,
+    ) -> Result<OpenFolder> {
+        let root_text = root_string(&root);
         let store = Arc::new(FolderStore::open(&dir).await?);
         if store.meta(store::META_ROOT).await?.is_none() {
             store
                 .set_meta(store::META_ROOT, &root_string(&index_root))
                 .await?;
         }
-        store
-            .set_meta(
-                store::META_LAST_OPENED,
-                &store::next_open_stamp().to_string(),
-            )
-            .await?;
+        // The folders list orders by this; a background run is not an open.
+        if role == Role::Open {
+            store
+                .set_meta(
+                    store::META_LAST_OPENED,
+                    &store::next_open_stamp().to_string(),
+                )
+                .await?;
+        }
         let counts = store.counts(&prefix).await?;
         let mut initial = FolderIndexStatusDto::new(
             &root_text,
@@ -369,11 +449,11 @@ impl FolderIndexManager {
             limits: self.config.limits,
             debounce: self.config.debounce,
             wipe_prefix: wipe && !prefix.is_empty(),
+            role,
+            manager: Weak::clone(&self.me),
         };
         let task = crate::shared::background::spawn(job.run());
-        let snapshot = status.get();
-        info!(root = %root.display(), index_root = %index_root.display(), "Folder index opened");
-        *slot = Some(OpenFolder {
+        Ok(OpenFolder {
             root,
             dir: Some(dir),
             prefix,
@@ -382,24 +462,110 @@ impl FolderIndexManager {
             engine,
             cancel,
             task,
-        });
-        Ok(snapshot)
+        })
     }
 
-    /// Closes the open folder's index, if any.
+    /// Closes the open folder's index, if any. A background run goes on.
     pub async fn close(&self) {
-        if let Some(previous) = self.open.lock().await.take() {
+        if let Some(previous) = self.slots.lock().await.open.take() {
             previous.shut().await;
         }
     }
 
-    /// The live status for the open folder; for another, what its index on
-    /// disk holds.
+    /// Looks for a paused folder to resume, off the caller's task.
+    fn hand_over(&self) {
+        if let Some(manager) = self.me.upgrade() {
+            let _ = crate::shared::background::spawn(async move { manager.resume_paused().await });
+        }
+    }
+
+    /// Resumes the most recently opened paused folder in the background,
+    /// when the open folder has settled and no other is running. A folder
+    /// that finishes hands over to the next.
+    async fn resume_paused(&self) {
+        if !self.config.background {
+            return;
+        }
+        let mut slots = self.slots.lock().await;
+        if slots.exhausted || slots.background.as_ref().is_some_and(OpenFolder::running) {
+            return;
+        }
+        let skip = match slots.open.as_ref() {
+            Some(current) if current.running() => return,
+            Some(current) => current.dir.clone(),
+            None => None,
+        };
+        if let Some(finished) = slots.background.take() {
+            finished.shut().await;
+        }
+        let Some((root, dir)) = self.next_paused(skip.as_deref(), &slots.resumed).await else {
+            slots.exhausted = true;
+            return;
+        };
+        slots.resumed.insert(dir.clone());
+        match self
+            .start(
+                root.clone(),
+                root.clone(),
+                dir,
+                String::new(),
+                false,
+                Role::Background,
+            )
+            .await
+        {
+            Ok(folder) => {
+                info!(root = %root.display(), "Folder index resumed in the background");
+                slots.background = Some(folder);
+            }
+            Err(error) => {
+                warn!(%error, root = %root.display(), "Could not resume a paused folder index");
+                drop(slots);
+                self.hand_over();
+            }
+        }
+    }
+
+    /// The most recently opened folder whose own index stopped part-way,
+    /// as `(root, index directory)`, leaving out `skip` (the open folder's
+    /// index) and those already resumed.
+    async fn next_paused(
+        &self,
+        skip: Option<&Path>,
+        resumed: &HashSet<PathBuf>,
+    ) -> Option<(PathBuf, PathBuf)> {
+        let mut indexes = store::list_indexes(&self.config.base_dir).await;
+        indexes.sort_by_key(|entry| std::cmp::Reverse(entry.last_opened));
+        for entry in indexes {
+            if entry.too_large || skip == Some(entry.dir.as_path()) || resumed.contains(&entry.dir)
+            {
+                continue;
+            }
+            let Some(root) = entry.root else { continue };
+            if !root.is_dir() || self.refusal(&root).is_some() {
+                continue;
+            }
+            if let Ok(Some(snapshot)) = store::inspect(&entry.dir, "").await {
+                let paused = snapshot.too_large.is_none()
+                    && settled_state(&snapshot.counts, snapshot.complete)
+                        == FolderIndexSummaryState::Partial;
+                if paused {
+                    return Some((root, entry.dir));
+                }
+            }
+        }
+        None
+    }
+
+    /// The live status for the open folder or the one finishing in the
+    /// background; for another, what its index on disk holds.
     pub async fn status(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
         let root = scope.root().to_path_buf();
-        if let Some(current) = self.open.lock().await.as_ref() {
-            if current.root == root {
+        {
+            let slots = self.slots.lock().await;
+            let live = slots.open.iter().chain(&slots.background);
+            if let Some(current) = live.into_iter().find(|current| current.root == root) {
                 return Ok(current.status.get());
             }
         }
@@ -438,25 +604,31 @@ impl FolderIndexManager {
     }
 
     /// What each of `roots`' index holds, for the folders list: the live
-    /// status for the open folder, what is on disk for the rest. `indexes`
-    /// is the directory listing, read once for the lot.
+    /// status for the open folder and the background one, what is on disk
+    /// for the rest. `indexes` is the directory listing, read once for the
+    /// lot.
     pub async fn summaries(
         &self,
         roots: &[PathBuf],
         indexes: &[IndexEntry],
     ) -> Vec<FolderIndexSummaryDto> {
-        let live = {
-            let slot = self.open.lock().await;
-            slot.as_ref().map(|current| {
-                let own = current.dir.clone().filter(|_| current.prefix.is_empty());
-                (current.root.clone(), own, current.status.get())
-            })
+        let live: Vec<_> = {
+            let slots = self.slots.lock().await;
+            slots
+                .open
+                .iter()
+                .chain(&slots.background)
+                .map(|current| {
+                    let own = current.dir.clone().filter(|_| current.prefix.is_empty());
+                    (current.root.clone(), own, current.status.get())
+                })
+                .collect()
         };
         let mut summaries = Vec::with_capacity(roots.len());
         for root in roots {
-            summaries.push(match &live {
-                Some((open, own, status)) if open == root => live_summary(status, own.as_deref()),
-                _ => self.summary_on_disk(root, indexes).await,
+            summaries.push(match live.iter().find(|(running, _, _)| running == root) {
+                Some((_, own, status)) => live_summary(status, own.as_deref()),
+                None => self.summary_on_disk(root, indexes).await,
             });
         }
         summaries
@@ -506,14 +678,16 @@ impl FolderIndexManager {
     /// parent's index wipes only its own part of it.
     pub async fn rebuild(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
-        let mut slot = self.open.lock().await;
-        if let Some(previous) = slot.take() {
+        let mut slots = self.slots.lock().await;
+        slots.make_way().await;
+        if let Some(previous) = slots.open.take() {
             previous.shut().await;
         }
-        self.open_into(&mut slot, scope, true).await
+        self.open_into(&mut slots.open, scope, true).await
     }
 
-    /// Deletes `root`'s own index directory, closing it first if it is open.
+    /// Deletes `root`'s own index directory, closing it first if it is open
+    /// or finishing in the background.
     /// A folder that reuses an enclosing folder's index has none of its own,
     /// and the enclosing one is left alone. The folder may be gone from disk
     /// by now, so a root that no longer resolves is taken as given.
@@ -522,16 +696,26 @@ impl FolderIndexManager {
             .map(|scope| scope.root().to_path_buf())
             .unwrap_or_else(|_| PathBuf::from(root.trim()));
         let dir = store::index_dir(&self.config.base_dir, &root);
-        let mut slot = self.open.lock().await;
-        let open_here = slot.as_ref().is_some_and(|current| {
+        let here = |current: &OpenFolder| {
             current.root == root || current.dir.as_deref() == Some(dir.as_path())
-        });
-        if open_here {
-            if let Some(current) = slot.take() {
+        };
+        let mut slots = self.slots.lock().await;
+        if slots.open.as_ref().is_some_and(here) {
+            if let Some(current) = slots.open.take() {
+                current.shut().await;
+            }
+        }
+        let background_here = slots.background.as_ref().is_some_and(here);
+        if background_here {
+            if let Some(current) = slots.background.take() {
                 current.shut().await;
             }
         }
         remove_dir(&dir);
+        drop(slots);
+        if background_here {
+            self.hand_over();
+        }
         Ok(())
     }
 
@@ -539,8 +723,8 @@ impl FolderIndexManager {
     /// indexed. `None` otherwise: refused, too large, no model, or empty.
     pub async fn search_for(&self, root: &Path) -> Option<Arc<FolderSearch>> {
         let search = {
-            let slot = self.open.lock().await;
-            let current = slot.as_ref()?;
+            let slots = self.slots.lock().await;
+            let current = slots.open.as_ref()?;
             if current.root != root {
                 return None;
             }
@@ -571,8 +755,8 @@ impl FolderIndexManager {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             let status = {
-                let slot = self.open.lock().await;
-                slot.as_ref().map(|current| current.status.get())
+                let slots = self.slots.lock().await;
+                slots.open.as_ref().map(|current| current.status.get())
             };
             match status {
                 Some(status)
@@ -591,6 +775,16 @@ impl FolderIndexManager {
                 }
             }
         }
+    }
+
+    /// The folder finishing in the background, if any. For tests.
+    #[cfg(test)]
+    pub async fn background(&self) -> Option<FolderIndexStatusDto> {
+        let slots = self.slots.lock().await;
+        slots
+            .background
+            .as_ref()
+            .map(|current| current.status.get())
     }
 }
 
@@ -611,6 +805,9 @@ struct FolderJob {
     debounce: Duration,
     /// A rebuild of a sub-folder inside a reused index.
     wipe_prefix: bool,
+    role: Role,
+    /// Told when a run finishes, so a paused folder can take its turn.
+    manager: Weak<FolderIndexManager>,
 }
 
 impl FolderJob {
@@ -671,15 +868,18 @@ impl FolderJob {
 
         // Watching starts before the walk, so a save made during a long
         // first run is picked up after it rather than missed.
-        let watching = match watcher::watch(&self.walk_root, self.debounce) {
-            Ok(watching) => Some(watching),
-            Err(error) => {
-                warn!(%error, "Folder index runs without a watcher");
-                None
-            }
+        let watching = match self.role {
+            Role::Background => None,
+            Role::Open => match watcher::watch(&self.walk_root, self.debounce) {
+                Ok(watching) => Some(watching),
+                Err(error) => {
+                    warn!(%error, "Folder index runs without a watcher");
+                    None
+                }
+            },
         };
 
-        if !self.settle(indexer.run().await) {
+        if !self.settle_and_hand_over(indexer.run().await) || self.role == Role::Background {
             return;
         }
         let Some((_watcher, mut changes)) = watching else {
@@ -716,10 +916,27 @@ impl FolderJob {
                 }
                 indexer.sync_paths(relative).await
             };
-            if !self.settle(outcome) {
+            // A save may land just as the first run hands over, and the
+            // background waits while the open folder is busy; the next
+            // finished sync tries again.
+            if !self.settle_and_hand_over(outcome) {
                 return;
             }
         }
+    }
+
+    /// Settles the run, and when it finished (done, or too large to index)
+    /// lets the manager resume a paused folder. `false` when the task should
+    /// stop.
+    fn settle_and_hand_over(&self, outcome: Result<Outcome>) -> bool {
+        let finished = matches!(outcome, Ok(Outcome::Done | Outcome::TooLarge { .. }));
+        let go_on = self.settle(outcome);
+        if finished {
+            if let Some(manager) = self.manager.upgrade() {
+                manager.hand_over();
+            }
+        }
+        go_on
     }
 
     /// Records how a run ended. `false` when the task should stop.
@@ -837,8 +1054,8 @@ pub fn global() -> Option<Arc<FolderIndexManager>> {
 }
 
 /// Installs the app's manager unless one already is; returns whichever won.
-pub fn install(manager: impl FnOnce() -> FolderIndexManager) -> Arc<FolderIndexManager> {
-    Arc::clone(MANAGER.get_or_init(|| Arc::new(manager())))
+pub fn install(manager: impl FnOnce() -> Arc<FolderIndexManager>) -> Arc<FolderIndexManager> {
+    Arc::clone(MANAGER.get_or_init(manager))
 }
 
 /// Search over `root` when it is the open folder and has an index.

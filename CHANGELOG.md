@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Explorer** (`/explorer`, ⌘6): a folder from disk beside a chat
   - Pick a folder once; the tree, the viewer and the model's tools stay inside it until you close it
   - Back and forward through the files opened (‹ › above the file, ⌘[ and ⌘])
+  - Hide and show the folder tree (button at the left of the scope bar, ⌘\)
+  - A line link whose path isn't in the folder (often just the file name) finds the file: one match opens at the cited lines, several are listed to pick from. The file found or picked is remembered for that folder, so the same link opens straight away; files read stay cached and are re-read in the background after a minute
   - Folder settings: each folder has its own system prompt and space (General by default), from its ⋯ menu or the scope bar. Its threads live in that space, which sets the library they search; changing it moves them. Migration `20261003100000_explorer_folder_settings.sql`
   - Read-only code viewer with line selection, syntax highlighting for about 45 languages (C and C++, Markdown with highlighted code fences, CMake, shell and more) loaded on demand, code folding, bracket matching and ⌘F find; the Studio lab editor shares the same language registry and colours
   - Explorer threads read the folder (`list_directory`, `read_file`, `search_files`, `find_files`, `search_folder`), can still search the web and the library, and answer with `path:10-24` line references that open in the viewer
   - Per-folder semantic index under `<data_dir>/folder-index/`, outside `lattice.db`: passages in SQLite with FTS5 plus a vector file, dense and BM25 results fused by reciprocal rank, kept current by a file watcher
   - Index progress in passages, percent and time left, in the scope bar, above the chat composer and in the log
+  - Paused folder indexes finish in the background once the open folder's index is done: the most recently opened first, one at a time, without a watcher; opening a folder pauses that until its own run is done
   - **Your folders** on the start screen: every opened folder with its index status, size, threads and last-opened time; pin, rename, delete index, and remove (optionally with the folder's threads). No index is deleted unless you ask
   - Migration `20261002100000_conversation_explorer_root.sql` binds a conversation to its folder through `conversations.explorer_root`; `20261002110000_explorer_folders.sql` keeps the folder list
 - **Learning Studio** (`/studio`, ⌘7): programs built from your sources with curriculum, practice, sandboxed labs, assessment evidence, a canvas, portability packs and Recall
@@ -23,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Studio navigation grouped into five tabs
 
 ### Changed
+- The navigation rail can be collapsed to icons on a wide window (**Collapse** at its bottom); the choice is remembered
 - **Study left the rail**: flashcard decks moved into Learning Studio; the `study` backend stays and powers Recall
   - Explorer took Study's ⌘6 slot
 - Startup JavaScript is back under the 1,050,000-byte budget checked by `scripts/check-initial-js-budget.mjs`: icon, date and command-menu code now loads with the page that uses it
