@@ -15,7 +15,7 @@ vi.mock('../../IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: 
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
 // this list is still the complete set of buttons Layout puts in the nav.
-const NAV_LABELS = ['Home', 'Search', 'Library', 'Journal', 'Chat', 'References', 'Explorer', 'Studio', 'Import', 'Settings'];
+const NAV_LABELS = ['Home', 'Search', 'Library', 'Journal', 'Chat', 'References', 'Explorer', 'Studio', 'Import', 'Settings', 'Collapse sidebar'];
 
 describe('Layout', () => {
   let user: ReturnType<typeof userEvent.setup>;
@@ -36,6 +36,24 @@ describe('Layout', () => {
   beforeEach(() => {
     user = userEvent.setup();
     vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('collapses the labeled rail on a wide window and remembers it', async () => {
+    const { unmount } = renderLayout();
+    const rail = () => screen.getByRole('navigation', { name: 'Main navigation' }).closest('aside')!;
+    expect(rail()).toHaveClass('xl:w-[212px]');
+
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(rail()).not.toHaveClass('xl:w-[212px]');
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
+    expect(localStorage.getItem('layout.railCompact')).toBe('1');
+
+    unmount();
+    renderLayout();
+    expect(rail()).not.toHaveClass('xl:w-[212px]');
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(rail()).toHaveClass('xl:w-[212px]');
   });
 
   it('renders every navigation item once, in rail order', () => {

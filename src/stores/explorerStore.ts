@@ -73,6 +73,12 @@ export interface ExplorerState {
   selection: ExplorerLineRange | null;
   /** Lines an answer pointed at. */
   highlight: ExplorerHighlight | null;
+  /**
+   * Cited paths that named no file, each with the file it turned out to
+   * mean, so the same link opens that file at once instead of being looked
+   * for again. Kept for the open folder only.
+   */
+  aliases: Readonly<Record<string, string>>;
   /** The thread last used for each root, so a folder reopens its own chat. */
   threadByRoot: Record<string, string>;
   /** The open folder's search index; `null` until the backend has said. */
@@ -92,6 +98,12 @@ export interface ExplorerState {
   goBack: () => void;
   /** Reopen the file Back left, until another file is opened. */
   goForward: () => void;
+  /**
+   * The open path named no file, and `to` is the one it meant: show that
+   * instead, at the same lines, without a step in the history, and remember
+   * it for the next link that cites `from`.
+   */
+  retarget: (_from: string, _to: string) => void;
   setSelection: (_range: ExplorerLineRange | null) => void;
   /** Open a file and light up the lines a line reference names. */
   reveal: (_path: string, _range: ExplorerLineRange) => void;
@@ -153,6 +165,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   forward: [],
   selection: null,
   highlight: null,
+  aliases: {},
   threadByRoot: read<Record<string, string>>(THREADS_KEY, {}),
   indexStatus: null,
   indexEvents: 0,
@@ -161,7 +174,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     if (root?.root === get().root?.root) return;
     write(ROOT_KEY, root);
     // Paths are relative to the root, so nothing about the old view carries over.
-    set({ root, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, indexStatus: null });
+    set({ root, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, aliases: {}, indexStatus: null });
   },
 
   toggleExpanded: (path) => {
@@ -212,9 +225,25 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     });
   },
 
+  retarget: (from, to) => {
+    const { openPath, highlight, expanded, aliases } = get();
+    if (openPath !== from || from === to) return;
+    // A remembered file that has since gone points its citers at the new one.
+    const remembered = Object.fromEntries(
+      Object.entries(aliases).map(([cited, file]) => [cited, file === from ? to : file]),
+    );
+    set({
+      openPath: to,
+      expanded: withAncestors(expanded, to),
+      highlight: highlight?.path === from ? { ...highlight, path: to } : highlight,
+      aliases: { ...remembered, [from]: to },
+    });
+  },
+
   setSelection: (selection) => set({ selection }),
 
-  reveal: (path, range) => {
+  reveal: (cited, range) => {
+    const path = get().aliases[cited] ?? cited;
     const expanded = new Set(get().expanded);
     for (const dir of ancestors(path)) expanded.add(dir);
     nonce += 1;

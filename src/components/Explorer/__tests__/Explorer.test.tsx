@@ -37,6 +37,17 @@ describe('ScopeBar', () => {
     await user.click(screen.getByRole('button', { name: 'Close folder' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it('hides and shows the folder tree', async () => {
+    const user = userEvent.setup();
+    const onToggleTree = vi.fn();
+    const { rerender } = render(<ScopeBar root={{ root: ROOT, name: 'project' }} onClose={vi.fn()} onToggleTree={onToggleTree} />);
+    await user.click(screen.getByRole('button', { name: 'Hide folder tree' }));
+    expect(onToggleTree).toHaveBeenCalledOnce();
+
+    rerender(<ScopeBar root={{ root: ROOT, name: 'project' }} onClose={vi.fn()} treeHidden onToggleTree={onToggleTree} />);
+    expect(screen.getByRole('button', { name: 'Show folder tree' })).toHaveAttribute('aria-pressed', 'true');
+  });
 });
 
 describe('explorerStore.reveal', () => {

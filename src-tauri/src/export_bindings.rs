@@ -93,6 +93,7 @@ fn main() {
             lattice::features::explorer::plugin::explorer_resolve_root,
             lattice::features::explorer::plugin::explorer_list_dir,
             lattice::features::explorer::plugin::explorer_read_file,
+            lattice::features::explorer::plugin::explorer_locate_file,
             lattice::features::explorer::plugin::explorer_search,
             lattice::features::explorer::plugin::set_conversation_explorer_root,
             lattice::features::explorer::plugin::explorer_index_open::<tauri::Wry>,
