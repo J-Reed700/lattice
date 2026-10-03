@@ -14,6 +14,9 @@ const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
 const MAX_SOURCE_COUNT: i64 = 100;
 const MAX_VERSION_COUNT: i64 = 100;
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
+/// Chunks read when a library document is captured as a source; reaching it
+/// means the capture may be missing the document's tail.
+pub(super) const LIBRARY_CAPTURE_CHUNKS: usize = 128;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -157,6 +160,35 @@ impl LearningSourceLibraryRepository {
         Err(invalid(
             "Operation ID was already used with different source data.",
         ))
+    }
+
+    /// A library document's file name and its first indexed chunks in order,
+    /// each clipped just past the capture limit. `None` while the document has
+    /// no indexed text.
+    pub async fn library_document_text(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<(String, Vec<String>)>> {
+        let rows = sqlx::query(
+            "SELECT d.file_name, substr(c.content, 1, ?) content FROM documents d
+             JOIN text_chunks c ON c.document_id = d.id
+             WHERE d.id = ? ORDER BY c.chunk_index LIMIT ?",
+        )
+        .bind((MAX_TEXT_CHARS + 1) as i64)
+        .bind(document_id)
+        .bind(LIBRARY_CAPTURE_CHUNKS as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let Some(first) = rows.first() else {
+            return Ok(None);
+        };
+        let title: String = first.try_get("file_name").map_err(db)?;
+        let chunks = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>("content").map_err(db))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some((title, chunks)))
     }
 
     pub async fn preflight_new_source(

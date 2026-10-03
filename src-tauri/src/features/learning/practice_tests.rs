@@ -279,7 +279,9 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
         version_id: "version-1".into(),
         quote: "café passage".into(),
     };
-    assert!(validate_citations(&[valid.clone()], std::slice::from_ref(&source)).is_ok());
+    assert!(
+        validate_citations(std::slice::from_ref(&valid), std::slice::from_ref(&source)).is_ok()
+    );
     let wrong = LearningPracticeCitationDto {
         quote: "cafe passage".into(),
         ..valid.clone()

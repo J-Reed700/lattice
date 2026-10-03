@@ -1258,3 +1258,47 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn library_document_text_reads_chunks_in_order_and_clips_each_one() -> Result<()> {
+    use super::source_library::{LearningSourceLibraryRepository, LIBRARY_CAPTURE_CHUNKS};
+    let pool = pool().await?;
+    let db = |e: sqlx::Error| crate::shared::error::AppError::Database(e.to_string());
+    let document_id = id();
+    sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum,status) VALUES(?,?,?,?,?,?,?)")
+        .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")
+        .bind(22_i64).bind("2026-10-02").bind("checksum").bind("ready")
+        .execute(&pool).await.map_err(db)?;
+    // Inserted out of order, one far longer than a capture keeps, and more
+    // chunks than one capture reads.
+    let long = "x".repeat(70_000);
+    let mut chunks = vec![
+        (1_i64, "second".to_string()),
+        (0, "first".to_string()),
+        (2, long),
+    ];
+    chunks.extend(
+        (3..LIBRARY_CAPTURE_CHUNKS as i64 + 5).map(|index| (index, format!("chunk {index}"))),
+    );
+    for (index, content) in &chunks {
+        sqlx::query("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES(?,?,?,?)")
+            .bind(id())
+            .bind(&document_id)
+            .bind(content)
+            .bind(index)
+            .execute(&pool)
+            .await
+            .map_err(db)?;
+    }
+    let library = LearningSourceLibraryRepository::new(pool);
+    let (title, text) = library
+        .library_document_text(&document_id)
+        .await?
+        .expect("indexed text");
+    assert_eq!(title, "Field notes.txt");
+    assert_eq!(text.len(), LIBRARY_CAPTURE_CHUNKS);
+    assert_eq!((text[0].as_str(), text[1].as_str()), ("first", "second"));
+    assert_eq!(text[2].chars().count(), 64_001);
+    assert!(library.library_document_text(&id()).await?.is_none());
+    Ok(())
+}

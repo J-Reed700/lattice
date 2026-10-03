@@ -1238,6 +1238,37 @@ fn parse_job(r: sqlx::sqlite::SqliteRow) -> Result<LearningGenerationJob> {
     Ok(job)
 }
 
+fn job_kind_name(kind: LearningGenerationJobKind) -> &'static str {
+    match kind {
+        LearningGenerationJobKind::ProgramOutline => "program",
+        LearningGenerationJobKind::LessonPreparation => "lesson_preparation",
+        LearningGenerationJobKind::AssessmentVariant => "assessment",
+        LearningGenerationJobKind::AdaptiveFollowUp => "diagnostic",
+        LearningGenerationJobKind::PracticalActivity => "practical",
+    }
+}
+
+fn decode_diagnostic_row(r: &sqlx::sqlite::SqliteRow) -> Result<LearningDiagnosticAttemptDto> {
+    let status = match r.get::<String, _>("status").as_str() {
+        "active" => LearningDiagnosticStatus::Active,
+        "submitted" => LearningDiagnosticStatus::Submitted,
+        "skipped" => LearningDiagnosticStatus::Skipped,
+        _ => return Err(AppError::Database("Invalid diagnostic status".into())),
+    };
+    Ok(LearningDiagnosticAttemptDto {
+        id: r.get("id"),
+        program_id: r.get("program_id"),
+        status,
+        prompts: decode(r.get("prompt_json"))?,
+        responses: decode(r.get("response_json"))?,
+        source_coverage_gaps: decode(r.get("source_coverage_gaps_json"))?,
+        interpretation:
+            "Self-inventory only. Responses are not scored and do not establish mastery.".into(),
+        created_at: r.get("created_at"),
+        submitted_at: r.get("submitted_at"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1667,34 +1698,4 @@ mod tests {
         );
         Ok(())
     }
-}
-fn job_kind_name(kind: LearningGenerationJobKind) -> &'static str {
-    match kind {
-        LearningGenerationJobKind::ProgramOutline => "program",
-        LearningGenerationJobKind::LessonPreparation => "lesson_preparation",
-        LearningGenerationJobKind::AssessmentVariant => "assessment",
-        LearningGenerationJobKind::AdaptiveFollowUp => "diagnostic",
-        LearningGenerationJobKind::PracticalActivity => "practical",
-    }
-}
-
-fn decode_diagnostic_row(r: &sqlx::sqlite::SqliteRow) -> Result<LearningDiagnosticAttemptDto> {
-    let status = match r.get::<String, _>("status").as_str() {
-        "active" => LearningDiagnosticStatus::Active,
-        "submitted" => LearningDiagnosticStatus::Submitted,
-        "skipped" => LearningDiagnosticStatus::Skipped,
-        _ => return Err(AppError::Database("Invalid diagnostic status".into())),
-    };
-    Ok(LearningDiagnosticAttemptDto {
-        id: r.get("id"),
-        program_id: r.get("program_id"),
-        status,
-        prompts: decode(r.get("prompt_json"))?,
-        responses: decode(r.get("response_json"))?,
-        source_coverage_gaps: decode(r.get("source_coverage_gaps_json"))?,
-        interpretation:
-            "Self-inventory only. Responses are not scored and do not establish mastery.".into(),
-        created_at: r.get("created_at"),
-        submitted_at: r.get("submitted_at"),
-    })
 }
