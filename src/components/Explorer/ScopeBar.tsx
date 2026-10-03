@@ -1,4 +1,4 @@
-import { Folder, SlidersHorizontal, X } from 'lucide-react';
+import { Folder, PanelLeft, SlidersHorizontal, X } from 'lucide-react';
 
 import type { ExplorerRoot, FolderIndexStatus } from '@/stores/explorerStore';
 
@@ -18,6 +18,9 @@ export interface ScopeBarProps {
   onRetryIndex?: () => void;
   /** Opens the folder's settings: its space and system prompt. */
   onSettings?: () => void;
+  /** Whether the folder tree is hidden; with `onToggleTree`, the bar offers the switch. */
+  treeHidden?: boolean;
+  onToggleTree?: () => void;
 }
 
 /**
@@ -27,9 +30,21 @@ export interface ScopeBarProps {
  * back to the start screen. There is no breadcrumb or "set as scope"; a
  * different folder is a deliberate new choice.
  */
-export function ScopeBar({ root, onClose, closing = false, indexStatus, onRebuildIndex, onRetryIndex, onSettings }: ScopeBarProps) {
+export function ScopeBar({ root, onClose, closing = false, indexStatus, onRebuildIndex, onRetryIndex, onSettings, treeHidden = false, onToggleTree }: ScopeBarProps) {
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-subtle bg-chrome px-3">
+      {onToggleTree && (
+        <button
+          type="button"
+          onClick={onToggleTree}
+          aria-label={treeHidden ? 'Show folder tree' : 'Hide folder tree'}
+          aria-pressed={treeHidden}
+          title={`${treeHidden ? 'Show' : 'Hide'} folder tree (⌘\\)`}
+          className="-ml-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)] hover:text-text-primary"
+        >
+          <PanelLeft className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      )}
       <Folder className="h-3.5 w-3.5 shrink-0 text-text-muted" strokeWidth={1.6} aria-hidden="true" />
       <p className="flex min-w-0 items-baseline gap-2 text-[13px]" title={root.root}>
         <span className="shrink-0 font-medium text-text-primary">{root.name}</span>

@@ -10,6 +10,73 @@ import { useExplorerStore } from '@/stores/explorerStore';
 import { CodeViewer } from './CodeViewer';
 import { describeLines } from './describeLines';
 
+/**
+ * Files read once stay in memory for half an hour, so a link back to one
+ * opens it at once. A file older than a minute (or any, when the window
+ * regains focus) is read again behind what is shown, so edits made in
+ * another editor still come through.
+ */
+const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
+
+/**
+ * The open path named no file. Answers often cite a file by its name alone
+ * (`effect_api.hpp:12`) or by a path that has lost a folder, so the folder is
+ * searched for what it meant: one match opens at the same lines, several are
+ * offered, and none says so.
+ */
+function MissingFile({ root, path, message }: { root: string; path: string; message: string }) {
+  const retarget = useExplorerStore((state) => state.retarget);
+  const located = useQuery({
+    queryKey: ['explorer', 'locate', root, path],
+    queryFn: async () => {
+      const result = await VaultAPI.explorerLocateFile(root, path);
+      if (!result.ok) throw new Error(result.error);
+      // The path itself comes back when the file is there but would not read.
+      return { exists: result.data.includes(path), matches: result.data.filter((match) => match !== path) };
+    },
+    ...FILE_CACHE,
+  });
+  const matches = located.data?.matches ?? [];
+  const only = matches.length === 1 ? matches[0] : null;
+
+  useEffect(() => {
+    if (only) retarget(path, only);
+  }, [only, path, retarget]);
+
+  if (located.isPending || only) {
+    return <p className="px-4 py-3 text-xs text-text-muted">Looking for {path.split('/').pop()} in this folder…</p>;
+  }
+  if (matches.length > 1) {
+    return (
+      <div className="px-4 py-3">
+        <p className="text-xs text-text-secondary">
+          <code className="font-mono">{path}</code> isn’t a path in this folder. It could be:
+        </p>
+        <ul className="mt-2 flex flex-col gap-0.5">
+          {matches.map((match) => (
+            <li key={match}>
+              <button
+                type="button"
+                onClick={() => retarget(path, match)}
+                className="w-full truncate rounded-sm px-2 py-1 text-left font-mono text-[12px] text-text-primary hover:bg-[hsl(var(--text-primary)/0.06)]"
+                title={match}
+              >
+                {match}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  return (
+    <p role="alert" className="px-4 py-3 text-xs text-danger-fg">
+      {message}
+      {located.data && !located.data.exists && ' Nothing else in this folder has that name.'}
+    </p>
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -55,7 +122,7 @@ export function ExplorerFileView({ root }: { root: string }) {
       return result.data;
     },
     enabled: Boolean(openPath),
-    staleTime: 5_000,
+    ...FILE_CACHE,
   });
 
   if (!openPath) {
@@ -110,7 +177,7 @@ export function ExplorerFileView({ root }: { root: string }) {
         {file.isPending ? (
           <p className="px-4 py-3 text-xs text-text-muted">Opening…</p>
         ) : file.isError ? (
-          <p role="alert" className="px-4 py-3 text-xs text-danger-fg">{file.error.message}</p>
+          <MissingFile root={root} path={openPath} message={file.error.message} />
         ) : text !== null ? (
           <CodeViewer
             path={openPath}

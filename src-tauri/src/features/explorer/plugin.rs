@@ -58,6 +58,15 @@ pub async fn explorer_read_file(root: String, path: String) -> Result<ExplorerFi
     blocking(move || fs::read_file(&Scope::open(&root)?, &path)).await
 }
 
+/// The files in the folder a path from an answer most likely means: the path
+/// itself when it exists, else files whose path ends with it, else files of
+/// the same name. Empty when none match.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_locate_file(root: String, path: String) -> Result<Vec<String>, ApiError> {
+    blocking(move || fs::locate_file(&Scope::open(&root)?, &path)).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn explorer_search(
@@ -290,6 +299,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             explorer_resolve_root,
             explorer_list_dir,
             explorer_read_file,
+            explorer_locate_file,
             explorer_search,
             set_conversation_explorer_root,
             explorer_index_open,

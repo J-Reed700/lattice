@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
@@ -11,6 +11,8 @@ import {
   Layers3,
   MessageCircle,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Search,
   Settings,
@@ -27,12 +29,31 @@ import { IndexingStatusRail } from '../IndexingStatus/IndexingStatusRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 /**
- * Layout — labeled navigation on wide windows, compact rail on smaller ones.
+ * Layout — labeled navigation on wide windows, compact rail on smaller ones,
+ * or always compact when the reader collapses it.
  *
  * The rail lists the app's surfaces in the same order as their ⌘-number
  * shortcuts so the two never disagree. Desktop only: the Tauri window has an
  * 800px minimum width, so there is no mobile breakpoint to serve.
  */
+
+const COMPACT_KEY = 'layout.railCompact';
+
+function readCompact(): boolean {
+  try {
+    return localStorage.getItem(COMPACT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeCompact(value: boolean): void {
+  try {
+    localStorage.setItem(COMPACT_KEY, value ? '1' : '0');
+  } catch {
+    // Preference only.
+  }
+}
 
 type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'explorer' | 'studio' | 'ingest' | 'settings';
 
@@ -81,9 +102,11 @@ interface NavButtonProps {
   item: NavItem;
   isActive: boolean;
   onClick: () => void;
+  /** Kept to the icon rail on a wide window too. */
+  compact: boolean;
 }
 
-function NavButton({ item, isActive, onClick }: NavButtonProps) {
+function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
   const reduceMotion = useReducedMotion();
   return (
     <Tooltip delayDuration={500}>
@@ -94,7 +117,8 @@ function NavButton({ item, isActive, onClick }: NavButtonProps) {
           aria-label={item.label}
           aria-current={isActive ? 'page' : undefined}
           className={cn(
-            'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 transition-colors duration-fast xl:justify-start',
+            'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 transition-colors duration-fast',
+            !compact && 'xl:justify-start',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             isActive ? 'text-text-primary' : 'text-text-tertiary hover:text-text-primary',
           )}
@@ -111,11 +135,11 @@ function NavButton({ item, isActive, onClick }: NavButtonProps) {
             <span aria-hidden="true" className="row-hover absolute inset-0 rounded-md" />
           )}
           <span className={cn('relative flex', isActive && 'text-accent')}>{item.icon}</span>
-          <span className={cn('relative hidden text-ui xl:block', isActive && 'font-medium')}>{item.label}</span>
-          <kbd aria-hidden="true" className="relative ml-auto hidden font-sans text-[11px] tabular-nums text-text-muted opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">{item.shortcut}</kbd>
+          <span className={cn('relative hidden text-ui', !compact && 'xl:block', isActive && 'font-medium')}>{item.label}</span>
+          <kbd aria-hidden="true" className={cn('relative ml-auto hidden font-sans text-[11px] tabular-nums text-text-muted opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-visible:opacity-100', !compact && 'xl:block')}>{item.shortcut}</kbd>
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={10} className="xl:hidden">
+      <TooltipContent side="right" sideOffset={10} className={compact ? undefined : 'xl:hidden'}>
         <span className="flex items-center gap-2">
           <span>{item.label}</span>
           <kbd className="kbd">{item.shortcut}</kbd>
@@ -131,48 +155,81 @@ export function Layout() {
   const activeView = resolveActiveView(location.pathname);
 
   const go = (view: View) => navigate(`/${view}`);
+  const [compact, setCompact] = useState(readCompact);
+  useEffect(() => writeCompact(compact), [compact]);
+  /** Classes for the labeled rail, dropped while it is collapsed. */
+  const wide = (classes: string) => (compact ? null : classes);
 
   return (
     <div className="flex h-screen min-h-0 bg-chrome">
       {/* The rail is window chrome: dim, quiet, and draggable where it is empty. */}
       <aside
         data-tauri-drag-region
-        className="flex w-[60px] shrink-0 flex-col px-2 pb-2.5 pt-[calc(var(--titlebar-inset)+12px)] xl:w-[212px] xl:px-2.5"
+        className={cn('flex w-[60px] shrink-0 flex-col px-2 pb-2.5 pt-[calc(var(--titlebar-inset)+12px)]', wide('xl:w-[212px] xl:px-2.5'))}
       >
-        <div data-tauri-drag-region className="mb-3 flex h-8 items-center justify-center gap-2 xl:justify-start xl:px-2.5" aria-label="Lattice">
+        <div data-tauri-drag-region className={cn('mb-3 flex h-8 items-center justify-center gap-2', wide('xl:justify-start xl:px-2.5'))} aria-label="Lattice">
           <Layers3 className="pointer-events-none h-[18px] w-[18px] text-accent" strokeWidth={1.6} />
-          <span className="pointer-events-none hidden font-serif text-[17px] font-medium tracking-[-0.02em] text-text-primary xl:block">Lattice</span>
+          <span className={cn('pointer-events-none hidden font-serif text-[17px] font-medium tracking-[-0.02em] text-text-primary', wide('xl:block'))}>Lattice</span>
         </div>
 
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
           aria-label="Search and commands"
-          className="pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-text-tertiary transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.09)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:justify-start"
+          className={cn(
+            'pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-text-tertiary transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.09)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            wide('xl:justify-start'),
+          )}
         >
-          <Command className="h-3.5 w-3.5 shrink-0 xl:hidden" strokeWidth={STROKE} />
-          <Search className="hidden h-3.5 w-3.5 shrink-0 xl:block" strokeWidth={STROKE} />
-          <span className="hidden text-ui xl:block">Find anything</span>
-          <kbd className="kbd ml-auto hidden xl:inline-flex">⌘K</kbd>
+          <Command className={cn('h-3.5 w-3.5 shrink-0', wide('xl:hidden'))} strokeWidth={STROKE} />
+          <Search className={cn('hidden h-3.5 w-3.5 shrink-0', wide('xl:block'))} strokeWidth={STROKE} />
+          <span className={cn('hidden text-ui', wide('xl:block'))}>Find anything</span>
+          <kbd className={cn('kbd ml-auto hidden', wide('xl:inline-flex'))}>⌘K</kbd>
         </button>
 
         <nav aria-label="Main navigation" className="flex min-h-0 flex-1 flex-col">
           <div className="flex w-full flex-col gap-px">
             {PRIMARY_NAV.map((item) => (
-              <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={() => go(item.view)} />
+              <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={() => go(item.view)} compact={compact} />
             ))}
           </div>
 
           <div className="mx-2.5 my-2.5 h-px bg-border-subtle" aria-hidden="true" />
 
-          <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={() => go(IMPORT_NAV.view)} />
+          <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={() => go(IMPORT_NAV.view)} compact={compact} />
 
           <div data-tauri-drag-region className="min-h-4 flex-1" />
 
           <div className="flex w-full flex-col items-center gap-px">
             <IndexingStatusRail />
             <HeaderDownloadsIndicator />
-            <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={() => go(SETTINGS_NAV.view)} />
+            <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={() => go(SETTINGS_NAV.view)} compact={compact} />
+            {/* Only a wide window has a labeled rail to collapse. */}
+            <Tooltip delayDuration={500}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setCompact((value) => !value)}
+                  aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'}
+                  className={cn(
+                    'group relative hidden h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 text-text-tertiary transition-colors duration-fast hover:text-text-primary xl:flex',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    wide('xl:justify-start'),
+                  )}
+                >
+                  <span aria-hidden="true" className="row-hover absolute inset-0 rounded-md" />
+                  {compact ? (
+                    <PanelLeftOpen className={cn('relative', ICON_CLASS)} strokeWidth={STROKE} />
+                  ) : (
+                    <PanelLeftClose className={cn('relative', ICON_CLASS)} strokeWidth={STROKE} />
+                  )}
+                  <span className={cn('relative hidden text-ui', wide('xl:block'))}>Collapse</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={10} className={compact ? undefined : 'xl:hidden'}>
+                Expand sidebar
+              </TooltipContent>
+            </Tooltip>
           </div>
         </nav>
       </aside>

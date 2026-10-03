@@ -306,6 +306,7 @@
     "explorer:allow-explorer-resolve-root",
     "explorer:allow-explorer-list-dir",
     "explorer:allow-explorer-read-file",
+    "explorer:allow-explorer-locate-file",
     "explorer:allow-explorer-search",
     "explorer:allow-set-conversation-explorer-root",
     "explorer:allow-explorer-index-open",

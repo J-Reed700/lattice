@@ -59,6 +59,10 @@ The rail on the left of the window holds the main surfaces:
 | Import | ⌘I | Add files and web pages |
 | Settings | ⌘, | Models, search, backups and everything else |
 
+On a wide window the rail shows names; **Collapse** at its bottom shrinks it to
+icons, and the same button expands it again. Lattice remembers the choice. On a
+narrow window the rail is always icons.
+
 On Windows and Linux, use **Ctrl** wherever this manual says **⌘**.
 
 **Command palette (⌘K).** Type to jump to a document, a recent search or any
@@ -85,7 +89,7 @@ typed anything, Quick capture offers to import that page instead.
 | Enter | Send a chat message |
 | Shift+Enter | New line in a chat message |
 | ⌘⇧K | Find in conversations and references (in Chat) |
-| ⌘\ | Hide or show the sidebar (Chat, Journal, References) |
+| ⌘\ | Hide or show the sidebar (Chat, Journal, References) or the folder tree (Explorer) |
 | ⌘F | Find in the open file (in Explorer) |
 | ⌘[ / ⌘] | Back to the previous file / forward to the next (in Explorer) |
 
@@ -291,7 +295,10 @@ Explorer (⌘6) puts a folder from your disk on the left and a chat on the right
 3. Ask about the folder in the chat. The chat can list, read and search files
    inside the folder, and when it mentions lines (for example
    `src/main.rs:10-24`) they appear as links that open the file and highlight
-   those lines.
+   those lines. If an answer names a file without its whole path (just
+   `engine.cpp:12`), Lattice finds it in the folder; when more than one file
+   fits, it lists them so you can pick. Lattice remembers the file it found (or
+   the one you picked), so the same link opens it straight away next time.
 4. Click line numbers in the viewer to send those lines with your next message.
 
 The folder is locked once it's open: the chat can't read outside it. To work

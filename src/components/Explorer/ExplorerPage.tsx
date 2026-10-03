@@ -28,6 +28,7 @@ import './explorer.css';
 export { INDEX_STATUS_EVENT } from './indexProgress';
 
 const TREE_WIDTH_KEY = 'explorer.treeWidth';
+const TREE_HIDDEN_KEY = 'explorer.treeHidden';
 const CHAT_WIDTH_KEY = 'explorer.chatWidth';
 const TREE_DEFAULT = 240;
 const CHAT_DEFAULT = 440;
@@ -48,6 +49,22 @@ function readWidth(key: string, fallback: number): number {
 function writeWidth(key: string, value: number): void {
   try {
     localStorage.setItem(key, String(Math.round(value)));
+  } catch {
+    // Preference only.
+  }
+}
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
   } catch {
     // Preference only.
   }
@@ -107,6 +124,7 @@ export function ExplorerPage() {
   const [settingsFor, setSettingsFor] = useState<FolderSettingsTarget | null>(null);
   const [treeWidth, setTreeWidth] = useState(() => readWidth(TREE_WIDTH_KEY, TREE_DEFAULT));
   const [chatWidth, setChatWidth] = useState(() => readWidth(CHAT_WIDTH_KEY, CHAT_DEFAULT));
+  const [treeHidden, setTreeHidden] = useState(() => readFlag(TREE_HIDDEN_KEY));
   const [rowWidth, setRowWidth] = useState(0);
   const rowRef = useRef<HTMLDivElement>(null);
   const threads = useExplorerThread(root?.root ?? null, root?.name ?? '');
@@ -146,6 +164,20 @@ export function ExplorerPage() {
 
   useEffect(() => writeWidth(TREE_WIDTH_KEY, treeWidth), [treeWidth]);
   useEffect(() => writeWidth(CHAT_WIDTH_KEY, chatWidth), [chatWidth]);
+  useEffect(() => writeFlag(TREE_HIDDEN_KEY, treeHidden), [treeHidden]);
+
+  // ⌘\ hides and shows the folder tree, as it does Chat's sidebar.
+  useEffect(() => {
+    if (!rootPath) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '\\') {
+        event.preventDefault();
+        setTreeHidden((hidden) => !hidden);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [rootPath]);
 
   useEffect(() => {
     const element = rowRef.current;
@@ -223,9 +255,11 @@ export function ExplorerPage() {
   };
 
   // Each column yields before the file view does; the view keeps VIEWER_MIN.
+  // A hidden tree takes no room, so the chat can have what it would have had.
   const room = Math.max(0, rowWidth - VIEWER_MIN);
-  const chat = rowWidth ? Math.min(chatWidth, Math.max(CHAT_MIN, room - TREE_MIN)) : chatWidth;
-  const tree = rowWidth ? Math.min(treeWidth, Math.max(TREE_MIN, room - chat)) : treeWidth;
+  const treeFloor = treeHidden ? 0 : TREE_MIN;
+  const chat = rowWidth ? Math.min(chatWidth, Math.max(CHAT_MIN, room - treeFloor)) : chatWidth;
+  const tree = treeHidden ? 0 : rowWidth ? Math.min(treeWidth, Math.max(TREE_MIN, room - chat)) : treeWidth;
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 bg-bg">
@@ -242,24 +276,33 @@ export function ExplorerPage() {
               onRebuildIndex={() => void rebuildIndex(false)}
               onRetryIndex={() => void rebuildIndex(true)}
               onSettings={() => void openSettings()}
+              treeHidden={treeHidden}
+              onToggleTree={() => setTreeHidden((hidden) => !hidden)}
             />
             <div className="flex min-h-0 flex-1">
-              <aside aria-label="Folder tree" className="flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface" style={{ width: tree }}>
+              {/* Hidden, not unmounted, so the tree keeps its place and a search its results. */}
+              <aside
+                aria-label="Folder tree"
+                className={treeHidden ? 'hidden' : 'flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface'}
+                style={{ width: tree }}
+              >
                 <ExplorerSearch key={root.root} root={root.root} onActiveChange={setSearching} />
                 {/* Hidden, not unmounted, so what is open survives a search. */}
                 <div className={searching ? 'hidden' : 'min-h-0 flex-1'}>
                   <ExplorerTree key={root.root} root={root.root} />
                 </div>
               </aside>
-              <SplitHandle
-                label="Resize folder tree"
-                width={tree}
-                min={TREE_MIN}
-                max={Math.max(TREE_MIN, room - chat)}
-                side={1}
-                onResize={setTreeWidth}
-                onReset={() => setTreeWidth(TREE_DEFAULT)}
-              />
+              {!treeHidden && (
+                <SplitHandle
+                  label="Resize folder tree"
+                  width={tree}
+                  min={TREE_MIN}
+                  max={Math.max(TREE_MIN, room - chat)}
+                  side={1}
+                  onResize={setTreeWidth}
+                  onReset={() => setTreeWidth(TREE_DEFAULT)}
+                />
+              )}
               <main aria-label="File" className="h-full min-w-0 flex-1">
                 <ExplorerFileView root={root.root} />
               </main>

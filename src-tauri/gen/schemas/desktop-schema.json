@@ -3927,6 +3927,12 @@
           "markdownDescription": "Enables the explorer_list_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the explorer_locate_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-locate-file",
+          "markdownDescription": "Enables the explorer_locate_file command without any pre-configured scope."
+        },
+        {
           "description": "Enables the explorer_read_file command without any pre-configured scope.",
           "type": "string",
           "const": "explorer:allow-explorer-read-file",
@@ -4021,6 +4027,12 @@
           "type": "string",
           "const": "explorer:deny-explorer-list-dir",
           "markdownDescription": "Denies the explorer_list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_locate_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-locate-file",
+          "markdownDescription": "Denies the explorer_locate_file command without any pre-configured scope."
         },
         {
           "description": "Denies the explorer_read_file command without any pre-configured scope.",
