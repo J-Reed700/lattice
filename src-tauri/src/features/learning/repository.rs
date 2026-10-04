@@ -29,6 +29,9 @@ pub(super) fn block_kind(v: LearningBlockKind) -> &'static str {
         LearningBlockKind::Explanation => "explanation",
         LearningBlockKind::WorkedExample => "worked_example",
         LearningBlockKind::Reflection => "reflection",
+        LearningBlockKind::GuidedPractice => "guided_practice",
+        LearningBlockKind::IndependentPractice => "independent_practice",
+        LearningBlockKind::Recap => "recap",
     }
 }
 pub(super) fn assessment(v: LearningAssessmentKind) -> &'static str {
@@ -59,6 +62,9 @@ fn parse_block(s: &str) -> Result<LearningBlockKind> {
         "explanation" => Ok(LearningBlockKind::Explanation),
         "worked_example" => Ok(LearningBlockKind::WorkedExample),
         "reflection" => Ok(LearningBlockKind::Reflection),
+        "guided_practice" => Ok(LearningBlockKind::GuidedPractice),
+        "independent_practice" => Ok(LearningBlockKind::IndependentPractice),
+        "recap" => Ok(LearningBlockKind::Recap),
         _ => Err(AppError::Database("Invalid learning block kind".into())),
     }
 }
@@ -84,6 +90,12 @@ impl LearningRepository {
     pub async fn active_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
             .prepare_sources(program_id)
+            .await
+    }
+
+    pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
+        super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
+            .verification_sources(program_id)
             .await
     }
 
@@ -145,20 +157,34 @@ impl LearningRepository {
     }
 
     pub async fn create(&self, program: &LearningProgramDto) -> Result<()> {
+        self.create_with_references(program, &[]).await
+    }
+
+    pub(super) async fn create_with_references(
+        &self,
+        program: &LearningProgramDto,
+        references: &[super::sources::InitialReference],
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let s = &program.summary;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status.clone())).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await.map_err(db)?;
         for (mi, m) in program.modules.iter().enumerate() {
-            sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json) VALUES(?,?,?,?,?,?)")
-                .bind(&m.id).bind(&s.id).bind(mi as i64).bind(&m.title).bind(&m.summary).bind(json(&m.outcomes)?).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json,prerequisite_ids_json,project_json) VALUES(?,?,?,?,?,?,?,?)")
+                .bind(&m.id).bind(&s.id).bind(mi as i64).bind(&m.title).bind(&m.summary).bind(json(&m.outcomes)?).bind(json(&m.prerequisite_module_ids)?).bind(json(&m.project)?).execute(&mut *tx).await.map_err(db)?;
             for (li, l) in m.lessons.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed) VALUES(?,?,?,?,?,?,?,?,?)")
                     .bind(&l.id).bind(&s.id).bind(&m.id).bind(li as i64).bind(&l.title).bind(&l.objective).bind(l.estimated_minutes).bind(prep(l.preparation.clone())).bind(l.completed as i64).execute(&mut *tx).await.map_err(db)?;
             }
         }
         for source in &program.sources {
-            insert_source(&mut tx, &s.id, source).await?;
+            insert_source(
+                &mut tx,
+                &s.id,
+                source,
+                references.iter().find(|r| r.source_id == source.id),
+            )
+            .await?;
         }
         tx.commit().await.map_err(db)
     }
@@ -182,6 +208,14 @@ impl LearningRepository {
                 })
             })
             .collect()
+    }
+
+    pub async fn has_source_history(&self, program_id: &str) -> Result<bool> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_sources WHERE program_id=?)")
+            .bind(program_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db)
     }
 
     pub async fn get(&self, id: &str) -> Result<LearningProgramDto> {
@@ -226,6 +260,7 @@ impl LearningRepository {
                             title: b.get("title"),
                             body: b.get("body"),
                             source_ids: decode(b.get("source_ids_json"))?,
+                            rubric: decode(b.get("rubric_json"))?,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -264,6 +299,8 @@ impl LearningRepository {
                 title: m.get("title"),
                 summary: m.get("summary"),
                 outcomes: decode(m.get("outcomes_json"))?,
+                prerequisite_module_ids: decode(m.get("prerequisite_ids_json"))?,
+                project: decode(m.get("project_json"))?,
                 lessons: ls,
             });
         }
@@ -373,8 +410,10 @@ impl LearningRepository {
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }
+        super::content_verification::persist_report(&mut tx, program_id, lesson_id, prepared)
+            .await?;
         for (i, b) in prepared.blocks.iter().enumerate() {
-            sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,?,?,?,?)").bind(lesson_id).bind(i as i64).bind(block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(json(&b.source_ids)?).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(i as i64).bind(block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(json(&b.source_ids)?).bind(json(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
         }
         for (i, q) in prepared.questions.iter().enumerate() {
             sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) SELECT ?,?,module_id,?,?,?,?,? FROM learning_lessons WHERE id=?")
@@ -768,14 +807,8 @@ impl LearningRepository {
         let lesson_id: String = row.get("lesson_id");
         validate_memory_lesson(&mut tx, program_id, &lesson_id, true).await?;
         let source_ids: Vec<String> = decode(row.get("source_ids_json"))?;
-        validate_draft_sources(
-            &mut tx,
-            program_id,
-            &lesson_id,
-            &source_ids,
-            row.get::<String, _>("origin") == "generated",
-        )
-        .await?;
+        let generated = row.get::<String, _>("origin") == "generated";
+        validate_draft_sources(&mut tx, program_id, &lesson_id, &source_ids, generated).await?;
         let mut citations = Vec::new();
         for source_id in &source_ids {
             let source = sqlx::query(
@@ -822,9 +855,18 @@ impl LearningRepository {
             citations.push(crate::features::study::dto::StudySourceDto {
                 chunk_id: format!("learning-memory:{draft_id}"),
                 document_id: String::new(),
-                file_name: "Personal learning card".into(),
+                file_name: if generated {
+                    row.get("lesson_title")
+                } else {
+                    "Personal learning card".into()
+                },
                 file_path: String::new(),
-                excerpt: "Learner-authored recall card without an external source.".into(),
+                excerpt: if generated {
+                    "AI-authored recall from the prepared lesson; no external source."
+                } else {
+                    "Learner-authored recall card without an external source."
+                }
+                .into(),
                 url: None,
             });
         }
@@ -948,7 +990,9 @@ async fn validate_draft_sources(
     source_ids: &[String],
     generated: bool,
 ) -> Result<()> {
-    if generated && source_ids.is_empty() {
+    let cited_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=? AND json_array_length(source_ids_json)>0")
+        .bind(lesson_id).fetch_one(&mut **tx).await.map_err(db)?;
+    if generated && source_ids.is_empty() && cited_blocks > 0 {
         return Err(AppError::InvalidInput(
             "Generated card drafts must cite lesson sources.".into(),
         ));
@@ -1072,14 +1116,22 @@ async fn insert_source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     program_id: &str,
     source: &LearningSourceDto,
+    reference: Option<&super::sources::InitialReference>,
 ) -> Result<()> {
-    let text = source
+    let text = reference
+        .map(|r| r.captured.text.as_str())
+        .unwrap_or(&source.excerpt)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_owned();
+    let preview = source
         .excerpt
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .trim()
         .to_owned();
-    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(program_id).bind(source.title.trim()).bind(&source.url).bind(&text).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(program_id).bind(source.title.trim()).bind(&source.url).bind(&preview).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
     let kind = if source.url.is_some() {
         "web"
     } else {
@@ -1094,15 +1146,22 @@ async fn insert_source(
             .map(|(id, _)| id.to_owned())
             .unwrap_or_else(|| source.id.clone())
     };
+    let origin = reference.map(|r| r.origin.clone()).unwrap_or(origin);
     let policy = if source.url.is_some() {
         "manual"
     } else {
         "fixed"
     };
+    let requested_url = reference
+        .and_then(|r| r.captured.requested_url.as_deref())
+        .or(source.url.as_deref());
+    let resolved_url = reference
+        .and_then(|r| r.captured.resolved_url.as_deref())
+        .or(source.url.as_deref());
     let digest = format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,0,?,?)")
-        .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(&source.url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+        .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,?,NULL,?,?,?,?,?,?,?,?,?)")
-        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(&source.url).bind(&source.url).bind(&text).bind(&text).bind(&digest).bind(text.split_whitespace().count() as i64).bind(1_i64).bind("program_seed_bounded_v1").bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(requested_url).bind(resolved_url).bind(&text).bind(text.chars().take(2400).collect::<String>()).bind(&digest).bind(text.split_whitespace().count() as i64).bind(reference.is_none() as i64).bind(reference.map(|r| r.captured.extraction_version.as_str()).unwrap_or("program_seed_bounded_v1")).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }

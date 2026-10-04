@@ -9,7 +9,7 @@
 //! index at all. A fake port would assert that this module calls itself.
 
 use super::*;
-use crate::domain::conversation_memory::{compute_digest, SourceRole};
+use crate::domain::conversation::memory::{compute_digest, SourceRole};
 use crate::features::conversation::repository::ConversationRepository;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;

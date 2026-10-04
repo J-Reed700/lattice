@@ -17,10 +17,12 @@
 //! file-access config, and the data-dir-derived paths).
 
 use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
+use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::settings::di::ContainerSettingsSideEffects;
+use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::services::{
     init_function_registry, register_custom_query_tools, FunctionExecutor, WebService,
@@ -33,12 +35,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Named-model cache (router / utility roles), keyed by model name.
-pub(crate) type NamedLlmCache =
-    Arc<crate::infrastructure::model_cache::ModelCache<String, Arc<dyn LLMPort>>>;
+pub(crate) type NamedLlmCache = Arc<ModelCache<String, Arc<dyn LLMPort>>>;
 
 /// Single-slot chat model cache.
-pub(crate) type ChatLlmCache =
-    Arc<crate::infrastructure::model_cache::ModelCache<(), Arc<dyn LLMPort>>>;
+pub(crate) type ChatLlmCache = Arc<ModelCache<(), Arc<dyn LLMPort>>>;
 
 /// Composition root for the application's dependency graph.
 ///
@@ -93,7 +93,7 @@ pub struct Container {
     /// Chat cache owns single-flight loading and invalidation-safe publication.
     pub(crate) llm_cache: ChatLlmCache,
     /// Owns embedding readiness checks, loading, and retry cooldown.
-    pub(crate) embedding_runtime: Arc<crate::infrastructure::embedding_runtime::EmbeddingRuntime>,
+    pub(crate) embedding_runtime: Arc<EmbeddingRuntime>,
 
     /// All vault writes flow through a single mpsc-fed worker; see
     /// `features::vault::writeback`.
@@ -148,12 +148,10 @@ impl Container {
         data_dir: PathBuf,
     ) -> Result<Self> {
         // These are populated asynchronously when models load
-        let embedding_runtime =
-            Arc::new(crate::infrastructure::embedding_runtime::EmbeddingRuntime::new());
-        let llm_cache: ChatLlmCache =
-            Arc::new(crate::infrastructure::model_cache::ModelCache::new());
-        let router_llm_cache = Arc::new(crate::infrastructure::model_cache::ModelCache::new());
-        let utility_llm_cache = Arc::new(crate::infrastructure::model_cache::ModelCache::new());
+        let embedding_runtime = Arc::new(EmbeddingRuntime::new());
+        let llm_cache: ChatLlmCache = Arc::new(ModelCache::new());
+        let router_llm_cache = Arc::new(ModelCache::new());
+        let utility_llm_cache = Arc::new(ModelCache::new());
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // CoreModule builds shared singletons (security, runtime, credentials)

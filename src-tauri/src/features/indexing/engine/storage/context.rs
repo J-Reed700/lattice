@@ -4,7 +4,7 @@ use super::checksum::calculate_checksum;
 use crate::features::embedding::service::MODEL_NAME;
 use crate::features::indexing::engine::chunker::ContextualizedChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::shared::utils::path::path_to_string;
+use crate::shared::fs::path::path_to_string;
 use chrono::Utc;
 use serde::Deserialize;
 use sqlx::{Sqlite, SqlitePool, Transaction};

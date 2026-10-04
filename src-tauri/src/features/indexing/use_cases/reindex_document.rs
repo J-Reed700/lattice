@@ -441,7 +441,7 @@ mod tests {
     use crate::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
     use crate::domain::entities::Document;
     use crate::features::embedding::entity::Embedding;
-    use crate::shared::domain_types::ValidatedFilePath;
+    use crate::shared::types::ValidatedFilePath;
     use async_trait::async_trait;
     use std::fs;
     use std::path::Path;

@@ -6,7 +6,7 @@
 //! the module: any code can assemble a prompt that fits when everything fits.
 
 use super::*;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemoryState, MemoryValidity, SourceMessage, SourceRole,
 };
@@ -488,7 +488,7 @@ fn the_shared_summary_framing_is_the_prefix_eviction_searches_for() {
     // manager and the context-window builder all word it identically. Reword the
     // opening and the assembler silently stops being able to evict a summary,
     // giving up the user's own turns instead.
-    let framed = crate::domain::conversation_memory::frame_generated_summary("anything at all");
+    let framed = crate::domain::conversation::memory::frame_generated_summary("anything at all");
 
     assert!(framed.starts_with("[generated summary"));
     assert!(

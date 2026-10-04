@@ -127,7 +127,7 @@ impl RecencyScorer {
                 crate::shared::error::AppError::Database(format!("Failed to get updated_at: {}", e))
             })?;
 
-            match crate::shared::time::parse_db_timestamp(&updated_at) {
+            match crate::shared::persistence::timestamps::parse_db_timestamp(&updated_at) {
                 Ok(datetime) => {
                     timestamps.insert(id, datetime);
                 }
@@ -245,14 +245,16 @@ mod tests {
     #[test]
     fn test_parse_sqlite_datetime() {
         let datetime_str = "2024-01-15 10:30:45";
-        let result = crate::shared::time::parse_db_timestamp(datetime_str);
+        let result = crate::shared::persistence::timestamps::parse_db_timestamp(datetime_str);
         assert!(result.is_ok());
 
         let datetime_str_iso = "2024-01-15T10:30:45";
-        let result_iso = crate::shared::time::parse_db_timestamp(datetime_str_iso);
+        let result_iso =
+            crate::shared::persistence::timestamps::parse_db_timestamp(datetime_str_iso);
         assert!(result_iso.is_ok());
 
-        let result_offset = crate::shared::time::parse_db_timestamp("2024-01-15T05:30:45-05:00");
+        let result_offset =
+            crate::shared::persistence::timestamps::parse_db_timestamp("2024-01-15T05:30:45-05:00");
         assert!(result_offset.is_ok());
     }
 

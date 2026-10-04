@@ -1,7 +1,7 @@
 //! Recent Documents Repository Port
 
 use crate::application::contracts::recent_documents::RecentDocumentRecord;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 #[async_trait]

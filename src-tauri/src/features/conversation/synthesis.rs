@@ -5,7 +5,7 @@ use super::commands as conversation;
 use super::workspace_dto::*;
 use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
-use crate::shared::{api_result::ApiError, error::AppError};
+use crate::shared::{error::AppError, ipc::ApiError};
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 type SnapshotKey = (String, Option<String>, String, Option<String>, bool);
@@ -437,10 +437,12 @@ fn is_week_synthesis_page(title: &str) -> bool {
 
 fn sort_entries_by_recency(entries: &mut [JournalSynthesisEntry]) {
     entries.sort_by(|left, right| {
-        let left_time = crate::shared::time::parse_db_timestamp(&left.updated_at)
-            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
-        let right_time = crate::shared::time::parse_db_timestamp(&right.updated_at)
-            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+        let left_time =
+            crate::shared::persistence::timestamps::parse_db_timestamp(&left.updated_at)
+                .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+        let right_time =
+            crate::shared::persistence::timestamps::parse_db_timestamp(&right.updated_at)
+                .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
         right_time.cmp(&left_time)
     });
 }
@@ -483,7 +485,9 @@ async fn select_week_entries(
         entries.push(JournalSynthesisEntry {
             conversation_id: conversation_id.clone(),
             title: candidate.title,
-            updated_at: crate::shared::time::format_db_timestamp(candidate.updated_at),
+            updated_at: crate::shared::persistence::timestamps::format_db_timestamp(
+                candidate.updated_at,
+            ),
             message_count: messages.len(),
             transcript,
             kind: SynthesisEntryKind::Conversation,
@@ -494,8 +498,9 @@ async fn select_week_entries(
     }
 
     // (b) Saved passages — our own table, always written canonically.
-    let cutoff =
-        crate::shared::time::format_db_timestamp(now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS));
+    let cutoff = crate::shared::persistence::timestamps::format_db_timestamp(
+        now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS),
+    );
     let references = crate::features::references::repository::PassageReferenceRepository::new(
         container.db_pool().clone(),
     )

@@ -12,7 +12,7 @@
 //!
 //! Validation. Every rule about whether a quote is real, whether a source
 //! belongs to this conversation, and what a transition may do lives in
-//! [`crate::domain::conversation_memory`], and the atomic write lives behind
+//! [`crate::domain::conversation::memory`], and the atomic write lives behind
 //! [`ConversationMemoryPort`]. This module calls them; it never re-decides them.
 //!
 //! ## The shape of a run
@@ -50,7 +50,7 @@ use tokio_util::sync::CancellationToken;
 use crate::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
 use crate::application::ports::LLMPort;
-use crate::domain::conversation_memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
+use crate::domain::conversation::memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
 use crate::shared::error::AppError;
 
 // ---------------------------------------------------------------------------

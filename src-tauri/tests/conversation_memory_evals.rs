@@ -122,12 +122,12 @@ use lattice::application::services::conversation_memory::{
     prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
     COMPACTION_DEADLINE,
 };
-use lattice::domain::conversation::MessageRole;
-use lattice::domain::conversation_memory::{
+use lattice::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
     SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
     MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
+use lattice::domain::conversation::MessageRole;
 use lattice::features::conversation::chat::memory_context::build_memory_plan;
 use lattice::features::conversation::repository::ConversationRepository;
 use lattice::features::llm::engine::ollama_client::OllamaClient;

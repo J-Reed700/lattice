@@ -168,6 +168,7 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         web_search_error: None,
         kb_unavailable_reason: None,
         kb_attempted: false,
+        web_queries: Vec::new(),
         sources: Vec::new(),
         available_for_rag: 0,
         sub_timings: RetrievalSubTimingMetrics::default(),
@@ -200,6 +201,7 @@ fn external_result(url: &str, context: Option<&str>) -> pipeline::ExternalSearch
         error: None,
         elapsed_ms: 7,
         pages: Default::default(),
+        queries: Vec::new(),
     }
 }
 
@@ -231,6 +233,26 @@ fn what_the_web_phase_read_reaches_the_outcome_the_tool_loop_starts_from() {
     assert_eq!(
         outcome.pages_read.recall("https://read.test/recap"),
         Some(Recall::AlreadyWhole { word_count: 3 })
+    );
+}
+
+/// A deep-research turn lists these for the model, so it does not spend a
+/// round repeating a search the first round already ran.
+#[test]
+fn the_searches_the_web_phase_ran_reach_the_outcome() {
+    let mut web = external_result("https://example.com/web", Some("web context"));
+    web.queries = vec![
+        "China extreme weather 2026".to_string(),
+        "China typhoon track October 2026".to_string(),
+    ];
+    let mut outcome = empty_pipeline_outcome();
+    pipeline::attach_web_results(&mut outcome, web);
+    assert_eq!(
+        outcome.web_queries,
+        [
+            "China extreme weather 2026",
+            "China typhoon track October 2026"
+        ]
     );
 }
 

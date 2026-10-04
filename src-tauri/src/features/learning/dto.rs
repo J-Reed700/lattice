@@ -19,6 +19,9 @@ pub enum LearningPreparation {
 pub enum LearningBlockKind {
     Explanation,
     WorkedExample,
+    GuidedPractice,
+    IndependentPractice,
+    Recap,
     Reflection,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -44,6 +47,8 @@ pub struct LearningBlockDto {
     pub title: String,
     pub body: String,
     pub source_ids: Vec<String>,
+    #[serde(default)]
+    pub rubric: Vec<LearningPracticeCriterionDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +79,19 @@ pub struct LearningModuleDto {
     pub summary: String,
     pub outcomes: Vec<String>,
     pub lessons: Vec<LearningLessonDto>,
+    #[serde(default)]
+    pub prerequisite_module_ids: Vec<String>,
+    #[serde(default)]
+    pub project: Option<LearningProjectMilestoneDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LearningProjectMilestoneDto {
+    pub title: String,
+    pub brief: String,
+    pub deliverables: Vec<String>,
+    pub success_criteria: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +155,28 @@ pub struct GenerateLearningProgramRequestDto {
     pub minutes_per_session: i64,
     pub document_ids: Vec<String>,
     pub source_urls: Vec<String>,
+    /// Omitted by older clients; their existing 2–6 module contract remains valid.
+    #[serde(default)]
+    pub course_depth: Option<LearningCourseDepth>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningCourseDepth {
+    Focused,
+    Course,
+    DeepDive,
+}
+
+impl LearningCourseDepth {
+    pub fn bounds(depth: Option<Self>) -> (usize, usize, usize, usize) {
+        match depth {
+            Some(Self::Focused) => (2, 3, 2, 3),
+            Some(Self::Course) => (4, 6, 3, 5),
+            Some(Self::DeepDive) => (6, 10, 4, 6),
+            None => (2, 6, 2, 6),
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -181,6 +221,7 @@ pub struct LearningAnswerKey {
 }
 #[derive(Debug, Clone)]
 pub struct PreparedLearningLesson {
+    pub verification: Option<super::content_verification::LessonVerificationReport>,
     pub blocks: Vec<LearningBlockDto>,
     pub questions: Vec<LearningQuestionDto>,
     pub keys: Vec<LearningAnswerKey>,
@@ -665,6 +706,18 @@ pub struct LearningPracticeSessionSummaryDto {
     pub updated_at: i64,
     pub submitted_at: Option<i64>,
     pub grade_status: Option<LearningPracticeGradeStatus>,
+    #[serde(default)]
+    pub task_kind: LearningPracticeTaskKind,
+    #[serde(default)]
+    pub revises_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningPracticeTaskKind {
+    #[default]
+    Independent,
+    Guided,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -773,6 +826,10 @@ pub struct StartLearningPracticeSessionRequestDto {
     pub lesson_id: String,
     pub expected_program_revision: i64,
     pub mode: LearningPracticeMode,
+    #[serde(default)]
+    pub task_kind: LearningPracticeTaskKind,
+    #[serde(default)]
+    pub revises_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

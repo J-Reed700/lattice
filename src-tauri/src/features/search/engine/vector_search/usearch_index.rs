@@ -27,7 +27,7 @@ use crate::features::search::engine::service::SearchResult;
 use crate::features::search::engine::vector_ops::cosine_similarity_simd;
 use crate::features::search::SearchServiceTrait;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use std::cmp::Ordering as CmpOrdering;

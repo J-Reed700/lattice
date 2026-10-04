@@ -3,6 +3,7 @@
 #[cfg(test)]
 use super::*;
 use crate::application::ports::EmbeddingPort;
+use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::infrastructure::{
     adapters::content_extraction_adapter::ContentExtractionAdapter,
     file_system::SecureFileStorage,
@@ -65,10 +66,8 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
         Arc::new(EmbeddingRepository::new(db.pool().clone())),
         uow.clone(),
     ));
-    let worker =
-        StartBatchFileImportUseCase::new(repo.clone(), indexer, uow).with_document_scope(Arc::new(
-            crate::infrastructure::document_scope::SqliteDocumentScope::new(db.pool().clone()),
-        ));
+    let worker = StartBatchFileImportUseCase::new(repo.clone(), indexer, uow)
+        .with_document_scope(Arc::new(SqliteDocumentScope::new(db.pool().clone())));
     sqlx::query("INSERT OR IGNORE INTO conversation_spaces (id, name) VALUES ('retry-space', 'Patent Training')").execute(db.pool()).await?;
     let paths = ["first.txt", "second.txt", "fail.txt"].map(|name| dir.path().join(name));
     for (path, text) in paths.iter().zip([
@@ -885,9 +884,10 @@ async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::R
     });
     let harness = ImportHarness::new(dir.path(), embedding).await?;
     let pool = harness.db.pool().clone();
-    let worker = harness.worker.clone().with_document_scope(Arc::new(
-        crate::infrastructure::document_scope::SqliteDocumentScope::new(pool.clone()),
-    ));
+    let worker = harness
+        .worker
+        .clone()
+        .with_document_scope(Arc::new(SqliteDocumentScope::new(pool.clone())));
     sqlx::query("INSERT INTO conversations (id, title, model_name) VALUES ('chat-a', 'A', 'm'), ('chat-b', 'B', 'm')")
         .execute(&pool)
         .await?;

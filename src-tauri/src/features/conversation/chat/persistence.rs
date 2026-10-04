@@ -382,8 +382,14 @@ fn spawn_memory_indexing(
     conversation_id: String,
     memories: Vec<MemoryToIndex>,
 ) {
-    tokio::spawn(async move {
-        let embedding_service = match container.get_or_load_embedding().await {
+    let cancel = crate::shared::runtime::background::cancellation_token();
+    crate::shared::runtime::background::spawn(async move {
+        let loaded = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            result = container.get_or_load_embedding() => result,
+        };
+        let embedding_service = match loaded {
             Ok(service) => service,
             Err(e) => {
                 warn!(
@@ -402,7 +408,12 @@ fn spawn_memory_indexing(
                 continue;
             }
 
-            let embedding = match embed_memory(embedding_service.as_ref(), &memory.content).await {
+            let embedded = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                result = embed_memory(embedding_service.as_ref(), &memory.content) => result,
+            };
+            let embedding = match embedded {
                 Ok(value) => value,
                 Err(e) => {
                     warn!(

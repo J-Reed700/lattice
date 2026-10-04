@@ -21,7 +21,7 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     /// let embedding = service.embed_single("hello world").await?;
     /// assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
     /// ```

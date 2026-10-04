@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useReducer,
   useRef,
   type ReactNode,
   type RefObject,
@@ -21,11 +22,12 @@ interface VirtualizedMessageListProps<T> {
   scrollElementRef: RefObject<HTMLElement | null>;
   getKey: (item: T) => string;
   getMessageId: (item: T) => string | null;
+  onVisibleIndexChange?: (index: number) => void;
   renderItem: (item: T, index: number) => ReactNode;
 }
 
 function VirtualizedMessageListImpl<T>(
-  { items, scrollElementRef, getKey, getMessageId, renderItem }: VirtualizedMessageListProps<T>,
+  { items, scrollElementRef, getKey, getMessageId, onVisibleIndexChange, renderItem }: VirtualizedMessageListProps<T>,
   ref: React.ForwardedRef<VirtualizedMessageListHandle>
 ) {
   const itemsRef = useRef(items);
@@ -47,16 +49,34 @@ function VirtualizedMessageListImpl<T>(
     useAnimationFrameWithResizeObserver: true,
   });
   const refreshFrameRef = useRef<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [, rerender] = useReducer((count: number) => count + 1, 0);
 
   // A hidden/minimized Tauri webview can report a zero-sized scroll rect and
   // not emit another ResizeObserver callback when it is shown again. A stale
   // rect leaves the virtualizer with an empty range, which makes the composer
-  // appear at the top of an otherwise blank chat. Re-measure on every browser
-  // lifecycle signal that can restore the webview's layout, and once more on
-  // the next frame after native focus so WebKit has committed its dimensions.
+  // appear at the top of an otherwise blank chat. On every browser lifecycle
+  // signal that can restore the webview's layout (and on the next frame, so
+  // WebKit has committed its dimensions), read the viewport afresh and measure
+  // the rows on screen where they stand.
+  //
+  // Never `virtualizer.measure()`: it forgets every row's height, and a row
+  // whose size did not change is never measured again (its ResizeObserver
+  // stays quiet and its ref is not called twice). Every long answer then
+  // shrank to the 320px estimate and the rows piled on top of each other —
+  // after any window focus, including the one that closes the "Delete this
+  // message?" dialog — and stayed that way.
   const refreshMeasurements = useCallback(() => {
+    const refresh = () => {
+      const element = scrollElementRef.current;
+      if (element) virtualizer.scrollRect = { width: element.offsetWidth, height: element.offsetHeight };
+      listRef.current
+        ?.querySelectorAll<HTMLElement>(':scope > [data-index]')
+        .forEach((row) => virtualizer.measureElement(row));
+      rerender();
+    };
     if (typeof window.requestAnimationFrame !== 'function') {
-      virtualizer.measure();
+      refresh();
       return;
     }
     if (refreshFrameRef.current !== null) {
@@ -64,9 +84,9 @@ function VirtualizedMessageListImpl<T>(
     }
     refreshFrameRef.current = window.requestAnimationFrame(() => {
       refreshFrameRef.current = null;
-      virtualizer.measure();
+      refresh();
     });
-  }, [virtualizer]);
+  }, [scrollElementRef, virtualizer]);
 
   useEffect(() => {
     const refresh = () => refreshMeasurements();
@@ -103,8 +123,16 @@ function VirtualizedMessageListImpl<T>(
 
   const rows = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
+  // Track the message at the reading edge, not the first overscanned row.
+  // A long reply remains current until its bottom passes this line.
+  const visibleIndex = virtualizer.getVirtualItemForOffset((virtualizer.scrollOffset ?? 0) + 24)?.index;
+  useEffect(() => {
+    if (visibleIndex !== undefined) onVisibleIndexChange?.(visibleIndex);
+  }, [visibleIndex, onVisibleIndexChange]);
+
   return (
     <div
+      ref={listRef}
       className="chat-message-list"
       data-testid="chat-message-list"
       style={{

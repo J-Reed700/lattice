@@ -9,6 +9,7 @@ import { TaskList } from '@tiptap/extension-task-list';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 
+import { fileRefFromHref } from './fileRefs';
 import { SlashMenu, type SlashMenuOptions } from './slashMenu';
 import { Wikilink } from './wikilink';
 
@@ -43,6 +44,11 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
     Link.configure({
       openOnClick: true,
       autolink: true,
+      // Tiptap's own check reads `.-:` in its pattern as a character range, so
+      // a relative address that starts with a letter (`src/main.rs#L12`) is
+      // dropped and the link becomes plain text. An address that names a file
+      // is kept, so an answer's link to a file in the folder still works.
+      isAllowedUri: (url, ctx) => ctx.defaultValidate(url) || fileRefFromHref(url) !== null,
       HTMLAttributes: {
         target: '_blank',
         rel: 'noopener noreferrer',

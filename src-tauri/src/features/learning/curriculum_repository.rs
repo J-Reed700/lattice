@@ -12,6 +12,24 @@ use crate::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 
+pub(crate) fn stable_job_operation_id(program_id: &str, lesson_id: &str, revision: i64) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(
+        format!("learning-prepare:{program_id}:{lesson_id}:{revision}").as_bytes(),
+    );
+    let mut bytes = [0u8; 16];
+    if let Some(prefix) = digest.get(..bytes.len()) {
+        bytes.copy_from_slice(prefix);
+    }
+    if let Some(version_byte) = bytes.get_mut(6) {
+        *version_byte = (*version_byte & 0x0f) | 0x50;
+    }
+    if let Some(variant_byte) = bytes.get_mut(8) {
+        *variant_byte = (*variant_byte & 0x3f) | 0x80;
+    }
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -108,7 +126,7 @@ impl LearningCurriculumRepository {
                 id: module_id,
                 title: m.get("title"),
                 purpose: m.get("summary"),
-                prerequisite_module_ids: vec![],
+                prerequisite_module_ids: decode(m.get("prerequisite_ids_json"))?,
                 outcome_ids,
                 lessons,
             });
@@ -464,9 +482,61 @@ impl LearningCurriculumRepository {
         self.plan(&request.program_id).await
     }
 
+    pub async fn diagnostic_replay<T: serde::Serialize>(
+        &self,
+        operation_id: &str,
+        request: &T,
+    ) -> Result<Option<LearningDiagnosticAttemptDto>> {
+        validate_operation_id(operation_id)?;
+        if let Some(row) = sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(operation_id).fetch_optional(&self.pool).await.map_err(db)? {
+            if row.get::<String,_>("payload_hash") != hash(&encode(request)?) { return Err(AppError::InvalidInput("Operation ID was reused with different diagnostic data.".into())); }
+            return Ok(Some(self.diagnostic(&row.get::<String,_>("diagnostic_id")).await?));
+        }
+        Ok(None)
+    }
+
+    pub async fn diagnostic_for_program(
+        &self,
+        program_id: &str,
+        diagnostic_id: &str,
+    ) -> Result<LearningDiagnosticAttemptDto> {
+        let attempt = self.diagnostic(diagnostic_id).await?;
+        if attempt.program_id != program_id {
+            return Err(AppError::NotFound(
+                "Diagnostic not found in this program".into(),
+            ));
+        }
+        Ok(attempt)
+    }
+
+    pub async fn diagnostic_tasks(
+        &self,
+        program_id: &str,
+        diagnostic_id: &str,
+    ) -> Result<Vec<super::diagnostic_generation::DiagnosticTask>> {
+        let encoded: String = sqlx::query_scalar(
+            "SELECT evaluation_json FROM learning_diagnostic_attempts WHERE id=? AND program_id=?",
+        )
+        .bind(diagnostic_id)
+        .bind(program_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Diagnostic not found".into()))?;
+        decode(&encoded)
+    }
+
     pub async fn start_diagnostic(
         &self,
         request: &StartLearningDiagnosticRequestDto,
+    ) -> Result<LearningDiagnosticAttemptDto> {
+        self.start_diagnostic_authored(request, None).await
+    }
+
+    pub async fn start_diagnostic_authored(
+        &self,
+        request: &StartLearningDiagnosticRequestDto,
+        tasks: Option<&[super::diagnostic_generation::DiagnosticTask]>,
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         self.seed_accepted(&request.program_id).await?;
@@ -534,18 +604,32 @@ impl LearningCurriculumRepository {
                         "Accepted curriculum references a missing learning outcome.".into(),
                     )
                 })?;
-                prompts.push(LearningDiagnosticPromptDto { id:uuid::Uuid::new_v4().to_string(), prompt:format!("Self-inventory: What do you currently understand about {title}? Share a question or example if useful."), outcome_id:outcome.clone(), outcome_title:title, source_version_ids:source_ids.clone() });
+                let prompt = if let Some(tasks) = tasks {
+                    let Some(task) = tasks.iter().find(|t| &t.outcome_id == outcome) else {
+                        continue;
+                    };
+                    task.prompt.clone()
+                } else {
+                    format!("Self-inventory: What do you currently understand about {title}? Share a question or example if useful.")
+                };
+                prompts.push(LearningDiagnosticPromptDto {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    prompt,
+                    outcome_id: outcome.clone(),
+                    outcome_title: title,
+                    source_version_ids: source_ids.clone(),
+                });
             }
         }
-        if prompts.is_empty() {
+        if prompts.is_empty() || tasks.is_some_and(|t| t.len() != prompts.len() || t.len() > 6) {
             return Err(AppError::InvalidState(
                 "The accepted program has no outcomes for a diagnostic.".into(),
             ));
         }
         let id = uuid::Uuid::new_v4().to_string();
         let created = now();
-        sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at) VALUES(?,?,?,'active',?,'[]','[]','[]',?,NULL)")
-            .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(encode(&prompts)?).bind(created).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at,evaluation_json) VALUES(?,?,?,'active',?,'[]','[]','[]',?,NULL,?)")
+            .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(encode(&prompts)?).bind(created).bind(encode(&tasks.unwrap_or_default())?).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO learning_diagnostic_operations(operation_id,program_id,diagnostic_id,kind,payload_hash,created_at) VALUES(?,?,?,'start',?,?)")
             .bind(&request.operation_id).bind(&request.program_id).bind(&id).bind(payload).bind(created).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -556,7 +640,42 @@ impl LearningCurriculumRepository {
         &self,
         request: &SubmitLearningDiagnosticRequestDto,
     ) -> Result<LearningDiagnosticAttemptDto> {
+        self.submit_diagnostic_evaluated(request, None).await
+    }
+
+    pub async fn submit_diagnostic_evaluated(
+        &self,
+        request: &SubmitLearningDiagnosticRequestDto,
+        findings: Option<&[LearningDiagnosticFindingDto]>,
+    ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
+        if let Some(replay) = self
+            .diagnostic_replay(&request.operation_id, request)
+            .await?
+        {
+            return Ok(replay);
+        }
+        let attempt = self
+            .diagnostic_for_program(&request.program_id, &request.diagnostic_id)
+            .await?;
+        let tasks = self
+            .diagnostic_tasks(&request.program_id, &request.diagnostic_id)
+            .await?;
+        if !tasks.is_empty() && !request.save_only {
+            super::diagnostic_generation::validate_findings(
+                &attempt,
+                &request.responses,
+                findings.ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "These performance tasks require feedback before submission.".into(),
+                    )
+                })?,
+            )?;
+        } else if findings.is_some() {
+            return Err(AppError::InvalidInput(
+                "A self-inventory cannot be presented as a scored diagnostic.".into(),
+            ));
+        }
         let payload = hash(&encode(request)?);
         let mut tx = self.pool.begin().await.map_err(db)?;
         if let Some(row)=sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
@@ -574,10 +693,20 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let row=sqlx::query("SELECT prompt_json,status FROM learning_diagnostic_attempts WHERE id=? AND program_id=?").bind(&request.diagnostic_id).bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Diagnostic attempt not found".into()))?;
+        let row=sqlx::query("SELECT prompt_json,status,revision FROM learning_diagnostic_attempts WHERE id=? AND program_id=?").bind(&request.diagnostic_id).bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Diagnostic attempt not found".into()))?;
         if row.get::<String, _>("status") != "active" {
             return Err(AppError::InvalidState(
                 "This diagnostic attempt is already closed.".into(),
+            ));
+        }
+        let diagnostic_revision: i64 = row.get("revision");
+        if request
+            .expected_diagnostic_revision
+            .is_some_and(|revision| revision != diagnostic_revision)
+            || (!tasks.is_empty() && request.expected_diagnostic_revision.is_none())
+        {
+            return Err(AppError::InvalidState(
+                "The starting-point answers changed elsewhere. Reload before saving.".into(),
             ));
         }
         let prompts: Vec<LearningDiagnosticPromptDto> = decode(row.get("prompt_json"))?;
@@ -597,13 +726,13 @@ impl LearningCurriculumRepository {
                     "Diagnostic responses must be 4000 characters or fewer.".into(),
                 ));
             }
-            if response.response.trim().is_empty() {
+            if response.response.trim().is_empty() && !request.save_only {
                 return Err(AppError::InvalidInput(
                     "Answer every self-inventory prompt or skip the diagnostic.".into(),
                 ));
             }
         }
-        if seen.len() != expected.len() {
+        if seen.len() != expected.len() && !request.save_only {
             return Err(AppError::InvalidInput(
                 "Answer every self-inventory prompt or skip the diagnostic.".into(),
             ));
@@ -619,8 +748,8 @@ impl LearningCurriculumRepository {
                 });
             }
         }
-        sqlx::query("UPDATE learning_diagnostic_attempts SET status='submitted',response_json=?,findings_json='[]',source_coverage_gaps_json=?,submitted_at=? WHERE id=? AND status='active'")
-            .bind(responses_json).bind(encode(&gaps)?).bind(now()).bind(&request.diagnostic_id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_diagnostic_attempts SET status=?,response_json=?,findings_json=?,source_coverage_gaps_json=?,submitted_at=?,revision=revision+1 WHERE id=? AND status='active'")
+            .bind(if request.save_only { "active" } else { "submitted" }).bind(responses_json).bind(encode(&findings.unwrap_or_default())?).bind(encode(&gaps)?).bind(if request.save_only { None } else { Some(now()) }).bind(&request.diagnostic_id).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO learning_diagnostic_operations(operation_id,program_id,diagnostic_id,kind,payload_hash,created_at) VALUES(?,?,?,'submit',?,?)")
             .bind(&request.operation_id).bind(&request.program_id).bind(&request.diagnostic_id).bind(payload).bind(now()).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -695,6 +824,53 @@ impl LearningCurriculumRepository {
         rows.into_iter().map(parse_job).collect()
     }
 
+    /// Explicit lesson preparation may resume an existing retry chain. Concurrent
+    /// clicks share one stable retry operation and only one worker can claim it.
+    pub async fn start_lesson_job(
+        &self,
+        request: &StartLearningGenerationJobRequestDto,
+    ) -> Result<LearningGenerationJob> {
+        if request.progress_total != 1 {
+            return Err(AppError::InvalidInput(
+                "Select one lesson to prepare.".into(),
+            ));
+        }
+        let mut job = self.start_job(request).await?;
+        let jobs = self.jobs(&request.program_id).await?;
+        let mut visited = std::collections::HashSet::new();
+        while let Some(child) = jobs
+            .iter()
+            .find(|candidate| candidate.retry_of_job_id.as_deref() == Some(job.id.as_str()))
+        {
+            if !visited.insert(job.id.clone()) {
+                return Err(AppError::InvalidState(
+                    "The lesson retry history is invalid.".into(),
+                ));
+            }
+            job = child.clone();
+        }
+        if matches!(
+            job.status,
+            LearningGenerationJobStatus::Failed
+                | LearningGenerationJobStatus::Interrupted
+                | LearningGenerationJobStatus::Cancelled
+        ) {
+            job = self
+                .retry_job(&LearningGenerationJobActionRequestDto {
+                    operation_id: stable_job_operation_id(
+                        &request.program_id,
+                        &format!("retry-{}", job.id),
+                        request.expected_revision,
+                    ),
+                    program_id: request.program_id.clone(),
+                    job_id: job.id.clone(),
+                    expected_revision: request.expected_revision,
+                })
+                .await?;
+        }
+        Ok(job)
+    }
+
     pub async fn start_job(
         &self,
         request: &StartLearningGenerationJobRequestDto,
@@ -763,11 +939,18 @@ impl LearningCurriculumRepository {
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }
-        let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 ORDER BY m.ordinal,l.ordinal LIMIT 3")
+        let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 ORDER BY m.ordinal,l.ordinal")
             .bind(&request.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        if next_lessons.get(..lesson_ids.len()) != Some(lesson_ids.as_slice()) {
+        if (lesson_ids.len() == 1
+            && lesson_ids
+                .first()
+                .is_some_and(|id| !next_lessons.contains(id)))
+            || (lesson_ids.len() > 1
+                && next_lessons.get(..lesson_ids.len()) != Some(lesson_ids.as_slice()))
+        {
             return Err(AppError::InvalidInput(
-                "A preparation job may only target the next outline lessons in order.".into(),
+                "Select an unfinished outline lesson; batch preparation must follow course order."
+                    .into(),
             ));
         }
         let id = uuid::Uuid::new_v4().to_string();
@@ -958,6 +1141,32 @@ impl LearningCurriculumRepository {
         tx.commit().await.map_err(db)
     }
 
+    pub async fn interrupt_job(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let row =
+            sqlx::query("SELECT status,progress_current FROM learning_generation_jobs WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+                .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
+        if row.get::<String, _>("status") != "running" {
+            tx.commit().await.map_err(db)?;
+            return Ok(());
+        }
+        let stamp = now();
+        sqlx::query("UPDATE learning_generation_jobs SET status='interrupted',finished_at=?,error_code='generation_interrupted',error_message=?,progress_message='Generation interrupted',published_result_id=NULL WHERE id=?").bind(stamp).bind("Application shut down during generation").bind(id).execute(&mut *tx).await.map_err(db)?;
+        let ordinal: i64 = sqlx::query_scalar(
+            "SELECT coalesce(max(ordinal),-1)+1 FROM learning_generation_job_events WHERE job_id=?",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) VALUES(?,?,'interrupted',?,?,?)").bind(id).bind(ordinal).bind(row.get::<i64,_>("progress_current")).bind("Generation interrupted").bind(stamp).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)
+    }
+
     pub async fn publish_prepared_lessons(
         &self,
         id: &str,
@@ -1015,8 +1224,10 @@ impl LearningCurriculumRepository {
                     "Only outline lessons can be published by this job.".into(),
                 ));
             }
+            super::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
+                .await?;
             for (ordinal, b) in prepared.blocks.iter().enumerate() {
-                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(super::repository::block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).execute(&mut *tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(super::repository::block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
             }
             for (ordinal, q) in prepared.questions.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) SELECT ?,?,module_id,?,?,?,?,? FROM learning_lessons WHERE id=?").bind(&q.id).bind(lesson_id).bind(super::repository::assessment(q.kind.clone())).bind(&q.prompt).bind(encode(&q.options)?).bind(encode(&q.source_ids)?).bind(ordinal as i64).bind(lesson_id).execute(&mut *tx).await.map_err(db)?;
@@ -1259,11 +1470,16 @@ fn decode_diagnostic_row(r: &sqlx::sqlite::SqliteRow) -> Result<LearningDiagnost
         id: r.get("id"),
         program_id: r.get("program_id"),
         status,
+        revision: r.get("revision"),
         prompts: decode(r.get("prompt_json"))?,
         responses: decode(r.get("response_json"))?,
         source_coverage_gaps: decode(r.get("source_coverage_gaps_json"))?,
-        interpretation:
-            "Self-inventory only. Responses are not scored and do not establish mastery.".into(),
+        findings: decode(r.get("findings_json"))?,
+        interpretation: if r.get::<String, _>("evaluation_json") == "[]" {
+            "Self-inventory only. Responses are not scored and do not establish mastery.".into()
+        } else {
+            "Starting-point feedback is provisional. Use it to choose practice or a challenge; it does not establish mastery.".into()
+        },
         created_at: r.get("created_at"),
         submitted_at: r.get("submitted_at"),
     })
@@ -1456,6 +1672,8 @@ mod tests {
             diagnostic_id: active.id.clone(),
             expected_revision: program.summary.revision,
             responses: vec![],
+            save_only: false,
+            expected_diagnostic_revision: None,
         };
         assert!(repo.submit_diagnostic(&incomplete).await.is_err());
         incomplete.responses = active
@@ -1556,6 +1774,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplicate_workers(
+    ) -> Result<()> {
+        let pool = pool().await?;
+        let program = active_program(&pool).await?;
+        let repo = LearningCurriculumRepository::new(pool.clone());
+        let target = program.modules[1].lessons[1].id.clone();
+        let request = StartLearningGenerationJobRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: serde_json::json!({"lessonIds":[target]}).to_string(),
+            progress_total: 1,
+        };
+        let first = repo.start_lesson_job(&request).await?;
+        assert_eq!(repo.start_lesson_job(&request).await?.id, first.id);
+        assert!(repo.begin_job(&first.id).await?);
+        repo.fail_job(&first.id, "Synthetic review failure").await?;
+        let (left, right) = tokio::join!(
+            repo.start_lesson_job(&request),
+            repo.start_lesson_job(&request)
+        );
+        let retry = left?;
+        assert_eq!(retry.id, right?.id);
+        assert_ne!(retry.id, first.id);
+        assert_eq!(retry.retry_of_job_id.as_deref(), Some(first.id.as_str()));
+        assert!(repo.begin_job(&retry.id).await?);
+        assert!(!repo.begin_job(&retry.id).await?);
+        repo.fail_job(&retry.id, "A second synthetic failure")
+            .await?;
+        let next = repo.start_lesson_job(&request).await?;
+        assert_eq!(next.retry_of_job_id.as_deref(), Some(retry.id.as_str()));
+        assert_eq!(repo.start_lesson_job(&request).await?.id, next.id);
+        let mut invalid = request.clone();
+        invalid.operation_id = op_id();
+        invalid.request_json = serde_json::json!({"lessonIds":[op_id()]}).to_string();
+        assert!(repo.start_lesson_job(&invalid).await.is_err());
+        let mut batch = request;
+        batch.operation_id = op_id();
+        batch.progress_total = 2;
+        batch.request_json=serde_json::json!({"lessonIds":[program.modules[1].lessons[1].id,program.modules[0].lessons[0].id]}).to_string();
+        assert!(repo.start_job(&batch).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> Result<()> {
         let pool = pool().await?;
         let program = active_program(&pool).await?;
@@ -1617,8 +1881,10 @@ mod tests {
         let duplicate_question_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,'practice','Existing item','[]','[]',0)")
             .bind(&duplicate_question_id).bind(&target).bind(&module_id).execute(&pool).await.map_err(db)?;
-        let broken = super::super::dto::PreparedLearningLesson {
+        let mut broken = super::super::dto::PreparedLearningLesson {
+            verification: None,
             blocks: vec![super::super::dto::LearningBlockDto {
+                rubric: vec![],
                 kind: super::super::dto::LearningBlockKind::Explanation,
                 title: "A staged explanation".into(),
                 body: "This should roll back with the transaction.".into(),
@@ -1633,6 +1899,9 @@ mod tests {
             }],
             keys: vec![],
         };
+        broken.verification = Some(super::super::content_verification::tests::attest(
+            &target, &broken,
+        ));
         assert!(curriculum
             .publish_prepared_lessons(&retry.id, before_revision, &[(target.clone(), broken)])
             .await
@@ -1662,11 +1931,21 @@ mod tests {
                 .map_err(db)?;
         assert_eq!(after_failure, before_revision);
 
-        let good = super::super::dto::PreparedLearningLesson {
-            blocks: vec![],
+        let mut good = super::super::dto::PreparedLearningLesson {
+            verification: None,
+            blocks: vec![super::super::dto::LearningBlockDto {
+                kind: super::super::dto::LearningBlockKind::Explanation,
+                title: "Verified teaching fixture".into(),
+                body: "A persisted explanation.".into(),
+                source_ids: vec![],
+                rubric: vec![],
+            }],
             questions: vec![],
             keys: vec![],
         };
+        good.verification = Some(super::super::content_verification::tests::attest(
+            &target, &good,
+        ));
         curriculum
             .publish_prepared_lessons(&retry.id, before_revision, &[(target.clone(), good)])
             .await?;

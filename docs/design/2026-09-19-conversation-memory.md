@@ -61,7 +61,7 @@ These findings were checked during preparation. Re-read the named symbols before
 | Existing component | Current behavior | Required change |
 |---|---|---|
 | `src-tauri/src/features/conversation/plugin_impl.rs::compact_conversation_impl` | Utility-model prose summary; retains at least two recent messages; reuses prior summary | Move compaction orchestration into a focused use case; generate and validate structured memory deltas and summary |
-| `src-tauri/src/domain/conversation.rs::CompactionRecord` | Summary text, boundary, counts, ratio | Keep display/accounting record; associate it with an atomic memory revision |
+| `src-tauri/src/domain/conversation/aggregate.rs::CompactionRecord` | Summary text, boundary, counts, ratio | Keep display/accounting record; associate it with an atomic memory revision |
 | `ConversationAggregate::context_preamble` | Wraps summary in a string | Stop using it as the production authority for instruction memory |
 | `ConversationAggregate::to_llm_messages` | Emits summary as a system message plus suffix | Use shared typed assembly; generated text is not a system policy |
 | `src-tauri/src/application/services/context_window_builder.rs` | Charges summary first, scans newest completed messages, silently stops at budget | Delegate to bounded context assembly; dropping unprocessed originals requires compaction first |
@@ -625,7 +625,7 @@ These paths are proposed new files unless listed as existing in section 3.
 
 | Module | Responsibility |
 |---|---|
-| `domain/conversation_memory.rs` | Memory items, evidence spans, transitions, state/version types, pure validation rules |
+| `domain/conversation/memory.rs` | Memory items, evidence spans, transitions, state/version types, pure validation rules |
 | `application/ports/conversation_memory.rs` | Snapshot read, source paging/recall, and atomic commit contracts |
 | `application/services/conversation_memory/` | Extraction orchestration, validation, transition handling, compaction job |
 | `application/services/context_assembler/` | Shared budget, mandatory selection, typed rendering, accounting |
@@ -1180,7 +1180,7 @@ one thing. Removed:
   `20260916000000_init_schema.sql` had hidden trigger behavior and column
   defaults from the tests that depended on them.
 - Two framings of a generated summary collapsed to one
-  `domain::conversation_memory::frame_generated_summary`, used by the chat
+  `domain::conversation::memory::frame_generated_summary`, used by the chat
   assembler, the QA context manager and the context-window builder. Its
   `[generated summary` opening is load-bearing: the assembler's eviction finds
   the summary by that prefix, and a test in `context_assembler/tests.rs` pins the

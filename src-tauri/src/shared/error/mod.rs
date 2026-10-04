@@ -1,35 +1,22 @@
-//! Application error types for Lattice Desktop.
+//! Serializable error contracts shared by application, domain, and IPC code.
 //!
-//! This module provides a unified error type that is:
-//! - **Serializable** for Tauri IPC boundaries
-//! - **Comprehensive** with 23+ semantic error variants
-//! - **Compatible** with Result-based error handling
-//!
-//! # Example
+//! `DomainError` and `ApplicationError` describe failures in those layers;
+//! `AppError` wraps them and carries infrastructure failures across the app.
+//! Adapters implement conversions from database, keyring, download, and LLM
+//! errors so these contracts do not depend on those implementations.
 //!
 //! ```rust
-//! use crate::shared::error::{AppError, Result};
+//! use lattice::shared::error::{AppError, Result};
 //!
-//! fn find_document(id: &str) -> Result<Document> {
-//!     database::get(id)
-//!         .ok_or_else(|| AppError::NotFound {
-//!             resource_type: "document".into(),
-//!             resource_id: id.into(),
-//!         })
+//! fn require_document(document: Option<String>) -> Result<String> {
+//!     document.ok_or_else(|| AppError::NotFound("Document not found".into()))
 //! }
 //! ```
-//!
-//! # Error Variants
-//!
-//! The `AppError` enum provides semantic error types organized by domain:
-//!
-//! - **Infrastructure**: `Io`, `Database`, `Serialization`, `Migration`, `Configuration`
-//! - **Domain**: `NotFound`, `AlreadyExists`, `InvalidInput`, `InvalidOperation`
-//! - **Security**: `Unauthorized`, `Forbidden`, `RateLimitExceeded`, `ValidationFailed`
-//! - **External Services**: `EmbeddingError`, `SearchError`, `OnnxError`
-//! - **System**: `Internal`, `NotImplemented`, `Timeout`, `ResourceExhausted`
-//!
-//! All variants are serializable and provide user-friendly error messages.
+
+mod application;
+mod domain;
+pub use application::ApplicationError;
+pub use domain::DomainError;
 
 // Main error definitions
 mod types;
@@ -38,8 +25,3 @@ pub use types::{AppError, ErrorResponse, Result, ResultExt};
 // Examples module
 #[cfg(any(test, doc))]
 pub mod examples;
-
-// Tests module
-// Temporarily disabled due to refactoring
-// #[cfg(test)]
-// mod tests;

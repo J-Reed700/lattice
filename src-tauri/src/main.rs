@@ -4,7 +4,7 @@
 use lattice::infrastructure::setup;
 
 #[cfg(feature = "desktop-e2e")]
-mod learning_runtime_self_test;
+mod desktop_e2e;
 
 // IPC commands are exposed through domain-specific Tauri plugins.
 
@@ -130,7 +130,7 @@ fn main() {
                 eprintln!("A bundled Python resource directory is required.");
                 std::process::exit(2);
             };
-            if let Err(error) = learning_runtime_self_test::run(resources.into()) {
+            if let Err(error) = desktop_e2e::learning_runtime_self_test::run(resources.into()) {
                 eprintln!("Embedded runtime self-test failed: {error}");
                 std::process::exit(1);
             }

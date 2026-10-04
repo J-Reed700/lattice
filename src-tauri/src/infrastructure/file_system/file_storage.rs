@@ -45,8 +45,8 @@
 
 use crate::application::ports::{FileMetadata, FileStoragePort};
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
-use crate::shared::utils::atomic_fs::AtomicFs;
+use crate::shared::error::Result;
+use crate::shared::fs::atomic::AtomicFs;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;

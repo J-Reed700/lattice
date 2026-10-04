@@ -5,7 +5,7 @@ use crate::features::references::dto::{
     CreatePassageReferenceRequestDto, PassageReferenceDto, UpdatePassageReferenceRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

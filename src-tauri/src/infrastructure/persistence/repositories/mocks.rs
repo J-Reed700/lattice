@@ -257,7 +257,7 @@ impl ChunkRepositoryPort for MockChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<Chunk> {
-        use crate::shared::domain_types::DocumentId;
+        use crate::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = Chunk::new(doc_id, content.to_string(), index);
         self.save(&chunk).await?;
@@ -607,7 +607,7 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
         _modified_at: &str,
         checksum: &str,
     ) -> Result<Document> {
-        use crate::shared::domain_types::ValidatedFilePath;
+        use crate::shared::types::ValidatedFilePath;
         use std::path::PathBuf;
 
         let validated_path = ValidatedFilePath::new(PathBuf::from(file_path))?;
@@ -863,7 +863,7 @@ impl EmbeddingRepositoryTrait for MockEmbeddingRepository {
 #[async_trait]
 impl EmbeddingRepositoryPort for MockEmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::domain_types::ChunkId;
+        use crate::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;
@@ -1064,7 +1064,7 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         mention_type: &str,
         metadata: Option<&str>,
     ) -> Result<crate::application::ports::MentionData, AppError> {
-        use crate::shared::domain_types::{ChunkId, DocumentId};
+        use crate::shared::types::{ChunkId, DocumentId};
         use uuid::Uuid;
 
         // For the mock, we need to create a simplified representation

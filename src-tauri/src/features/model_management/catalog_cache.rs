@@ -1,8 +1,8 @@
-use crate::domain::embedding_constants::{
+use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, QWEN3_EMBEDDING_MODEL_CURATED_ID,
     QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,
 };
-use crate::domain::model_metadata::ModelType;
+use crate::domain::models::metadata::ModelType;
 use std::collections::HashMap;
 use std::sync::RwLock;
 

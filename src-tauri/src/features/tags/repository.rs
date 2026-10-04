@@ -16,8 +16,8 @@
 use crate::application::ports::{Filter, RepositoryPort};
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::infrastructure::persistence::mappers::{TagMapper, TagModel};
-use crate::shared::domain_types::TagName;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::TagName;
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
 
@@ -660,7 +660,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
             let db_models = if let Some(pattern) = &tag_filter.name_pattern {
                 // Case-insensitive partial match
                 let search_pattern =
-                    crate::shared::sql_like::contains_pattern(&pattern.to_lowercase());
+                    crate::shared::persistence::sql_like::contains_pattern(&pattern.to_lowercase());
                 let limit_i64 = limit as i64;
                 sqlx::query(
                     r#"

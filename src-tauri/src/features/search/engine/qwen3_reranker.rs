@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use tokenizers::Tokenizer;
 
 use crate::shared::error::{AppError, Result, ResultExt};
-use crate::shared::utils::with_autorelease_pool;
+use crate::shared::runtime::with_autorelease_pool;
 
 use super::reranker::{
     best_reranker_device, resolve_model_dir, run_admitted, RerankResult, Reranker,

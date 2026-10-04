@@ -60,6 +60,8 @@ export interface DeckThinking {
   step: TurnStep;
   /** This generation was followed by another trip, so it chose to go back. */
   wentBack: boolean;
+  /** The trip it went back for, when it did. */
+  wentBackTo: DeckRound | null;
 }
 
 export interface DeckStep {
@@ -190,7 +192,7 @@ export function deckOf(steps: readonly TurnStep[]): Deck {
       if (step.kind === 'deep_research') continue;
       items.push(
         step.kind === 'generate'
-          ? { type: 'thinking', step, wentBack: false }
+          ? { type: 'thinking', step, wentBack: false, wentBackTo: null }
           : { type: 'step', step }
       );
     }
@@ -203,6 +205,7 @@ export function deckOf(steps: readonly TurnStep[]): Deck {
     if (item.type !== 'thinking') return;
     const next = items.slice(index + 1).find(later => later.type !== 'step');
     item.wentBack = next?.type === 'round' && hadRoundBefore(items, index);
+    item.wentBackTo = item.wentBack && next?.type === 'round' ? next : null;
   });
 
   return {
@@ -211,6 +214,27 @@ export function deckOf(steps: readonly TurnStep[]): Deck {
     modeNote: mode?.result ?? null,
     rounds,
   };
+}
+
+/** Longest search shown in a return line before it is cut. */
+const RETURN_QUERY_CHARS = 80;
+
+/**
+ * What the model went back for, in words: the search it ran, or the pages it
+ * opened. Read from the round itself, because "another round of deep
+ * research" over a single page read promises a sweep that never happened.
+ */
+export function returnLine(round: DeckRound): string {
+  const [first, ...rest] = round.queries;
+  if (first) {
+    const text =
+      first.text.length > RETURN_QUERY_CHARS ? `${first.text.slice(0, RETURN_QUERY_CHARS - 1)}…` : first.text;
+    const more = rest.length > 0 ? ` and ${plural(rest.length, 'more search', 'more searches')}` : '';
+    return `Not enough yet — searching again for “${text}”${more}`;
+  }
+  const opened = round.pages.filter(page => page.state !== 'found').length;
+  if (opened > 0) return `Not enough yet — reading ${plural(opened, 'more page', 'more pages')}`;
+  return 'Not enough yet — going back for another look';
 }
 
 function hadRoundBefore(items: readonly DeckItem[], index: number): boolean {

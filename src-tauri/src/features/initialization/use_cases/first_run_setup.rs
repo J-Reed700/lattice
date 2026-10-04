@@ -1,9 +1,9 @@
 use crate::application::ports::system_info::SystemInfoPort;
-use crate::domain::curated_models::{get_curated_llm_models, recommend_chat_model_for_ram};
-use crate::domain::embedding_constants::default_embedding_model;
+use crate::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
+use crate::domain::models::embedding_defaults::default_embedding_model;
+use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
-use crate::shared::utils::gpu_acceleration_available;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -131,7 +131,7 @@ impl CheckFirstRunStatusUseCase {
 fn embedding_recommendation() -> Option<RecommendedModel> {
     // Qwen3 where there is a GPU to run it, MiniLM where there is not.
     let default = default_embedding_model(gpu_acceleration_available());
-    let entry = crate::domain::curated_models::get_curated_embedding_models()
+    let entry = crate::domain::models::curated::get_curated_embedding_models()
         .into_iter()
         .find(|m| m.id == default.curated_id);
     if entry.is_none() {
@@ -161,7 +161,7 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {

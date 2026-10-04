@@ -12,7 +12,7 @@ use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, Sa
 use crate::application::ports::LLMPort;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::interfaces::di::Container;
-use crate::shared::{api_result::ApiError, error::AppError};
+use crate::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::time::Duration;
 

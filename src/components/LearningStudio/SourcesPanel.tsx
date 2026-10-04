@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { BookOpen, Check, ChevronRight, Clock3, ExternalLink, FileText, Globe2, Plus, RefreshCw, Search, ShieldAlert, Upload, X } from 'lucide-react';
 
-import { useLibraryDocumentsQuery } from '@/hooks/queries/useLibraryDocumentsQuery';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,
@@ -14,6 +13,7 @@ import type {
   UpdateLearningSourcePolicyRequestDto,
 } from '@/lib/bindings';
 
+import { LearningDocumentPicker, type LearningDocumentSelection } from './LearningDocumentPicker';
 import {
   useAddLearningDocumentSource,
   useAddLearningTextSource,
@@ -48,7 +48,7 @@ function sourceTitle(source: LearningSourceLibraryItemDto) { return source.activ
 function statusLabel(source: LearningSourceLibraryItemDto) {
   if (source.pendingVersionId) return 'Update available';
   if (source.latestCheck?.status === 'failed') return 'Check failed';
-  if (source.activeVersion?.truncated || source.activeVersion?.extractionVersion.toLowerCase().includes('legacy')) return 'Legacy / bounded';
+  if (source.activeVersion?.truncated || source.activeVersion?.extractionVersion.toLowerCase().includes('legacy')) return 'Incomplete capture';
   if (source.freshnessPolicy === 'fixed') return 'Pinned snapshot';
   if (source.activeVersion) return 'Stored for offline reading';
   return 'No saved version';
@@ -65,7 +65,6 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
   const refresh = useRefreshLearningSource();
   const adopt = useAdoptLearningSourceVersion();
   const updatePolicy = useUpdateLearningSourcePolicy();
-  const { documents, isLoading: documentsLoading, error: documentsError, refreshFiles } = useLibraryDocumentsQuery();
   const [selectedId, setSelectedId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -75,7 +74,9 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
   const [addKind, setAddKind] = useState<AddKind>('web');
   const [webUrl, setWebUrl] = useState('');
   const [webPolicy, setWebPolicy] = useState<LearningSourcePolicy>('manual');
-  const [documentId, setDocumentId] = useState('');
+  const [selectedDocuments, setSelectedDocuments] = useState<LearningDocumentSelection[]>([]);
+  const documentId = selectedDocuments[0]?.id ?? '';
+  const setDocumentId = () => setSelectedDocuments([]);
   const [pasteTitle, setPasteTitle] = useState('');
   const [pastePublisher, setPastePublisher] = useState('');
   const [pasteText, setPasteText] = useState('');
@@ -207,13 +208,13 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
       if (!documentId) { setFormError('Choose a document from your Library.'); return; }
       const request = addRequest<AddLearningDocumentSourceRequestDto>('add-document', { programId, documentId });
       const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto));
-      if (ok) { preparedAddRef.current = null; setDocumentId(''); setAddOpen(false); }
+      if (ok) { preparedAddRef.current = null; setDocumentId(); setAddOpen(false); }
       return;
     }
     const textLength = Array.from(pasteText).length;
     if (!pasteTitle.trim()) { setFormError('Give this saved text a title.'); return; }
     if (!pasteText.trim()) { setFormError('Paste some text to save.'); return; }
-    if (textLength > 64_000) { setFormError('Keep pasted text to 64,000 characters or fewer.'); return; }
+    if (textLength > 2_000_000) { setFormError('Keep pasted text to 2,000,000 characters or fewer.'); return; }
     const request = addRequest<AddLearningTextSourceRequestDto>('add-text', { programId, title: pasteTitle.trim(), publisher: pastePublisher.trim() || null, text: pasteText });
     const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto));
     if (ok) { preparedAddRef.current = null; setPasteTitle(''); setPastePublisher(''); setPasteText(''); setAddOpen(false); }
@@ -239,10 +240,10 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
 
   return <div className="min-w-0" data-testid="learning-sources-workspace">
     <header className="mb-4 flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-[#d7c9b8] bg-[#eee8df] p-5 sm:p-7 dark:border-white/10 dark:bg-[#28251f]">
-      <div><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Program materials</p><h2 className="mt-1 font-serif text-2xl text-text-primary sm:text-3xl">Sources</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Read the exact saved text behind your lessons. Searches use this program’s stored versions and work offline.</p></div>
+      <div><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Program materials</p><h2 className="mt-1 font-serif text-2xl text-text-primary sm:text-3xl">Sources</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Build the reference collection used to write and check your lessons. Saved versions remain available for offline reading.</p></div>
       <button ref={addTriggerRef} type="button" disabled={mutationBusy} onClick={() => { setFormError(''); setOperationMessage(''); setAddOpen(true); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50"><Plus size={16} /> Add material</button>
       <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5">{[
-        ['Downloaded', counts.downloaded], ['Pinned', counts.pinned], ['Update available', counts.updates], ['Failed checks', counts.failed], ['Legacy / truncated', counts.legacy],
+        ['Downloaded', counts.downloaded], ['Pinned', counts.pinned], ['Update available', counts.updates], ['Failed checks', counts.failed], ['Incomplete captures', counts.legacy],
       ].map(([label, count]) => <div key={label} className="rounded-xl border border-white/70 bg-white/50 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"><div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><div className="mt-1 font-serif text-xl tabular-nums text-text-primary">{count}</div></div>)}</div>
     </header>
 
@@ -284,8 +285,8 @@ export function SourcesPanel({ programId, active = true }: { programId: string; 
     {addOpen && <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-0 sm:place-items-center sm:p-4" onMouseDown={(event) => { if (!mutationBusy && event.target === event.currentTarget) setAddOpen(false); }}><section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-source-title" tabIndex={-1} className="max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl sm:rounded-2xl sm:p-7"><div className="flex items-start justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Add to this program</div><h3 id="add-source-title" className="mt-1 font-serif text-2xl text-text-primary">Bring in a source</h3><p className="mt-2 text-xs leading-5 text-text-muted">Sources are saved as immutable versions. Reading and search use the captured text.</p></div><button type="button" aria-label="Close add material" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full p-2 text-text-muted hover:bg-background disabled:opacity-50"><X size={17} /></button></div>
       <div className="mt-5 grid grid-cols-3 gap-2" role="group" aria-label="Material type">{([['web', 'Web page'], ['document', 'Library document'], ['paste', 'Paste text']] as const).map(([kind, label]) => <button key={kind} type="button" disabled={mutationBusy} aria-pressed={addKind === kind} onClick={() => { setAddKind(kind); setFormError(''); }} className={`rounded-xl border px-2 py-3 text-xs font-medium disabled:opacity-50 ${addKind === kind ? 'border-accent/40 bg-accent/5 text-accent' : 'border-border bg-background text-text-muted'}`}>{label}</button>)}</div>
       {addKind === 'web' && <div className="mt-5 space-y-4"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Lattice captures readable page text for this program. The reader never fetches the page in your browser; you can open the canonical reference separately.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="source-url">Web address<input id="source-url" data-add-focus type="url" value={webUrl} onChange={(event) => setWebUrl(event.target.value)} placeholder="https://example.org/article" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="new-source-policy">Freshness policy<select id="new-source-policy" value={webPolicy} onChange={(event) => setWebPolicy(event.target.value as LearningSourcePolicy)} className="mt-2 w-full min-w-0 max-w-full rounded-xl border border-border bg-background px-3 py-3 text-sm"><option value="fixed">Fixed snapshot · intentionally pinned</option><option value="manual">Manual · I decide when to check</option><option value="before_use">Before use · check before lesson preparation</option></select></label></div>}
-      {addKind === 'document' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Choose an indexed Library document. Studio saves a program-scoped snapshot; later changes to the Library document do not rewrite it.</p>{documentsError && <div role="alert" className="rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700">{documentsError}<button type="button" onClick={() => void refreshFiles()} className="ml-2 underline">Retry</button></div>}{documentsLoading ? <p role="status" className="text-xs text-text-muted">Loading Library documents…</p> : documents.length ? <label className="block text-xs font-medium text-text-secondary" htmlFor="source-document">Library document<select id="source-document" data-add-focus value={documentId} onChange={(event) => setDocumentId(event.target.value)} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3 text-sm"><option value="">Choose a document</option>{documents.map((item) => <option key={item.id} value={item.id}>{item.fileName} · {item.wordCount.toLocaleString()} words</option>)}</select></label> : !documentsError ? <p className="rounded-xl bg-background p-4 text-xs text-text-muted">No indexed documents are available in your Library.</p> : null}</div>}
-      {addKind === 'paste' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Paste notes, excerpts, or other material you have permission to use. Up to 64,000 characters are saved as a fixed snapshot; title and publisher fields are limited to 180 characters.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-title">Title<input id="paste-source-title" data-add-focus value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-publisher">Publisher or origin <span className="font-normal text-text-muted">(optional)</span><input id="paste-source-publisher" value={pastePublisher} onChange={(event) => setPastePublisher(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-text">Saved text<textarea id="paste-source-text" value={pasteText} onChange={(event) => setPasteText(event.target.value)} rows={8} className="mt-1.5 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6" /></label><div className="text-right text-[10px] tabular-nums text-text-muted">{Array.from(pasteText).length.toLocaleString()} / 64,000 characters</div></div>}
+      {addKind === 'document' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Choose an indexed document from a Space. Studio saves a snapshot for this course; later changes to the document do not rewrite it.</p><LearningDocumentPicker selected={selectedDocuments} onChange={setSelectedDocuments} limit={1} /></div>}
+      {addKind === 'paste' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Paste notes, excerpts, or other material you have permission to use. Up to 2,000,000 characters are saved as a fixed snapshot; title and publisher fields are limited to 180 characters.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-title">Title<input id="paste-source-title" data-add-focus value={pasteTitle} onChange={(event) => setPasteTitle(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-publisher">Publisher or origin <span className="font-normal text-text-muted">(optional)</span><input id="paste-source-publisher" value={pastePublisher} onChange={(event) => setPastePublisher(event.target.value)} maxLength={180} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="paste-source-text">Saved text<textarea id="paste-source-text" value={pasteText} onChange={(event) => setPasteText(event.target.value)} rows={8} className="mt-1.5 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6" /></label><div className="text-right text-[10px] tabular-nums text-text-muted">{Array.from(pasteText).length.toLocaleString()} / 2,000,000 characters</div></div>}
       {formError && <p role="alert" className="mt-4 rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700">{formError}</p>}{operationMessage && retryOperation?.kind.startsWith('add-') && <p role="status" className="mt-3 text-xs text-rose-700">{operationMessage} You can retry the same submission without creating a duplicate.</p>}
       <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full border border-border px-4 py-2.5 text-xs text-text-secondary disabled:opacity-50">Cancel</button><button type="button" disabled={mutationBusy} onClick={() => void submitAdd()} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-50"><Upload size={14} />{mutationBusy ? 'Saving…' : retryOperation?.kind.startsWith('add-') ? 'Retry save source' : 'Save source'}</button></div>
     </section></div>}

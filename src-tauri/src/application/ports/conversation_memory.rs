@@ -17,7 +17,7 @@
 //! transaction performed the rewrite and cannot be forgotten by a new call
 //! site. See `trg_conversation_memory_invalidate_*` in the init migration.
 
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     ConversationMemoryState, MemoryCommit, MemoryId, MemorySnapshot, SourceMessage, SourceRole,
 };
 use crate::shared::error::Result;
@@ -313,7 +313,7 @@ pub trait ConversationMemoryPort: Send + Sync {
         conversation_id: &str,
         offset: i64,
         limit: i64,
-    ) -> Result<Vec<crate::domain::conversation_memory::MemoryItem>>;
+    ) -> Result<Vec<crate::domain::conversation::memory::MemoryItem>>;
 
     /// Current state row without materializing items — cheap enough to consult
     /// on every turn.

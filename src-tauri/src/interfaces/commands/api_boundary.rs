@@ -2,7 +2,7 @@
 //!
 //! Provides helpers for converting ApiResult into Tauri-friendly JSON values.
 
-use crate::shared::api_result::ApiResult;
+use crate::shared::ipc::ApiResult;
 use serde::Serialize;
 
 pub trait TauriResultBoundary {

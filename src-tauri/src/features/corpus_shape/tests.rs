@@ -24,8 +24,8 @@ use sqlx::SqlitePool;
 
 use crate::application::factories::ChecksumFactory;
 use crate::application::ports::{DocumentRepositoryPort, LLMPort};
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::features::corpus_shape::clustering::ClusteringParams;
 use crate::features::corpus_shape::entity::LabelSource;
 use crate::features::corpus_shape::labeling::RepresentativeDoc;
@@ -36,8 +36,8 @@ use crate::features::embedding::entity::Embedding as EmbeddingEntity;
 use crate::infrastructure::persistence::repositories::mocks::{
     MockDocumentRepository, MockEmbeddingRepository,
 };
-use crate::shared::domain_types::{ChunkId, ValidatedFilePath};
 use crate::shared::error::Result;
+use crate::shared::types::{ChunkId, ValidatedFilePath};
 
 struct CountingMockLlm {
     calls: Arc<Mutex<usize>>,
@@ -116,7 +116,7 @@ fn make_document(id: &str, file_name: &str) -> Document {
     let checksum = ChecksumFactory::from_bytes(file_name.as_bytes()).unwrap();
     let now = Utc::now();
     Document::with_id(
-        crate::shared::domain_types::DocumentId::from(id.to_string()),
+        crate::shared::types::DocumentId::from(id.to_string()),
         path,
         file_name.to_string(),
         None,

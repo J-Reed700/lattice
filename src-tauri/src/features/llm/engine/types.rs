@@ -431,6 +431,35 @@ pub struct OllamaChatStreamResponse {
     pub eval_count: Option<u32>,
 }
 
+use crate::shared::error::AppError;
+
+/// Auto-convert from LLMError to AppError
+impl From<crate::features::llm::engine::types::LLMError> for AppError {
+    fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
+        use crate::features::llm::engine::types::LLMError;
+        match e {
+            LLMError::ModelNotLoaded => AppError::ModelLoadFailed("Model not loaded".to_string()),
+            LLMError::GenerationFailed(msg) => {
+                AppError::Other(format!("LLM generation failed: {}", msg))
+            }
+            LLMError::ClientUnavailable(msg) => AppError::ServiceNotAvailable(msg),
+            LLMError::Network(msg) => AppError::Network(msg),
+            LLMError::InvalidConfig(msg) => AppError::InvalidConfig(msg),
+            LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
+            LLMError::InsufficientMemory(msg) => AppError::ModelLoadFailed(msg),
+            LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
+            // Not `ModelLoadFailed`: nothing is wrong with the model.
+            LLMError::SidecarBinaryUnusable(msg) => AppError::ServiceNotAvailable(msg),
+            LLMError::Io(e) => AppError::Io {
+                message: e.to_string(),
+                kind: format!("{:?}", e.kind()),
+            },
+            LLMError::Reqwest(e) => AppError::Network(e.to_string()),
+            LLMError::Other(msg) => AppError::Other(format!("LLM error: {}", msg)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

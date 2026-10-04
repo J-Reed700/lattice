@@ -23,7 +23,7 @@ fn registry() -> &'static RwLock<Option<Arc<Hook>>> {
 
 pub fn register_post_index_hook(use_case: Arc<GenerateDocumentSummariesUseCase>, pool: SqlitePool) {
     clear_post_index_hook();
-    let cancel = crate::shared::background::cancellation_token().child_token();
+    let cancel = crate::shared::runtime::background::cancellation_token().child_token();
     let hook = Arc::new(Hook {
         use_case,
         pool,
@@ -35,7 +35,7 @@ pub fn register_post_index_hook(use_case: Arc<GenerateDocumentSummariesUseCase>,
     if let Ok(mut slot) = registry().write() {
         *slot = Some(hook.clone());
     }
-    crate::shared::background::spawn(run(hook));
+    crate::shared::runtime::background::spawn(run(hook));
 }
 
 pub fn clear_post_index_hook() {

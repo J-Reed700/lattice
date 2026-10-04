@@ -31,7 +31,7 @@ use crate::features::conversation::space_dto::{
     UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     State,

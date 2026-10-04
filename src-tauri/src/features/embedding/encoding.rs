@@ -18,7 +18,7 @@
 //! see `looks_like_bincode` for how the two are told apart.
 
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// Width of one `f32` on disk.
 const F32_BYTES: usize = 4;

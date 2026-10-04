@@ -443,7 +443,7 @@ const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
 /// the frontend's trace schema and drop the "search unavailable" notice on
 /// exactly the turn that needs it.
 fn unavailable_reason(error: &str) -> String {
-    crate::shared::text_utils::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
+    crate::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
 
 fn passage_count_line(results: &[SearchResultDto]) -> String {

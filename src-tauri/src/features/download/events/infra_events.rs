@@ -1,4 +1,4 @@
-use crate::domain::download_snapshot::{BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot};
+use crate::domain::download::snapshot::{BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -89,7 +89,7 @@ pub struct DownloadEventBridge {
     >,
     event_bus: Option<
         Arc<
-            crate::infrastructure::event_bus::EventBus<
+            crate::infrastructure::events::event_bus::EventBus<
                 crate::features::download::events::model_download_events::ModelDownloadEvent,
             >,
         >,
@@ -109,7 +109,7 @@ impl DownloadEventBridge {
         >,
         event_bus: Option<
             Arc<
-                crate::infrastructure::event_bus::EventBus<
+                crate::infrastructure::events::event_bus::EventBus<
                     crate::features::download::events::model_download_events::ModelDownloadEvent,
                 >,
             >,
@@ -532,8 +532,8 @@ impl DownloadEventBridge {
     async fn create_batch_snapshot(
         &self,
         model_id: &str,
-    ) -> Result<crate::domain::download_snapshot::BatchSnapshot, String> {
-        use crate::domain::download_snapshot::{
+    ) -> Result<crate::domain::download::snapshot::BatchSnapshot, String> {
+        use crate::domain::download::snapshot::{
             BatchSnapshot, DownloadStatus, FileSnapshot, FileStatus,
         };
 
@@ -651,7 +651,7 @@ impl DownloadEventBridge {
         &self,
         event: crate::features::download::manager::DownloadEvent,
     ) -> Result<DownloadEvent, String> {
-        use crate::domain::download_snapshot::{DownloadStatus, SingleFileSnapshot};
+        use crate::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
         use crate::features::download::manager::DownloadEvent as ME;
 
         match event {

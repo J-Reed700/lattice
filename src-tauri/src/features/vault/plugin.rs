@@ -8,7 +8,7 @@ use tauri::{
 
 use crate::features::vault::watcher::RescanSummary;
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ErrorCode};
+use crate::shared::ipc::{ApiError, ErrorCode};
 
 #[tauri::command]
 #[specta::specta]

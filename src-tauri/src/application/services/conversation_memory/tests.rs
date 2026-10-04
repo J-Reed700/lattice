@@ -26,7 +26,7 @@ use crate::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, SamplingOverride,
 };
 use crate::application::ports::LLMPort;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES,

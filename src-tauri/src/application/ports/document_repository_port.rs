@@ -31,7 +31,7 @@
 
 use crate::application::ports::repository_port::RepositoryPort;
 use crate::domain::entities::Document;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 /// Port for document-specific repository operations.

@@ -103,9 +103,9 @@ pub fn start_vault_writer(
 ) -> VaultWriterHandle {
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
-    let cancel = crate::shared::background::cancellation_token().child_token();
+    let cancel = crate::shared::runtime::background::cancellation_token().child_token();
     let lifetime = Arc::new(WriterLifetime(cancel.clone()));
-    crate::shared::background::spawn(run_worker(
+    crate::shared::runtime::background::spawn(run_worker(
         wake.clone(),
         settings_uc,
         app_handle.clone(),

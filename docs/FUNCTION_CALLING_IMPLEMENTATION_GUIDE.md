@@ -84,7 +84,7 @@ integration points that must agree:
 3. the command list in `src-tauri/build.rs`;
 4. the permission in `src-tauri/capabilities/main.json`
    (`functions:allow-<command-name>`);
-5. the command list in `src-tauri/src/export_bindings.rs`, then
+5. the command list in `src-tauri/src/bin/export_bindings/main.rs`, then
    `npm run bindings:generate` to refresh `src/lib/bindings.ts`.
 
 `python3 scripts/check-tauri-command-inventory.py` checks that points 2-4

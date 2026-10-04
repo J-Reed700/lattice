@@ -7,9 +7,9 @@ use crate::features::settings::dto::{
     UpdateSettingsRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
 use crate::shared::error::AppError;
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::http::reqwest_client_builder;
+use crate::shared::ipc::ApiError;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Client,

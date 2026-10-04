@@ -6,6 +6,7 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
 import {
   deckOf,
   hostHue,
+  returnLine,
   roundLine,
   type DeckPage,
   type DeckRound,
@@ -55,7 +56,7 @@ export function ResearchDeck({ steps, live }: { steps: readonly TurnStep[]; live
       {deck.items.map(item => {
         if (item.type === 'step') return <StepRow key={item.step.id} step={item.step} />;
         if (item.type === 'thinking') {
-          return <Thinking key={item.step.id} item={item} deepResearch={deck.deepResearch} />;
+          return <Thinking key={item.step.id} item={item} />;
         }
         if (!isCard(item)) {
           return <PlainRound key={`round-${item.round}`} round={item} numbered={numbered} />;
@@ -107,8 +108,8 @@ function PlainRound({ round, numbered }: { round: DeckRound; numbered: boolean }
   );
 }
 
-function Thinking({ item, deepResearch }: { item: DeckThinking; deepResearch: boolean }) {
-  const { step, wentBack } = item;
+function Thinking({ item }: { item: DeckThinking }) {
+  const { step, wentBackTo } = item;
   const elapsed = useElapsedSeconds(step.state === 'running' ? step : null);
   return (
     <>
@@ -123,16 +124,15 @@ function Thinking({ item, deepResearch }: { item: DeckThinking; deepResearch: bo
       ) : (
         <StepRow step={step} />
       )}
-      {wentBack && (
+      {wentBackTo && (
         // The model's own decision, in words. Without it a second card reads as
-        // the first search still going; with it, as a choice to dig further.
+        // the first search still going; with it, as a choice to dig further,
+        // named by what it actually went to do.
         <li className="deck-again">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v2.4h-2.4" />
           </svg>
-          {deepResearch
-            ? 'Not enough yet — starting another round of deep research'
-            : 'Not enough yet — going back for another look'}
+          {returnLine(wentBackTo)}
         </li>
       )}
     </>

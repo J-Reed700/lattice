@@ -323,7 +323,7 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
 mod tests {
     use super::*;
     use crate::application::ports::MockSettingsRepository;
-    use crate::shared::test_paths;
+    use crate::shared::testing::paths as test_paths;
     use serde_json::json;
     use std::collections::HashMap;
 

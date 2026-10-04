@@ -72,7 +72,7 @@ describe('ResearchDeck', () => {
     render(<ResearchDeck live steps={twoRounds} />);
 
     expect(
-      screen.getByText('Not enough yet — starting another round of deep research')
+      screen.getByText('Not enough yet — searching again for “a sharper question”')
     ).toBeInTheDocument();
     // Why this turn is long, said once and not as a row of work.
     expect(screen.getByText('searches wider')).toBeInTheDocument();

@@ -6,7 +6,7 @@ use crate::features::function_calling::dto::WebSearchResult;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
-use crate::shared::text_utils::build_excerpt;
+use crate::shared::text::build_excerpt;
 
 /// Marks a `SourceDto` that came from the web rather than the user's vault.
 ///

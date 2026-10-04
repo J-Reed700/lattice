@@ -32,7 +32,7 @@
 //! ```
 
 use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;
 

@@ -261,6 +261,7 @@ fn practical_fixture() -> (LearningLessonDto, LearningSourceVersionDto) {
         estimated_minutes: 30,
         preparation: LearningPreparation::Ready,
         blocks: vec![LearningBlockDto {
+            rubric: vec![],
             kind: LearningBlockKind::Explanation,
             title: "Contract".into(),
             body: "A quoted comma belongs to its field; doubled quotes encode one quote.".into(),

@@ -34,7 +34,7 @@ engine/
 1. Settings pick a provider (`LLMProvider`: `auto`, `local`, `ollama`,
    `llamacpp`, `openai`, `anthropic`, in
    `application/contracts/settings.rs`). `application/services/model_selection.rs`
-   resolves `auto`/`local`/`ollama`; `infrastructure/model_loading.rs` builds
+   resolves `auto`/`local`/`ollama`; `features/llm/loading.rs` builds
    the client for each role (chat, router, utility).
 2. Local models go through `factory::create_llm(LLMConfig::Local { .. })`.
    `SidecarManager::start_with_fallback` preflights the bundled binary, picks a

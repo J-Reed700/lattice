@@ -32,7 +32,7 @@
 //! }
 //! ```
 
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};

@@ -246,9 +246,9 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             "Assessment item difficulty must use the 1–5 scale.".into(),
         ));
     }
-    if candidate.source_version_ids.is_empty() || candidate.source_version_ids.len() > 24 {
+    if candidate.source_version_ids.len() > 24 {
         return Err(AppError::InvalidInput(
-            "Assessment items require 1–24 frozen source versions.".into(),
+            "Assessment items support at most 24 frozen source versions.".into(),
         ));
     }
     for source in &candidate.source_version_ids {

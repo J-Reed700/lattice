@@ -310,7 +310,7 @@ mod tests {
 
     fn create_test_document_aggregate(_id: &str, path: &str, _title: Option<&str>) -> Document {
         use crate::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
-        use crate::shared::domain_types::ValidatedFilePath;
+        use crate::shared::types::ValidatedFilePath;
         use chrono::Utc;
         use std::path::PathBuf;
 

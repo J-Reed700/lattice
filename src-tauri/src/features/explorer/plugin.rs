@@ -7,7 +7,7 @@ use super::{dto::*, folders, fs, scope::Scope};
 use crate::{
     application::ports::EmbeddingPort,
     interfaces::di::Container,
-    shared::{api_result::ApiError, AppError},
+    shared::{ipc::ApiError, AppError},
 };
 use async_trait::async_trait;
 use std::sync::Arc;

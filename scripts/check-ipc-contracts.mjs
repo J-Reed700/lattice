@@ -10,6 +10,8 @@ const probePath = path.join(root, 'src', '__contract_probe__.ts');
 const host = ts.createCompilerHost(parsed.options);
 const getSourceFile = host.getSourceFile.bind(host);
 const probe = `
+import { Channel } from '@tauri-apps/api/core';
+import type { GenerateLearningProgramRequestDto, LearningProgramDto, LearningOutlineProgressDto } from './lib/bindings';
 declare function invoke<T>(command: string, args?: unknown): Promise<T>;
 invoke<{ madeUpField: string }[]>('get_indexing_activities', { limit: 10 });
 invoke<{ madeUpField: string }[]>('get_learning_runtime_catalog');
@@ -17,6 +19,11 @@ invoke<null>('remove_tag_from_document', { request: { documentId: 'doc', tagId: 
 invoke<null>('remove_tag_from_document', { request: { document_id: 'doc', tag_id: 'tag' } });
 invoke<null>('command_without_a_generated_contract');
 invoke<null>('delete_model', { modelId: 'model' });
+declare const outlineRequest: GenerateLearningProgramRequestDto;
+invoke<LearningProgramDto>('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: new Channel<LearningOutlineProgressDto>() });
+invoke<LearningProgramDto>('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: {} });
+invoke<LearningProgramDto>('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: null });
+invoke<LearningProgramDto>('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: new Channel<string>() });
 declare function apiCall<T>(command: string, args?: unknown): Promise<T>;
 apiCall<null>('command_without_a_route');
 `;
@@ -55,8 +62,19 @@ visit(api, node => {
 const report = { generatedCommands: contracts.size, checked: 0, mismatches: [], uncovered: [], unrouted: [], argumentNames: [] };
 function nullable(type) { return Boolean(type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) || type.isUnion() && type.types.some(nullable); }
 function checkObject(expression, expected, context, prefix = '') {
+    const optional = nullable(expected);
     expected = checker.getNonNullableType(expected);
     if (!(expected.flags & ts.TypeFlags.Object) || checker.isArrayType(expected) || checker.isTupleType(expected)) return;
+    // Transport classes such as Tauri Channel serialize themselves. TypeScript
+    // checks their nominal identity and payload type; private members are not
+    // wire fields and cannot be looked up by their displayed property names.
+    if (expected.getSymbol()?.declarations?.some(ts.isClassDeclaration)) {
+        const supplied = checker.getTypeAtLocation(expression);
+        const checked = optional ? checker.getNonNullableType(supplied) : supplied;
+        if (!checker.isTypeAssignableTo(checked, expected))
+            report.argumentNames.push({ ...context, field: prefix.replace(/\.$/, ''), actual: checker.typeToString(supplied), expected: checker.typeToString(expected) });
+        return;
+    }
     if (checker.getIndexTypeOfType(expected, ts.IndexKind.String))
         return;
     const properties = checker.getPropertiesOfType(expected);
@@ -146,16 +164,18 @@ for (const source of program.getSourceFiles()) {
 }
 if (process.argv.includes('--self-test')) {
     const isProbe = item => item.location.startsWith('src/__contract_probe__.ts:');
+    const channelErrors = report.argumentNames.filter(item => isProbe(item) && item.command === 'generate_learning_program');
     if (report.mismatches.filter(isProbe).length !== 2 || report.uncovered.filter(isProbe).length !== 1
         || !report.mismatches.some(item => isProbe(item) && item.command === 'get_learning_runtime_catalog')
         || report.unrouted.filter(isProbe).length !== 1
         || !report.argumentNames.some(item => isProbe(item) && item.unexpected === 'request.documentId')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'request.document_id')
-        || !report.argumentNames.some(item => isProbe(item) && item.missing === 'deleteFile'))
+        || !report.argumentNames.some(item => isProbe(item) && item.missing === 'deleteFile')
+        || channelErrors.length !== 3 || channelErrors.some(item => item.field !== 'onProgress'))
         throw new Error('IPC guard failed to detect intentionally broken contracts');
     for (const key of ['mismatches', 'uncovered', 'unrouted', 'argumentNames']) report[key] = report[key].filter(item => !isProbe(item));
-    report.checked -= 5;
-    console.log('IPC guard rejects stale wrapped and direct responses, missing contracts, unrouted commands, and incorrect nested request fields.');
+    report.checked -= 9;
+    console.log('IPC guard rejects stale wrapped and direct responses, missing contracts, unrouted commands, incorrect nested request fields, and invalid transport channels.');
 }
 if (process.argv.includes('--json'))
     console.log(JSON.stringify(report, null, 2));

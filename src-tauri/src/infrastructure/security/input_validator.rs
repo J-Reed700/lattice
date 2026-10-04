@@ -558,7 +558,7 @@ impl InputValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::test_paths;
+    use crate::shared::testing::paths as test_paths;
 
     #[test]
     fn test_search_query_validation() {

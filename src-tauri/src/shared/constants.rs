@@ -32,7 +32,7 @@ pub const DEFAULT_BATCH_SIZE: usize = 100;
 /// Maximum batch size for processing operations
 pub const MAX_BATCH_SIZE: usize = 1000;
 
-pub use crate::domain::embedding_constants::{
+pub use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
 

@@ -211,7 +211,7 @@ manager's eviction past 8 indexes were replaced by one managed list.
   folder's space, so a thread never takes the Chat sidebar's space. The
   chat's prompt precedence is the conversation's own prompt, then the
   folder's instructions, then the space's prompt, then the global one
-  (`infrastructure/conversation_context.rs`). All SQL is in
+  (`features/conversation/context_repository.rs`). All SQL is in
   `features/explorer/repository.rs`; `features/explorer/folders.rs` composes
   it with the manager and the conversation delete.
 - **Rows.** `explorer_index_open` upserts the row and bumps

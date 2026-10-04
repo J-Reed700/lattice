@@ -23,7 +23,7 @@
 
 use super::ConversationRepository;
 use crate::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
-use crate::domain::conversation_memory::{MemoryId, SourceRole};
+use crate::domain::conversation::memory::{MemoryId, SourceRole};
 use crate::shared::error::{AppError, Result};
 use std::str::FromStr;
 

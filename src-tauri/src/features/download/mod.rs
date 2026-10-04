@@ -20,8 +20,7 @@
 //!
 //! Domain types (DownloadSession, DownloadError, DownloadedModel, the
 //! DownloadedModelRepository port) live in the domain layer under
-//! `crate::domain::{download, download_snapshot, downloaded_model,
-//! repositories}` because the application layer and several other
+//! `crate::domain::{download, models, repositories}` because the application layer and several other
 //! features depend on them.
 //!
 //! No use cases here — download is orchestrated *through* the LLM and

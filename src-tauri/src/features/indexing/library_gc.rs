@@ -160,7 +160,7 @@ mod tests {
     use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
     use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
     use crate::infrastructure::storage::ContentAddressedStorage;
-    use crate::shared::domain_types::ValidatedFilePath;
+    use crate::shared::types::ValidatedFilePath;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
     use tokio::fs;

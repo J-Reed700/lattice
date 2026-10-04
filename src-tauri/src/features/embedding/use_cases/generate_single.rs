@@ -149,7 +149,7 @@ impl GenerateSingleEmbeddingUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use async_trait::async_trait;
 
     /// Mock embedding service for testing

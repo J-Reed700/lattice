@@ -262,7 +262,7 @@ impl DeleteDownloadedModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;

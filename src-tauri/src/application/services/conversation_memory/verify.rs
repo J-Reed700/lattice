@@ -21,7 +21,7 @@ use serde::Deserialize;
 use tracing::warn;
 
 use crate::application::ports::LLMPort;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     EvidenceSpan, MemoryItem, SemanticVerdict, SourceMessage, ValidatedPatch,
     ValidatedTransitionTarget,
 };
@@ -43,7 +43,7 @@ const MAX_SURROUNDING_CHARS: usize = 1_500;
 
 /// Verdicts for one patch, keyed the way [`apply_patch`] wants them.
 ///
-/// [`apply_patch`]: crate::domain::conversation_memory::apply_patch
+/// [`apply_patch`]: crate::domain::conversation::memory::apply_patch
 #[derive(Debug, Clone, Default)]
 pub struct VerificationOutcome {
     /// Keyed by `candidate_id`. Every addition appears: optional facts,
@@ -133,7 +133,7 @@ pub async fn review_patch(
 ) -> std::result::Result<VerificationOutcome, CompactionError> {
     let mut outcome = VerificationOutcome::default();
 
-    let additions: Vec<&crate::domain::conversation_memory::ValidatedAddition> =
+    let additions: Vec<&crate::domain::conversation::memory::ValidatedAddition> =
         patch.additions.iter().collect();
     if additions.is_empty() && patch.transitions.is_empty() {
         return Ok(outcome);
@@ -189,7 +189,7 @@ pub async fn review_patch(
         requests.push(OwnedReview {
             id: format!("transition:{}", transition.target.as_str()),
             change: match transition.state {
-                crate::domain::conversation_memory::MemoryState::Resolved => "resolve_item",
+                crate::domain::conversation::memory::MemoryState::Resolved => "resolve_item",
                 _ => "supersede_item",
             },
             kind: existing

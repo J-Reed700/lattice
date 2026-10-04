@@ -3,6 +3,7 @@
 //! The `Container` owns the embedding runtime handle; the lifecycle calls that
 //! read it belong to this feature and are registered from here.
 
+use crate::features::embedding::loading::EmbeddingLoader;
 use std::sync::Arc;
 
 use crate::application::ports::EmbeddingPort;
@@ -24,7 +25,7 @@ impl Container {
     }
 
     async fn load_embedding_with_fallback(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        crate::infrastructure::embedding_loading::EmbeddingLoader {
+        EmbeddingLoader {
             downloaded_models: self.ai.downloaded_model_repo().clone(),
             security: self.core.security_context().clone(),
             index: self.search.runtime_index(),

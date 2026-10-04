@@ -1,8 +1,12 @@
-# `infrastructure::ml` (re-export shim)
+# `infrastructure::ml`
 
-This module holds no embedding code. The embedding engine lives in
-`src-tauri/src/features/embedding/`, and `infrastructure/ml/mod.rs` only
-re-exports a few of its types under the old `crate::infrastructure::ml::*` path:
+Shared model infrastructure lives here. `model_cache.rs` provides single-flight
+loading and invalidation-safe publication for both LLM and embedding ports.
+Its unit tests live alongside the implementation.
+
+The embedding engine and its loading lifecycle live in
+`src-tauri/src/features/embedding/` (`loading.rs` and `runtime.rs`).
+`infrastructure/ml/mod.rs` also re-exports a few embedding types:
 
 | Re-export | Defined in `features/embedding/` |
 |-----------|----------------------------------|
@@ -11,8 +15,7 @@ re-exports a few of its types under the old `crate::infrastructure::ml::*` path:
 | `RemoteEmbeddingService`, `DEFAULT_REMOTE_EMBEDDING_MODEL`, `DEFAULT_REMOTE_EMBEDDING_URL` | `remote_service.rs` |
 | `validate_embedding_dimension`, `DimensionMismatchError` | `validator.rs` |
 
-No code in `src-tauri/src` or `src-tauri/tests` imports through this path today;
-new code should import from `crate::features::embedding` directly.
+New embedding consumers should import from `crate::features::embedding` directly.
 
 ## Where embeddings actually come from
 
@@ -28,11 +31,5 @@ new code should import from `crate::features::embedding` directly.
   `embeddings` Tauri plugin (`features/embedding/plugin.rs`).
 
 The built-in default model is `sentence-transformers/all-MiniLM-L6-v2` (384
-dims), defined in `src-tauri/src/domain/embedding_constants.rs`. Model files
+dims), defined in `src-tauri/src/domain/models/embedding_defaults.rs`. Model files
 are stored under `~/.cache/lattice/models/<model_id>/`.
-
-## Note
-
-`tests.rs` in this directory is not declared by `mod.rs`, so it is never
-compiled. It targets the removed fastembed API (`crate::embeddings`,
-`ModelConfig::AllMpnetBaseV2`).

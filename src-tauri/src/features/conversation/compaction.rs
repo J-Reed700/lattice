@@ -167,9 +167,15 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
 /// Consolidation follows a committed answer and cannot change its success.
 /// The shared job slots coalesce queued requests through the durable watermark.
 pub fn consolidate_after_turn(container: Container, conversation_id: String) {
-    tokio::spawn(async move {
+    let cancel = crate::shared::runtime::background::cancellation_token();
+    crate::shared::runtime::background::spawn(async move {
         static MAINTENANCE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-        let Ok(_permit) = MAINTENANCE.acquire().await else {
+        let permit = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            permit = MAINTENANCE.acquire() => permit,
+        };
+        let Ok(_permit) = permit else {
             return;
         };
         let result: Result<()> = async {
@@ -182,7 +188,12 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
             {
                 return Ok(());
             }
-            let job = build_job(&container, None).await?.ok_or_else(|| {
+            let built = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Ok(()),
+                result = build_job(&container, None) => result,
+            };
+            let job = built?.ok_or_else(|| {
                 AppError::ServiceNotAvailable(
                     "No utility model available for memory consolidation".into(),
                 )
@@ -191,6 +202,7 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
                 &conversation_id,
                 CompactionRequest {
                     trigger: CompactionTrigger::Maintenance,
+                    cancellation: Some(cancel.clone()),
                     ..Default::default()
                 },
             )

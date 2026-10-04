@@ -15,7 +15,7 @@
 
 use crate::application::ports::update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
 use semver::Version;
 use serde::{Deserialize, Serialize};

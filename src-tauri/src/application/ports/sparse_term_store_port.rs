@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 
 use crate::domain::value_objects::SparseEmbedding;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// One chunk's sparse posting, ready to persist.
 pub type ChunkSparseTerms = (String, SparseEmbedding);

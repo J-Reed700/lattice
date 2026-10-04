@@ -12,7 +12,7 @@ use crate::features::indexing::dto::{
 use crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto;
 use crate::interfaces::commands::document_list;
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ErrorCode};
+use crate::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -28,10 +28,10 @@ pub struct MetadataUpdate {
     pub custom_fields: Option<std::collections::HashMap<String, String>>,
 }
 
-fn unwrap_api_result<T>(result: crate::shared::api_result::ApiResult<T>) -> Result<T, ApiError> {
+fn unwrap_api_result<T>(result: crate::shared::ipc::ApiResult<T>) -> Result<T, ApiError> {
     match result {
-        crate::shared::api_result::ApiResult::Success { data, .. } => Ok(data),
-        crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+        crate::shared::ipc::ApiResult::Success { data, .. } => Ok(data),
+        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: error.code,
             message: error.message,
             details: error.details,
@@ -183,7 +183,7 @@ pub async fn delete_file_index(
             Ok(())
         } else {
             match result {
-                crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+                crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
                     code: ErrorCode::InternalError,
                     message: error.message,
                     details: error.details,
@@ -239,13 +239,11 @@ pub async fn get_indexing_status(
     let result = indexing_commands::get_index_progress_impl(&container).await;
 
     match result {
-        crate::shared::api_result::ApiResult::Success { data: progress, .. } => {
-            Ok(IndexingStatus {
-                active: progress.is_indexing,
-                progress: progress.percent_complete.unwrap_or(0.0),
-            })
-        }
-        crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+        crate::shared::ipc::ApiResult::Success { data: progress, .. } => Ok(IndexingStatus {
+            active: progress.is_indexing,
+            progress: progress.percent_complete.unwrap_or(0.0),
+        }),
+        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -357,8 +355,8 @@ pub async fn cancel_indexing(container: State<'_, Container>) -> Result<(), ApiE
 pub async fn pause_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::pause_indexing_impl(&container).await;
     match result {
-        crate::shared::api_result::ApiResult::Success { .. } => Ok(()),
-        crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+        crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
+        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -371,8 +369,8 @@ pub async fn pause_indexing(container: State<'_, Container>) -> Result<(), ApiEr
 pub async fn resume_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::resume_indexing_impl(&container).await;
     match result {
-        crate::shared::api_result::ApiResult::Success { .. } => Ok(()),
-        crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+        crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
+        crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
             code: ErrorCode::InternalError,
             message: error.message,
             details: error.details,
@@ -406,8 +404,8 @@ pub async fn reindex_file(path: String, container: State<'_, Container>) -> Resu
         let result = indexing_commands::reindex_document_impl(&container, doc_id).await;
 
         match result {
-            crate::shared::api_result::ApiResult::Success { .. } => Ok(()),
-            crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
+            crate::shared::ipc::ApiResult::Success { .. } => Ok(()),
+            crate::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
                 code: ErrorCode::InternalError,
                 message: error.message,
                 details: error.details,

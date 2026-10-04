@@ -335,7 +335,57 @@ impl SyncRepository for PgSyncRepository {
             .await?;
 
             let Some(op_seq) = inserted_seq else {
-                accepted_paths.push(change.path);
+                let original = sqlx::query_as::<_, ChangeRow>(
+                    "SELECT seq, client_op_id, action::text AS action, path, title, content,
+                            content_hash, base_version, applied_version, created_at
+                     FROM document_ops WHERE user_id=$1 AND device_id=$2 AND client_op_id=$3",
+                )
+                .bind(user_id)
+                .bind(device.id)
+                .bind(change.client_op_id)
+                .fetch_one(tx.as_mut())
+                .await?;
+                if original.action != change.action.as_db_str()
+                    || original.path != change.path
+                    || original.title != change.title
+                    || original.content != change.content
+                    || original.content_hash != change.content_hash
+                    || original.base_version != change.base_version
+                {
+                    return Err(AppError::Conflict(
+                        "client_op_id was already used with a different payload".into(),
+                    ));
+                }
+                max_seq = max_seq.max(original.seq);
+                if original.applied_version.is_some() {
+                    accepted_paths.push(original.path);
+                } else {
+                    // A rejected operation is durable too. Replaying it must
+                    // return its conflict, even if the document head has moved.
+                    let row = sqlx::query_as::<_, ConflictRow>(
+                        "SELECT id, path, server_version, incoming_base_version,
+                                status::text AS status, created_at, resolved_at
+                         FROM conflicts WHERE user_id=$1 AND server_op_seq=$2
+                           AND incoming_device_id=$3 AND incoming_client_op_id=$4",
+                    )
+                    .bind(user_id)
+                    .bind(original.seq)
+                    .bind(device.id)
+                    .bind(change.client_op_id)
+                    .fetch_one(tx.as_mut())
+                    .await?;
+                    conflicts.push(ConflictInfo {
+                        id: row.id,
+                        path: row.path,
+                        server_version: row.server_version,
+                        incoming_base_version: row.incoming_base_version,
+                        status: ConflictStatus::from_db(&row.status).ok_or_else(|| {
+                            AppError::Internal("invalid conflict status in database".into())
+                        })?,
+                        created_at: row.created_at,
+                        resolved_at: row.resolved_at,
+                    });
+                }
                 continue;
             };
             max_seq = max_seq.max(op_seq);

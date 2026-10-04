@@ -5,7 +5,7 @@ use crate::features::search::dto::SearchResponseDto;
 use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::interfaces::di::Container;
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 
 /// Rerank the shortlist, reporting whether cross-encoder scores were actually
 /// applied.

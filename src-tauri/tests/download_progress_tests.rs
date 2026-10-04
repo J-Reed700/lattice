@@ -164,22 +164,6 @@ fn test_download_progress_edge_cases() {
     assert_eq!(session.progress().estimated_time_remaining(), Some(0));
 }
 
-// DEPRECATED: Old event structure no longer exists
-// TODO: Rewrite to test new snapshot-based event structure
-#[test]
-#[ignore = "needs rewrite for snapshot-based events"]
-fn test_tauri_event_serialization() {
-    // Old test removed - event structure changed to snapshot-based
-}
-
-// DEPRECATED: Old event structure no longer exists
-// TODO: Rewrite to test new snapshot-based event structure
-#[test]
-#[ignore = "needs rewrite for snapshot-based events"]
-fn test_tauri_event_deserialization() {
-    // Old test removed - event structure changed to snapshot-based
-}
-
 #[test]
 fn test_download_lifecycle_with_progress() {
     let mut session = DownloadSession::new(

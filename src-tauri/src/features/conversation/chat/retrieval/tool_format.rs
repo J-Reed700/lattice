@@ -4,7 +4,7 @@ use crate::features::function_calling::dto::{
     WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use crate::features::settings::dto::ToolOutputSettingsDto;
-use crate::shared::text_utils::{build_excerpt, safe_truncate};
+use crate::shared::text::{build_excerpt, safe_truncate};
 
 pub(super) fn format_tool_result(
     tool_name: &str,

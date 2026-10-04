@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
-use crate::shared::time::parse_db_timestamp;
+use crate::shared::persistence::timestamps::parse_db_timestamp;
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(800);
@@ -68,7 +68,7 @@ pub fn start_vault_watcher(
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
 ) {
-    crate::shared::background::spawn(async move {
+    crate::shared::runtime::background::spawn(async move {
         let settings = match settings_uc.execute().await {
             Ok(s) => s,
             Err(e) => {
@@ -191,7 +191,7 @@ async fn run_watcher(
         "vault watcher started"
     );
 
-    let cancel = crate::shared::background::cancellation_token();
+    let cancel = crate::shared::runtime::background::cancellation_token();
     loop {
         tokio::select! {
             biased;
@@ -738,7 +738,7 @@ impl Drop for RescanMembershipGuard {
         }
         let pool = self.pool.clone();
         let run_id = self.run_id.clone();
-        let _ = crate::shared::background::spawn(async move {
+        let _ = crate::shared::runtime::background::spawn(async move {
             let _ = crate::features::vault::repository::finish_rescan(&pool, &run_id).await;
         });
     }

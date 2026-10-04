@@ -5,7 +5,7 @@ use super::chat::{
 };
 use crate::features::conversation::repository::ConversationRepository;
 use crate::interfaces::di::Container;
-use crate::shared::{api_result::ApiError, error::AppError};
+use crate::shared::{error::AppError, ipc::ApiError};
 fn to_message_dto(
     message: &crate::domain::conversation::ConversationMessage,
 ) -> crate::features::conversation::dto::MessageDto {

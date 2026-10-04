@@ -1,8 +1,8 @@
 //! Imports from third-party knowledge tools (Obsidian, Notion, Roam).
 
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
+use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Imports documents from an Obsidian lattice

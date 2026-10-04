@@ -47,7 +47,7 @@ use crate::features::search::engine::fusion::{ReciprocalRankFusion, WeightedRank
 use crate::features::search::mapper::SearchMapper;
 use crate::features::search::SparseSearchTrait;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 use once_cell::sync::Lazy;
 use rust_stemmers::{Algorithm, Stemmer};
 use tracing::{debug, info, warn};

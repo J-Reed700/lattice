@@ -2137,7 +2137,7 @@ mod tests {
             "INSERT INTO conversation_memory_state (conversation_id, schema_version) \
              VALUES ('c1', ?)",
         )
-        .bind(crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION)
+        .bind(crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
         .execute(&pool)
         .await
         .unwrap();
@@ -2148,7 +2148,7 @@ mod tests {
         assert!(info.memory_tables_present);
         assert_eq!(
             info.memory_schema_version,
-            Some(crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION)
+            Some(crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION)
         );
 
         // Now a snapshot a *newer* build would have written. The migration

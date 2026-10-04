@@ -572,7 +572,8 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
 
     let activities = super::practical_repository::LearningPracticalRepository::new(pool.clone())
         .workspace(&copy_id)
-        .await?;
+        .await?
+        .with_capabilities(Vec::new(), Vec::new());
     let earlier = activities
         .activities
         .iter()

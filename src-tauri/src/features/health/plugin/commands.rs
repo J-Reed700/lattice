@@ -2,7 +2,7 @@
 
 use crate::features::health::commands as health_commands;
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ErrorCode};
+use crate::shared::ipc::{ApiError, ErrorCode};
 use tauri::State;
 
 pub use super::types::*;

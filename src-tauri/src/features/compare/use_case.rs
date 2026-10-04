@@ -11,7 +11,7 @@ use tracing::debug;
 use crate::application::ports::{LLMPort, RepositoryPort};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::time::now_db_timestamp;
+use crate::shared::persistence::timestamps::now_db_timestamp;
 
 use super::dto::{
     CompareCellDto, CompareCitationDto, CompareDocumentsRequestDto, CompareRowDto, CompareTableDto,

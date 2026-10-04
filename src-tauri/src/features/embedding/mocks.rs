@@ -56,7 +56,7 @@ impl MockEmbeddingService {
 #[cfg(test)]
 impl Default for MockEmbeddingService {
     fn default() -> Self {
-        Self::new(crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM)
+        Self::new(crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM)
     }
 }
 

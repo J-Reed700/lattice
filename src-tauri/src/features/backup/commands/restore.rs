@@ -2,9 +2,9 @@
 
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
-use crate::shared::path_confinement::confine_to_root;
+use crate::shared::fs::confinement::confine_to_root;
+use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 
 /// Restores database from a backup file

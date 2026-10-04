@@ -89,11 +89,11 @@ pub enum ModelSourceDto {
     External,
 }
 
-impl From<crate::domain::model_catalog::ModelSource> for ModelSourceDto {
-    fn from(domain: crate::domain::model_catalog::ModelSource) -> Self {
+impl From<crate::domain::models::catalog::ModelSource> for ModelSourceDto {
+    fn from(domain: crate::domain::models::catalog::ModelSource) -> Self {
         match domain {
-            crate::domain::model_catalog::ModelSource::Curated => Self::Curated,
-            crate::domain::model_catalog::ModelSource::External => Self::External,
+            crate::domain::models::catalog::ModelSource::Curated => Self::Curated,
+            crate::domain::models::catalog::ModelSource::External => Self::External,
         }
     }
 }
@@ -321,8 +321,8 @@ pub struct ModelSearchResultDto {
     pub popularity_likes: Option<u64>,
 }
 
-impl From<crate::domain::model_catalog::ModelSearchResult> for ModelSearchResultDto {
-    fn from(domain: crate::domain::model_catalog::ModelSearchResult) -> Self {
+impl From<crate::domain::models::catalog::ModelSearchResult> for ModelSearchResultDto {
+    fn from(domain: crate::domain::models::catalog::ModelSearchResult) -> Self {
         Self {
             model: domain.model.into(),
             relevance_score: domain.relevance_score,

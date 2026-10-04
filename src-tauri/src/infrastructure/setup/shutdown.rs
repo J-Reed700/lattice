@@ -15,8 +15,8 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     // sidecars. In-flight model starts can still cross the process boundary,
     // but SidecarRegistry closes admission atomically during kill_all() and
     // kills any child that tries to register afterwards.
-    if let Some(tasks) =
-        app_handle.try_state::<std::sync::Arc<crate::shared::background::BackgroundTasks>>()
+    if let Some(tasks) = app_handle
+        .try_state::<std::sync::Arc<crate::shared::runtime::background::BackgroundTasks>>()
     {
         tasks.close();
     }
@@ -43,8 +43,8 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
         let shutdown_future = async {
             let mut cleanup_results = Vec::new();
 
-            if let Some(tasks) =
-                app_handle.try_state::<std::sync::Arc<crate::shared::background::BackgroundTasks>>()
+            if let Some(tasks) = app_handle
+                .try_state::<std::sync::Arc<crate::shared::runtime::background::BackgroundTasks>>()
             {
                 // Critical writes finish or remain durably queued. The outer
                 // process deadline handles a stuck worker without closing its DB.

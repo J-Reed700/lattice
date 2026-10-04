@@ -41,7 +41,7 @@ impl CloudLlm {
         };
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
-        let client = crate::shared::utils::reqwest_client_builder()
+        let client = crate::shared::http::reqwest_client_builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()

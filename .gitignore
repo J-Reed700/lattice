@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 build/
+!/scripts/build/
 develop-eggs/
 dist/
 /downloads/
@@ -72,6 +73,7 @@ coverage-final.json
 target/
 node_modules/
 models/
+!/src-tauri/src/domain/models/
 .cache/
 .fastembed_cache/
 .turbo/

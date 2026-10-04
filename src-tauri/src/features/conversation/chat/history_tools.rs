@@ -44,7 +44,7 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::ToolDefinition;
 use crate::application::services::context_assembler::{RecallDiagnostics, SelectedPassage};
-use crate::domain::conversation_memory::SourceMessage;
+use crate::domain::conversation::memory::SourceMessage;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::shared::error::Result;
 

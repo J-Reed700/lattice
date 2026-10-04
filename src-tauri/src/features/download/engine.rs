@@ -1,5 +1,5 @@
 use crate::domain::download::DownloadError;
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
 use reqwest::{header, Client, Response, StatusCode};
 use sha2::{Digest, Sha256};

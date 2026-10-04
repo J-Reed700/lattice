@@ -10,7 +10,7 @@ use crate::shared::error::Result;
 #[cfg(test)]
 pub use crate::features::tags::service::DocumentLockGuard;
 #[cfg(test)]
-use crate::shared::domain_types::TagName;
+use crate::shared::types::TagName;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
@@ -298,7 +298,7 @@ impl MockTagRepository {
     /// # Example
     /// ```rust
     /// use lattice::domain::entities::tag::Tag;
-    /// use lattice::shared::domain_types::TagName;
+    /// use lattice::shared::types::TagName;
     /// use lattice::services::traits::MockTagRepository;
     ///
     /// let mock = MockTagRepository::new();
@@ -373,10 +373,9 @@ impl TagRepositoryTrait for MockTagRepository {
             return Ok(tag);
         }
 
-        let tag_name =
-            crate::shared::domain_types::TagName::new(name.to_string()).map_err(|e| {
-                crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
-            })?;
+        let tag_name = crate::shared::types::TagName::new(name.to_string()).map_err(|e| {
+            crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
+        })?;
         let tag_color = color.unwrap_or("#6366f1");
         let tag = crate::features::tags::entity::Tag::new(tag_name, tag_color.to_string());
 
@@ -533,7 +532,7 @@ impl TagRepositoryTrait for MockTagRepository {
             .ok_or_else(|| crate::shared::error::AppError::NotFound("Tag not found".to_string()))?;
 
         let updated_name = match name {
-            Some(n) => crate::shared::domain_types::TagName::new(n.to_string()).map_err(|e| {
+            Some(n) => crate::shared::types::TagName::new(n.to_string()).map_err(|e| {
                 crate::shared::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
             })?,
             None => tag.name().clone(),

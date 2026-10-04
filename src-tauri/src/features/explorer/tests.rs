@@ -498,7 +498,7 @@ mod model_tools {
 
 /// What a line reference in an answer meant, when it is not a path as written.
 #[test]
-fn a_cited_path_is_located_by_its_ending_then_by_its_name() {
+fn a_cited_path_is_located_without_discarding_its_folders() {
     let (dir, scope) = fixture();
     write(dir.path(), "contracts/effect_api.hpp", b"// api\n");
     write(
@@ -526,8 +526,8 @@ fn a_cited_path_is_located_by_its_ending_then_by_its_name() {
     );
     assert_eq!(
         fs::locate_file(&scope, "lib/util.rs").unwrap(),
-        ["src/lib/util.rs", "modules/engine/include/util.rs"],
-        "a path ending outranks a name match, whatever the length"
+        ["src/lib/util.rs"],
+        "a path ending excludes unrelated files with the same name"
     );
     assert_eq!(
         fs::locate_file(&scope, "UTIL.RS").unwrap(),
@@ -535,12 +535,160 @@ fn a_cited_path_is_located_by_its_ending_then_by_its_name() {
         "shortest first, case ignored"
     );
 
-    // A wrong folder still finds the file by name; ignored files never match.
+    // Missing intermediate folders are fine; invented folders are not.
     assert_eq!(
-        fs::locate_file(&scope, "engine/effect_api.hpp").unwrap(),
-        ["contracts/effect_api.hpp"]
+        fs::locate_file(&scope, "engine/util.rs").unwrap(),
+        ["modules/engine/include/util.rs"]
     );
+    assert!(fs::locate_file(&scope, "engine/effect_api.hpp")
+        .unwrap()
+        .is_empty());
     assert!(fs::locate_file(&scope, "out.rs").unwrap().is_empty());
     assert!(fs::locate_file(&scope, "missing.cpp").unwrap().is_empty());
     assert!(fs::locate_file(&scope, "  ").unwrap().is_empty());
+}
+
+#[test]
+fn locate_file_crash_reference_excludes_other_mod_files() {
+    let (_dir, scope) = fixture();
+    let crash = "src-tauri/src/infrastructure/crash/mod.rs";
+    write(scope.root(), crash, b"// crash handler\n");
+    for index in 0..30 {
+        write(
+            scope.root(),
+            &format!("modules/other{index}/mod.rs"),
+            b"// unrelated\n",
+        );
+    }
+    // Even plausible but weaker abbreviations cannot dilute an exact ending.
+    write(scope.root(), "src/crash/helpers/mod.rs", b"// helpers\n");
+    write(
+        scope.root(),
+        "src/notcrash/mod.rs",
+        b"// different folder\n",
+    );
+    for reference in [
+        "crash/mod.rs",
+        "CRASH/MOD.RS",
+        "./crash//./mod.rs",
+        r"crash\mod.rs",
+    ] {
+        assert_eq!(
+            fs::locate_file(&scope, reference).unwrap(),
+            [crash],
+            "{reference}"
+        );
+    }
+}
+
+#[test]
+fn locate_file_offers_only_genuinely_ambiguous_paths() {
+    let (_dir, scope) = fixture();
+    write(scope.root(), "src/crash/mod.rs", b"// app\n");
+    write(scope.root(), "tests/crash/mod.rs", b"// tests\n");
+    write(
+        scope.root(),
+        "src/crash/helpers/mod.rs",
+        b"// weaker match\n",
+    );
+    write(scope.root(), "api/http/mod.rs", b"// unrelated\n");
+    assert_eq!(
+        fs::locate_file(&scope, "crash/mod.rs").unwrap(),
+        ["src/crash/mod.rs", "tests/crash/mod.rs"]
+    );
+    // A complete path still wins immediately.
+    assert_eq!(
+        fs::locate_file(&scope, "src/crash/mod.rs").unwrap(),
+        ["src/crash/mod.rs"]
+    );
+}
+
+#[test]
+fn locate_file_abbreviations_require_every_component_in_order() {
+    let (_dir, scope) = fixture();
+    write(
+        scope.root(),
+        "src-tauri/src/infrastructure/crash/mod.rs",
+        b"// app\n",
+    );
+    write(
+        scope.root(),
+        "src-tauri/src/features/chat/mod.rs",
+        b"// unrelated\n",
+    );
+    for reference in [
+        "src/crash/mod.rs",
+        "src-tauri/crash/mod.rs",
+        "src-tauri/infrastructure/mod.rs",
+    ] {
+        assert_eq!(
+            fs::locate_file(&scope, reference).unwrap(),
+            ["src-tauri/src/infrastructure/crash/mod.rs"],
+            "{reference}"
+        );
+    }
+    for reference in [
+        "crash/src/mod.rs",
+        "infra/crash/mod.rs",
+        "src/crash/crash/mod.rs",
+        "missing/mod.rs",
+    ] {
+        assert!(
+            fs::locate_file(&scope, reference).unwrap().is_empty(),
+            "{reference}"
+        );
+    }
+    write(
+        scope.root(),
+        "src/lib/crash/mod.rs",
+        b"// another matching abbreviation\n",
+    );
+    assert_eq!(
+        fs::locate_file(&scope, "src/crash/mod.rs").unwrap(),
+        [
+            "src/lib/crash/mod.rs",
+            "src-tauri/src/infrastructure/crash/mod.rs"
+        ]
+    );
+}
+
+#[test]
+fn locate_file_keeps_dotfiles_and_refuses_parent_components() {
+    let (_dir, scope) = fixture();
+    write(scope.root(), "config/.env", b"EXAMPLE=1\n");
+    write(scope.root(), "config/env", b"not the dotfile\n");
+    assert_eq!(fs::locate_file(&scope, ".env").unwrap(), ["config/.env"]);
+    for reference in ["../main.rs", "src/../main.rs"] {
+        assert!(matches!(
+            fs::locate_file(&scope, reference),
+            Err(AppError::PermissionDenied(_))
+        ));
+    }
+}
+
+#[test]
+fn locate_file_does_not_auto_open_a_match_from_an_incomplete_search() {
+    let (_dir, scope) = fixture();
+    let result = fs::locate_file_with_bounds(
+        &scope,
+        "main.rs",
+        WalkBounds {
+            max_files: 0,
+            ..WalkBounds::default()
+        },
+    );
+    assert!(result.unwrap_err().to_string().contains("search limit"));
+    // Exact paths do not depend on walking the folder.
+    assert_eq!(
+        fs::locate_file_with_bounds(
+            &scope,
+            "src/main.rs",
+            WalkBounds {
+                max_files: 0,
+                ..WalkBounds::default()
+            }
+        )
+        .unwrap(),
+        ["src/main.rs"]
+    );
 }

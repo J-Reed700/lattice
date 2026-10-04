@@ -31,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// Candidates fetched per requested result before exact rescoring.
 ///

@@ -28,6 +28,9 @@ pub(super) struct PromptMessageBuilder<'a> {
     /// they were. `None` means the evidence passed the sufficiency check, or
     /// that no check ran.
     thin_kb_reason: Option<String>,
+    /// Set on a deep-research turn that may search again: the searches its
+    /// first round already ran.
+    deep_research_searches: Option<Vec<String>>,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -54,7 +57,15 @@ impl<'a> PromptMessageBuilder<'a> {
             kb_unavailable_reason: None,
             kb_attempted: false,
             thin_kb_reason: None,
+            deep_research_searches: None,
         }
+    }
+
+    /// A deep-research turn that may search again after its first round,
+    /// with the searches that round ran.
+    pub(super) fn with_deep_research_searches(mut self, searches: Option<Vec<String>>) -> Self {
+        self.deep_research_searches = searches;
+        self
     }
 
     /// The Explorer folder block. It leads the context: the folder is what the
@@ -217,6 +228,9 @@ from general knowledge as though it came from the user's documents."
         }
         if let Some(context_text) = self.web_context.as_ref() {
             context_sections.push(format!("Web Results (Supplemental):\n{}", context_text));
+            if let Some(searches) = self.deep_research_searches.as_deref() {
+                context_sections.push(deep_research_instruction(searches));
+            }
         }
 
         if context_sections.len() > 1 {
@@ -288,6 +302,43 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
         }
         "No passages from their documents were available for this turn.".to_string()
     }
+}
+
+/// The most searches a deep-research instruction lists, and the longest each.
+const LISTED_SEARCHES: usize = 12;
+const LISTED_SEARCH_CHARS: usize = 120;
+
+/// What a deep-research turn is asked to do with the rounds it has left. The
+/// first round searched wide before the model ran; this sends the model after
+/// what that round missed, instead of answering from it or reopening one of
+/// its links.
+fn deep_research_instruction(searches: &[String]) -> String {
+    let listed: Vec<String> = searches
+        .iter()
+        .map(|search| search.trim())
+        .filter(|search| !search.is_empty())
+        .take(LISTED_SEARCHES)
+        .map(|search| {
+            format!(
+                "\"{}\"",
+                search.chars().take(LISTED_SEARCH_CHARS).collect::<String>()
+            )
+        })
+        .collect();
+    let already = if listed.is_empty() {
+        String::new()
+    } else {
+        format!(" Searches already run: {}.", listed.join("; "))
+    };
+    format!(
+        "Deep research: The Web Results above are the first round of this research, not all of it.{already} \
+Before you answer, work out which parts of the question they leave uncovered, thin or out of date. \
+For each gap, call web_search with a short new query aimed at it, then fetch_url_content on the results \
+that look most useful; when there are several gaps, make several calls in one reply. Do not repeat a \
+search listed here or reopen a page that was already read. Once the question is covered, or new \
+searches stop turning up anything new, stop and answer from everything you have gathered, saying what \
+is still uncertain."
+    )
 }
 
 /// Turn sufficiency reason codes into one sentence the model can act on.
@@ -883,5 +934,78 @@ mod attachment_prompt_tests {
             !prompt.contains("live web retrieval is currently unavailable"),
             "an attachment is context, so the empty-turn templates must not fire:\n{prompt}"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod deep_research_prompt_tests {
+    use super::*;
+
+    fn flags() -> SearchFlags {
+        SearchFlags {
+            force_kb_search: false,
+            force_web_search: true,
+            force_wiki_search: false,
+            deep_research_mode: true,
+            force_followup_mode: false,
+            closed_book: false,
+        }
+    }
+
+    fn prompt(web: Option<&str>, searches: Option<Vec<String>>) -> String {
+        let settings = LLMPromptSettingsDto::default();
+        PromptMessageBuilder::new(
+            &settings,
+            "what is going on with the weather in China?",
+            false,
+            flags(),
+        )
+        .with_web_context(web.map(str::to_string))
+        .with_deep_research_searches(searches)
+        .build()
+    }
+
+    /// The turn this was written for: a wide first round, then one page read
+    /// and an answer, because nothing asked the model to look further and it
+    /// had no search left to look with.
+    #[test]
+    fn deep_research_sends_the_model_after_what_the_first_round_missed() {
+        let searches = vec![
+            "China extreme weather events 2026".to_string(),
+            "China typhoon track October 2026".to_string(),
+        ];
+        let text = prompt(Some("[1] Storms test resilience"), Some(searches));
+        let results = text.find("Web Results").unwrap();
+        let instruction = text.find("Deep research:").unwrap();
+        assert!(
+            instruction > results,
+            "the instruction follows the results it is about:\n{text}"
+        );
+        assert!(text.contains(
+            "\"China extreme weather events 2026\"; \"China typhoon track October 2026\""
+        ));
+        assert!(text.contains("call web_search"));
+        assert!(text.contains("several calls in one reply"));
+        assert!(text.contains("Do not repeat a search listed here"));
+    }
+
+    #[test]
+    fn no_instruction_without_a_first_round_or_a_way_to_search() {
+        // The turn may not search again (web search off, or no tool calling).
+        assert!(!prompt(Some("[1] Storms"), None).contains("Deep research:"));
+        // No web results: the empty-turn templates speak for the turn instead.
+        assert!(!prompt(None, Some(vec!["q".to_string()])).contains("Deep research:"));
+    }
+
+    #[test]
+    fn the_list_of_searches_is_bounded() {
+        let many: Vec<String> = (0..40)
+            .map(|n| format!("query {n} {}", "x".repeat(300)))
+            .collect();
+        let text = deep_research_instruction(&many);
+        assert_eq!(text.matches("\"query ").count(), LISTED_SEARCHES);
+        assert!(!text.contains(&"x".repeat(LISTED_SEARCH_CHARS)));
+        assert!(!deep_research_instruction(&[]).contains("Searches already run"));
     }
 }

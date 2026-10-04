@@ -7,8 +7,8 @@
 
 use crate::domain::entities::chunk::Chunk;
 use crate::domain::services::ChunkingService;
-use crate::shared::domain_types::DocumentId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::DocumentId;
 use serde::{Deserialize, Serialize};
 
 /// Chunking strategy for splitting document content.
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,no_run
 /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-/// use lattice::shared::domain_types::DocumentId;
+/// use lattice::shared::types::DocumentId;
 ///
 /// let strategy = ChunkingStrategy::FixedSize { size: 512 };
 /// let doc_id = DocumentId::new();
@@ -110,7 +110,7 @@ impl ChunkingStrategy {
     ///
     /// ```rust,no_run
     /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-    /// use lattice::shared::domain_types::DocumentId;
+    /// use lattice::shared::types::DocumentId;
     ///
     /// let strategy = ChunkingStrategy::FixedSize { size: 100 };
     /// let chunks = strategy.chunk("Document text here", &DocumentId::new())?;

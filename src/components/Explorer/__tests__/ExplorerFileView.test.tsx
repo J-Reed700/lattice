@@ -15,6 +15,7 @@ const FILES: Record<string, string> = {
   'contracts/effect_api.hpp': '#pragma once\nstruct Effect {};\n',
   'src/util.hpp': '// one\n',
   'modules/engine/util.hpp': '// two\n',
+  'src-tauri/src/infrastructure/crash/mod.rs': Array.from({ length: 80 }, (_, index) => `// crash line ${index + 1}\n`).join(''),
 };
 
 function showView() {
@@ -68,13 +69,28 @@ describe('a cited path that is not a file', () => {
     expect(mocks.read.mock.calls.filter(([, path]) => path === 'contracts/effect_api.hpp')).toHaveLength(1);
   });
 
+  it('opens an abbreviated crash reference at the cited line without a picker', async () => {
+    const resolved = 'src-tauri/src/infrastructure/crash/mod.rs';
+    mocks.locate.mockResolvedValue({ ok: true, data: [resolved] });
+    useExplorerStore.getState().openFile('src/util.hpp');
+    useExplorerStore.getState().reveal('crash/mod.rs', { startLine: 57, endLine: 59 });
+    showView();
+
+    await waitFor(() => expect(useExplorerStore.getState().openPath).toBe(resolved));
+    expect(useExplorerStore.getState().highlight).toMatchObject({ path: resolved, range: { startLine: 57, endLine: 59 } });
+    expect(useExplorerStore.getState().back).toEqual(['src/util.hpp']);
+    expect(screen.queryByText(/Choose one:/)).not.toBeInTheDocument();
+    expect(await screen.findByText('// crash line 57')).toBeInTheDocument();
+    expect(mocks.locate).toHaveBeenCalledWith(ROOT, 'crash/mod.rs');
+  });
+
   it('asks which file when the name fits several', async () => {
     const user = userEvent.setup();
     mocks.locate.mockResolvedValue({ ok: true, data: ['src/util.hpp', 'modules/engine/util.hpp'] });
     useExplorerStore.getState().reveal('util.hpp', { startLine: 1, endLine: 1 });
     showView();
 
-    expect(await screen.findByText(/isn’t a path in this folder/)).toBeInTheDocument();
+    expect(await screen.findByText(/More than one file matches/)).toBeInTheDocument();
     expect(useExplorerStore.getState().openPath).toBe('util.hpp');
     await user.click(screen.getByRole('button', { name: 'modules/engine/util.hpp' }));
     expect(useExplorerStore.getState().openPath).toBe('modules/engine/util.hpp');
@@ -87,13 +103,24 @@ describe('a cited path that is not a file', () => {
     expect(mocks.locate).toHaveBeenCalledTimes(1);
   });
 
-  it('says so when nothing in the folder has that name', async () => {
+  it('says so when nothing in the folder matches the path', async () => {
     mocks.locate.mockResolvedValue({ ok: true, data: [] });
     useExplorerStore.getState().openFile('missing.cpp');
     showView();
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Not found: No such file or folder: missing.cpp Nothing else in this folder has that name.'
+      'Not found: No such file or folder: missing.cpp No file in this folder matches that path.'
     );
+  });
+
+  it('shows lookup failures without claiming there are no matching files', async () => {
+    mocks.locate.mockResolvedValue({ ok: false, error: "File lookup reached this folder's search limit. Use a more complete path." });
+    useExplorerStore.getState().reveal('crash/mod.rs', { startLine: 57, endLine: 57 });
+    showView();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('search limit');
+    expect(alert).not.toHaveTextContent('No file');
+    expect(useExplorerStore.getState().openPath).toBe('crash/mod.rs');
   });
 });

@@ -10,7 +10,7 @@
 use crate::application::ports::conversation_memory::{
     ConversationMemoryPort, SourceReadLimits, SourceSpanRef,
 };
-use crate::domain::conversation_memory::{MemoryItem, MemoryValidity};
+use crate::domain::conversation::memory::{MemoryItem, MemoryValidity};
 use crate::features::conversation::memory_dto::{
     ConversationMemoryDetailsDto, ConversationMemoryItemDto, MemoryEvidenceDto,
 };
@@ -158,7 +158,7 @@ mod tests {
         use crate::application::ports::conversation_memory::{
             MemoryCommitCandidate, MemoryCommitPreconditions,
         };
-        use crate::domain::conversation_memory::{
+        use crate::domain::conversation::memory::{
             compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem,
             MemoryKind, MemoryReview, MemoryState, SourceRole,
         };

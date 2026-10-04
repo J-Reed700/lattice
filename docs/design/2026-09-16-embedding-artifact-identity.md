@@ -128,7 +128,7 @@ with them, renamed to `compute_...`.
 
 ### 3.3 Domain model and repository
 
-`src-tauri/src/domain/downloaded_model.rs`:
+`src-tauri/src/domain/models/downloaded.rs`:
 
 - `DownloadedModel` gains `embedding_artifact_identity: Option<ArtifactIdentity>`.
 - `from_db(...)` gains the parameter (last position). `new` / `new_with_catalog`
@@ -222,7 +222,7 @@ A1 is ~40 lines; after it, A, B and C run in parallel.
 ### Agent A: identity type, schema, persistence, activation
 
 Owns: `src-tauri/src/domain/value_objects/{mod.rs,artifact_identity.rs}`,
-`src-tauri/src/domain/downloaded_model.rs`,
+`src-tauri/src/domain/models/downloaded.rs`,
 `src-tauri/migrations/20260916000000_init_schema.sql`,
 `src-tauri/src/features/download/downloaded_model_repository.rs`,
 `src-tauri/src/features/download/saga.rs`,
@@ -265,7 +265,7 @@ that call `DownloadedModel::from_db` or `set_active_embedding_model`.
 ### Agent B: consumers stop hashing
 
 Owns: `src-tauri/src/features/embedding/candle_service.rs`,
-`src-tauri/src/infrastructure/embedding_loading.rs`,
+`src-tauri/src/features/embedding/loading.rs`,
 `src-tauri/src/features/search/di.rs`,
 `src-tauri/src/features/model_management/commands_extra.rs`,
 `src-tauri/src/features/embedding/generator.rs`,
@@ -377,7 +377,7 @@ Blocking work still on the launch thread (found in C4, not fixed).
 thread, so every item below delays the first window. Paths are under
 `src-tauri/src/`.
 
-- `SystemInfoAdapter::new` (`infrastructure/system_info_adapter.rs:56`) calls
+- `SystemInfoAdapter::new` (`infrastructure/adapters/system_info.rs:56`) calls
   `sysinfo::System::new_all()`, a full scan of processes, disks, networks and
   CPUs. It runs twice per launch, from `interfaces/di/modules.rs:1084` and
   `features/llm/di.rs:66`, and nothing at startup reads either result. Make it

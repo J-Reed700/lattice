@@ -443,10 +443,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     let documents = Arc::new(SqliteDocuments::new(pool.clone()));
     for name in ["mpep-0100.pdf", "mpep-0200.pdf"] {
         let document = Document::new(
-            crate::shared::domain_types::ValidatedFilePath::new(PathBuf::from(format!(
-                "/tmp/{name}"
-            )))
-            .unwrap(),
+            crate::shared::types::ValidatedFilePath::new(PathBuf::from(format!("/tmp/{name}")))
+                .unwrap(),
             name.to_string(),
             "application/pdf".to_string(),
             1024,
@@ -506,7 +504,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
 async fn test_get_document_supports_internal_pagination() {
     use crate::application::ports::DocumentRepository;
     use crate::features::function_calling::domain::ToolDefinition;
-    use crate::shared::domain_types::ValidatedFilePath;
+    use crate::shared::types::ValidatedFilePath;
     use serde_json::json;
 
     let registry = Arc::new(FunctionRegistry::new());

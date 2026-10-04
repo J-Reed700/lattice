@@ -2,8 +2,8 @@ use crate::application::ports::batch_job_repository_port::BatchJobStatus;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::ValidatedFilePath;
 use std::sync::Arc;
 
 const AI_MODELS_NOT_INSTALLED_MSG: &str =

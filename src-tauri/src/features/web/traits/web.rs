@@ -119,6 +119,12 @@ pub trait WebServiceTrait: Send + Sync {
     /// - Content extraction fails
     async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput>;
 
+    /// Read a larger page for an immutable reference collection. Implementations
+    /// retain URL/DNS/redirect checks and must report any text truncation.
+    async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.fetch_url_content(url).await
+    }
+
     /// Validate URL for security (SSRF prevention)
     ///
     /// Blocks:

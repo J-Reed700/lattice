@@ -5,8 +5,8 @@
 
 use crate::application::factories::FileMetadataFactory;
 use crate::domain::value_objects::file_metadata::FileMetadata;
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
+use crate::shared::types::ValidatedFilePath;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde::Serialize;

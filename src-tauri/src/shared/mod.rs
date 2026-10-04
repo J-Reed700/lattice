@@ -1,24 +1,24 @@
-//! Shared Kernel
+//! Cross-cutting primitives grouped by responsibility.
 //!
-//! Foundation types and utilities used across all layers.
+//! Product rules belong in `domain` or their owning feature. Shared modules
+//! provide types, errors, IPC responses, encoding, filesystem and HTTP helpers,
+//! persistence formatting, runtime support, and resilience policies.
 
-pub mod api_result;
-pub mod background;
 pub mod constants;
-pub mod domain_types;
+pub mod encoding;
 pub mod error;
-pub mod path_confinement;
-pub mod result;
-pub mod sql_like;
+pub mod fs;
+pub mod http;
+pub mod ipc;
+pub mod persistence;
+pub mod resilience;
+pub mod runtime;
 #[cfg(test)]
-pub mod test_paths;
-pub mod text_utils;
-pub mod time;
-pub mod url_identity;
-// REMOVED: pub mod traits; (5,125-line god object eliminated - traits migrated to infrastructure/services/traits/)
-pub mod utils;
+pub mod testing;
+pub mod text;
+pub mod types;
 
-pub use api_result::{ApiError, ApiResult, ErrorCode};
 pub use constants::*;
-pub use domain_types::*;
 pub use error::{AppError, Result};
+pub use ipc::{ApiError, ApiResult, ErrorCode};
+pub use types::*;

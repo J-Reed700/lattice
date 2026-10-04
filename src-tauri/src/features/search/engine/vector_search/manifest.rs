@@ -33,7 +33,7 @@ use sqlx::SqlitePool;
 
 use super::compression::{VectorIndexCompression, VectorQuantization};
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// Bumped whenever the meaning of anything the index persists changes. A
 /// manifest written under a different version is not read; the index is

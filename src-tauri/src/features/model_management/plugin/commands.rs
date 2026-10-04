@@ -4,7 +4,7 @@
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ErrorCode};
+use crate::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -23,7 +23,7 @@ use crate::interfaces::commands::model_setup::{
 
 use crate::domain::download::DownloadOperationState;
 use crate::features::llm::commands::download_model as download_model_impl;
-use crate::shared::path_confinement::confine_to_root;
+use crate::shared::fs::confinement::confine_to_root;
 use std::path::Path;
 
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;

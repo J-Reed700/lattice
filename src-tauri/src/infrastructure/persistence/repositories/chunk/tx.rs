@@ -144,7 +144,7 @@ impl ChunkRepositoryPort for SqliteChunkRepositoryTx {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<ChunkEntity> {
-        use crate::shared::domain_types::DocumentId;
+        use crate::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = ChunkEntity::new(doc_id, content.to_string(), index);
         RepositoryPort::save(self, &chunk).await?;

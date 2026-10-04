@@ -169,8 +169,8 @@ impl StartBatchUrlImportUseCase {
         let job_id_clone = job_id.clone();
         let job_id_for_worker = job_id_clone.clone();
 
-        let cancel = crate::shared::background::cancellation_token();
-        let worker = crate::shared::background::spawn(async move {
+        let cancel = crate::shared::runtime::background::cancellation_token();
+        let worker = crate::shared::runtime::background::spawn(async move {
             let job_id_clone = job_id_for_worker;
             let cancellation = cancel.clone();
             if cancellation.is_cancelled() {

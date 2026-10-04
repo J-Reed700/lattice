@@ -62,7 +62,7 @@ async fn record_constraint_through(pool: &SqlitePool, conversation_id: &str, thr
     use crate::application::ports::conversation_memory::{
         MemoryCommitCandidate, MemoryCommitPreconditions, SummaryUpdate,
     };
-    use crate::domain::conversation_memory::{
+    use crate::domain::conversation::memory::{
         compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem,
         MemoryKind, MemoryReview, MemoryState, SourceRole,
     };
@@ -340,7 +340,7 @@ async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
     let state = repository.load_memory_state(&id).await.unwrap();
     assert_eq!(
         state.validity,
-        crate::domain::conversation_memory::MemoryValidity::Ready,
+        crate::domain::conversation::memory::MemoryValidity::Ready,
         "a status change must not invalidate memory whose evidence is unmoved"
     );
 

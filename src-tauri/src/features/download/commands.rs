@@ -1,8 +1,8 @@
 use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
-use crate::domain::model_paths::ModelPaths;
+use crate::domain::models::paths::ModelPaths;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::security::RateLimiter;
-use crate::shared::path_confinement::confine_to_root;
+use crate::shared::fs::confinement::confine_to_root;
 use crate::shared::ValidatedFilePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

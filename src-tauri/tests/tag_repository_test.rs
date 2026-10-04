@@ -16,58 +16,10 @@ mod tag_repository_tests {
             .await
             .expect("Failed to create in-memory SQLite pool");
 
-        // Create tags table
-        sqlx::query(
-            r#"
-            CREATE TABLE tags (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                color TEXT NOT NULL DEFAULT '#6366f1',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("Failed to create tags table");
-
-        // Create documents table for foreign keys
-        sqlx::query(
-            r#"
-            CREATE TABLE documents (
-                id TEXT PRIMARY KEY,
-                file_path TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                mime_type TEXT,
-                size_bytes INTEGER NOT NULL,
-                modified_at TEXT NOT NULL,
-                indexed_at TEXT NOT NULL,
-                checksum TEXT NOT NULL,
-                status TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("Failed to create documents table");
-
-        // Create document_tags junction table
-        sqlx::query(
-            r#"
-            CREATE TABLE document_tags (
-                document_id TEXT NOT NULL,
-                tag_id TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (document_id, tag_id),
-                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("Failed to create document_tags table");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("Failed to apply production migrations");
 
         pool
     }

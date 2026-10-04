@@ -4,9 +4,9 @@
 //! instead of panicking or failing silently.
 
 use crate::application::ports::EmbeddingPort;
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 /// Mock EmbeddingPort that returns AiModelsNotInstalled errors

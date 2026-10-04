@@ -307,197 +307,45 @@ impl LearningRecallRepository {
                 "Source search query must contain 1–240 characters.",
             ));
         }
-        let limit = req.limit.clamp(1, 50);
-        let version_rows = sqlx::query("SELECT v.id,v.source_id,v.full_text,v.title FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
-            .bind(&req.program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        if version_rows.is_empty() {
-            return Ok(Vec::new());
-        }
-        let query_embedding = if let Some(embedder) = embedder {
-            embedder.embed_query(query).await.ok()
-        } else {
-            None
-        };
-        if let (Some(embedder), Some(query_vector)) = (embedder, query_embedding.as_ref()) {
-            self.ensure_retrieval_index(&req.program_id, &version_rows, embedder)
-                .await?;
-            let model = embedder.model_identity();
-            let indexed = sqlx::query("SELECT i.source_version_id,i.chunk_text,i.start_byte,i.end_byte,i.embedding_json,v.source_id,v.title,v.full_text FROM learning_source_retrieval_index i JOIN learning_source_versions v ON v.program_id=i.program_id AND v.id=i.source_version_id JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id AND s.active_version_id=v.id AND s.deleted_at IS NULL WHERE i.program_id=? AND i.embedding_model=? AND i.embedding_json IS NOT NULL")
-                .bind(&req.program_id)
-                .bind(&model)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db)?;
-            let mut ranked = Vec::new();
-            for row in indexed {
-                let vector_json: String = row.get("embedding_json");
-                let vector: Vec<f32> = serde_json::from_str(&vector_json).map_err(|error| {
-                    AppError::InvalidState(format!("Invalid source embedding: {error}"))
-                })?;
-                if let Some(score) = cosine(query_vector, &vector) {
-                    ranked.push((score, row));
-                }
-            }
-            ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-            let mut results = Vec::new();
-            let library = LearningSourceLibraryRepository::new(self.pool.clone());
-            let workspace = library.workspace(&req.program_id).await?;
-            for (score, row) in ranked.into_iter().take(limit) {
-                let version_id: String = row.get("source_version_id");
-                let source_id: String = row.get("source_id");
-                let item = workspace
-                    .sources
-                    .iter()
-                    .find(|s| s.id == source_id)
-                    .ok_or_else(|| AppError::InvalidState("Active source disappeared.".into()))?;
-                let summary = item
-                    .versions
-                    .iter()
-                    .find(|v| v.id == version_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        AppError::InvalidState("Active source version disappeared.".into())
-                    })?;
-                let full_text: String = row.get("full_text");
-                let start: i64 = row.get("start_byte");
-                let end: i64 = row.get("end_byte");
-                let start = (start.max(0) as usize).min(full_text.len());
-                let end = (end.max(start as i64) as usize).min(full_text.len());
-                let selector = create_quote_selector(&full_text, start, end)
-                    .or_else(|_| fallback_selector(&full_text, query))?;
-                results.push(LearningSourceSemanticSearchResultDto {
-                    source_id,
-                    version: summary,
-                    excerpt: context_text(&full_text, start, 500),
-                    score,
-                    retrieval_kind: "semantic".into(),
-                    selector,
-                });
-            }
-            if !results.is_empty() {
-                return Ok(results);
-            }
-        }
-        self.lexical_search(&req.program_id, query, limit, &version_rows)
-            .await
-    }
-
-    async fn ensure_retrieval_index(
-        &self,
-        program_id: &str,
-        versions: &[sqlx::sqlite::SqliteRow],
-        embedder: &dyn EmbeddingPort,
-    ) -> Result<()> {
-        let model = embedder.model_identity();
-        for version in versions {
-            let id: String = version.get("id");
-            let source_id: String = version.get("source_id");
-            let text: String = version.get("full_text");
-            let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_source_retrieval_index WHERE program_id=? AND source_version_id=? AND embedding_model=? LIMIT 1")
-                .bind(program_id)
-                .bind(&id)
-                .bind(&model)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db)?;
-            if exists.is_some() {
-                continue;
-            }
-            let chunks = match embedder.split_text(&text, "") {
-                Ok(chunks) if !chunks.is_empty() => chunks,
-                _ => vec![
-                    crate::application::ports::embedding_port::EmbeddingTextChunk {
-                        text: text.chars().take(4_000).collect(),
-                        start: 0,
-                        end: text.chars().take(4_000).collect::<String>().len(),
-                        token_count: 0,
-                    },
-                ],
-            };
-            let texts = chunks
-                .iter()
-                .map(|chunk| chunk.text.clone())
-                .collect::<Vec<_>>();
-            let vectors = match embedder.embed_batch(&texts).await {
-                Ok(vectors) if vectors.len() == chunks.len() => vectors,
-                _ => continue,
-            };
-            let mut tx = self.pool.begin().await.map_err(db)?;
-            for (ordinal, (chunk, vector)) in chunks.iter().zip(vectors).enumerate() {
-                sqlx::query("INSERT OR IGNORE INTO learning_source_retrieval_index(program_id,source_version_id,chunk_ordinal,chunk_text,start_byte,end_byte,embedding_model,embedding_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
-                    .bind(program_id)
-                    .bind(&id)
-                    .bind(ordinal as i64)
-                    .bind(&chunk.text)
-                    .bind(chunk.start as i64)
-                    .bind(chunk.end as i64)
-                    .bind(&model)
-                    .bind(json(&vector)?)
-                    .bind(now())
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
-            }
-            tx.commit().await.map_err(db)?;
-            let _ = source_id;
-        }
-        Ok(())
-    }
-
-    async fn lexical_search(
-        &self,
-        program_id: &str,
-        query: &str,
-        limit: usize,
-        versions: &[sqlx::sqlite::SqliteRow],
-    ) -> Result<Vec<LearningSourceSemanticSearchResultDto>> {
-        let query_terms = lexical_terms(query);
-        if query_terms.is_empty() {
-            return Ok(Vec::new());
-        }
         let library = LearningSourceLibraryRepository::new(self.pool.clone());
-        let workspace = library.workspace(program_id).await?;
-        let mut ranked = Vec::new();
-        for row in versions {
-            let text: String = row.get("full_text");
-            let terms = lexical_terms(&text);
-            let score = jaccard(&query_terms, &terms);
-            if score <= 0.0 {
-                continue;
-            }
-            ranked.push((score, row));
-        }
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let sources = library.verification_sources(&req.program_id).await?;
+        let collection = super::reference_collection::ReferenceCollection::load(
+            &self.pool,
+            &req.program_id,
+            &sources,
+            embedder,
+        )
+        .await?;
+        let passages = collection.retrieve(query, req.limit).await?;
+        let workspace = library.workspace(&req.program_id).await?;
         let mut results = Vec::new();
-        for (score, row) in ranked.into_iter().take(limit) {
-            let source_id: String = row.get("source_id");
-            let version_id: String = row.get("id");
-            let source = workspace
+        for passage in passages {
+            let item = workspace
                 .sources
                 .iter()
-                .find(|item| item.id == source_id)
-                .ok_or_else(|| AppError::InvalidState("Active source disappeared.".into()))?;
-            let version = source
-                .versions
-                .iter()
-                .find(|item| item.id == version_id)
-                .cloned()
+                .find(|s| s.active_version_id.as_deref() == Some(&passage.source_id))
                 .ok_or_else(|| {
-                    AppError::InvalidState("Active source version disappeared.".into())
+                    invalid("The reference collection changed during search. Search again.")
                 })?;
-            let full_text: String = row.get("full_text");
-            let selector = fallback_selector(&full_text, query)?;
-            let start = best_match_byte(&full_text, query);
+            let version = item
+                .active_version
+                .clone()
+                .ok_or_else(|| invalid("The source version is unavailable."))?;
+            let source = sources
+                .iter()
+                .find(|s| s.id == passage.source_id)
+                .ok_or_else(|| invalid("The source version is unavailable."))?;
             results.push(LearningSourceSemanticSearchResultDto {
-                source_id,
+                source_id: item.id.clone(),
                 version,
-                excerpt: context_text(&full_text, start, 500),
-                score,
-                retrieval_kind: "lexical_fallback".into(),
-                selector,
+                excerpt: passage.text.clone(),
+                score: passage.score,
+                retrieval_kind: passage.retrieval_kind,
+                selector: create_quote_selector(
+                    &source.excerpt,
+                    passage.start_byte,
+                    passage.end_byte,
+                )?,
             });
         }
         Ok(results)
@@ -1688,78 +1536,6 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     }
     intersection as f64 / a.union(b).count().max(1) as f64
 }
-fn cosine(a: &[f32], b: &[f32]) -> Option<f64> {
-    if a.is_empty() || a.len() != b.len() || a.iter().chain(b).any(|value| !value.is_finite()) {
-        return None;
-    }
-    let dot: f64 = a
-        .iter()
-        .zip(b)
-        .map(|(left, right)| f64::from(*left) * f64::from(*right))
-        .sum();
-    let left: f64 = a
-        .iter()
-        .map(|value| f64::from(*value).powi(2))
-        .sum::<f64>()
-        .sqrt();
-    let right: f64 = b
-        .iter()
-        .map(|value| f64::from(*value).powi(2))
-        .sum::<f64>()
-        .sqrt();
-    (left > 0.0 && right > 0.0).then_some(dot / (left * right))
-}
-pub(super) fn context_text(text: &str, byte: usize, max_chars: usize) -> String {
-    let boundary = byte.min(text.len());
-    let start = text
-        .char_indices()
-        .take_while(|(index, _)| *index <= boundary)
-        .map(|(index, _)| index)
-        .filter(|index| text.is_char_boundary(*index))
-        .last()
-        .unwrap_or(0);
-    text.get(start..)
-        .unwrap_or_default()
-        .chars()
-        .take(max_chars)
-        .collect()
-}
-pub(super) fn fallback_selector(
-    text: &str,
-    query: &str,
-) -> Result<super::source_selector::LearningTextQuoteSelector> {
-    let term = query
-        .split_whitespace()
-        .find(|part| part.chars().count() >= 2)
-        .ok_or_else(|| invalid("Search query has no selectable text."))?;
-    if let Some((start, end)) = find_case_insensitive(text, term) {
-        create_quote_selector(text, start, end)
-    } else {
-        let end = text
-            .char_indices()
-            .nth(1)
-            .map(|(index, _)| index)
-            .unwrap_or(text.len());
-        create_quote_selector(text, 0, end)
-    }
-}
-
-fn find_case_insensitive(text: &str, needle: &str) -> Option<(usize, usize)> {
-    let wanted = needle.to_lowercase();
-    let needle_chars = needle.chars().count();
-    for (start, _) in text.char_indices() {
-        let candidate = text
-            .get(start..)?
-            .chars()
-            .take(needle_chars)
-            .collect::<String>();
-        if candidate.to_lowercase() == wanted {
-            return Some((start, start + candidate.len()));
-        }
-    }
-    None
-}
-
 async fn lock_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
@@ -1869,18 +1645,6 @@ async fn recall_record(
         .await
         .map_err(db)?;
     Ok(())
-}
-
-pub(super) fn best_match_byte(text: &str, query: &str) -> usize {
-    let Some(term) = query
-        .split(|ch: char| !ch.is_alphanumeric())
-        .find(|term| term.chars().count() >= 2)
-    else {
-        return 0;
-    };
-    find_case_insensitive(text, term)
-        .map(|(start, _)| start)
-        .unwrap_or(0)
 }
 
 async fn memory_deck(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<String> {

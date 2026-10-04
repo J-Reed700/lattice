@@ -26,8 +26,9 @@ struct Item {
     answer_index: usize,
     accepted_answers: Vec<String>,
     ordered_values: Vec<String>,
-    source_index: usize,
+    source_index: Option<usize>,
     quote: String,
+    rubric: Vec<super::teaching::GeneratedCriterion>,
 }
 
 pub async fn generate(
@@ -35,6 +36,7 @@ pub async fn generate(
     request: &CreateLearningAssessmentBlueprintRequestDto,
     outcomes: &[LearningOutcomeDefinitionDto],
     sources: &[LearningSourceVersionDto],
+    lessons: &[LearningLessonDto],
 ) -> Result<Vec<LearningAssessmentCandidateWriteDto>> {
     let mut slots = Vec::new();
     for (i, r) in request.requirements.iter().enumerate() {
@@ -42,18 +44,21 @@ pub async fn generate(
             slots.push((i, r));
         }
     }
-    if slots.is_empty() || slots.len() > 64 || sources.is_empty() || sources.len() > 24 {
+    if slots.is_empty() || slots.len() > 64 || sources.len() > 24 {
         return Err(AppError::InvalidInput(
             "Assessment coverage or source scope is outside its allowed bounds.".into(),
         ));
     }
     let source_context=sources.iter().map(|s|serde_json::json!({"id":s.version.id,"title":s.version.title,"text":s.full_text.chars().take(8000).collect::<String>()})).collect::<Vec<_>>();
     let requirements=request.requirements.iter().map(|r|serde_json::json!({"outcome":outcomes.iter().find(|o|o.id==r.outcome_id).map(|o|o.title.as_str()).unwrap_or(r.outcome_id.as_str()),"format":r.format,"difficultyMin":r.difficulty_min,"difficultyMax":r.difficulty_max,"count":r.count})).collect::<Vec<_>>();
-    let prompt=serde_json::json!({"title":request.title,"instructions":request.instructions,"requirements":requirements,"sources":source_context,"returnCount":slots.len()}).to_string();
-    let system="Author source-grounded assessment items. Return only JSON. For each item give requirementIndex, prompt, an explanation/rationale, options, answerIndex, acceptedAnswers, orderedValues, sourceIndex, and an exact quote from that source. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys. Do not include extra fields.";
-    let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":slots.len(),"maxItems":slots.len(),"items":{"type":"object","additionalProperties":false,"required":["requirementIndex","prompt","explanation","options","answerIndex","acceptedAnswers","orderedValues","sourceIndex","quote"],"properties":{"requirementIndex":{"type":"integer","minimum":0,"maximum":request.requirements.len().saturating_sub(1)},"prompt":{"type":"string","minLength":8,"maxLength":8000},"explanation":{"type":"string","minLength":8,"maxLength":1200},"options":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}},"answerIndex":{"type":"integer","minimum":0,"maximum":7},"acceptedAnswers":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}},"orderedValues":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":500}},"sourceIndex":{"type":"integer","minimum":0,"maximum":sources.len()-1},"quote":{"type":"string","minLength":12,"maxLength":700}}}}}});
+    let prompt=serde_json::json!({"title":request.title,"instructions":request.instructions,"requirements":requirements,"sources":source_context,"returnCount":slots.len(),"lessons":lessons.iter().map(|lesson|serde_json::json!({"title":lesson.title,"objective":lesson.objective,"blocks":lesson.blocks})).collect::<Vec<_>>()}).to_string();
+    let system="Author source-grounded assessment items. Return only JSON. For each item give requirementIndex, prompt, an explanation/rationale, options, answerIndex, acceptedAnswers, orderedValues, sourceIndex, an exact quote from that source, and rubric. Rubric has two to four task-specific criteria for open formats (title, description, dimension), or an empty array for objectively keyed items. Criteria must state observable incomplete, adequate and strong performance without leaking the answer. Include a concrete scenario and deliverable that require the outcome, not a request to repeat its title. If there are no sources, author from the supplied lesson material and outcomes, set sourceIndex to null and quote to an empty string; never invent citations. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys. Do not include extra fields.";
+    let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":slots.len(),"maxItems":slots.len(),"items":{"type":"object","additionalProperties":false,"required":["requirementIndex","prompt","explanation","options","answerIndex","acceptedAnswers","orderedValues","sourceIndex","quote","rubric"],"properties":{"requirementIndex":{"type":"integer","minimum":0,"maximum":request.requirements.len().saturating_sub(1)},"prompt":{"type":"string","minLength":8,"maxLength":8000},"explanation":{"type":"string","minLength":8,"maxLength":1200},"options":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}},"answerIndex":{"type":"integer","minimum":0,"maximum":7},"acceptedAnswers":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}},"orderedValues":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":500}},"sourceIndex":if sources.is_empty() {serde_json::json!({"type":"null"})} else {serde_json::json!({"type":"integer","minimum":0,"maximum":sources.len()-1})},"rubric":super::teaching::rubric_schema(),"quote":{"type":"string","minLength":if sources.is_empty(){0}else{12},"maxLength":700}}}}}});
+    let output_tokens = (slots.len() * 1100 + 600).min(16_000);
     let raw = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.count_tokens(system) + llm.count_tokens(&prompt) + 2200 > llm.max_context_tokens() {
+        if llm.count_tokens(system) + llm.count_tokens(&prompt) + output_tokens
+            > llm.max_context_tokens()
+        {
             return Err(AppError::InvalidInput(
                 "Assessment authoring request exceeds the model context window.".into(),
             ));
@@ -68,12 +73,12 @@ pub async fn generate(
                         },
                         CompletionInput::Message {
                             role: "user".into(),
-                            content: prompt,
+                            content: prompt.clone(),
                         },
                     ],
-                    json_schema: Some(schema),
+                    json_schema: Some(schema.clone()),
                     reasoning_effort: Some("low".into()),
-                    max_output_tokens: Some(2200),
+                    max_output_tokens: Some(output_tokens as u32),
                     ..Default::default()
                 })
                 .await?;
@@ -97,7 +102,9 @@ pub async fn generate(
     })
     .await
     .map_err(|_| AppError::ServiceNotAvailable("Assessment authoring timed out.".into()))??;
-    if raw.chars().count() > 40_000 {
+    let raw = super::teaching::review_and_repair(llm, system, &prompt, &schema, raw, output_tokens)
+        .await?;
+    if raw.chars().count() > 80_000 {
         return Err(AppError::InvalidInput(
             "Assessment authoring response is too large.".into(),
         ));
@@ -125,21 +132,31 @@ pub async fn generate(
             ));
         };
         *requirement_coverage += 1;
-        let Some(source) = sources.get(item.source_index) else {
-            return Err(AppError::InvalidInput(
-                "Assessment authoring referenced an unavailable source.".into(),
-            ));
+        let source = match item.source_index {
+            Some(index) => Some(sources.get(index).ok_or_else(|| {
+                AppError::InvalidInput(
+                    "Assessment authoring referenced an unavailable source.".into(),
+                )
+            })?),
+            None if sources.is_empty() && item.quote.is_empty() => None,
+            None => {
+                return Err(AppError::InvalidInput(
+                    "Source-backed assessments require a valid source quote.".into(),
+                ))
+            }
         };
         if item.explanation.trim().chars().count() < 8
             || item.explanation.chars().count() > 1200
-            || item.quote.trim().chars().count() < 12
-            || !source
-                .full_text
-                .to_lowercase()
-                .contains(&item.quote.trim().to_lowercase())
+            || source.is_some_and(|source| {
+                item.quote.trim().chars().count() < 12
+                    || !source
+                        .full_text
+                        .to_lowercase()
+                        .contains(&item.quote.trim().to_lowercase())
+            })
         {
             return Err(AppError::InvalidInput(
-                "Assessment item could not be tied to the frozen source text.".into(),
+                "Assessment item has invalid reasoning or source evidence.".into(),
             ));
         }
         let key = match requirement.format {
@@ -172,6 +189,13 @@ pub async fn generate(
             }
             _ => engine::LearningAssessmentKey::Rubric,
         };
+        let task_rubric = super::teaching::rubric(
+            item.rubric,
+            matches!(
+                requirement.format,
+                LearningItemFormat::Explanation | LearningItemFormat::Artifact
+            ),
+        )?;
         let candidate = engine::LearningAssessmentCandidate {
             id: uuid::Uuid::new_v4().to_string(),
             outcome_ids: vec![requirement.outcome_id.clone()],
@@ -179,13 +203,27 @@ pub async fn generate(
             difficulty: requirement.difficulty_min,
             prompt: item.prompt.trim().into(),
             options: item.options,
-            source_version_ids: vec![source.version.id.clone()],
-            rubric: request.rubric.clone(),
+            source_version_ids: source
+                .map(|source| vec![source.version.id.clone()])
+                .unwrap_or_default(),
+            rubric: task_rubric
+                .into_iter()
+                .map(|c| engine::LearningRubricCriterion {
+                    id: c.id,
+                    title: c.title,
+                    description: c.description,
+                    max_points: c.max_points as u32,
+                })
+                .collect(),
             key: key.clone(),
         };
         engine::validate_candidate(&candidate)?;
-        let digest = serde_json::to_string(&candidate)
-            .map_err(|e| AppError::Serialization(e.to_string()))?;
+        let digest = candidate
+            .prompt
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
         if !used.insert(digest) {
             return Err(AppError::InvalidInput(
                 "Assessment authoring returned duplicate items.".into(),
@@ -275,6 +313,7 @@ pub async fn grade_open(
             "Assessment grading exceeds the model context window.".into(),
         ));
     }
+
     let raw = tokio::time::timeout(Duration::from_secs(120), async {
         if llm.supports_typed_completions() {
             let r = llm

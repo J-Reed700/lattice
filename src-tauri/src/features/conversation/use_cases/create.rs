@@ -58,8 +58,8 @@ mod tests {
     use super::*;
     use crate::domain::Conversation;
     use crate::features::conversation::ConversationServiceTrait;
-    use crate::shared::domain_types::ConversationId;
     use crate::shared::error::AppError;
+    use crate::shared::types::ConversationId;
     use async_trait::async_trait;
     use chrono::Utc;
 

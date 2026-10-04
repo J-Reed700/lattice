@@ -285,7 +285,7 @@ async fn remove_quietly(path: &Path) {
 }
 
 fn normalize(url: &str) -> String {
-    crate::shared::url_identity::identity(url)
+    crate::shared::http::url_identity::identity(url)
 }
 
 #[cfg(test)]

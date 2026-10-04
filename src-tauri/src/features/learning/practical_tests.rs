@@ -12,27 +12,27 @@ use super::{
 fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
     let run_id = id();
     let token = id();
-    let root = super::practical_repository::run_workspace(&run_id);
-    let marker = super::practical_repository::workspace_owner_marker(&run_id);
+    let root = super::practical_runs::run_workspace(&run_id);
+    let marker = super::practical_runs::workspace_owner_marker(&run_id);
     std::fs::create_dir_all(&root)?;
     let sentinel = root.join("user-data.txt");
     std::fs::write(&sentinel, "preserve me")?;
 
     // This is the path taken when a container runner finds a pre-existing
     // root and returns a security error before it can materialize anything.
-    super::practical_repository::cleanup_invocation_workspace(&run_id, false, false);
+    super::practical_runs::cleanup_invocation_workspace(&run_id, false, false);
     assert_eq!(std::fs::read_to_string(&sentinel)?, "preserve me");
 
     // A caller-chosen run UUID cannot cause deletion of an existing folder.
-    super::practical_repository::remove_owned_workspace(&run_id, &token);
+    super::practical_runs::remove_owned_workspace(&run_id, &token);
     assert_eq!(std::fs::read_to_string(&sentinel)?, "preserve me");
 
     std::fs::write(&marker, id())?;
-    super::practical_repository::remove_owned_workspace(&run_id, &token);
+    super::practical_runs::remove_owned_workspace(&run_id, &token);
     assert_eq!(std::fs::read_to_string(&sentinel)?, "preserve me");
 
     std::fs::write(&marker, &token)?;
-    super::practical_repository::remove_owned_workspace(&run_id, &token);
+    super::practical_runs::remove_owned_workspace(&run_id, &token);
     assert!(!root.exists());
     assert!(!marker.exists());
     Ok(())
@@ -146,7 +146,8 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     ];
     let workspace = repository
         .save_generated_activity(&request, &activity, "fixture-model", "builtin-create")
-        .await?;
+        .await?
+        .with_capabilities(super::embedded_runtime::capabilities(), Vec::new());
     let saved = workspace
         .activities
         .first()
@@ -170,12 +171,14 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
             content: "export const add=(a,b)=>a-b;".into(),
         }],
     };
-    let unrelated_workspace = super::practical_repository::run_workspace(&run.run_id);
+    let unrelated_workspace = super::practical_runs::run_workspace(&run.run_id);
     std::fs::create_dir_all(&unrelated_workspace)?;
     let unrelated_file = unrelated_workspace.join("user-data.txt");
     std::fs::write(&unrelated_file, "must not be removed by a builtin run")?;
     assert_eq!(
-        repository.start_run(&run, "builtin-wrong").await?.status,
+        super::practical_runs::start_run(&repository, &run, "builtin-wrong")
+            .await?
+            .status,
         LearningPracticalRunStatus::Failed
     );
     assert_eq!(
@@ -186,19 +189,22 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     run.operation_id = id();
     run.run_id = id();
     run.learner_files[0].content = "export const add=(a,b)=>a+b;".into();
-    let passed = repository.start_run(&run, "builtin-right").await?;
+    let passed = super::practical_runs::start_run(&repository, &run, "builtin-right").await?;
     assert_eq!(passed.status, LearningPracticalRunStatus::Passed);
     assert_eq!(
         passed.builtin_runtime,
         Some(LearningBuiltinRuntime::Javascript)
     );
     assert_eq!(
-        repository.start_run(&run, "builtin-right").await?.id,
+        super::practical_runs::start_run(&repository, &run, "builtin-right")
+            .await?
+            .id,
         passed.id
     );
     let reopened = LearningPracticalRepository::new(pool.clone())
         .workspace(&program_id)
-        .await?;
+        .await?
+        .with_capabilities(super::embedded_runtime::capabilities(), Vec::new());
     assert_eq!(reopened.runs.len(), 2);
     run.operation_id = id();
     run.run_id = id();
@@ -206,7 +212,11 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         path: "checks.mjs".into(),
         content: "console.log('fake pass')".into(),
     });
-    assert!(repository.start_run(&run, "replace-checks").await.is_err());
+    assert!(
+        super::practical_runs::start_run(&repository, &run, "replace-checks")
+            .await
+            .is_err()
+    );
     let mut conflicting = request.clone();
     conflicting.operation_id = id();
     conflicting.activity_id = id();
@@ -219,14 +229,19 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     // a different embedded interpreter. Saved attempts remain readable.
     sqlx::query("UPDATE learning_practical_activities SET builtin_runtime_version='previous-runtime-v1' WHERE id=?")
         .bind(&request.activity_id).execute(&pool).await.map_err(db)?;
-    let older = repository.workspace(&program_id).await?;
+    let older = repository
+        .workspace(&program_id)
+        .await?
+        .with_capabilities(super::embedded_runtime::capabilities(), Vec::new());
     assert!(!older.activities[0].runtime_available);
     assert_eq!(older.runs.len(), 2);
     run.operation_id = id();
     run.run_id = id();
     run.learner_files.pop();
     assert_eq!(
-        repository.start_run(&run, "old-runtime").await?.status,
+        super::practical_runs::start_run(&repository, &run, "old-runtime")
+            .await?
+            .status,
         LearningPracticalRunStatus::RuntimeUnavailable
     );
     assert_eq!(
@@ -319,7 +334,10 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
     let repository = LearningPracticalRepository::new(pool.clone());
     let (request, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
 
-    let workspace = repository.workspace(&program_id).await?;
+    let workspace = repository
+        .workspace(&program_id)
+        .await?
+        .with_capabilities(super::embedded_runtime::capabilities(), Vec::new());
     let saved = workspace
         .activities
         .iter()
@@ -341,7 +359,8 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
 
     let replay = repository
         .save_generated_activity(&request, &generated(), "fixture-model", "activity-payload")
-        .await?;
+        .await?
+        .with_capabilities(super::embedded_runtime::capabilities(), Vec::new());
     assert_eq!(replay.activities.len(), 1);
     assert!(repository
         .save_generated_activity(&request, &generated(), "fixture-model", "different-payload")
@@ -655,9 +674,18 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
         image_id: format!("sha256:{}", "b".repeat(64)),
         ..create.clone()
     };
-    let updated = repository
+    let snapshot = repository
         .save_runtime_profile(&update, "profile-update")
         .await?;
+    let docker = super::lab_runtime::LearningLabRuntimeCapability {
+        engine: LearningContainerEngine::Docker,
+        available: true,
+        version: None,
+        reason: None,
+    };
+    let updated = snapshot
+        .clone()
+        .with_capabilities(Vec::new(), vec![docker.clone()]);
     assert_eq!(
         updated
             .runtime_profiles
@@ -679,6 +707,36 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
     assert_eq!(
         frozen.runtime_command,
         Some(vec!["python".into(), "-I".into(), "checks/run.py".into()])
+    );
+    // Availability follows the activity's frozen engine, even after its
+    // profile is edited to select another engine.
+    assert!(frozen.runtime_available);
+    let unavailable = snapshot.clone().with_capabilities(
+        Vec::new(),
+        vec![super::lab_runtime::LearningLabRuntimeCapability {
+            available: false,
+            reason: Some("Docker is offline".into()),
+            ..docker.clone()
+        }],
+    );
+    assert!(!unavailable.activities[0].runtime_available);
+    assert_eq!(
+        unavailable.activities[0]
+            .runtime_unavailable_reason
+            .as_deref(),
+        Some("Docker is offline")
+    );
+    let mut disabled = snapshot;
+    disabled
+        .workspace
+        .runtime_profiles
+        .iter_mut()
+        .for_each(|profile| profile.enabled = false);
+    let disabled = disabled.with_capabilities(Vec::new(), vec![docker]);
+    assert!(!disabled.activities[0].runtime_available);
+    assert_eq!(
+        disabled.activities[0].runtime_unavailable_reason.as_deref(),
+        Some("The frozen runtime profile is disabled.")
     );
     let stale = SaveLearningRuntimeProfileRequestDto {
         operation_id: id(),
@@ -702,10 +760,16 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
         .execute(&pool)
         .await
         .map_err(db)?;
-    assert_eq!(repository.recover_running_runs().await?, 1);
+    assert_eq!(
+        super::practical_runs::recover_running_runs(&repository).await?,
+        1
+    );
     let recovered = repository.run(&run_id).await?;
     assert_eq!(recovered.status, LearningPracticalRunStatus::Interrupted);
     assert!(recovered.completed_at.is_some());
-    assert_eq!(repository.recover_running_runs().await?, 0);
+    assert_eq!(
+        super::practical_runs::recover_running_runs(&repository).await?,
+        0
+    );
     Ok(())
 }

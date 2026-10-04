@@ -8,7 +8,7 @@ use futures::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
-const MAX_TEXT_CHARS: usize = 64_000;
+pub(super) const MAX_TEXT_CHARS: usize = 2_000_000;
 const MAX_EXCERPT_CHARS: usize = 2_400;
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
 const MAX_SOURCE_COUNT: i64 = 100;
@@ -16,7 +16,7 @@ const MAX_VERSION_COUNT: i64 = 100;
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
 /// Chunks read when a library document is captured as a source; reaching it
 /// means the capture may be missing the document's tail.
-pub(super) const LIBRARY_CAPTURE_CHUNKS: usize = 128;
+pub(super) const LIBRARY_CAPTURE_CHUNKS: usize = 8192;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -162,13 +162,34 @@ impl LearningSourceLibraryRepository {
         ))
     }
 
-    /// A library document's file name and its first indexed chunks in order,
-    /// each clipped just past the capture limit. `None` while the document has
-    /// no indexed text.
+    /// Capture every indexed chunk in order under a bounded read snapshot.
+    /// Oversized or still-indexing documents fail before any text is captured.
     pub async fn library_document_text(
         &self,
         document_id: &str,
     ) -> Result<Option<(String, Vec<String>)>> {
+        // Reject oversized captures before allocating their text. Read the
+        // size and chunks under one snapshot if an import updates concurrently.
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let status: Option<String> = sqlx::query_scalar("SELECT status FROM documents WHERE id=?")
+            .bind(document_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+        if status.is_none() {
+            return Ok(None);
+        }
+        if status.as_deref() != Some("indexed") {
+            return Err(invalid("The document is not fully indexed. Let its import finish before adding it as a reference."));
+        }
+        let size = sqlx::query("SELECT count(*) chunks, coalesce(sum(length(content)),0) characters FROM text_chunks WHERE document_id=?").bind(document_id).fetch_one(&mut *tx).await.map_err(db)?;
+        let count: i64 = size.get("chunks");
+        let characters: i64 = size.get("characters");
+        if count >= LIBRARY_CAPTURE_CHUNKS as i64
+            || characters + count.saturating_sub(1) * 2 > MAX_TEXT_CHARS as i64
+        {
+            return Err(invalid("This document exceeds the MVP capture limit. Import individual chapters, each under two million characters."));
+        }
         let rows = sqlx::query(
             "SELECT d.file_name, substr(c.content, 1, ?) content FROM documents d
              JOIN text_chunks c ON c.document_id = d.id
@@ -177,7 +198,7 @@ impl LearningSourceLibraryRepository {
         .bind((MAX_TEXT_CHARS + 1) as i64)
         .bind(document_id)
         .bind(LIBRARY_CAPTURE_CHUNKS as i64)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         let Some(first) = rows.first() else {
@@ -1064,7 +1085,7 @@ impl LearningSourceLibraryRepository {
             .is_some_and(|text| text.trim().is_empty() || text.chars().count() > MAX_TEXT_CHARS)
         {
             return Err(invalid(
-                "Replacement source text must contain 1–64,000 characters.",
+                "Replacement source text must contain 1–2,000,000 characters.",
             ));
         }
         let hash = json_hash(req)?;
@@ -1231,6 +1252,23 @@ impl LearningSourceLibraryRepository {
     pub async fn prepare_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
         let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| LearningSourceDto {
+                id: r.get("id"),
+                title: r.get("title"),
+                url: r
+                    .get::<Option<String>, _>("resolved_url")
+                    .or_else(|| r.get("requested_url")),
+                excerpt: r.get("excerpt"),
+                acquired_at: r.get("acquired_at"),
+            })
+            .collect())
+    }
+    pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
+        self.backfill_legacy(program_id).await?;
+        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
             .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows
             .into_iter()

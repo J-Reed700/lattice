@@ -49,10 +49,10 @@ let currentSession: ReturnType<typeof baseSession> | null;
 let currentWorkspace: { programId: string; sessions: unknown[] };
 const toWorkspace = () => ({ programId: 'program-1', sessions: currentWorkspace.sessions });
 const updateRevision = () => { if (currentSession) currentSession.summary.revision += 1; };
-const renderWorkbench = (chosenLesson = lesson) => {
+const renderWorkbench = (chosenLesson = lesson, embedded = false) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} />, { wrapper });
+  return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} taskKind={embedded ? 'guided' : 'independent'} />, { wrapper });
 };
 
 describe('Learning Studio grounded practice workbench', () => {
@@ -66,6 +66,8 @@ describe('Learning Studio grounded practice workbench', () => {
       currentSession = baseSession();
       currentSession.summary.id = request.sessionId;
       currentSession.summary.mode = request.mode;
+      currentSession.summary.taskKind = request.taskKind;
+      currentSession.summary.revisesSessionId = request.revisesSessionId;
       currentWorkspace.sessions = [{ ...currentSession.summary }];
       return ok(toWorkspace());
     });
@@ -82,11 +84,37 @@ describe('Learning Studio grounded practice workbench', () => {
     });
     mocks.mode.mockImplementation(async (request) => { if (currentSession) { currentSession.summary.mode = request.mode; updateRevision(); } return ok(toWorkspace()); });
     mocks.openSource.mockImplementation(async () => { if (currentSession) { currentSession.assistance.push({ id: 'assist-source', kind: 'source_opened', mode: currentSession.summary.mode, artifactRevision: currentSession.artifact.revision, details: {}, createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
-    mocks.tutor.mockImplementation(async (request) => { if (currentSession) { currentSession.tutorTurns.push({ id: `turn-${currentSession.tutorTurns.length + 1}`, prompt: request.prompt, response: 'Start by separating the observation from your interpretation.', requestKind: request.requestKind, hintLevel: request.hintLevel, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
+    mocks.tutor.mockImplementation(async (request) => { if (currentSession) { if (request.requestKind === 'hint') currentSession.assistance.push({ id: `hint-${currentSession.tutorTurns.length}`, kind: 'hint', mode: currentSession.summary.mode, artifactRevision: currentSession.artifact.revision, details: { hintLevel: request.hintLevel }, createdAt: Date.now() }); currentSession.tutorTurns.push({ id: `turn-${currentSession.tutorTurns.length + 1}`, prompt: request.prompt, response: 'Start by separating the observation from your interpretation.', requestKind: request.requestKind, hintLevel: request.hintLevel, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
     mocks.reveal.mockImplementation(async () => { if (currentSession) { currentSession.revealedSolution = 'A worked explanation of the inference.'; updateRevision(); } return ok(toWorkspace()); });
     mocks.submit.mockImplementation(async () => { if (currentSession) { currentSession.summary.status = 'submitted'; currentSession.summary.submittedAt = Date.now(); currentSession.summary.gradeStatus = 'uncertain'; currentSession.result = { gradeStatus: 'uncertain', artifactRevision: currentSession.artifact.revision, artifactText: currentSession.artifact.text, rubric: currentSession.rubric, criteria: [{ criterionId: 'criterion-1', dimension: 'explanation', score: null, maxPoints: 4, observation: 'There is not enough evidence to judge the connection.', evidenceQuote: null }], evidence: [{ dimension: 'explanation', observed: false, observation: 'No complete explanation was visible.', evidenceQuote: null, assistanceKinds: [] }], modeAtSubmission: currentSession.summary.mode, assistance: currentSession.assistance, graderModel: 'Study grader', submittedAt: Date.now() }; updateRevision(); } return ok(toWorkspace()); });
     mocks.acceptProposal.mockImplementation(async () => { if (currentSession) { currentSession.proposals[0].status = 'accepted'; updateRevision(); } return ok(toWorkspace()); });
     mocks.rejectProposal.mockImplementation(async () => { if (currentSession) { currentSession.proposals[0].status = 'rejected'; updateRevision(); } return ok(toWorkspace()); });
+  });
+
+  it('keeps guided practice in the lesson, saves work before feedback, and reveals hints progressively', async () => {
+    const user = userEvent.setup();
+    currentSession = null; currentWorkspace.sessions = [];
+    renderWorkbench(lesson, true);
+    await user.click(await screen.findByRole('button', { name: 'Start guided exercise' }));
+    expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ taskKind: 'guided', mode: 'practice' }));
+    await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'I separated the observed facts from my interpretation.');
+    await user.click(screen.getByRole('button', { name: 'Check my reasoning' }));
+    await waitFor(() => expect(mocks.tutor).toHaveBeenCalledWith(expect.objectContaining({ requestKind: 'critique' })));
+    expect(mocks.save.mock.invocationCallOrder[0]).toBeLessThan(mocks.tutor.mock.invocationCallOrder[0]);
+    await user.click(await screen.findByRole('button', { name: 'Give me a hint' }));
+    await waitFor(() => expect(mocks.tutor).toHaveBeenCalledWith(expect.objectContaining({ hintLevel: 'orienting_question' })));
+    expect(await screen.findByRole('button', { name: 'Next hint' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reveal solution' })).not.toBeInTheDocument();
+  });
+
+  it('revises a submitted guided response with its original attempt ID', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided'; currentSession!.summary.status = 'submitted';
+    currentSession!.result = { gradeStatus: 'uncertain', criteria: [], rubric: currentSession!.rubric, evidence: [], assistance: [], modeAtSubmission: 'practice', graderModel: 'fixture', submittedAt: 10, artifactRevision: 0, artifactText: 'first attempt' };
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    renderWorkbench(lesson, true);
+    await user.click(await screen.findByRole('button', { name: 'Revise this response' }));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ revisesSessionId: 'attempt-1', taskKind: 'guided', mode: 'practice' })));
   });
 
   it('gates attempts on lesson preparation', async () => {

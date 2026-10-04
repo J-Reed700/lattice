@@ -275,7 +275,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
     let message = json!({"role":"assistant","content":"","reasoning_content":"retained reasoning",
         "tool_calls":[{"id":"call_1","type":"function","function":{"name":"search","arguments":"{\"q\":\"rust\"}"}}]});
     Mock::given(method("POST")).and(path("/v1/chat/completions")).and(header("authorization","Basic test-credential"))
-        .and(body_partial_json(json!({"stream":true,"messages":[{"role":"user","content":"Find rust"}],"tools":[{"type":"function","function":{"name":"search","description":"Search","parameters":{"type":"object"}}}]})))
+        .and(body_partial_json(json!({"stream":true,"messages":[{"role":"user","content":"Find rust"}],"tools":[{"type":"function","function":{"name":"search","description":"Search","parameters":{"type":"object"}}}],"parallel_tool_calls":true})))
         .respond_with(ResponseTemplate::new(200).set_body_string(stream_reply(message.clone(), "tool_calls"))).expect(1).mount(&server).await;
     let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
     let response = client

@@ -19,7 +19,7 @@ use crate::features::llm::engine::circuit_breaker::{
 use crate::features::llm::engine::traits::{GenerationConfig, LLMClient};
 use crate::features::llm::engine::types::*;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use reqwest::{
@@ -815,7 +815,7 @@ impl OllamaClient {
         &self,
         mut request: OllamaGenerateRequest,
     ) -> Result<OllamaGenerateResponse> {
-        use crate::shared::utils::{retry_with_backoff, RetryConfig};
+        use crate::shared::resilience::{retry_with_backoff, RetryConfig};
 
         if request.stream {
             return Err(AppError::InvalidInput(
@@ -1223,7 +1223,7 @@ impl OllamaClient {
         use crate::features::llm::engine::types::{
             OllamaChatMessage, OllamaChatRequest, OllamaChatResponse,
         };
-        use crate::shared::utils::{retry_with_backoff, RetryConfig};
+        use crate::shared::resilience::{retry_with_backoff, RetryConfig};
 
         debug!("Generating chat with model: {}", self.model_name);
         let _permit = self
@@ -1643,17 +1643,15 @@ impl LLMPort for OllamaClient {
     async fn complete(
         &self,
         request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> crate::shared::result::Result<crate::application::ports::llm_port::CompletionResponse>
-    {
+    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
         self.complete_typed(request).await
     }
 
     async fn complete_with_progress(
         &self,
         request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> crate::shared::result::Result<()> + Send + Sync),
-    ) -> crate::shared::result::Result<crate::application::ports::llm_port::CompletionResponse>
-    {
+        on_text: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
+    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
         self.complete_typed_with_progress(request, on_text).await
     }
 
@@ -1662,7 +1660,7 @@ impl LLMPort for OllamaClient {
         prompt: &str,
         context: &[String],
         images: Option<Vec<String>>,
-    ) -> crate::shared::result::Result<String> {
+    ) -> crate::shared::error::Result<String> {
         let system = if context.is_empty() {
             None
         } else {
@@ -1685,8 +1683,8 @@ impl LLMPort for OllamaClient {
         prompt: &str,
         context: &[String],
         images: Option<Vec<String>>,
-    ) -> crate::shared::result::Result<
-        Box<dyn Stream<Item = crate::shared::result::Result<String>> + Send + Unpin + '_>,
+    ) -> crate::shared::error::Result<
+        Box<dyn Stream<Item = crate::shared::error::Result<String>> + Send + Unpin + '_>,
     > {
         fn parse_context_to_chat_message(
             context_entry: &str,
@@ -1779,7 +1777,7 @@ impl LLMPort for OllamaClient {
         text.len().div_ceil(4)
     }
 
-    async fn is_ready(&self) -> crate::shared::result::Result<bool> {
+    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
         self.health_check_with_result().await
     }
 
@@ -1797,9 +1795,9 @@ impl LLMPort for OllamaClient {
         context: &[String],
         images: Option<Vec<String>>,
         tools: Option<&[crate::application::ports::ToolDefinition]>,
-    ) -> crate::shared::result::Result<
+    ) -> crate::shared::error::Result<
         Box<
-            dyn Stream<Item = crate::shared::result::Result<crate::application::ports::StreamChunk>>
+            dyn Stream<Item = crate::shared::error::Result<crate::application::ports::StreamChunk>>
                 + Send
                 + Unpin
                 + '_,

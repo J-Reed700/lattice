@@ -1,5 +1,6 @@
 //! LLM / model-management feature dependency injection.
 
+use crate::features::llm::loading::ModelLoader;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -23,11 +24,11 @@ use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
+use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
-use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;
@@ -151,11 +152,8 @@ impl Container {
         self.app_handle.clone()
     }
 
-    fn model_loader(&self) -> crate::infrastructure::model_loading::ModelLoader {
-        crate::infrastructure::model_loading::ModelLoader::new(
-            self.ai.downloaded_model_repo().clone(),
-            self.app_handle(),
-        )
+    fn model_loader(&self) -> ModelLoader {
+        ModelLoader::new(self.ai.downloaded_model_repo().clone(), self.app_handle())
     }
 
     async fn load_llm_with_fallback(&self) -> Result<Arc<dyn LLMPort>> {
@@ -346,8 +344,8 @@ impl Container {
         crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(&app_handle);
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
-            let cancel = crate::shared::background::cancellation_token();
-            let _ = crate::shared::background::spawn(async move {
+            let cancel = crate::shared::runtime::background::cancellation_token();
+            let _ = crate::shared::runtime::background::spawn(async move {
                 if cancel.is_cancelled() {
                     return;
                 }

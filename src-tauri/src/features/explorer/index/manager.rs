@@ -433,7 +433,7 @@ impl FolderIndexManager {
         let status = Arc::new(StatusCell::new(initial, Arc::clone(&self.emit)));
         status.announce();
 
-        let cancel = crate::shared::background::cancellation_token().child_token();
+        let cancel = crate::shared::runtime::background::cancellation_token().child_token();
         let engine = Arc::new(RwLock::new(None));
         let index_scope = Scope::open(&root_string(&index_root))?;
         let job = FolderJob {
@@ -452,7 +452,7 @@ impl FolderIndexManager {
             role,
             manager: Weak::clone(&self.me),
         };
-        let task = crate::shared::background::spawn(job.run());
+        let task = crate::shared::runtime::background::spawn(job.run());
         Ok(OpenFolder {
             root,
             dir: Some(dir),
@@ -475,7 +475,10 @@ impl FolderIndexManager {
     /// Looks for a paused folder to resume, off the caller's task.
     fn hand_over(&self) {
         if let Some(manager) = self.me.upgrade() {
-            let _ = crate::shared::background::spawn(async move { manager.resume_paused().await });
+            let _ =
+                crate::shared::runtime::background::spawn(
+                    async move { manager.resume_paused().await },
+                );
         }
     }
 

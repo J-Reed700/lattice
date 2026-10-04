@@ -19,7 +19,7 @@ use crate::application::ports::conversation_memory::{
     SourceSpanRef, SummaryUpdate,
 };
 use crate::application::ports::LLMPort;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     apply_patch, EvidenceSpan, MemoryCommit, MemoryItem, MemoryKind, MemoryState,
     MemoryValidationError, SemanticVerdict, SourceMessage, ValidatedPatch,
     ValidatedTransitionTarget,
@@ -334,7 +334,7 @@ impl CompactionJob {
             window
                 .iter()
                 .rposition(|m| {
-                    m.role == crate::domain::conversation_memory::SourceRole::Assistant
+                    m.role == crate::domain::conversation::memory::SourceRole::Assistant
                         && m.status == "completed"
                 })
                 .map(|index| index + 1)

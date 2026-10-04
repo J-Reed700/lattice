@@ -140,3 +140,67 @@ async fn concurrent_first_writes_preserve_optimistic_conflict_detection(pool: Pg
             .unwrap();
     assert_eq!(version, 1);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
+async fn retry_preserves_conflict_after_head_advances(pool: PgPool) {
+    let repo = PgSyncRepository::new(pool.clone());
+    let writer = device(&repo, 42).await;
+    repo.push_changes(42, writer, vec![change("note.md")])
+        .await
+        .unwrap();
+    let stale = change("note.md");
+    let first = repo
+        .push_changes(42, writer, vec![stale.clone()])
+        .await
+        .unwrap();
+    assert!(first.accepted_paths.is_empty());
+    assert_eq!(first.conflicts.len(), 1);
+    let mut update = change("note.md");
+    update.action = SyncAction::Update;
+    update.base_version = Some(1);
+    let latest = repo.push_changes(42, writer, vec![update]).await.unwrap();
+    let replay = repo.push_changes(42, writer, vec![stale]).await.unwrap();
+    assert!(replay.accepted_paths.is_empty());
+    assert_eq!(replay.conflicts.len(), 1);
+    assert_eq!(replay.conflicts[0].id, first.conflicts[0].id);
+    assert_eq!(replay.conflicts[0].server_version, Some(1));
+    assert_eq!(replay.high_watermark_seq, latest.high_watermark_seq);
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM document_ops), (SELECT count(*) FROM conflicts), (SELECT count(*) FROM outbox)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (3, 1, 2));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
+async fn reused_operation_id_rejects_changed_payload_and_rolls_back_batch(pool: PgPool) {
+    let repo = PgSyncRepository::new(pool.clone());
+    let writer = device(&repo, 42).await;
+    let original = change("note.md");
+    repo.push_changes(42, writer, vec![original.clone()])
+        .await
+        .unwrap();
+    for field in 0..6 {
+        let mut changed = original.clone();
+        match field {
+            0 => changed.action = SyncAction::Delete,
+            1 => changed.path = "other.md".into(),
+            2 => changed.title = None,
+            3 => changed.content = Some("changed".into()),
+            4 => changed.content_hash = Some("abc".into()),
+            _ => changed.base_version = Some(1),
+        }
+        let result = repo
+            .push_changes(42, writer, vec![change("rollback.md"), changed])
+            .await;
+        assert!(
+            matches!(result, Err(AppError::Conflict(_))),
+            "field {field}"
+        );
+    }
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM document_ops), (SELECT count(*) FROM document_heads), (SELECT count(*) FROM outbox)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 1));
+}

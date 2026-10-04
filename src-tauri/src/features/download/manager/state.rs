@@ -68,7 +68,7 @@ impl DownloadManagerService {
         let (event_tx, event_rx) = mpsc::channel(128);
 
         Self {
-            shutdown: crate::shared::background::cancellation_token().child_token(),
+            shutdown: crate::shared::runtime::background::cancellation_token().child_token(),
             repository,
             engine,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),

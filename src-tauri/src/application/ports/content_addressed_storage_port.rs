@@ -24,7 +24,7 @@
 //!
 //! - `ContentAddressedStorage` - SHA-256 based storage in `~/.lattice/files/`
 
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::HashMap;

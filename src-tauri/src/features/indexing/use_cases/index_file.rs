@@ -47,8 +47,8 @@ use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::mapper::IndexingMapper;
 use crate::features::indexing::LibraryGc;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::ValidatedFilePath;
 use tracing::instrument;
 
 // Type aliases for complex return types

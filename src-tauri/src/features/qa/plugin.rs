@@ -6,7 +6,7 @@
 use crate::features::qa::commands::{check_llm_health, get_qa_model};
 use crate::features::qa::starters_dto::ChatStartersDto;
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 use tauri::{plugin::Builder, Runtime, State};
 
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
@@ -23,7 +23,7 @@ pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 #[specta::specta]
 pub async fn get_qa_model_wrapper(container: State<'_, Container>) -> Result<String, ApiError> {
     get_qa_model(container).await.map_err(|e| ApiError {
-        code: crate::shared::api_result::ErrorCode::InternalError,
+        code: crate::shared::ipc::ErrorCode::InternalError,
         message: e.to_string(),
         details: None,
     })
@@ -35,7 +35,7 @@ pub async fn check_llm_health_wrapper(
     container: State<'_, Container>,
 ) -> Result<super::dto::LLMHealthStatusDto, ApiError> {
     check_llm_health(container).await.map_err(|e| ApiError {
-        code: crate::shared::api_result::ErrorCode::InternalError,
+        code: crate::shared::ipc::ErrorCode::InternalError,
         message: e.to_string(),
         details: None,
     })

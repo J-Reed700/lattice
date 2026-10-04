@@ -74,6 +74,8 @@ fn start_request(p: &LearningProgramDto, lesson: &str) -> StartLearningPracticeS
         lesson_id: lesson.into(),
         expected_program_revision: p.summary.revision,
         mode: LearningPracticeMode::Practice,
+        task_kind: LearningPracticeTaskKind::Independent,
+        revises_session_id: None,
     }
 }
 fn save_request(
@@ -251,6 +253,45 @@ async fn submitted_result_is_an_immutable_artifact_snapshot() -> Result<()> {
     assert_eq!(result.artifact_text, "submitted wording");
     assert_eq!(result.grade_status, LearningPracticeGradeStatus::Uncertain);
     assert_eq!(result.evidence.len(), 4);
+    let revision = StartLearningPracticeSessionRequestDto {
+        operation_id: id(),
+        session_id: id(),
+        program_id: p.summary.id.clone(),
+        lesson_id: lesson.clone(),
+        expected_program_revision: p.summary.revision,
+        mode: LearningPracticeMode::Practice,
+        task_kind: LearningPracticeTaskKind::Independent,
+        revises_session_id: Some(start.session_id.clone()),
+    };
+    repo.start(&revision, "revision-start").await?;
+    let revised = repo.get_session(&revision.session_id).await?;
+    assert_eq!(revised.artifact.text, "submitted wording");
+    assert_eq!(
+        revised.summary.revises_session_id.as_deref(),
+        Some(start.session_id.as_str())
+    );
+    assert_eq!(revised.assistance.len(), 1);
+    assert!(revised.assistance[0]
+        .details
+        .get("previousFeedback")
+        .is_some());
+    assert_eq!(
+        repo.get_session(&start.session_id).await?.summary.status,
+        LearningPracticeSessionStatus::Submitted
+    );
+    assert!(repo
+        .change_mode(
+            &ChangeLearningPracticeModeRequestDto {
+                operation_id: id(),
+                program_id: p.summary.id,
+                session_id: revision.session_id,
+                expected_revision: 0,
+                mode: LearningPracticeMode::Demonstrate
+            },
+            "revision-mode"
+        )
+        .await
+        .is_err());
     Ok(())
 }
 

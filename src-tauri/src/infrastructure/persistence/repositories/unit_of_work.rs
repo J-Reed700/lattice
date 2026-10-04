@@ -44,7 +44,7 @@ use crate::application::ports::{
 };
 use crate::domain::repositories::{SearchRepository, SystemRepository};
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 use super::batch_job::SqliteBatchJobRepositoryTx;
 use super::chunk::SqliteChunkRepositoryTx;

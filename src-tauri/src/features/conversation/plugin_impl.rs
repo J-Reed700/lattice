@@ -29,7 +29,7 @@ use crate::features::conversation::space_dto::{
     UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 
 pub use super::branching::{
     fork_conversation_impl, regenerate_response_impl, truncate_conversation_after_impl,
@@ -770,7 +770,7 @@ fn compaction_response(
     let summary_tokens = outcome.summary_tokens.max(1) as i64;
     let record = crate::domain::conversation::CompactionRecord {
         id: uuid::Uuid::new_v4().to_string(),
-        conversation_id: crate::shared::domain_types::ConversationId::from_string(
+        conversation_id: crate::shared::types::ConversationId::from_string(
             conversation_id.to_string(),
         )
         .map_err(|error| {

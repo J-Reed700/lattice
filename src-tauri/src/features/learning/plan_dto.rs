@@ -85,12 +85,34 @@ pub struct LearningDiagnosticAttemptDto {
     pub id: String,
     pub program_id: String,
     pub status: LearningDiagnosticStatus,
+    #[serde(default)]
+    pub revision: i64,
     pub prompts: Vec<LearningDiagnosticPromptDto>,
     pub responses: Vec<LearningDiagnosticResponseDto>,
     pub source_coverage_gaps: Vec<LearningDiagnosticCoverageGapDto>,
     pub interpretation: String,
+    #[serde(default)]
+    pub findings: Vec<LearningDiagnosticFindingDto>,
     pub created_at: i64,
     pub submitted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningDiagnosticSignal {
+    NeedsPractice,
+    ReadyForChallenge,
+    Uncertain,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningDiagnosticFindingDto {
+    pub prompt_id: String,
+    pub outcome_id: String,
+    pub signal: LearningDiagnosticSignal,
+    pub feedback: String,
+    pub evidence_quote: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -109,6 +131,10 @@ pub struct SubmitLearningDiagnosticRequestDto {
     pub diagnostic_id: String,
     pub expected_revision: i64,
     pub responses: Vec<LearningDiagnosticResponseDto>,
+    #[serde(default)]
+    pub save_only: bool,
+    #[serde(default)]
+    pub expected_diagnostic_revision: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

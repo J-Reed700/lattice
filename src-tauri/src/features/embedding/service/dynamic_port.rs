@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::application::ports::{EmbeddingPort, MockEmbeddingPort};
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
 pub struct DynamicEmbedding {
     provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
@@ -22,21 +22,21 @@ impl DynamicEmbedding {
 
 #[async_trait]
 impl EmbeddingPort for DynamicEmbedding {
-    async fn embed_single(&self, text: &str) -> crate::shared::result::Result<Vec<f32>> {
+    async fn embed_single(&self, text: &str) -> crate::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_single(text).await,
             None => MockEmbeddingPort::new_degraded().embed_single(text).await,
         }
     }
 
-    async fn embed_query(&self, text: &str) -> crate::shared::result::Result<Vec<f32>> {
+    async fn embed_query(&self, text: &str) -> crate::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_query(text).await,
             None => MockEmbeddingPort::new_degraded().embed_single(text).await,
         }
     }
 
-    async fn embed_batch(&self, texts: &[String]) -> crate::shared::result::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[String]) -> crate::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_batch(texts).await,
             None => MockEmbeddingPort::new_degraded().embed_batch(texts).await,
@@ -61,7 +61,7 @@ impl EmbeddingPort for DynamicEmbedding {
         &self,
         text: &str,
         prefix: &str,
-    ) -> crate::shared::result::Result<
+    ) -> crate::shared::error::Result<
         Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
         self.provider
@@ -77,7 +77,7 @@ impl EmbeddingPort for DynamicEmbedding {
     fn window_parts(
         &self,
         text: &str,
-    ) -> crate::shared::result::Result<
+    ) -> crate::shared::error::Result<
         Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
         self.provider
@@ -105,7 +105,7 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_sparse_batch(
         &self,
         texts: &[String],
-    ) -> crate::shared::result::Result<Vec<crate::domain::value_objects::SparseEmbedding>> {
+    ) -> crate::shared::error::Result<Vec<crate::domain::value_objects::SparseEmbedding>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_sparse_batch(texts).await,
             None => {
@@ -117,7 +117,7 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_batch_with_sparse(
         &self,
         texts: &[String],
-    ) -> crate::shared::result::Result<(
+    ) -> crate::shared::error::Result<(
         Vec<Vec<f32>>,
         Vec<crate::domain::value_objects::SparseEmbedding>,
     )> {
@@ -132,7 +132,7 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_sparse_query(
         &self,
         text: &str,
-    ) -> crate::shared::result::Result<crate::domain::value_objects::SparseEmbedding> {
+    ) -> crate::shared::error::Result<crate::domain::value_objects::SparseEmbedding> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_sparse_query(text).await,
             None => {
@@ -145,7 +145,7 @@ impl EmbeddingPort for DynamicEmbedding {
         &self,
         span_text: &str,
         chunk_ranges: &[std::ops::Range<usize>],
-    ) -> crate::shared::result::Result<Vec<Vec<f32>>> {
+    ) -> crate::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_span_chunks(span_text, chunk_ranges).await,
             None => {
@@ -158,7 +158,7 @@ impl EmbeddingPort for DynamicEmbedding {
         }
     }
 
-    async fn is_ready(&self) -> crate::shared::result::Result<bool> {
+    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
         match self.provider.current_model() {
             Some(inner) => inner.is_ready().await,
             None => Ok(false),

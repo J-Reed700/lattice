@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_initialize_models_response_serialization() {
-        use crate::domain::embedding_constants::{
+        use crate::domain::models::embedding_defaults::{
             DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
         };
         let response = InitializeModelsResponseDto {

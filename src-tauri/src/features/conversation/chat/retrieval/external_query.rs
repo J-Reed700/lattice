@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 
 use super::{
     extract_acronym_context_terms, extract_acronym_terms, extract_phrase_terms,

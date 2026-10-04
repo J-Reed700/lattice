@@ -35,7 +35,7 @@ use super::manifest::{
 use super::usearch_index::USearchVectorIndex;
 use crate::application::ports::VectorSearchPort;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// How often the flusher looks at the index.
 const FLUSH_TICK: Duration = Duration::from_secs(5);
@@ -357,7 +357,7 @@ impl IndexPersistence {
     /// Shutdown stops ticks, waits for any active save, then performs the
     /// final flush before closing SQLite. Never cancel an active blocking save.
     pub async fn run(self: Arc<Self>) {
-        let cancel = crate::shared::background::cancellation_token();
+        let cancel = crate::shared::runtime::background::cancellation_token();
         loop {
             tokio::select! {
                 biased;

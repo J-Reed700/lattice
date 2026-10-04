@@ -184,6 +184,8 @@ impl LearningPracticeRepository {
             .into_iter()
             .map(|r| {
                 Ok(LearningPracticeSessionSummaryDto {
+                    task_kind: parse_task_kind(r.get("task_kind"))?,
+                    revises_session_id: r.get("revises_session_id"),
                     id: r.get("id"),
                     lesson_id: r.get("lesson_id"),
                     lesson_title: r.get("lesson_title"),
@@ -218,6 +220,8 @@ impl LearningPracticeRepository {
             .bind(session_id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let status_text: String = row.get("status");
         let summary = LearningPracticeSessionSummaryDto {
+            task_kind: parse_task_kind(row.get("task_kind"))?,
+            revises_session_id: row.get("revises_session_id"),
             id: row.get("id"),
             lesson_id: row.get("lesson_id"),
             lesson_title: row.get("lesson_title"),
@@ -589,12 +593,77 @@ impl LearningPracticeRepository {
         }
         let title: String = lesson.get("title");
         let objective: String = lesson.get("objective");
-        let task_prompt=format!("{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",objective.trim());
-        let rubric = default_rubric();
+        let fallback_prompt=format!("{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",objective.trim());
+        let block_kind = match req.task_kind {
+            LearningPracticeTaskKind::Guided => "guided_practice",
+            LearningPracticeTaskKind::Independent => "independent_practice",
+        };
+        let block = sqlx::query("SELECT body,rubric_json FROM learning_blocks WHERE lesson_id=? AND kind=? ORDER BY ordinal LIMIT 1")
+            .bind(&req.lesson_id).bind(block_kind).fetch_optional(&mut *tx).await.map_err(db)?;
+        if req.task_kind == LearningPracticeTaskKind::Guided && block.is_none() {
+            return Err(invalid(
+                "This lesson has no guided exercise. Use its independent assignment.",
+            ));
+        }
+        let mut task_prompt = block
+            .as_ref()
+            .map(|b| b.get::<String, _>("body"))
+            .unwrap_or(fallback_prompt);
+        let mut rubric: Vec<LearningPracticeCriterionDto> = block
+            .as_ref()
+            .map(|b| decode(b.get("rubric_json")))
+            .transpose()?
+            .unwrap_or_default();
+        if rubric.is_empty() {
+            rubric = default_rubric();
+        }
+        let mut initial_text = String::new();
+        let mut inherited_assistance = None;
+        if let Some(parent_id) = &req.revises_session_id {
+            uuid(parent_id, "previous attempt")?;
+            if req.mode == LearningPracticeMode::Demonstrate {
+                return Err(invalid(
+                    "Revisions use previous feedback and must remain assisted practice.",
+                ));
+            }
+            let parent = sqlx::query("SELECT s.task_prompt,s.task_kind,s.rubric_json,s.source_version_ids_json,sub.artifact_text,sub.criteria_json,sub.assistance_json FROM learning_practice_sessions s JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.id=? AND s.program_id=? AND s.lesson_id=?")
+                .bind(parent_id).bind(&req.program_id).bind(&req.lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
+                .ok_or_else(||invalid("Only a submitted attempt from this lesson can be revised."))?;
+            if parse_task_kind(parent.get("task_kind"))? != req.task_kind {
+                return Err(invalid("A revision must keep the original exercise."));
+            }
+            task_prompt = parent.get("task_prompt");
+            rubric = decode(parent.get("rubric_json"))?;
+            source_ids = decode(parent.get("source_version_ids_json"))?;
+            initial_text = parent.get("artifact_text");
+            let previous_assistance: Vec<LearningPracticeAssistanceEventDto> =
+                decode(parent.get("assistance_json"))?;
+            let assistance_summary: Vec<_> = previous_assistance
+                .iter()
+                .map(|event| serde_json::json!({"kind":event.kind,"mode":event.mode}))
+                .collect();
+            inherited_assistance = Some(
+                serde_json::json!({"revisesSessionId":parent_id,"previousFeedback":decode::<serde_json::Value>(parent.get("criteria_json"))?,"previousAssistance":assistance_summary}),
+            );
+        }
         let timestamp = now();
-        sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?)")
-            .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,'',?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(digest("")).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at,task_kind,revises_session_id) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?,?,?)")
+            .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(digest(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        if let Some(details) = inherited_assistance {
+            Self::insert_assistance(
+                &mut tx,
+                &req.operation_id,
+                &req.program_id,
+                &req.session_id,
+                "tutor_response",
+                mode(&req.mode),
+                0,
+                &details,
+                timestamp,
+            )
+            .await?;
+        }
         Self::record_operation(
             &mut tx,
             &req.operation_id,
@@ -695,6 +764,11 @@ impl LearningPracticeRepository {
         if current.revision != req.expected_revision {
             return Err(invalid("Practice session changed; reload and retry."));
         }
+        if current.revises_session_id.is_some() && req.mode == LearningPracticeMode::Demonstrate {
+            return Err(invalid(
+                "Revisions use previous feedback and cannot become independent demonstrations.",
+            ));
+        }
         let old_mode = mode(&current.mode);
         let t = now();
         let update=sqlx::query("UPDATE learning_practice_sessions SET mode=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(mode(&req.mode)).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
@@ -746,6 +820,8 @@ impl LearningPracticeRepository {
         }
         let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let summary = LearningPracticeSessionSummaryDto {
+            task_kind: parse_task_kind(row.get("task_kind"))?,
+            revises_session_id: row.get("revises_session_id"),
             id: row.get("id"),
             lesson_id: row.get("lesson_id"),
             lesson_title: row.get("lesson_title"),
@@ -1168,4 +1244,18 @@ pub fn validate_tutor_bounds(prompt: &str, response: &str) -> Result<()> {
         return Err(invalid("Tutor response must be 1–6,000 characters."));
     }
     Ok(())
+}
+
+fn task_kind(kind: &LearningPracticeTaskKind) -> &'static str {
+    match kind {
+        LearningPracticeTaskKind::Guided => "guided",
+        LearningPracticeTaskKind::Independent => "independent",
+    }
+}
+fn parse_task_kind(value: &str) -> Result<LearningPracticeTaskKind> {
+    match value {
+        "guided" => Ok(LearningPracticeTaskKind::Guided),
+        "independent" => Ok(LearningPracticeTaskKind::Independent),
+        _ => Err(AppError::Database("Invalid practice task kind".into())),
+    }
 }

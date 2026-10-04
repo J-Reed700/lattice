@@ -7,6 +7,63 @@ candidate evidence and the remaining opt-in/manual release checks are recorded i
 inspection: 2026-09-30 through 2026-10-01. Any test fixtures or interface previews
 use illustrative content, not real learner records.
 
+## Course authoring update — 2026-10-04
+
+The course-creation contract now accepts a goal without source material. Supplied
+documents remain explicitly selected through a named Space; sources are optional
+for topic-based AI authoring, and failed selected sources are never silently
+ignored. This supersedes earlier source-only assumptions below.
+
+Depth is a separate choice from session length: focused, complete, and deep-dive
+courses support up to 3, 6, and 10 modules respectively. New lessons combine
+substantial explanations and worked examples with guided practice, an independent
+assignment, reflection, and recap. The assignment becomes the saved practice task.
+Module checkpoints author written explanations and application artifacts against
+accepted outcomes. Projects and the final capstone start with a course-aware
+brief. A complete syllabus and module milestones connect these workflows.
+
+Topic-based content cannot claim external citations. Later sources can ground
+future work, while existing attempts and prepared lessons retain their original
+content and evidence. Quantitative structure is a generation boundary, not proof
+of teaching quality; live-model evaluation remains required. Implementation and
+verification details are in `docs/development/learning-studio-verification.md`.
+
+## Teaching loop update — 2026-10-04
+
+New curricula store explicit prerequisite links and a structured project milestone
+for every module. Lessons receive the course sequence, project brief, and recent
+lesson recaps. A separate AI review examines the candidate and allows one targeted
+repair, followed by re-review; unresolved defects leave existing work intact.
+Schema and content bounds remain enforced. This review is an additional model
+call, not independent expert certification.
+
+The content review requires an exact passage and a specific factual finding for
+every lesson section, including unchanged sections after repair. Incomplete
+reviews and invented quotes fail before persistence. Section defects cannot be
+hidden by an empty overall issues list. Written feedback remains a text review;
+code execution belongs to an explicitly started lab runtime. Grading also makes
+one bounded repair when rubric evidence is malformed or is not an exact excerpt
+of the learner's saved work. Invalid feedback is never saved as a score.
+
+Guided exercises now accept saved learner work inside the lesson. The learner can
+request a critique or progressively stronger hints, submit against the exercise's
+own rubric, and revise a submitted response. Revisions copy the original task,
+rubric, source versions, and response while preserving the original submission.
+Prior feedback is visible to the learner and tutor. Revision attempts remain
+assisted practice and cannot become independent demonstrations.
+
+Optional starting-point checks now contain short performance tasks with private
+answer keys, rather than self-ratings. Answers autosave with revision checks and
+operation replay. Feedback must cite the submitted answer and suggests study or a
+challenge; it never silently skips lessons. The course's next action considers
+unfinished attempts, missed outcomes, placement, completed guided work, independent
+assignments, and due recall. Newer evidence supersedes earlier recommendations.
+
+Teaching rubrics are specific to the task and survive persistence and pack import.
+An uncertain grading judgment carries no numeric score. A zero requires an
+assessable incorrect attempt; no attempt is not evidence of failure. Existing
+courses retain compatibility with their older content and default rubrics.
+
 ## 1. Decision and purpose
 
 Build **Studio**, an enclosed learning module inside Lattice. **Acclimate** is

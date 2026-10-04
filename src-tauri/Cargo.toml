@@ -34,7 +34,7 @@ name = "lattice-desktop"
 
 [[bin]]
 name = "export_bindings"
-path = "src/export_bindings.rs"
+path = "src/bin/export_bindings/main.rs"
 required-features = ["bindings-export"]
 
 [build-dependencies]
@@ -214,7 +214,7 @@ candle-transformers = { version = "=0.10.2", features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Drains the Objective-C objects Candle's Metal dispatches autorelease
-# (see shared/utils/autorelease.rs). Already in the tree through `metal`.
+# (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
 objc = "0.2"
 
 

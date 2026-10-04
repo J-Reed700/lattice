@@ -10,8 +10,8 @@ use sqlx::SqlitePool;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
-use crate::domain::downloaded_model::DownloadedModel;
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+use crate::domain::models::downloaded::DownloadedModel;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
@@ -250,7 +250,7 @@ pub async fn build_with_compression(
             dimension,
             usearch_index_path.clone(),
         ));
-        crate::shared::background::spawn(Arc::clone(&persistence).run());
+        crate::shared::runtime::background::spawn(Arc::clone(&persistence).run());
         index_persistence = Some(persistence);
     }
 
@@ -510,8 +510,8 @@ mod reembed_marker_tests {
 #[cfg(test)]
 mod index_identity_tests {
     use super::index_identity;
-    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
-    use crate::domain::model_metadata::ModelType;
+    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use crate::domain::models::metadata::ModelType;
     use crate::domain::value_objects::ArtifactIdentity;
     use crate::features::embedding::candle_service::WEIGHTS_SAFETENSORS;
     use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};

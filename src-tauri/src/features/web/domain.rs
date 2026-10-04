@@ -40,8 +40,8 @@
 //! # }
 //! ```
 
-use crate::shared::domain_types::DocumentId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::DocumentId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -183,7 +183,7 @@ pub fn sanitize_title(title: &str) -> String {
 ///
 /// ```rust,no_run
 /// # use lattice::domain::web_archive::WebArchivePath;
-/// # use lattice::shared::domain_types::DocumentId;
+/// # use lattice::shared::types::DocumentId;
 /// # use url::Url;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let url = Url::parse("https://github.com/rust-lang/rust")?;
@@ -255,7 +255,7 @@ impl WebArchivePath {
     ///
     /// ```rust,no_run
     /// # use lattice::domain::web_archive::WebArchivePath;
-    /// # use lattice::shared::domain_types::DocumentId;
+    /// # use lattice::shared::types::DocumentId;
     /// # use url::Url;
     /// # use std::path::PathBuf;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
