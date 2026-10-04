@@ -9,16 +9,13 @@ telemetry.
 
 ## Screenshots
 
-The screenshots below are captured from the running app; the ones you're
-missing are listed in [docs/screenshots](docs/screenshots/README.md) with
-notes on what to capture.
+Screenshots from the running macOS app. Click an image to view it at full size.
 
-| | |
+| Home dashboard | Explorer and chat |
 | --- | --- |
-| ![Home dashboard](docs/screenshots/dashboard.png) | ![Search results](docs/screenshots/search.png) |
-| ![Chat with source citations](docs/screenshots/chat.png) | ![Flashcard review in Studio](docs/screenshots/studio.png) |
-| ![Explorer with a folder open](docs/screenshots/explorer.png) | ![Related documents panel](docs/screenshots/neighborhood.png) |
-| ![Model settings](docs/screenshots/settings.png) | |
+| [![Home dashboard with library statistics and recent conversations](docs/screenshots/dashboard.png)](docs/screenshots/dashboard.png) | [![Explorer with a folder tree, Rust source file, and a chat about the code](docs/screenshots/explorer.png)](docs/screenshots/explorer.png) |
+| **Journal and sources** | **Learning Studio** |
+| [![Journal entry with inline citations and the sources panel open](docs/screenshots/journal.png)](docs/screenshots/journal.png) | [![Learning Studio with options to build a program and create a flashcard deck](docs/screenshots/studio.png)](docs/screenshots/studio.png) |
 
 ## What it does
 
