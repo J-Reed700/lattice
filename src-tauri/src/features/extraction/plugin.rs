@@ -9,7 +9,7 @@ use crate::{
         dto::DocumentRefDto,
     },
     interfaces::di::Container,
-    shared::api_result::ApiError,
+    shared::ipc::ApiError,
 };
 use tauri::{
     plugin::{Builder, TauriPlugin},

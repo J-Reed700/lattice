@@ -8,7 +8,7 @@
 //! - Just the core business data and logic
 
 use crate::domain::entities::document::Language;
-use crate::shared::domain_types::{ChunkId, DocumentId};
+use crate::shared::types::{ChunkId, DocumentId};
 use serde::{Deserialize, Serialize};
 
 /// Parameters for creating a chunk with an existing ID.
@@ -39,7 +39,7 @@ pub struct ChunkParams {
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::chunk::Chunk;
-/// use lattice::shared::domain_types::DocumentId;
+/// use lattice::shared::types::DocumentId;
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk = Chunk::new(doc_id, "This is chunk content".to_string(), 0);
@@ -114,7 +114,7 @@ impl Chunk {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::chunk::Chunk;
-    /// use lattice::shared::domain_types::DocumentId;
+    /// use lattice::shared::types::DocumentId;
     ///
     /// let doc_id = DocumentId::new();
     /// let chunk = Chunk::new(doc_id.clone(), "Content here".to_string(), 0);

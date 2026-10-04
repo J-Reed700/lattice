@@ -1,8 +1,11 @@
+import { useRef, useState } from 'react';
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
 import type {
   LearningProgramDto,
+  LearningOutlineProgressDto,
   LearningProgramSummaryDto,
   GenerateLearningProgramRequestDto,
   AcceptLearningProgramRequestDto,
@@ -48,16 +51,49 @@ function useProgramMutation<TRequest>(mutate: (request: TRequest) => ReturnType<
 
 export function useGenerateLearningProgram() {
   const client = useQueryClient();
-  return useMutation({
+  const activeRequest = useRef<string | null>(null);
+  const [progress, setProgress] = useState<LearningOutlineProgressDto | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string>();
+  const mutation = useMutation({
     // Program generation has no idempotency key, so recovery must be an
     // intentional user action rather than a blind mutation retry.
     retry: false,
-    mutationFn: async (request: GenerateLearningProgramRequestDto) => unwrap(await VaultAPI.generateLearningProgram(request)),
+    mutationFn: async (request: GenerateLearningProgramRequestDto) => {
+      const requestId = crypto.randomUUID();
+      activeRequest.current = requestId;
+      setProgress(null);
+      setCancelling(false);
+      setCancelError(undefined);
+      try {
+        return unwrap(await VaultAPI.generateLearningProgram(request, { requestId, onProgress: (update) => {
+          if (activeRequest.current === requestId) setProgress(update);
+        } }));
+      } finally {
+        if (activeRequest.current === requestId) { activeRequest.current = null; setCancelling(false); }
+      }
+    },
     onSuccess: async (program) => {
       client.setQueryData(learningProgramKey(program.summary.id), program);
       await client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
     },
   });
+  const cancel = async () => {
+    const requestId = activeRequest.current;
+    if (!requestId || cancelling) return;
+    setCancelling(true);
+    setCancelError(undefined);
+    try {
+      const accepted = unwrap(await VaultAPI.cancelLearningOutline(requestId));
+      if (!accepted && activeRequest.current === requestId) setCancelling(false);
+    } catch (error) {
+      if (activeRequest.current === requestId) {
+        setCancelling(false);
+        setCancelError(error instanceof Error ? error.message : 'Could not cancel. Try again.');
+      }
+    }
+  };
+  return { ...mutation, progress, cancelling, cancelError, cancel };
 }
 
 export function useAcceptLearningProgram() {

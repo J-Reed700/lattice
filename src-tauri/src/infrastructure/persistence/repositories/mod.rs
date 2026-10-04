@@ -6,6 +6,8 @@
 pub mod batch_job_repository;
 pub mod chunk_repository;
 pub mod document_repository;
+pub mod document_scope;
+pub mod file_library;
 
 // Transaction-aware repository implementations (Tx modules)
 pub mod batch_job;
@@ -14,7 +16,7 @@ pub mod document;
 pub mod model_file;
 pub mod system;
 
-// Support modules grouped under support/ for filesystem organization.
+// Shared repository support.
 pub mod mocks;
 pub mod traits;
 pub mod unit_of_work;

@@ -24,7 +24,7 @@ impl SqliteEmbeddingRepository {
 #[async_trait]
 impl EmbeddingRepositoryPort for SqliteEmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
-        use crate::shared::domain_types::ChunkId;
+        use crate::shared::types::ChunkId;
         let chunk_id_typed = ChunkId::from(chunk_id.to_string());
         let embedding = DomainEmbedding::new(chunk_id_typed, model.to_string(), vector.len());
         self.save(&embedding, vector.to_vec()).await?;

@@ -10,8 +10,8 @@
 use crate::domain::conversation::{
     CompactionRecord, Conversation, ConversationMessage, DocumentReference, MessageRole,
 };
-use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::ConversationId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;

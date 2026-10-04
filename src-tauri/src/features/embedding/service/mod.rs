@@ -12,4 +12,5 @@ pub use crate::features::embedding::candle_service::CandleEmbeddingService as Em
 pub use dynamic_embedding_service::DynamicEmbeddingService;
 pub use dynamic_port::DynamicEmbedding;
 
-pub const MODEL_NAME: &str = crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
+pub const MODEL_NAME: &str =
+    crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;

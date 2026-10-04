@@ -9,7 +9,7 @@ use crate::features::indexing::use_cases::embedding_input::{
     embed_prepared_chunks, prepare_structured_with_spans,
 };
 use crate::features::search::engine::vector_search::{VectorIndexCompression, VectorQuantization};
-use crate::shared::domain_types::ValidatedFilePath;
+use crate::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 #[tokio::test]

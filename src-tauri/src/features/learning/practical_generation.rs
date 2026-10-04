@@ -314,7 +314,7 @@ pub async fn generate_activity(
     });
     let raw = complete_json(
         llm,
-        "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. Use only the supplied frozen source snapshots for factual claims. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer. Return strict JSON.",
+        "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. When source snapshots are supplied, use them for factual claims. Without sources, build from the lesson and general knowledge, acknowledge uncertainty, and leave sourceVersionIds empty. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer. Return strict JSON.",
         context.to_string(),
         activity_schema(),
         4_000,

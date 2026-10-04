@@ -97,6 +97,7 @@ export const Message = memo(({
 
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
   const revealInExplorer = useExplorerStore((s) => s.reveal);
+  const openInExplorer = useExplorerStore((s) => s.openFile);
   const messageBookmarkMap = useConversationsStore((s) => s.messageBookmarkMap);
   const messageVerificationMap = useConversationsStore((s) => s.messageVerification);
   const bookmarkMessage = useConversationsStore((s) => s.bookmarkMessage);
@@ -650,11 +651,16 @@ export const Message = memo(({
     const codeRef =
       showsCodeRefs && event.target instanceof Element ? event.target.closest<HTMLElement>('[data-code-ref]') : null;
     if (codeRef) {
+      const path = codeRef.dataset.codeRef;
+      if (!path) return;
+      // A chip may sit inside a link whose address is the file; never follow it.
+      event.preventDefault();
       const startLine = Number(codeRef.dataset.codeRefStart);
       const endLine = Number(codeRef.dataset.codeRefEnd);
-      if (codeRef.dataset.codeRef && Number.isInteger(startLine) && Number.isInteger(endLine)) {
-        event.preventDefault();
-        revealInExplorer(codeRef.dataset.codeRef, { startLine, endLine });
+      if (codeRef.dataset.codeRefStart && Number.isInteger(startLine) && Number.isInteger(endLine)) {
+        revealInExplorer(path, { startLine, endLine });
+      } else {
+        openInExplorer(path);
       }
       return;
     }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -382,9 +382,11 @@ function SimulationPanel({
 export function PracticalWorkbenchPanel({
   program,
   lesson,
+  projectRequest,
 }: {
   program: LearningProgramDto;
   lesson: LearningLessonDto | null;
+  projectRequest?: { id: string; brief: string } | null;
 }) {
   const programId = program.summary.id;
   const query = usePracticalWorkspace(programId);
@@ -398,6 +400,10 @@ export function PracticalWorkbenchPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [projectBrief, setProjectBrief] = useState<string | null>(null);
+  useEffect(() => {
+    if (projectRequest) { setProjectBrief(projectRequest.brief); setComposerOpen(true); }
+  }, [projectRequest]);
   const newActivityRef = useRef<HTMLButtonElement>(null);
   const [runtimeSetupRequest, setRuntimeSetupRequest] = useState(0);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -1082,10 +1088,12 @@ export function PracticalWorkbenchPanel({
         <ActivityComposer
           program={program}
           lesson={lesson}
+          initialBrief={projectBrief ?? undefined}
+          initialKind={projectBrief ? "project" : undefined}
           profiles={profiles}
           builtinRuntimes={builtinRuntimes}
           returnFocusRef={newActivityRef}
-          onClose={() => setComposerOpen(false)}
+          onClose={() => { setComposerOpen(false); setProjectBrief(null); }}
           onRequestRuntimeSetup={() => {
             setComposerOpen(false);
             setRuntimeSetupRequest((request) => request + 1);

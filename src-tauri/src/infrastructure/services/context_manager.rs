@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn the_generated_summary_is_given_up_before_any_of_the_users_own_words() {
-        let summary = crate::domain::conversation_memory::frame_generated_summary(
+        let summary = crate::domain::conversation::memory::frame_generated_summary(
             "The user chose Postgres and asked for nightly backups.",
         );
         let messages = history(&[
@@ -790,7 +790,7 @@ mod tests {
     fn test_format_conversation_history_system_role() {
         let conv_messages = vec![ConversationMessage {
             id: "1".to_string(),
-            conversation_id: crate::shared::domain_types::ConversationId::new(),
+            conversation_id: crate::shared::types::ConversationId::new(),
             role: MessageRole::System,
             content: "System message".to_string(),
             tokens: 10,

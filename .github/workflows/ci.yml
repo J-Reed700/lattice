@@ -127,6 +127,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test
 
+      - name: Desktop lifecycle and repository integration tests
+        working-directory: src-tauri
+        run: cargo test --locked --test background_lifecycle_test --test tag_repository_test --test plugins_tests
+
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-latest'
         working-directory: src-tauri

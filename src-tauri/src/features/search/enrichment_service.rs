@@ -301,7 +301,7 @@ fn snippet_of(content: &str) -> String {
     if content.chars().count() > SNIPPET_CHARS {
         format!(
             "{}...",
-            crate::shared::text_utils::safe_truncate(content, SNIPPET_CHARS)
+            crate::shared::text::safe_truncate(content, SNIPPET_CHARS)
         )
     } else {
         content.to_string()

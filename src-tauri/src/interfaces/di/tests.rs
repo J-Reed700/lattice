@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 mod di_integration_tests {
-    use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use crate::features::embedding::EmbeddingServiceTrait;
     use crate::interfaces::di::MockAppContainer;
 

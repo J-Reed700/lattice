@@ -167,7 +167,7 @@ pub(in crate::features::conversation::chat) fn fetch_target(
 }
 
 fn normalize(url: &str) -> String {
-    crate::shared::url_identity::identity(url)
+    crate::shared::http::url_identity::identity(url)
 }
 
 /// Keep the reason short — it is repeated in the prompt every round.

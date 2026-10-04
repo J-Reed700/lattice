@@ -31,7 +31,7 @@ use crate::domain::entities::document::Document;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
-use crate::shared::text_utils::{build_excerpt, safe_truncate};
+use crate::shared::text::{build_excerpt, safe_truncate};
 
 use super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::retrieval::infer_category;

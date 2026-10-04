@@ -8,8 +8,8 @@ use crate::features::indexing::use_cases::{
     index_file::PrepareForIndexingOutcome, IndexFileUseCase,
 };
 use crate::shared::{
-    domain_types::ValidatedFilePath,
     error::{AppError, Result},
+    types::ValidatedFilePath,
 };
 use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
@@ -203,7 +203,7 @@ impl StartBatchFileImportUseCase {
 
     fn spawn_job(&self, job_id: String) {
         let worker = self.clone();
-        let _ = crate::shared::background::spawn(async move {
+        let _ = crate::shared::runtime::background::spawn(async move {
             if let Err(error) = worker.process_job(&job_id).await {
                 tracing::error!(%job_id, %error, "Batch file import stopped");
                 // Surface orchestration failures instead of leaving a job running forever.
@@ -252,7 +252,7 @@ impl StartBatchFileImportUseCase {
     }
 
     async fn process_job(&self, job_id: &str) -> Result<()> {
-        let cancellation = crate::shared::background::cancellation_token();
+        let cancellation = crate::shared::runtime::background::cancellation_token();
         let job = self.batch_repo.get_batch_job(job_id).await?;
         if job.status == "cancelled" {
             return Ok(());

@@ -24,7 +24,7 @@ use crate::application::ports::conversation_memory::{
     CommittedMemorySnapshot, MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions,
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, SourceMessage, SourceRole,
     MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS, MEMORY_SCHEMA_VERSION,

@@ -364,7 +364,7 @@ impl MockAppContainer {
             tag_repo: Arc::new(MockTagRepository::new()),
             mention_repo: Arc::new(MockMentionRepository::new()),
             embedding_service: Arc::new(MockEmbeddingService::new(
-                crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM,
+                crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM,
             )),
             search_service: Arc::new(MockSearchService::new()),
         }
@@ -609,7 +609,7 @@ mod tests_basic {
 
         assert_eq!(
             embedding.len(),
-            crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM
+            crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM
         );
 
         let _emb_id = container

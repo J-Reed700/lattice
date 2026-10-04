@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::domain::model_management::ModelFormat;
+pub use crate::domain::models::selection::ModelFormat;
 
 /// Information about an LLM model
 #[derive(Debug, Clone, Serialize, Deserialize)]

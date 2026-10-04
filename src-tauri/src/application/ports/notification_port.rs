@@ -34,7 +34,7 @@
 //! }
 //! ```
 
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use serde_json::Value;
 
 /// Type alias for notification callback functions.

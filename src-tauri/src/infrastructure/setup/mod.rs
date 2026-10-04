@@ -4,6 +4,7 @@ pub mod database;
 pub mod degraded_mocks;
 pub mod directories;
 pub mod embedding;
+pub mod indexing_config;
 pub mod observability;
 pub mod renderer_shutdown;
 pub mod shutdown;

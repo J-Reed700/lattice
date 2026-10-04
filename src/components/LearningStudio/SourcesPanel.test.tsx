@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/api', () => ({ default: {
+  listConversationSpaces: async () => ({ ok: true, data: [] }),
+  listSpaceDocuments: async () => ({ ok: true, data: mocks.documents().map((doc: { id: string; fileName: string }) => ({ documentId: doc.id, fileName: doc.fileName, category: null, modifiedAt: null })) }),
   getLearningSourceWorkspace: mocks.workspace,
   getLearningSourceVersion: mocks.version,
   searchLearningSources: mocks.search,
@@ -29,7 +31,7 @@ vi.mock('@/lib/api', () => ({ default: {
   updateLearningSourcePolicy: mocks.policy,
   getLearningProgram: vi.fn(), listLearningPrograms: vi.fn(),
 } }));
-vi.mock('@/hooks/queries/useLibraryDocumentsQuery', () => ({ useLibraryDocumentsQuery: () => ({ documents: mocks.documents(), isLoading: false, error: null, refreshFiles: mocks.refreshFiles }) }));
+
 
 const activeText = {
   id: 'version-1', versionNumber: 1, title: 'Field notes', publisher: 'Open Archive', resolvedUrl: 'https://archive.example/field',
@@ -129,7 +131,7 @@ describe('Learning Studio Sources workspace', () => {
     renderSources({ programId: 'program-1', sources: [] });
     await user.click(await screen.findByRole('button', { name: 'Add material' }));
     await user.click(screen.getByRole('button', { name: 'Library document' }));
-    await user.selectOptions(screen.getByLabelText('Library document'), 'doc-1');
+    await user.click(await screen.findByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Save source' }));
     await waitFor(() => expect(mocks.addDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'doc-1', programId: 'program-1' })));
   });

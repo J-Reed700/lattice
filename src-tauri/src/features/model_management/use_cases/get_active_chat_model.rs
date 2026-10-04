@@ -2,7 +2,7 @@
 //!
 //! Gets the currently active chat model.
 
-use crate::domain::downloaded_model::DownloadedModel;
+use crate::domain::models::downloaded::DownloadedModel;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
 

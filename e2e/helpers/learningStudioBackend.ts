@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 
 import type {
   LearningMemoryDto,
+  LearningOutlineProgressDto,
   LearningLessonDto,
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
@@ -145,6 +146,8 @@ type PracticeSession = {
     updatedAt: number;
     submittedAt: number | null;
     gradeStatus: "provisional" | "uncertain" | null;
+    taskKind?: "guided" | "independent";
+    revisesSessionId?: string | null;
   };
   taskPrompt: string;
   lessonObjective: string;
@@ -239,6 +242,18 @@ export async function installLearningStudioBackend(page: Page) {
           kind: "worked_example",
           title: "Read a sample",
           body: "Record the chosen measure and observation period, then check which cases are absent.",
+          sourceIds: [source.id],
+        },
+        {
+          kind: "guided_practice",
+          title: "Try a comparison",
+          body: "Compare observations recorded over different periods. State the first change you would make before interpreting the difference, and explain why.",
+          sourceIds: [source.id],
+        },
+        {
+          kind: "independent_practice",
+          title: "Design your comparison",
+          body: "Create a measurement plan with a consistent observation period, explain the comparison, and identify one limitation.",
           sourceIds: [source.id],
         },
         {
@@ -465,7 +480,7 @@ export async function installLearningStudioBackend(page: Page) {
         requiredLessonCountAfter: lesson ? 1 : 0,
         resumeLessonId: lesson?.id ?? null,
         jobs: [],
-        latestDiagnostic: null,
+        latestDiagnostic: null as Record<string, unknown> | null,
       },
       practicalWorkspace: {
         programId: program.summary.id,
@@ -528,7 +543,7 @@ export async function installLearningStudioBackend(page: Page) {
       programId: program.summary.id,
       revisionNumber: 1,
       status: "accepted",
-      modules: [{ id: "module-e2e-1", title: "Field methods", purpose: "Compare observations carefully.", lessons: [curriculumLesson] }],
+      modules: [{ id: "module-e2e-1", title: "Field methods", purpose: "Compare observations carefully.", outcomeIds: ["outcome-1"], prerequisiteModuleIds: [], lessons: [curriculumLesson] }],
       createdAt: 1_790_000_000_000,
       acceptedAt: 1_790_000_000_001,
     };
@@ -709,6 +724,13 @@ export async function installLearningStudioBackend(page: Page) {
     (
       window as unknown as { __LATTICE_LEARNING_STATE__: typeof state }
     ).__LATTICE_LEARNING_STATE__ = state;
+
+    let pendingOutline: { id: string; reject: (error: Error) => void; send: (update: LearningOutlineProgressDto) => void } | null = null;
+    const outlineControl = {
+      hold: false,
+      update(update: LearningOutlineProgressDto) { pendingOutline?.send(update); },
+    };
+    (window as unknown as { __LATTICE_OUTLINE_TEST__: typeof outlineControl }).__LATTICE_OUTLINE_TEST__ = outlineControl;
 
     const copyMemory = () => JSON.parse(JSON.stringify(memory));
     const now = () => new Date().toISOString();
@@ -979,10 +1001,54 @@ export async function installLearningStudioBackend(page: Page) {
         ].includes(command)
       )
         return [];
+      if (command === "plugin:conversation|list_space_documents") return [];
       if (command === "plugin:file|list_all_documents") return [];
+      if (command === "plugin:learning|cancel_learning_outline") {
+        if (!pendingOutline || pendingOutline.id !== getArg<string>(args, "requestId")) return false;
+        pendingOutline.reject(new Error("Course generation cancelled. Your inputs are kept."));
+        pendingOutline = null;
+        return true;
+      }
+      if (command === "plugin:learning|generate_learning_program") {
+        if (outlineControl.hold) {
+          const channel = getArg<{ id: number }>(args, "onProgress");
+          let index = 0;
+          return new Promise((_resolve, reject) => {
+            pendingOutline = { id: getArg<string>(args, "requestId"), reject, send: (message) => {
+              callbacks.get(channel.id)?.({ index: index++, message });
+            } };
+            pendingOutline.send({ stage: "reading_sources", elapsedSeconds: 0, stageSeconds: 0, responseCharacters: 0, modelName: null });
+          });
+        }
+        const request = getArg<{ goal: string; priorKnowledge: string; minutesPerSession: number }>(args, "request");
+        program.summary.title = request.goal;
+        program.summary.goal = request.goal;
+        program.summary.status = "draft";
+        program.summary.revision = 0;
+        program.summary.completedLessons = 0;
+        program.priorKnowledge = request.priorKnowledge;
+        program.minutesPerSession = request.minutesPerSession;
+        program.sources = [];
+        program.modules.forEach((module) => module.lessons.forEach((lesson) => {
+          lesson.preparation = "outline";
+          lesson.completed = false;
+          lesson.blocks = [];
+          lesson.questions = [];
+        }));
+        return program;
+      }
       if (command === "plugin:learning|list_learning_programs")
         return [program.summary];
       if (command === "plugin:learning|get_learning_program") return program;
+      if (command === "plugin:learning|get_learning_lesson_evidence") return {
+        policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
+        retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
+        claimCount: 14, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
+        teachingClaims: [{ sectionIndex: 0, claim: "A careful comparison records the chosen measure and observation period.",
+          reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
+          passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }] }],
+      };
       if (command === "plugin:learning|get_learning_memory")
         return copyMemory();
       if (command === "plugin:learning|get_learning_practice_workspace") {
@@ -1025,6 +1091,8 @@ export async function installLearningStudioBackend(page: Page) {
               updatedAt: timestamp,
               submittedAt: null,
               gradeStatus: null,
+              taskKind: request.taskKind === "guided" ? "guided" : "independent",
+              revisesSessionId: typeof request.revisesSessionId === "string" ? request.revisesSessionId : null,
             },
             taskPrompt: "Compare the same measure across the stated observation period and explain one limit of the evidence.",
             lessonObjective: lesson.objective,
@@ -1037,6 +1105,15 @@ export async function installLearningStudioBackend(page: Page) {
             revealedSolutionCitations: [],
             result: null,
           };
+          const task = lesson.blocks.find((block) => block.kind === (request.taskKind === "guided" ? "guided_practice" : "independent_practice"));
+          if (task) session.taskPrompt = task.body;
+          if (request.revisesSessionId) {
+            const parent = practiceSessions.get(String(request.revisesSessionId));
+            if (!parent || parent.summary.status !== "submitted" || parent.summary.lessonId !== lesson.id) throw new Error("Only a submitted attempt from this lesson can be revised.");
+            session.taskPrompt = parent.taskPrompt;
+            session.artifact.text = parent.artifact.text;
+            session.rubric = JSON.parse(JSON.stringify(parent.rubric)) as PracticeCriterion[];
+          }
           practiceSessions.set(session.summary.id, session);
           syncPracticeSummary(session);
           recordPracticeEffect(command, operation);
@@ -1996,6 +2073,30 @@ export async function installLearningStudioBackend(page: Page) {
         const summary = (state.assessmentWorkspace.forms as Array<Record<string, unknown>>).find((entry) => entry.id === form.id);
         if (summary) Object.assign(summary, { status: form.status, submittedAt: form.submittedAt, gradeStatus: null, score: null });
         return form;
+      }
+      if (command === "plugin:learning|start_learning_diagnostic") {
+        state.planWorkspace.latestDiagnostic = {
+          id: "diagnostic-e2e", programId: program.summary.id, status: "active", revision: 0,
+          prompts: [{ id: "placement-task", prompt: "Two samples were observed for different periods. Explain how you would make their comparison fair.", outcomeId: "outcome-1", outcomeTitle: "Compare observations", sourceVersionIds: [source.id] }],
+          responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Provisional starting-point feedback.", createdAt: Date.now(), submittedAt: null,
+        };
+        return state.planWorkspace.latestDiagnostic;
+      }
+      if (command === "plugin:learning|submit_learning_diagnostic") {
+        const request = getRequest<Record<string, unknown>>(args);
+        const diagnostic = state.planWorkspace.latestDiagnostic;
+        if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw new Error("The starting-point answers changed elsewhere. Reload before saving.");
+        diagnostic.responses = request.responses;
+        diagnostic.revision = Number(diagnostic.revision) + 1;
+        if (!request.saveOnly) {
+          diagnostic.status = "submitted"; diagnostic.submittedAt = Date.now();
+          diagnostic.findings = [{ promptId: "placement-task", outcomeId: "outcome-1", signal: "needs_practice", feedback: "Name a consistent observation period before comparing the measurements.", evidenceQuote: null }];
+        }
+        return diagnostic;
+      }
+      if (command === "plugin:learning|skip_learning_diagnostic") {
+        state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
+        return state.planWorkspace.latestDiagnostic;
       }
       if (command === "plugin:learning|get_learning_plan")
         return state.planWorkspace;

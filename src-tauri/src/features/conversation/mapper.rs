@@ -68,7 +68,7 @@ impl ConversationDtoMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::domain_types::ConversationId;
+    use crate::shared::types::ConversationId;
     use chrono::Utc;
 
     #[test]

@@ -7,7 +7,7 @@
 //! the structure for future implementation.
 
 use crate::features::tags::dto::{CreateTagRequestDto, TagDto};
-use crate::shared::domain_types::TagId;
+use crate::shared::types::TagId;
 use crate::AppError;
 
 /// Mapper for tag-related conversions.

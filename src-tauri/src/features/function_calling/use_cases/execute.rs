@@ -34,7 +34,7 @@
 
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

@@ -5,7 +5,7 @@
 
 use crate::{
     features::huggingface::commands::{self as hf_settings, HfTokenStatus},
-    shared::api_result::ApiError,
+    shared::ipc::ApiError,
 };
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -18,7 +18,7 @@ pub async fn set_huggingface_token(token: String) -> Result<(), ApiError> {
     hf_settings::set_huggingface_token(token)
         .await
         .map_err(|e| ApiError {
-            code: crate::shared::api_result::ErrorCode::InvalidInput,
+            code: crate::shared::ipc::ErrorCode::InvalidInput,
             message: e,
             details: None,
         })
@@ -30,7 +30,7 @@ pub async fn get_huggingface_token_status() -> Result<HfTokenStatus, ApiError> {
     hf_settings::get_huggingface_token_status()
         .await
         .map_err(|e| ApiError {
-            code: crate::shared::api_result::ErrorCode::InternalError,
+            code: crate::shared::ipc::ErrorCode::InternalError,
             message: e,
             details: None,
         })
@@ -42,7 +42,7 @@ pub async fn get_huggingface_token() -> Result<Option<String>, ApiError> {
     hf_settings::get_huggingface_token()
         .await
         .map_err(|e| ApiError {
-            code: crate::shared::api_result::ErrorCode::InternalError,
+            code: crate::shared::ipc::ErrorCode::InternalError,
             message: e,
             details: None,
         })
@@ -54,7 +54,7 @@ pub async fn delete_huggingface_token() -> Result<(), ApiError> {
     hf_settings::delete_huggingface_token()
         .await
         .map_err(|e| ApiError {
-            code: crate::shared::api_result::ErrorCode::InternalError,
+            code: crate::shared::ipc::ErrorCode::InternalError,
             message: e,
             details: None,
         })

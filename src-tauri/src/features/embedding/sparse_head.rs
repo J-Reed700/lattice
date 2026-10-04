@@ -40,7 +40,7 @@ use tokenizers::Tokenizer;
 
 use crate::domain::value_objects::SparseEmbedding;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// The PyTorch pickle the BGE-M3 repository publishes.
 pub const SPARSE_HEAD_PT: &str = "sparse_linear.pt";

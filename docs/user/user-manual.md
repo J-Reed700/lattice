@@ -216,7 +216,7 @@ message box, and you can also type `/` to set them:
 | `/docs` | Search your documents for every answer |
 | `/web` | Let the answer search the web |
 | `/wiki` | Search and summarise Wikipedia |
-| `/deep` | Deep research: multi-step research across sources (slower) |
+| `/deep` | Deep research: searches wide first, then keeps searching for what that missed before it answers (slower) |
 | `/auto` | Let Lattice decide whether this is a new topic or a follow-up |
 | `/followup` | Keep every turn on the current topic |
 | `/query` | Always search sources before answering |
@@ -235,6 +235,13 @@ Drop files onto the chat to attach them to the conversation.
 - A turn record shows what was searched and which sources were pulled in.
 
 ### Message actions
+
+For long conversations, use the slim **Conversation outline** rail on the right.
+Its counter tracks the message you are reading, even within a long answer. Open
+the list icon for numbered previews of your messages and the assistant's replies;
+click one to jump to its beginning. The arrows move to the previous or next
+message, and **Latest** returns to the end. Collapse the list with its top-right
+button or Escape. Lattice remembers whether you left it expanded.
 
 On a message you can copy, edit and resend, regenerate, try the question with
 another model, branch the conversation from that point, add it to your
@@ -299,6 +306,13 @@ Explorer (⌘6) puts a folder from your disk on the left and a chat on the right
    `engine.cpp:12`), Lattice finds it in the folder; when more than one file
    fits, it lists them so you can pick. Lattice remembers the file it found (or
    the one you picked), so the same link opens it straight away next time.
+   Directory names narrow the match: `crash/mod.rs:57` finds files ending in
+   `crash/mod.rs`, without listing other `mod.rs` files. If no path has that
+   ending, Lattice also checks for omitted intermediate folders while keeping
+   every named folder in order.
+   References work however the answer writes them (`src/main.rs:10-24`,
+   `main.rs#L12`, "lines 10–24 of main.rs", a list in brackets, or just a file
+   path), and a file named without lines opens at the top.
 4. Click line numbers in the viewer to send those lines with your next message.
 
 The folder is locked once it's open: the chat can't read outside it. To work

@@ -5,7 +5,7 @@
 //! This is a pure domain entity containing only the business logic and metadata
 //! about embeddings. The actual vector data is handled by the infrastructure layer.
 
-use crate::shared::domain_types::ChunkId;
+use crate::shared::types::ChunkId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -24,9 +24,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::embedding::Embedding;
-/// use lattice::shared::domain_types::ChunkId;
+/// use lattice::shared::types::ChunkId;
 ///
-/// use lattice::domain::embedding_constants::{
+/// use lattice::domain::models::embedding_defaults::{
 ///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
 /// };
 /// let chunk_id = ChunkId::new();
@@ -70,9 +70,9 @@ impl Embedding {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::shared::domain_types::ChunkId;
+    /// use lattice::shared::types::ChunkId;
     ///
-    /// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
+    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
     /// let embedding = Embedding::new(
     ///     ChunkId::new(),
     ///     DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
@@ -168,7 +168,7 @@ impl Embedding {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::shared::domain_types::ChunkId;
+    /// use lattice::shared::types::ChunkId;
     ///
     /// let emb1 = Embedding::new(
     ///     ChunkId::new(),
@@ -209,7 +209,9 @@ impl Embedding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
+    use crate::domain::models::embedding_defaults::{
+        DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
+    };
     use chrono::Duration;
 
     #[test]

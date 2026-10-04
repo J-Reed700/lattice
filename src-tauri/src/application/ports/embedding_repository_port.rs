@@ -5,7 +5,7 @@
 //! from domain metadata.
 
 use crate::domain::entities::Embedding;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 /// Port for embedding persistence operations.

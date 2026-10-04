@@ -78,7 +78,7 @@ impl WebIngestionService {
             return Some(trimmed.to_string());
         }
 
-        let truncated = &trimmed[..crate::shared::text_utils::floor_char_boundary(trimmed, 200)];
+        let truncated = &trimmed[..crate::shared::text::floor_char_boundary(trimmed, 200)];
         if let Some(last_space) = truncated.rfind(' ') {
             Some(format!("{}...", &trimmed[..last_space]))
         } else {

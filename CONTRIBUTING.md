@@ -13,6 +13,48 @@ npm ci
 npm run tauri:dev
 ```
 
+## Code organization
+
+Keep the repository root for package manifests, tool configuration, and project
+entry points. Put implementation and operational helpers in their owning folders:
+
+| Location | Responsibility |
+| --- | --- |
+| `src/` | React frontend |
+| `src-tauri/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
+| `src-tauri/src/application/` | Cross-feature contracts, ports, and orchestration |
+| `src-tauri/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
+| `src-tauri/src/shared/` | Cross-cutting types, errors, IPC, filesystem, HTTP, persistence formatting, runtime, and resilience helpers |
+| `src-tauri/src/infrastructure/` | Shared technical implementations, grouped by responsibility |
+| `src-tauri/src/interfaces/` | Dependency injection and shared IPC adapters |
+| `src-tauri/src/bin/<tool>/` | Developer executables and their private helpers |
+| `src-tauri/src/desktop_e2e/` | Helpers compiled only into the instrumented desktop executable |
+| `api-rust/src/` | Optional sync service, organized into HTTP, sync, and persistence modules |
+| `scripts/build/` | Build entry points and their configuration |
+| `scripts/dev/` | Local development launchers |
+| `src-tauri/scripts/` | Desktop-crate maintenance and verification scripts |
+
+Keep code with its owner: embedding loading belongs in `features/embedding/`,
+LLM loading in `features/llm/`, messaging in `infrastructure/events/`, and
+cross-feature SQL adapters in `infrastructure/persistence/repositories/`.
+Avoid adding loose implementation files to the crate or infrastructure roots.
+`lib.rs`, `main.rs`, and each folder's `mod.rs` define entry points and module
+surfaces. Move callers to the new module path when reorganizing code.
+
+Use `domain/models/` for model catalogs, selection, metadata, and artifact rules;
+`domain/conversation/` owns conversation aggregates and memory rules, and
+`domain/download/` owns sessions and progress snapshots. Shared primitives live
+in `shared/types/`, while technical helpers go in their named module (`fs`,
+`http`, `runtime`, `resilience`, `encoding`, `persistence`, or `text`). Keep
+application errors in `shared/error/` and IPC envelopes in `shared/ipc/`.
+Do not recreate a generic `shared/utils/` folder or a second `Result` alias.
+`domain/error.rs` and `shared/constants.rs` remain small, explicit module roots.
+
+The npm entry points remain the supported shortcuts: `npm run dev`,
+`npm run build`, and `npm run build:node`. For direct invocation, use paths such
+as `bash scripts/dev/dev.sh help` or `bash scripts/build/build.sh --help`.
+Run the base-schema smoke check with `bash src-tauri/scripts/test-migrations.sh`.
+
 ## Architecture conventions
 
 Each feature repository is the source of truth for persisted feature state.
@@ -36,7 +78,7 @@ When adding a Tauri command, update all five integration points:
 2. The feature's `tauri::generate_handler!` registration.
 3. The command list in `src-tauri/build.rs`.
 4. The permission entry in `src-tauri/capabilities/main.json`.
-5. The command list in `src-tauri/src/export_bindings.rs`, then
+5. The command list in `src-tauri/src/bin/export_bindings/main.rs`, then
    `npm run bindings:generate`.
 
 Missing step 3 or 4 still compiles and is rejected at runtime;

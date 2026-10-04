@@ -9,7 +9,7 @@ use crate::features::settings::dto::{
 use crate::infrastructure::services::router::RouterAction;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -185,6 +185,9 @@ pub(super) struct RetrievalPipelineOutcome {
     /// loop starts from this, so it never re-fetches a page the prompt carries
     /// or retries one that is already known to be blocked.
     pub(super) pages_read: super::fetch_memory::FetchMemory,
+    /// Every web search retrieval ran before the model did, the first one
+    /// first, so a deep-research turn can tell the model what not to repeat.
+    pub(super) web_queries: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]

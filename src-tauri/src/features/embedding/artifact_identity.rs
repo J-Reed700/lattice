@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::domain::downloaded_model::DownloadedModel;
+use crate::domain::models::downloaded::DownloadedModel;
 use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};

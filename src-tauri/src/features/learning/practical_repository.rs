@@ -3,10 +3,10 @@
 use super::{
     assessment_engine::LearningRubricCriterion,
     dto::{LearningPracticeCitationDto, LearningPracticeMode},
-    embedded_runtime::{self, BuiltinLabExecutionSpec, LearningBuiltinRuntime},
+    embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime},
     lab_runtime::{
         self, LearningContainerEngine, LearningLabExecutionResult, LearningLabExecutionSpec,
-        LearningLabFile, LearningLabLimits, LearningLabRunStatus, LearningLabRuntimeCapability,
+        LearningLabFile, LearningLabLimits, LearningLabRunStatus,
     },
     practical_dto::*,
     practical_generation::{GeneratedPracticalActivity, PracticalFileRole},
@@ -15,15 +15,7 @@ use crate::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::{LazyLock, Mutex},
-};
-use tokio_util::sync::CancellationToken;
-
-static ACTIVE_RUNS: LazyLock<Mutex<HashMap<String, CancellationToken>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+use std::collections::{HashMap, HashSet};
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -213,7 +205,7 @@ struct InternalActivitySnapshot {
     generator_model: String,
 }
 
-enum PreparedExecution {
+pub(super) enum PreparedExecution {
     Container {
         engine: LearningContainerEngine,
         spec: LearningLabExecutionSpec,
@@ -224,13 +216,13 @@ enum PreparedExecution {
     },
 }
 
-struct PreparedRun {
-    dto: LearningPracticalRunDto,
-    execution: PreparedExecution,
-    outcome_ids: Vec<String>,
-    practice_mode: LearningPracticeMode,
-    allowed_aids: Vec<String>,
-    workspace_owner_token: Option<String>,
+pub(super) struct PreparedRun {
+    pub(super) dto: LearningPracticalRunDto,
+    pub(super) execution: PreparedExecution,
+    pub(super) outcome_ids: Vec<String>,
+    pub(super) practice_mode: LearningPracticeMode,
+    pub(super) allowed_aids: Vec<String>,
+    pub(super) workspace_owner_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -238,6 +230,14 @@ pub struct SimulationTurnWrite {
     pub content: String,
     pub citations: Vec<LearningPracticeCitationDto>,
     pub model_name: String,
+}
+
+/// Saved workspace data. Runtime availability is resolved by `practical_workspace`.
+/// The inner DTO is private until the service has applied the current capabilities.
+#[derive(Debug, Clone)]
+pub struct PracticalWorkspaceSnapshot {
+    pub(super) workspace: LearningPracticalWorkspaceDto,
+    pub(super) builtin_versions: HashMap<String, Option<String>>,
 }
 
 #[derive(Clone)]
@@ -456,7 +456,7 @@ impl LearningPracticalRepository {
         Ok(())
     }
 
-    pub async fn workspace(&self, program_id: &str) -> Result<LearningPracticalWorkspaceDto> {
+    pub async fn workspace(&self, program_id: &str) -> Result<PracticalWorkspaceSnapshot> {
         uuid(program_id, "program")?;
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
@@ -466,11 +466,6 @@ impl LearningPracticalRepository {
         if exists.is_none() {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
-        let (docker, podman) = tokio::join!(
-            lab_runtime::detect_container_engine(LearningContainerEngine::Docker),
-            lab_runtime::detect_container_engine(LearningContainerEngine::Podman)
-        );
-        let capabilities = vec![docker, podman];
         let profiles = self.profiles().await?;
         let activity_rows = sqlx::query(
             "SELECT * FROM learning_practical_activities WHERE program_id=? ORDER BY created_at DESC,id",
@@ -480,8 +475,13 @@ impl LearningPracticalRepository {
         .await
         .map_err(db)?;
         let mut activities = Vec::with_capacity(activity_rows.len());
+        let mut builtin_versions = HashMap::new();
         for row in activity_rows {
-            activities.push(self.parse_activity(row, &capabilities, &profiles).await?);
+            builtin_versions.insert(
+                row.get::<String, _>("id"),
+                row.get("builtin_runtime_version"),
+            );
+            activities.push(self.parse_activity(row).await?);
         }
         let run_rows = sqlx::query(
             "SELECT * FROM learning_practical_runs WHERE program_id=? ORDER BY created_at DESC,id",
@@ -505,18 +505,21 @@ impl LearningPracticalRepository {
         for row in simulation_rows {
             simulations.push(self.parse_simulation(row).await?);
         }
-        Ok(LearningPracticalWorkspaceDto {
-            program_id: program_id.into(),
-            builtin_runtimes: embedded_runtime::capabilities(),
-            runtime_capabilities: capabilities,
-            runtime_profiles: profiles,
-            activities,
-            runs,
-            simulations,
+        Ok(PracticalWorkspaceSnapshot {
+            workspace: LearningPracticalWorkspaceDto {
+                program_id: program_id.into(),
+                builtin_runtimes: Vec::new(),
+                runtime_capabilities: Vec::new(),
+                runtime_profiles: profiles,
+                activities,
+                runs,
+                simulations,
+            },
+            builtin_versions,
         })
     }
 
-    async fn profiles(&self) -> Result<Vec<LearningRuntimeProfileDto>> {
+    pub(super) async fn profiles(&self) -> Result<Vec<LearningRuntimeProfileDto>> {
         let rows = sqlx::query("SELECT * FROM learning_runtime_profiles ORDER BY name,id")
             .fetch_all(&self.pool)
             .await
@@ -542,8 +545,6 @@ impl LearningPracticalRepository {
     async fn parse_activity(
         &self,
         row: sqlx::sqlite::SqliteRow,
-        capabilities: &[LearningLabRuntimeCapability],
-        profiles: &[LearningRuntimeProfileDto],
     ) -> Result<LearningPracticalActivityDto> {
         let id: String = row.get("id");
         let file_rows = sqlx::query("SELECT * FROM learning_practical_files WHERE activity_id=? AND role IN ('starter','reference') ORDER BY ordinal")
@@ -581,51 +582,11 @@ impl LearningPracticalRepository {
             LearningPracticalRuntimeKind::None
         };
         let profile_id: Option<String> = row.get("runtime_profile_id");
-        let profile = profile_id
-            .as_deref()
-            .and_then(|id| profiles.iter().find(|profile| profile.id == id));
         let frozen_engine = row
             .get::<Option<String>, _>("runtime_engine")
             .as_deref()
             .map(parse_engine)
             .transpose()?;
-        let capability = frozen_engine.and_then(|engine| {
-            capabilities
-                .iter()
-                .find(|capability| capability.engine == engine)
-        });
-        let (runtime_available, runtime_unavailable_reason) = match runtime_kind {
-            LearningPracticalRuntimeKind::Builtin if builtin_runtime.map(|runtime| runtime.version().to_owned()) != row.get::<Option<String>, _>("builtin_runtime_version") =>
-                (false, Some("This activity uses an earlier built-in runtime. Its saved results remain available; generate a new activity to run with this app version.".into())),
-            LearningPracticalRuntimeKind::Builtin => embedded_runtime::capabilities().into_iter()
-                .find(|capability| Some(capability.id) == builtin_runtime)
-                .map(|capability| (capability.available, capability.reason))
-                .unwrap_or((false, Some("Built-in runtime is unavailable.".into()))),
-            LearningPracticalRuntimeKind::None => (
-                false,
-                Some("This activity is completed and reviewed without local execution.".into()),
-            ),
-            LearningPracticalRuntimeKind::Container => match (profile, capability) {
-                (Some(profile), Some(capability)) if profile.enabled && capability.available => {
-                    (true, None)
-                }
-                (Some(profile), _) if !profile.enabled => (
-                    false,
-                    Some("The frozen runtime profile is disabled.".into()),
-                ),
-                (_, Some(capability)) => (
-                    false,
-                    capability
-                        .reason
-                        .clone()
-                        .or_else(|| Some("The container runtime is unavailable.".into())),
-                ),
-                _ => (
-                    false,
-                    Some("The frozen runtime profile is unavailable.".into()),
-                ),
-            },
-        };
         Ok(LearningPracticalActivityDto {
             id,
             program_id: row.get("program_id"),
@@ -664,8 +625,9 @@ impl LearningPracticalRepository {
                 .as_deref()
                 .map(decode)
                 .transpose()?,
-            runtime_available,
-            runtime_unavailable_reason,
+            // The service fills these before the snapshot becomes a public DTO.
+            runtime_available: false,
+            runtime_unavailable_reason: None,
             generator_model: row.get("generator_model"),
             files,
             revision: row.get("revision"),
@@ -791,7 +753,7 @@ impl LearningPracticalRepository {
 }
 
 impl LearningPracticalRepository {
-    async fn prepare_run(
+    pub(super) async fn prepare_run(
         &self,
         request: &StartLearningPracticalRunRequestDto,
         payload_hash: &str,
@@ -953,122 +915,7 @@ impl LearningPracticalRepository {
         }))
     }
 
-    pub async fn start_run(
-        &self,
-        request: &StartLearningPracticalRunRequestDto,
-        payload_hash: &str,
-    ) -> Result<LearningPracticalRunDto> {
-        let Some(prepared) = self.prepare_run(request, payload_hash).await? else {
-            return self.run(&request.run_id).await;
-        };
-        let unavailable_reason = match &prepared.execution {
-            PreparedExecution::Container { engine, .. } => {
-                let capability = lab_runtime::detect_container_engine(*engine).await;
-                (!capability.available).then(|| capability.reason.unwrap_or_else(|| "The selected container runtime is unavailable.".into()))
-            },
-            PreparedExecution::Builtin {spec, version} if version != spec.runtime.version() =>
-                Some("The activity's built-in runtime version is no longer available. Generate a new activity to use the current runtime.".into()),
-            PreparedExecution::Builtin {spec, ..} => embedded_runtime::capabilities().into_iter()
-                .find(|capability| capability.id == spec.runtime && !capability.available)
-                .map(|capability| capability.reason.unwrap_or_else(|| "The built-in runtime is unavailable.".into())),
-        };
-        if let Some(reason) = unavailable_reason {
-            let result = LearningLabExecutionResult {
-                status: LearningLabRunStatus::RuntimeUnavailable,
-                exit_code: None,
-                stdout: String::new(),
-                stderr: reason,
-                output_truncated: false,
-                duration_ms: 0,
-            };
-            self.finish_run(&prepared, result).await?;
-            return self.run(&request.run_id).await;
-        }
-        let token = CancellationToken::new();
-        {
-            let mut active = ACTIVE_RUNS.lock().map_err(|_| {
-                AppError::InternalError("Practical run registry is unavailable.".into())
-            })?;
-            if active
-                .insert(request.run_id.clone(), token.clone())
-                .is_some()
-            {
-                return Err(AppError::ConcurrentModification {
-                    resource: "practical run".into(),
-                    details: "This run is already active.".into(),
-                });
-            }
-        }
-        // A cancellation may have committed between run creation and registry
-        // registration. Never launch a container for a terminal run.
-        if self.run(&request.run_id).await?.status != LearningPracticalRunStatus::Running {
-            ACTIVE_RUNS
-                .lock()
-                .map_err(|_| {
-                    AppError::InternalError("Practical run registry is unavailable.".into())
-                })?
-                .remove(&request.run_id);
-            return self.run(&request.run_id).await;
-        }
-        let root = run_workspace(&request.run_id);
-        let mut workspace_owned = false;
-        let mut ownership_marker_created = false;
-        let outcome = async {
-            match &prepared.execution {
-                PreparedExecution::Builtin { spec, .. } => {
-                    embedded_runtime::execute_builtin_lab(spec.clone(), token).await
-                }
-                PreparedExecution::Container { engine, spec } => {
-                    if let Some(parent) = root.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    if root.exists() {
-                        return Err(AppError::Security(
-                            "A practical run workspace already exists unexpectedly.".into(),
-                        ));
-                    }
-                    lab_runtime::materialize_workspace(&root, spec)?;
-                    // The workspace is ours only after materialization has
-                    // atomically created the previously absent directory.
-                    workspace_owned = true;
-                    let owner_token =
-                        prepared.workspace_owner_token.as_deref().ok_or_else(|| {
-                            AppError::InvalidState(
-                                "Container run is missing its workspace ownership token.".into(),
-                            )
-                        })?;
-                    create_workspace_owner_marker(&request.run_id, owner_token)?;
-                    ownership_marker_created = true;
-                    lab_runtime::execute_container_lab(*engine, &root, spec, token).await
-                }
-            }
-        }
-        .await;
-        cleanup_invocation_workspace(&request.run_id, workspace_owned, ownership_marker_created);
-        ACTIVE_RUNS
-            .lock()
-            .map_err(|_| AppError::InternalError("Practical run registry is unavailable.".into()))?
-            .remove(&request.run_id);
-        let execution = match outcome {
-            Ok(result) => result,
-            Err(error) => LearningLabExecutionResult {
-                status: if matches!(&error, AppError::ServiceNotAvailable(_)) {
-                    LearningLabRunStatus::RuntimeUnavailable
-                } else {
-                    LearningLabRunStatus::Failed
-                },
-                exit_code: None,
-                stdout: String::new(),
-                stderr: error.to_string().chars().take(2_000).collect(),
-                output_truncated: false,
-                duration_ms: 0,
-            },
-        };
-        self.finish_run(&prepared, execution).await?;
-        self.run(&request.run_id).await
-    }
-
-    async fn finish_run(
+    pub(super) async fn finish_run(
         &self,
         prepared: &PreparedRun,
         execution: LearningLabExecutionResult,
@@ -1190,127 +1037,30 @@ impl LearningPracticalRepository {
                 .bind(&request.run_id).execute(&mut *tx).await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
-        if changed {
-            // Cancel only after ownership and operation replay have been
-            // validated. A UUID from another program must not stop its guest.
-            if let Some(token) = ACTIVE_RUNS
-                .lock()
-                .map_err(|_| {
-                    AppError::InternalError("Practical run registry is unavailable.".into())
-                })?
-                .get(&request.run_id)
-                .cloned()
-            {
-                token.cancel();
-            }
-            let (engine, snapshot): (Option<String>, String) = sqlx::query(
-                "SELECT engine,activity_snapshot_json FROM learning_practical_runs WHERE id=? AND program_id=?",
-            )
-            .bind(&request.run_id)
-            .bind(&request.program_id)
-            .fetch_one(&self.pool)
-            .await
-            .map(|row| (row.get("engine"), row.get("activity_snapshot_json")))
-            .map_err(db)?;
-            let is_container_run = engine.is_some();
-            if let Some(engine) = engine {
-                lab_runtime::cleanup_interrupted_run(parse_engine(&engine)?, &request.run_id)
-                    .await?;
-            }
-            // If a runner is still active it owns the directory and removes it
-            // only after the process exits. For an orphaned run, the persisted
-            // random token proves this directory was created by that run.
-            let runner_is_active = ACTIVE_RUNS
-                .lock()
-                .map_err(|_| {
-                    AppError::InternalError("Practical run registry is unavailable.".into())
-                })?
-                .contains_key(&request.run_id);
-            if is_container_run && !runner_is_active {
-                if let Some(token) = workspace_owner_token_from_snapshot(&snapshot) {
-                    remove_owned_workspace(&request.run_id, &token);
-                }
-            }
-        }
         self.run(&request.run_id).await
     }
 
-    pub async fn recover_running_runs(&self) -> Result<usize> {
-        let rows = sqlx::query(
-            "SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE status IN ('pending','running')",
+    pub(super) async fn run_cleanup(&self, id: &str) -> Result<RunCleanup> {
+        let row = sqlx::query(
+            "SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE id=?",
         )
-        .fetch_all(&self.pool)
+        .bind(id)
+        .fetch_one(&self.pool)
         .await
         .map_err(db)?;
-        for row in &rows {
-            let id: String = row.get("id");
-            if let Some(engine) = row.get::<Option<String>, _>("engine") {
-                let _ = lab_runtime::cleanup_interrupted_run(parse_engine(&engine)?, &id).await;
-                if let Some(token) =
-                    workspace_owner_token_from_snapshot(row.get("activity_snapshot_json"))
-                {
-                    remove_owned_workspace(&id, &token);
-                }
-            }
-        }
-        let timestamp = now();
+        cleanup_record(&row)
+    }
+
+    pub(super) async fn unfinished_runs(&self) -> Result<Vec<RunCleanup>> {
+        let rows = sqlx::query("SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE status IN ('pending','running')")
+            .fetch_all(&self.pool).await.map_err(db)?;
+        rows.iter().map(cleanup_record).collect()
+    }
+
+    pub(super) async fn mark_runs_interrupted(&self) -> Result<usize> {
         let changed = sqlx::query("UPDATE learning_practical_runs SET status='interrupted',stderr='The desktop process stopped before the run completed.',completed_at=? WHERE status IN ('pending','running')")
-            .bind(timestamp).execute(&self.pool).await.map_err(db)?;
+            .bind(now()).execute(&self.pool).await.map_err(db)?;
         Ok(changed.rows_affected() as usize)
-    }
-}
-
-pub(super) fn run_workspace(run_id: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join("lattice-learning-labs")
-        .join(run_id)
-}
-
-pub(super) fn workspace_owner_marker(run_id: &str) -> PathBuf {
-    run_workspace(run_id).with_extension("owner")
-}
-
-fn workspace_owner_token_from_snapshot(snapshot: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(snapshot)
-        .ok()?
-        .get("workspaceOwnerToken")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-pub(super) fn cleanup_invocation_workspace(
-    run_id: &str,
-    workspace_owned: bool,
-    ownership_marker_created: bool,
-) {
-    if !workspace_owned {
-        return;
-    }
-    // This invocation created the directory. If marker creation failed,
-    // direct cleanup is still safe because materialize_workspace succeeded.
-    let _ = std::fs::remove_dir_all(run_workspace(run_id));
-    if ownership_marker_created {
-        let _ = std::fs::remove_file(workspace_owner_marker(run_id));
-    }
-}
-
-fn create_workspace_owner_marker(run_id: &str, token: &str) -> Result<()> {
-    use std::io::Write;
-    let path = workspace_owner_marker(run_id);
-    let mut marker = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    marker.write_all(token.as_bytes())?;
-    marker.sync_all()?;
-    Ok(())
-}
-
-pub(super) fn remove_owned_workspace(run_id: &str, token: &str) {
-    let marker_path = workspace_owner_marker(run_id);
-    if std::fs::read_to_string(&marker_path).is_ok_and(|marker| marker == token) {
-        let _ = std::fs::remove_dir_all(run_workspace(run_id));
-        let _ = std::fs::remove_file(marker_path);
     }
 }
 
@@ -1320,7 +1070,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         operation_id: &str,
         payload_hash: &str,
-    ) -> Result<Option<LearningPracticalWorkspaceDto>> {
+    ) -> Result<Option<PracticalWorkspaceSnapshot>> {
         let row = sqlx::query("SELECT program_id,payload_hash FROM learning_practical_activity_operations WHERE operation_id=?")
             .bind(operation_id).fetch_optional(&self.pool).await.map_err(db)?;
         match row {
@@ -1630,7 +1380,7 @@ impl LearningPracticalRepository {
         &self,
         request: &PrepareLearningRuntimePresetRequestDto,
         payload_hash: &str,
-    ) -> Result<Option<LearningPracticalWorkspaceDto>> {
+    ) -> Result<Option<PracticalWorkspaceSnapshot>> {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
@@ -1663,54 +1413,11 @@ impl LearningPracticalRepository {
         Ok(None)
     }
 
-    pub async fn runtime_generation_context(
-        &self,
-        profile_id: Option<&str>,
-        builtin: Option<LearningBuiltinRuntime>,
-    ) -> Result<Option<super::practical_generation::PracticalRuntimeContext>> {
-        if let Some(runtime) = builtin {
-            if profile_id.is_some() {
-                return Err(invalid("Choose one execution environment for an activity."));
-            }
-            let capability = embedded_runtime::capabilities()
-                .into_iter()
-                .find(|item| item.id == runtime)
-                .ok_or_else(|| invalid("Unknown built-in runtime."))?;
-            if !capability.available {
-                return Err(AppError::ServiceNotAvailable(
-                    capability
-                        .reason
-                        .unwrap_or_else(|| "The built-in runtime is unavailable.".into()),
-                ));
-            }
-            return Ok(Some(runtime.context()));
-        }
-        let Some(profile_id) = profile_id else {
-            return Ok(None);
-        };
-        uuid(profile_id, "runtime profile")?;
-        let profile = self
-            .profiles()
-            .await?
-            .into_iter()
-            .find(|profile| profile.id == profile_id && profile.enabled)
-            .ok_or_else(|| invalid("Selected runtime profile is unavailable."))?;
-        let contract = super::runtime_catalog::learning_runtime_catalog().into_iter()
-            .find(|preset| preset.command == profile.command)
-            .map(|preset| preset.entrypoint_contract)
-            .unwrap_or_else(|| "Create files compatible with this exact runtime command. Network access and external dependency installation are unavailable.".into());
-        Ok(Some(super::practical_generation::PracticalRuntimeContext {
-            name: profile.name,
-            command: profile.command,
-            contract,
-        }))
-    }
-
     pub async fn save_runtime_profile(
         &self,
         request: &SaveLearningRuntimeProfileRequestDto,
         payload_hash: &str,
-    ) -> Result<LearningPracticalWorkspaceDto> {
+    ) -> Result<PracticalWorkspaceSnapshot> {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
@@ -1779,7 +1486,7 @@ impl LearningPracticalRepository {
         generated: &GeneratedPracticalActivity,
         generator_model: &str,
         payload_hash: &str,
-    ) -> Result<LearningPracticalWorkspaceDto> {
+    ) -> Result<PracticalWorkspaceSnapshot> {
         if request.builtin_runtime.is_some() && request.runtime_profile_id.is_some() {
             return Err(invalid("Choose one execution environment for an activity."));
         }
@@ -2020,4 +1727,30 @@ impl LearningPracticalRepository {
             generator_model: row.get("generator_model"),
         })
     }
+}
+
+pub(super) struct RunCleanup {
+    pub id: String,
+    pub engine: Option<LearningContainerEngine>,
+    pub owner_token: Option<String>,
+}
+
+fn cleanup_record(row: &sqlx::sqlite::SqliteRow) -> Result<RunCleanup> {
+    Ok(RunCleanup {
+        id: row.get("id"),
+        engine: row
+            .get::<Option<String>, _>("engine")
+            .as_deref()
+            .map(parse_engine)
+            .transpose()?,
+        owner_token: workspace_owner_token_from_snapshot(row.get("activity_snapshot_json")),
+    })
+}
+
+fn workspace_owner_token_from_snapshot(snapshot: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(snapshot)
+        .ok()?
+        .get("workspaceOwnerToken")?
+        .as_str()
+        .map(str::to_owned)
 }

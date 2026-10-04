@@ -10,7 +10,7 @@ use crate::application::ports::llm_port::CompletionInput;
 pub struct SelectedPassage {
     pub message_id: String,
     pub sequence: i64,
-    pub role: crate::domain::conversation_memory::SourceRole,
+    pub role: crate::domain::conversation::memory::SourceRole,
     /// Exact source text. Never a paraphrase, and never shortened with an
     /// ellipsis while still being labelled verbatim.
     pub text: String,

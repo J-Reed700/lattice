@@ -9,7 +9,7 @@ use crate::features::indexing::dto::{
     IndexingStatsDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiResult, ErrorCode};
+use crate::shared::ipc::{ApiResult, ErrorCode};
 use tauri::State;
 
 async fn ensure_embedding_ready(container: &Container) -> Result<(), String> {

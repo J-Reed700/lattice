@@ -25,10 +25,11 @@ export function useRevealStreamingRef(content: string, active: boolean): void {
 
   useEffect(() => {
     if (!active) return;
-    const check = () => {
-      // Only closed backticks count, so a reference still being typed out
-      // (`src/a.rs:1` on its way to `:12`) is never shown half-written.
-      const refs = findCodeRefs(contentRef.current);
+    const check = (complete: boolean) => {
+      // A reference that runs to the end of the text may still be growing
+      // (`src/a.rs:1` on its way to `:12`), so mid-stream it waits for the
+      // next character; the last check, once the answer is done, takes it.
+      const refs = findCodeRefs(contentRef.current, { complete });
       const newest = refs[refs.length - 1];
       if (!newest) return;
       const key = `${newest.path}:${newest.startLine}-${newest.endLine}`;
@@ -36,11 +37,11 @@ export function useRevealStreamingRef(content: string, active: boolean): void {
       shownRef.current = key;
       reveal(newest.path, { startLine: newest.startLine, endLine: newest.endLine });
     };
-    const timer = window.setInterval(check, CHECK_MS);
+    const timer = window.setInterval(() => check(false), CHECK_MS);
     return () => {
       window.clearInterval(timer);
       // The last tokens can land between two checks.
-      check();
+      check(true);
     };
   }, [active, reveal]);
 }

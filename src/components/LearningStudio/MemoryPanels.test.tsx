@@ -190,6 +190,20 @@ describe('Learning Studio notebook and recall', () => {
     expect(screen.getByText('Select excerpts that support this card, or leave it as a personal mnemonic.')).toBeVisible();
   });
 
+  it('saves generated topic-only recall without requesting an external source', async () => {
+    const user = userEvent.setup();
+    const topicProgram = structuredClone(program);
+    topicProgram.sources = [];
+    topicProgram.modules[0].lessons[0].blocks[0].sourceIds = [];
+    const topicDraft = { ...draft(), sourceIds: [] };
+    mount(<RecallPanel program={topicProgram} lessonId={lesson.id} memory={memory({ drafts: [topicDraft] })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    expect(screen.getByText('This card is based on the prepared lesson. No external source is required.')).toBeVisible();
+    const save = screen.getByRole('button', { name: 'Save draft edits' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await waitFor(() => expect(api.saveLearningCardDraft).toHaveBeenCalledWith(expect.objectContaining({ draftId: topicDraft.id, sourceIds: [] })));
+  });
+
   it('gates generating and manually creating drafts until the program is active and the lesson is ready', () => {
     const outline = structuredClone(program);
     outline.modules[0].lessons[0].preparation = 'outline';

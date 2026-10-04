@@ -42,7 +42,7 @@ use crate::features::web::services::page_cache::{CachedFetch, CachedPage, PageCa
 use crate::features::web::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::stealth;
+use crate::shared::http::stealth;
 use async_trait::async_trait;
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
@@ -88,6 +88,7 @@ const MAX_TRACKED_SITES: usize = 64;
 /// Most of an article's text sits well inside this; past it a page is a
 /// dump, and the prompt has better uses for the room.
 const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
+const MAX_REFERENCE_PAGE_CHARS: usize = 2_000_000;
 /// Maximum decoded bytes accepted from a page before HTML parsing.
 const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// Maximum decoded bytes accepted from a search provider response.
@@ -122,7 +123,7 @@ fn cap_page_text(content: String, max_chars: usize) -> (String, bool) {
         return (content, false);
     }
     (
-        crate::shared::text_utils::safe_truncate(&content, max_chars),
+        crate::shared::text::safe_truncate(&content, max_chars),
         true,
     )
 }
@@ -501,11 +502,22 @@ impl WebService {
     /// address to re-resolve. Only the scheme is still checked, because a
     /// `file://` URL must not be readable by any path.
     pub async fn read_page(&self, url: &str) -> Result<ReadPage> {
+        self.read_page_bounded(url, MAX_FETCHED_PAGE_CHARS).await
+    }
+
+    async fn read_page_bounded(&self, url: &str, max_chars: usize) -> Result<ReadPage> {
         debug!("Fetching URL: {}", url);
         parse_fetchable_url(url)?;
 
         let lookup_start = Instant::now();
-        match self.page_cache.get(url).await {
+        // Reference snapshots have their own durable storage. Never return a
+        // short chat-cache entry as a complete book or overwrite that cache.
+        let cached = if max_chars == MAX_FETCHED_PAGE_CHARS {
+            self.page_cache.get(url).await
+        } else {
+            None
+        };
+        match cached {
             Some(CachedFetch::Page(page)) => {
                 info!(url, words = page.word_count, "URL served from page cache");
                 let fetched_at = page.fetched_at;
@@ -566,7 +578,7 @@ impl WebService {
                 status,
                 StatusCode::FORBIDDEN | StatusCode::SERVICE_UNAVAILABLE
             ) {
-                if let Some(page) = self.read_through_browser(url, start).await {
+                if let Some(page) = self.read_through_browser(url, start, max_chars).await {
                     return Ok(page);
                 }
             }
@@ -600,13 +612,20 @@ impl WebService {
             .map_err(|e| AppError::Network(format!("Failed to read response body: {e}")))?;
         let html = decode_response_text(html, content_type.as_deref());
 
-        let (title, content) = self.parse_page(html).await?;
+        let (title, content) = if max_chars == MAX_FETCHED_PAGE_CHARS {
+            self.parse_page(html).await?
+        } else {
+            run_html_parser(self.html_parsers.clone(), move || {
+                super::reference_text::extract(&html)
+            })
+            .await??
+        };
 
         // A page whose text is written by its scripts arrives as a shell: a
         // title and a menu. The browser runs the scripts; its text is kept
         // only when it is actually more.
         if content.trim().len() < THIN_PAGE_CHARS {
-            if let Some(page) = self.read_through_browser(url, start).await {
+            if let Some(page) = self.read_through_browser(url, start, max_chars).await {
                 if page.output.content.trim().len() > content.trim().len() {
                     return Ok(page);
                 }
@@ -614,13 +633,30 @@ impl WebService {
         }
 
         Ok(self
-            .keep_page(url, final_url, title, content, content_type, start)
+            .keep_page(
+                url,
+                final_url,
+                title,
+                content,
+                content_type,
+                (start, max_chars),
+            )
             .await)
     }
 
     /// Read `url` in a hidden browser window, and cache and return it if that
     /// produced text. `None` leaves the HTTP result standing.
-    async fn read_through_browser(&self, url: &str, start: Instant) -> Option<ReadPage> {
+    async fn read_through_browser(
+        &self,
+        url: &str,
+        start: Instant,
+        max_chars: usize,
+    ) -> Option<ReadPage> {
+        // Browser extraction is a bounded display read, not a complete reference
+        // capture. Do not silently certify a script-rendered prefix as a book.
+        if max_chars != MAX_FETCHED_PAGE_CHARS {
+            return None;
+        }
         match browser_reader::read(url, browser_reader::DEFAULT_READ_TIMEOUT).await {
             Ok(page) if !page.text.trim().is_empty() => {
                 // The browser follows redirects the HTTP client never saw.
@@ -639,7 +675,7 @@ impl WebService {
                         page.title,
                         page.text,
                         Some("text/html".to_string()),
-                        start,
+                        (start, max_chars),
                     )
                     .await,
                 )
@@ -663,10 +699,11 @@ impl WebService {
         title: Option<String>,
         content: String,
         content_type: Option<String>,
-        start: Instant,
+        budget: (Instant, usize),
     ) -> ReadPage {
+        let (start, max_chars) = budget;
         let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let (final_content, truncated) = cap_page_text(content, MAX_FETCHED_PAGE_CHARS);
+        let (final_content, truncated) = cap_page_text(content, max_chars);
 
         let word_count = final_content.split_whitespace().count();
 
@@ -676,20 +713,22 @@ impl WebService {
         );
 
         let fetched_at = Utc::now();
-        self.page_cache
-            .remember_page(
-                url,
-                &CachedPage {
-                    final_url: final_url.clone(),
-                    title: title.clone(),
-                    content: final_content.clone(),
-                    content_truncated: truncated,
-                    word_count,
-                    content_type: content_type.clone(),
-                    fetched_at,
-                },
-            )
-            .await;
+        if max_chars == MAX_FETCHED_PAGE_CHARS {
+            self.page_cache
+                .remember_page(
+                    url,
+                    &CachedPage {
+                        final_url: final_url.clone(),
+                        title: title.clone(),
+                        content: final_content.clone(),
+                        content_truncated: truncated,
+                        word_count,
+                        content_type: content_type.clone(),
+                        fetched_at,
+                    },
+                )
+                .await;
+        }
 
         ReadPage {
             output: FetchUrlContentOutput {
@@ -1736,6 +1775,16 @@ impl WebServiceTrait for WebService {
 
     async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
         self.read_page(url).await.map(|read| read.output)
+    }
+
+    async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        let page = self
+            .read_page_bounded(url, MAX_REFERENCE_PAGE_CHARS)
+            .await?;
+        if page.output.content.trim().len() < THIN_PAGE_CHARS {
+            return Err(AppError::InvalidInput("This page did not provide enough static reference text. Supply a readable chapter, document, or pasted text.".into()));
+        }
+        Ok(page.output)
     }
 
     /// The synchronous check the tool executors run before a request on their

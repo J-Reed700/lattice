@@ -49,21 +49,22 @@ describe('compactConversation', () => {
     });
     const { result } = renderHook(() => useConversationsController(), { wrapper });
 
-    const record = await result.current.compactConversation(CONVERSATION_ID);
+    const outcome = await result.current.compactConversation(CONVERSATION_ID);
 
     expect(compact).toHaveBeenCalledWith(CONVERSATION_ID, undefined);
-    expect(record?.id).toBe('c1');
-    expect(record?.upToMessageId).toBe('m3');
+    expect(outcome.ok && outcome.record.id).toBe('c1');
+    expect(outcome.ok && outcome.record.upToMessageId).toBe('m3');
     expect(conversationUiStore.getState().error).toBeNull();
   });
 
-  it('returns null and surfaces the error when the backend refuses', async () => {
+  /** The chat says why in place, where `/compact` was typed; no stray banner. */
+  it('returns the reason when the backend refuses', async () => {
     compact.mockResolvedValue({ ok: false, error: 'not enough history to compact' });
     const { result } = renderHook(() => useConversationsController(), { wrapper });
 
-    const record = await result.current.compactConversation(CONVERSATION_ID);
+    const outcome = await result.current.compactConversation(CONVERSATION_ID);
 
-    expect(record).toBeNull();
-    expect(conversationUiStore.getState().error).toBe('not enough history to compact');
+    expect(outcome).toEqual({ ok: false, error: 'not enough history to compact' });
+    expect(conversationUiStore.getState().error).toBeNull();
   });
 });

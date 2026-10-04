@@ -3,7 +3,7 @@ use super::{
     repository::LearningRepository, service,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::{interfaces::di::Container, shared::api_result::ApiError};
+use crate::{interfaces::di::Container, shared::ipc::ApiError};
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
@@ -64,23 +64,60 @@ pub async fn get_learning_program(
 }
 #[tauri::command]
 #[specta::specta]
+pub async fn get_learning_lesson_evidence(
+    program_id: String,
+    lesson_id: String,
+    container: State<'_, Container>,
+) -> Result<Option<super::lesson_evidence::LearningLessonEvidenceDto>, ApiError> {
+    super::lesson_evidence::get(container.db_pool(), &program_id, &lesson_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn generate_learning_program(
     request: GenerateLearningProgramRequestDto,
+    request_id: Option<String>,
+    on_progress: tauri::ipc::Channel<super::outline_progress::LearningOutlineProgressDto>,
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     service::validate_request(&request).map_err(ApiError::from)?;
-    let sources = super::sources::acquire(&container, &request)
+    let run = super::outline_progress::OutlineRun::register(request_id, move |update| {
+        let _ = on_progress.send(update);
+    })
+    .map_err(ApiError::from)?;
+    let progress = &run.0;
+    progress
+        .run(async {
+            progress.stage(super::outline_progress::OutlineStage::ReadingSources);
+            let sources = super::sources::acquire(&container, &request).await?;
+            progress.stage(super::outline_progress::OutlineStage::LoadingModel);
+            let llm = container.get_or_load_llm().await?;
+            progress.model(llm.model_name());
+            service::generate_with_references_and_progress(
+                &LearningRepository::new(container.db_pool().clone()),
+                llm.as_ref(),
+                request,
+                sources.sources,
+                &sources.references,
+                progress,
+            )
+            .await
+        })
         .await
-        .map_err(ApiError::from)?;
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
-    service::generate(
-        &LearningRepository::new(container.db_pool().clone()),
-        llm.as_ref(),
-        request,
-        sources,
-    )
-    .await
-    .map_err(ApiError::from)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cancel_learning_outline(request_id: String) -> Result<bool, ApiError> {
+    uuid::Uuid::parse_str(&request_id).map_err(|_| {
+        ApiError::from(crate::shared::error::AppError::InvalidInput(
+            "Invalid outline request ID".into(),
+        ))
+    })?;
+    Ok(super::outline_progress::cancel(&request_id))
 }
 #[tauri::command]
 #[specta::specta]
@@ -119,10 +156,10 @@ pub async fn prepare_learning_lesson(
             ),
         ));
     }
-    ensure_before_use_sources(&container, &request.program_id)
+    super::sources::ensure_before_use_sources(&container, &request.program_id)
         .await
         .map_err(ApiError::from)?;
-    let operation_id = stable_job_operation_id(
+    let operation_id = super::curriculum_repository::stable_job_operation_id(
         &request.program_id,
         &request.lesson_id,
         request.expected_revision,
@@ -139,15 +176,11 @@ pub async fn prepare_learning_lesson(
         container.db_pool().clone(),
     );
     let job = job_repo
-        .start_job(&job_request)
+        .start_lesson_job(&job_request)
         .await
         .map_err(ApiError::from)?;
-    let owned = container.inner().clone();
-    let job_id = job.id.clone();
-    tauri::async_runtime::spawn(async move {
-        run_generation_job(owned, job_id).await;
-    });
-    let result = tokio::time::timeout(std::time::Duration::from_secs(185), async {
+    generation_worker(&container).spawn(job.id.clone());
+    let result = tokio::time::timeout(std::time::Duration::from_secs(905), async {
         loop {
             let latest = job_repo.job(&job.id).await?;
             match latest.status {
@@ -186,96 +219,6 @@ pub async fn prepare_learning_lesson(
         .map_err(ApiError::from)
 }
 
-fn stable_job_operation_id(program_id: &str, lesson_id: &str, revision: i64) -> String {
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(
-        format!("learning-prepare:{program_id}:{lesson_id}:{revision}").as_bytes(),
-    );
-    let mut bytes = [0u8; 16];
-    if let Some(prefix) = digest.get(..bytes.len()) {
-        bytes.copy_from_slice(prefix);
-    }
-    if let Some(version_byte) = bytes.get_mut(6) {
-        *version_byte = (*version_byte & 0x0f) | 0x50;
-    }
-    if let Some(variant_byte) = bytes.get_mut(8) {
-        *variant_byte = (*variant_byte & 0x3f) | 0x80;
-    }
-    uuid::Uuid::from_bytes(bytes).to_string()
-}
-
-async fn ensure_before_use_sources(
-    container: &Container,
-    program_id: &str,
-) -> crate::shared::error::Result<()> {
-    let repo = source_library(container);
-    let workspace = repo.workspace(program_id).await?;
-    for source in workspace.sources.iter().filter(|s| {
-        s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse
-    }) {
-        if source.pending_version_id.is_some() {
-            return Err(crate::shared::error::AppError::InvalidInput(format!("A newer version of '{}' is available. Adopt it or change the freshness policy before preparing a lesson.",source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("this source"))));
-        }
-        let operation_id = uuid::Uuid::new_v4().to_string();
-        let request = RefreshLearningSourceRequestDto {
-            operation_id: operation_id.clone(),
-            program_id: program_id.into(),
-            source_id: source.id.clone(),
-            expected_revision: source.revision,
-        };
-        let refreshed = async {
-            container
-                .security_context()
-                .rate_limiters()
-                .web_ingest
-                .check_rate_limit("learning_source_before_use")
-                .await
-                .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
-            let url = source.requested_url.as_deref().ok_or_else(|| {
-                crate::shared::error::AppError::Database("Web source has no requested URL".into())
-            })?;
-            let article = container
-                .web_service()
-                .fetch_url_content(url)
-                .await
-                .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
-            Ok::<_, crate::shared::error::AppError>(super::source_library::CapturedLearningSource {
-                title: article.title.unwrap_or_else(|| url.into()),
-                publisher: None,
-                requested_url: Some(url.into()),
-                resolved_url: Some(article.url),
-                text: article.content,
-                truncated: article.content_truncated,
-                extraction_version: "web_article_v1".into(),
-            })
-        }
-        .await;
-        let (captured, failure) = match refreshed {
-            Ok(value) => (Some(value), None),
-            Err(error) => (None, Some(error.to_string())),
-        };
-        repo.refresh(&request, captured, failure).await?;
-        let refreshed = repo.workspace(program_id).await?;
-        let latest = refreshed
-            .sources
-            .iter()
-            .find(|s| s.id == source.id)
-            .and_then(|s| s.latest_check.as_ref())
-            .filter(|check| check.operation_id == operation_id);
-        match latest.map(|check| &check.status) {
-            Some(status) => {
-                super::source_library::LearningSourceLibraryRepository::before_use_allows(status)?
-            }
-            None => {
-                return Err(crate::shared::error::AppError::ServiceNotAvailable(format!(
-                    "Could not verify the before-use source '{}'. Retry after the source is reachable.",
-                    source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("web source")
-                )))
-            }
-        }
-    }
-    Ok(())
-}
 #[tauri::command]
 #[specta::specta]
 pub async fn complete_learning_lesson(
@@ -695,7 +638,7 @@ pub async fn add_learning_web_source(
             ))
         })?;
     let article = safe_web
-        .fetch_url_content(request.url.trim())
+        .fetch_reference_content(request.url.trim())
         .await
         .map_err(|error| {
             ApiError::from(crate::shared::error::AppError::Network(error.to_string()))
@@ -721,7 +664,7 @@ pub async fn add_learning_web_source(
         resolved_url: Some(article.url),
         text: article.content,
         truncated: article.content_truncated,
-        extraction_version: "web_article_v1".into(),
+        extraction_version: "web_reference_v1".into(),
     };
     repo.add(
         &request.operation_id,
@@ -782,48 +725,9 @@ pub async fn add_learning_document_source(
     repo.preflight_new_source(&request.program_id, &request.source_id, &request.version_id)
         .await
         .map_err(ApiError::from)?;
-    let Some((title, chunks)) = repo
-        .library_document_text(&request.document_id)
+    let captured = super::sources::capture_document(&repo, &request.document_id)
         .await
-        .map_err(ApiError::from)?
-    else {
-        return Err(ApiError::from(
-            crate::shared::error::AppError::InvalidInput(
-                "The selected document has no indexed text yet. Let its import finish first."
-                    .into(),
-            ),
-        ));
-    };
-    let mut text = String::new();
-    let mut truncated = chunks.len() == super::source_library::LIBRARY_CAPTURE_CHUNKS;
-    for chunk in &chunks {
-        let remaining = 64_001_usize.saturating_sub(text.chars().count());
-        if remaining == 0 {
-            truncated = true;
-            break;
-        }
-        if !text.is_empty() {
-            text.push_str("\n\n");
-        }
-        let excerpt: String = chunk.chars().take(remaining).collect();
-        if excerpt.chars().count() < chunk.chars().count() {
-            truncated = true;
-        }
-        text.push_str(&excerpt);
-        if text.chars().count() > 64_000 {
-            truncated = true;
-            break;
-        }
-    }
-    let captured = super::source_library::CapturedLearningSource {
-        title,
-        publisher: None,
-        requested_url: None,
-        resolved_url: None,
-        text,
-        truncated,
-        extraction_version: "document_chunks_v1".into(),
-    };
+        .map_err(ApiError::from)?;
     repo.add(
         &request.operation_id,
         &request.source_id,
@@ -934,7 +838,7 @@ pub async fn refresh_learning_source(
             .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
         let article = container
             .web_service()
-            .fetch_url_content(&url)
+            .fetch_reference_content(&url)
             .await
             .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
         Ok::<_, crate::shared::error::AppError>(super::source_library::CapturedLearningSource {
@@ -944,7 +848,7 @@ pub async fn refresh_learning_source(
             resolved_url: Some(article.url),
             text: article.content,
             truncated: article.content_truncated,
-            extraction_version: "web_article_v1".into(),
+            extraction_version: "web_reference_v1".into(),
         })
     }
     .await;
@@ -1615,8 +1519,41 @@ pub async fn start_learning_diagnostic(
     request: StartLearningDiagnosticRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningDiagnosticAttemptDto, ApiError> {
-    super::curriculum_repository::LearningCurriculumRepository::new(container.db_pool().clone())
-        .start_diagnostic(&request)
+    let repo = super::curriculum_repository::LearningCurriculumRepository::new(
+        container.db_pool().clone(),
+    );
+    if let Some(replay) = repo
+        .diagnostic_replay(&request.operation_id, &request)
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Ok(replay);
+    }
+    let program = LearningRepository::new(container.db_pool().clone())
+        .get(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    if program.summary.revision != request.expected_revision
+        || program.summary.status != LearningProgramStatus::Active
+    {
+        return Err(ApiError::from(
+            crate::shared::error::AppError::InvalidState(
+                "The course changed. Reload before checking your starting point.".into(),
+            ),
+        ));
+    }
+    repo.plan(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    let workspace = assessment_repo(&container)
+        .workspace(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let tasks = super::diagnostic_generation::author(llm.as_ref(), &program, &workspace.outcomes)
+        .await
+        .map_err(ApiError::from)?;
+    repo.start_diagnostic_authored(&request, Some(&tasks))
         .await
         .map_err(ApiError::from)
 }
@@ -1627,8 +1564,47 @@ pub async fn submit_learning_diagnostic(
     request: SubmitLearningDiagnosticRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningDiagnosticAttemptDto, ApiError> {
-    super::curriculum_repository::LearningCurriculumRepository::new(container.db_pool().clone())
-        .submit_diagnostic(&request)
+    let repo = super::curriculum_repository::LearningCurriculumRepository::new(
+        container.db_pool().clone(),
+    );
+    if let Some(replay) = repo
+        .diagnostic_replay(&request.operation_id, &request)
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Ok(replay);
+    }
+    let attempt = repo
+        .diagnostic_for_program(&request.program_id, &request.diagnostic_id)
+        .await
+        .map_err(ApiError::from)?;
+    let tasks = repo
+        .diagnostic_tasks(&request.program_id, &request.diagnostic_id)
+        .await
+        .map_err(ApiError::from)?;
+    if tasks.is_empty() || request.save_only {
+        return repo
+            .submit_diagnostic(&request)
+            .await
+            .map_err(ApiError::from);
+    }
+    let program = LearningRepository::new(container.db_pool().clone())
+        .get(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    if attempt.status != LearningDiagnosticStatus::Active
+        || request.expected_diagnostic_revision != Some(attempt.revision)
+        || request.expected_revision != program.summary.revision
+        || program.summary.status != LearningProgramStatus::Active
+    {
+        return Err(ApiError::from(crate::shared::error::AppError::InvalidState("Your course or answers changed. Reload before submitting the starting-point check.".into())));
+    }
+    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let findings =
+        super::diagnostic_generation::evaluate(llm.as_ref(), &attempt, &tasks, &request.responses)
+            .await
+            .map_err(ApiError::from)?;
+    repo.submit_diagnostic_evaluated(&request, Some(&findings))
         .await
         .map_err(ApiError::from)
 }
@@ -1655,11 +1631,7 @@ pub async fn start_learning_generation_job(
         container.db_pool().clone(),
     );
     let job = repo.start_job(&request).await.map_err(ApiError::from)?;
-    let owned = container.inner().clone();
-    let id = job.id.clone();
-    tauri::async_runtime::spawn(async move {
-        run_generation_job(owned, id).await;
-    });
+    generation_worker(&container).spawn(job.id.clone());
     Ok(job)
 }
 
@@ -1669,10 +1641,14 @@ pub async fn cancel_learning_generation_job(
     request: LearningGenerationJobActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
-    super::curriculum_repository::LearningCurriculumRepository::new(container.db_pool().clone())
-        .cancel_job(&request)
-        .await
-        .map_err(ApiError::from)
+    let job = super::curriculum_repository::LearningCurriculumRepository::new(
+        container.db_pool().clone(),
+    )
+    .cancel_job(&request)
+    .await
+    .map_err(ApiError::from)?;
+    super::generation_jobs::cancel(&job.id);
+    Ok(job)
 }
 
 #[tauri::command]
@@ -1685,11 +1661,7 @@ pub async fn retry_learning_generation_job(
         container.db_pool().clone(),
     );
     let job = repo.retry_job(&request).await.map_err(ApiError::from)?;
-    let owned = container.inner().clone();
-    let id = job.id.clone();
-    tauri::async_runtime::spawn(async move {
-        run_generation_job(owned, id).await;
-    });
+    generation_worker(&container).spawn(job.id.clone());
     Ok(job)
 }
 
@@ -1705,116 +1677,27 @@ pub async fn get_learning_generation_job(
         .map_err(ApiError::from)
 }
 
-async fn run_generation_job(container: Container, job_id: String) {
-    let repo = super::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
-    );
-    if let Err(error) = run_generation_job_inner(&container, &repo, &job_id).await {
-        let _ = repo.fail_job(&job_id, &error.to_string()).await;
+fn generation_worker(container: &Container) -> super::generation_jobs::LessonGenerationWorker {
+    let model_container = container.clone();
+    let source_container = container.clone();
+    let embedding_container = container.clone();
+    super::generation_jobs::LessonGenerationWorker {
+        pool: container.db_pool().clone(),
+        load_embedding: std::sync::Arc::new(move || {
+            let container = embedding_container.clone();
+            Box::pin(async move { container.get_or_load_embedding().await.ok() })
+        }),
+        load_llm: std::sync::Arc::new(move || {
+            let container = model_container.clone();
+            Box::pin(async move { container.get_or_load_llm().await })
+        }),
+        refresh_sources: std::sync::Arc::new(move |program_id| {
+            let container = source_container.clone();
+            Box::pin(async move {
+                super::sources::ensure_before_use_sources(&container, &program_id).await
+            })
+        }),
     }
-}
-
-async fn run_generation_job_inner(
-    container: &Container,
-    repo: &super::curriculum_repository::LearningCurriculumRepository,
-    job_id: &str,
-) -> crate::shared::error::Result<()> {
-    use super::curriculum::LearningGenerationJobKind;
-    if !repo.begin_job(job_id).await? {
-        return Ok(());
-    }
-    let job = repo.job(job_id).await?;
-    if job.kind != LearningGenerationJobKind::LessonPreparation {
-        return Err(crate::shared::error::AppError::InvalidInput(
-            "This worker currently accepts bounded lesson-preparation jobs only.".into(),
-        ));
-    }
-    let body: serde_json::Value = serde_json::from_str(&repo.job_request_json(job_id).await?)
-        .map_err(|e| crate::shared::error::AppError::Serialization(e.to_string()))?;
-    let requested_ids = body
-        .get("lessonIds")
-        .and_then(serde_json::Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let program_repo = LearningRepository::new(container.db_pool().clone());
-    let mut program = program_repo.get(&job.program_id).await?;
-    if program.summary.revision as u32 != job.base_revision_number {
-        return Err(crate::shared::error::AppError::InvalidState(
-            "Program changed before generation started.".into(),
-        ));
-    }
-    if program.summary.status != LearningProgramStatus::Active {
-        return Err(crate::shared::error::AppError::InvalidState(
-            "Only active programs can prepare lessons.".into(),
-        ));
-    }
-    ensure_before_use_sources(container, &job.program_id).await?;
-    program.sources = program_repo.active_sources(&job.program_id).await?;
-    if program.sources.is_empty() {
-        return Err(crate::shared::error::AppError::InvalidState(
-            "No active source snapshots are available for lesson preparation.".into(),
-        ));
-    }
-    let mut candidates = program
-        .modules
-        .iter()
-        .flat_map(|m| m.lessons.iter())
-        .filter(|lesson| lesson.preparation == LearningPreparation::Outline && !lesson.completed)
-        .collect::<Vec<_>>();
-    if !requested_ids.is_empty() {
-        if requested_ids.len() > 3 {
-            return Err(crate::shared::error::AppError::InvalidInput(
-                "A preparation job may target at most three upcoming lessons.".into(),
-            ));
-        }
-        candidates.retain(|lesson| requested_ids.contains(&lesson.id));
-        if candidates.len() != requested_ids.len() {
-            return Err(crate::shared::error::AppError::InvalidInput(
-                "A requested lesson is not an upcoming outline in this program.".into(),
-            ));
-        }
-    } else {
-        candidates.truncate(job.progress_total as usize);
-    }
-    if candidates.is_empty() || candidates.len() != job.progress_total as usize {
-        return Err(crate::shared::error::AppError::InvalidInput(
-            "The job must target one to three outline lessons.".into(),
-        ));
-    }
-    let llm = container.get_or_load_llm().await?;
-    let mut staged = Vec::new();
-    for (index, lesson) in candidates.into_iter().enumerate() {
-        let generated = tokio::time::timeout(
-            std::time::Duration::from_secs(180),
-            super::generation::prepare_lesson(llm.as_ref(), &program, lesson),
-        )
-        .await
-        .map_err(|_| {
-            crate::shared::error::AppError::ServiceNotAvailable(
-                "Lesson preparation timed out.".into(),
-            )
-        })??;
-        service::validate_prepared(&generated, &program)?;
-        staged.push((lesson.id.clone(), generated));
-        if !repo
-            .advance_job(
-                job_id,
-                index as u32 + 1,
-                &format!("Prepared {} of {} lessons", index + 1, job.progress_total),
-            )
-            .await?
-        {
-            return Ok(());
-        }
-    }
-    repo.publish_prepared_lessons(job_id, program.summary.revision, &staged)
-        .await
 }
 
 fn assessment_repo(
@@ -1882,12 +1765,35 @@ pub async fn create_learning_assessment_blueprint(
                 .map_err(ApiError::from)?,
         );
     }
+    let program = LearningRepository::new(container.db_pool().clone())
+        .get(&request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    let requested_outcomes: std::collections::HashSet<_> = request
+        .requirements
+        .iter()
+        .map(|requirement| requirement.outcome_id.as_str())
+        .collect();
+    let module_ids: std::collections::HashSet<_> = assessment_workspace
+        .outcomes
+        .iter()
+        .filter(|outcome| requested_outcomes.contains(outcome.id.as_str()))
+        .filter_map(|outcome| outcome.module_id.as_deref())
+        .collect();
+    let lessons: Vec<_> = program
+        .modules
+        .iter()
+        .filter(|module| module_ids.contains(module.id.as_str()))
+        .flat_map(|module| module.lessons.iter())
+        .cloned()
+        .collect();
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let candidates = super::assessment_generation::generate(
         llm.as_ref(),
         &request,
         &assessment_workspace.outcomes,
         &sources,
+        &lessons,
     )
     .await
     .map_err(ApiError::from)?;
@@ -2079,10 +1985,11 @@ pub async fn get_learning_practical_workspace(
     program_id: String,
     container: State<'_, Container>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
-    practical_repo(&container)
+    let workspace = practical_repo(&container)
         .workspace(&program_id)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(workspace.resolve_runtime().await)
 }
 
 #[tauri::command]
@@ -2130,27 +2037,29 @@ pub async fn prepare_learning_runtime_preset(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(workspace);
+        return Ok(workspace.resolve_runtime().await);
     }
     let prepared = super::runtime_catalog::prepare_container_preset(request.engine, request.preset)
         .await
         .map_err(ApiError::from)?;
-    repo.save_runtime_profile(
-        &SaveLearningRuntimeProfileRequestDto {
-            operation_id: request.operation_id,
-            program_id: request.program_id,
-            profile_id: request.profile_id,
-            expected_revision: None,
-            name: prepared.preset.name,
-            engine: request.engine,
-            image_id: prepared.image_id,
-            command: prepared.preset.command,
-            limits: prepared.preset.limits,
-        },
-        &hash,
-    )
-    .await
-    .map_err(ApiError::from)
+    let workspace = repo
+        .save_runtime_profile(
+            &SaveLearningRuntimeProfileRequestDto {
+                operation_id: request.operation_id,
+                program_id: request.program_id,
+                profile_id: request.profile_id,
+                expected_revision: None,
+                name: prepared.preset.name,
+                engine: request.engine,
+                image_id: prepared.image_id,
+                command: prepared.preset.command,
+                limits: prepared.preset.limits,
+            },
+            &hash,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(workspace.resolve_runtime().await)
 }
 
 #[tauri::command]
@@ -2160,10 +2069,11 @@ pub async fn save_learning_runtime_profile(
     container: State<'_, Container>,
 ) -> Result<LearningPracticalWorkspaceDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
-    practical_repo(&container)
+    let workspace = practical_repo(&container)
         .save_runtime_profile(&request, &hash)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(workspace.resolve_runtime().await)
 }
 
 #[tauri::command]
@@ -2179,7 +2089,7 @@ pub async fn generate_learning_practical_activity(
         .await
         .map_err(ApiError::from)?
     {
-        return Ok(replayed);
+        return Ok(replayed.resolve_runtime().await);
     }
     let program = LearningRepository::new(container.db_pool().clone())
         .get(&request.program_id)
@@ -2215,7 +2125,12 @@ pub async fn generate_learning_practical_activity(
         .filter_map(|source| source.active_version_id.clone())
         .take(12)
         .collect::<Vec<_>>();
-    if source_ids.is_empty() {
+    if source_ids.is_empty()
+        && LearningRepository::new(container.db_pool().clone())
+            .has_source_history(&request.program_id)
+            .await
+            .map_err(ApiError::from)?
+    {
         return Err(ApiError::from(
             crate::shared::error::AppError::InvalidInput(
                 "Add or adopt at least one source before generating a practical activity.".into(),
@@ -2225,13 +2140,13 @@ pub async fn generate_learning_practical_activity(
     let sources = practical_source_versions(&container, &request.program_id, &source_ids)
         .await
         .map_err(ApiError::from)?;
-    let runtime = repo
-        .runtime_generation_context(
-            request.runtime_profile_id.as_deref(),
-            request.builtin_runtime,
-        )
-        .await
-        .map_err(ApiError::from)?;
+    let runtime = super::practical_workspace::runtime_generation_context(
+        &repo,
+        request.runtime_profile_id.as_deref(),
+        request.builtin_runtime,
+    )
+    .await
+    .map_err(ApiError::from)?;
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     let generated = super::practical_generation::generate_activity(
         llm.as_ref(),
@@ -2243,9 +2158,11 @@ pub async fn generate_learning_practical_activity(
     )
     .await
     .map_err(ApiError::from)?;
-    repo.save_generated_activity(&request, &generated, llm.model_name(), &hash)
+    let workspace = repo
+        .save_generated_activity(&request, &generated, llm.model_name(), &hash)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(workspace.resolve_runtime().await)
 }
 
 #[tauri::command]
@@ -2255,8 +2172,7 @@ pub async fn start_learning_practical_run(
     container: State<'_, Container>,
 ) -> Result<LearningPracticalRunDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
-    practical_repo(&container)
-        .start_run(&request, &hash)
+    super::practical_runs::start_run(&practical_repo(&container), &request, &hash)
         .await
         .map_err(ApiError::from)
 }
@@ -2268,8 +2184,7 @@ pub async fn cancel_learning_practical_run(
     container: State<'_, Container>,
 ) -> Result<LearningPracticalRunDto, ApiError> {
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
-    practical_repo(&container)
-        .cancel_run(&request, &hash)
+    super::practical_runs::cancel_run(&practical_repo(&container), &request, &hash)
         .await
         .map_err(ApiError::from)
 }
@@ -2429,15 +2344,15 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let practical = super::practical_repository::LearningPracticalRepository::new(
                 container.db_pool().clone(),
             );
-            tauri::async_runtime::block_on(practical.recover_running_runs())?;
+            tauri::async_runtime::block_on(super::practical_runs::recover_running_runs(
+                &practical,
+            ))?;
             let pending = tauri::async_runtime::block_on(repo.pending_jobs())?;
-            for job in pending {
-                let owned = container.clone();
-                let id = job.id;
-                tauri::async_runtime::spawn(async move {
-                    run_generation_job(owned, id).await;
-                });
-            }
+            tauri::async_runtime::block_on(async {
+                for job in pending {
+                    generation_worker(&container).spawn(job.id);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2459,7 +2374,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_learning_generation_job,
             list_learning_programs,
             get_learning_program,
+            get_learning_lesson_evidence,
             generate_learning_program,
+            cancel_learning_outline,
             accept_learning_program,
             prepare_learning_lesson,
             complete_learning_lesson,

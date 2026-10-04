@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto } from '@/lib/bindings';
+import type { LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 import { LearningStudioPage } from './LearningStudioPage';
@@ -14,7 +14,7 @@ vi.mock('./PlanPanel', () => ({ PlanPanel: () => <div data-testid="plan-panel">P
 vi.mock('./CanvasPanel', () => ({ default: () => <div data-testid="canvas-panel">Canvas view</div> }));
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), get: vi.fn(), generate: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), submit: vi.fn(),
+  list: vi.fn(), get: vi.fn(), generate: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), submit: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
@@ -22,20 +22,25 @@ vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
   flushPendingSaves: mocks.flush,
 }));
 vi.mock('@/lib/api', () => ({ default: {
+  listConversationSpaces: async () => ({ ok: true, data: [] }),
+  listSpaceDocuments: async () => ({ ok: true, data: mocks.documents().map((doc: { id: string; fileName: string }) => ({ documentId: doc.id, fileName: doc.fileName, category: null, modifiedAt: null })) }),
   listLearningPrograms: mocks.list,
   getLearningProgram: mocks.get,
   generateLearningProgram: mocks.generate,
+  cancelLearningOutline: mocks.cancel,
   acceptLearningProgram: mocks.accept,
   prepareLearningLesson: mocks.prepare,
   completeLearningLesson: mocks.complete,
   submitLearningAttempt: mocks.submit,
   getLearningPlan: mocks.plan,
+  getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
+  getLearningAssessmentWorkspace: async (programId: string) => ({ ok: true, data: { programId, outcomes: [], forms: [], blueprints: [], evidence: [], followUps: [] } }),
   getLearningMemory: mocks.memory,
   // Flashcards share the landing page; an unconfigured mock means "no decks".
   listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
   getStudyDeck: mocks.deck,
 } }));
-vi.mock('@/hooks/queries/useLibraryDocumentsQuery', () => ({ useLibraryDocumentsQuery: () => ({ documents: mocks.documents(), isLoading: false, error: null, refreshFiles: vi.fn() }) }));
+
 
 const source = { id: 'source-1', title: 'Field guide', url: 'https://example.org/guide', excerpt: 'A carefully chosen passage.', acquiredAt: 1_790_000_000_000 };
 const quizQuestion = { id: 'quiz-1', kind: 'quiz' as const, prompt: 'Which principle applies?', options: ['First principle', 'Second principle'], sourceIds: ['source-1'] };
@@ -89,6 +94,40 @@ describe('Learning Studio program workflow', () => {
     mocks.flush.mockResolvedValue(true);
   });
 
+  it('shows model progress, cancels pending generation, and retains inputs for a fresh retry', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    let finish!: (value: ReturnType<typeof fail>) => void;
+    let update!: (value: LearningOutlineProgressDto) => void;
+    mocks.generate.mockImplementation((_request, options) => {
+      update = options.onProgress;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    mocks.cancel.mockImplementation(async () => { finish(fail('Course generation cancelled. Your inputs are kept.')); return ok(true); });
+    show('/studio?new=1');
+    await user.type(await screen.findByLabelText('Your goal'), 'Learn Rust ownership');
+    await user.click(screen.getByRole('radio', { name: /Deep dive/ }));
+    await user.click(screen.getByRole('button', { name: 'Create outline' }));
+    const first = mocks.generate.mock.calls[0][1].requestId;
+    await act(async () => update({ stage: 'reviewing', elapsedSeconds: 180, stageSeconds: 20, responseCharacters: 500, modelName: 'Test model' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Reviewing the teaching plan');
+    expect(screen.getByText(/500 characters received/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Cancel generation' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Cancel generation' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create outline' })).toBeEnabled());
+    expect(mocks.cancel).toHaveBeenCalledWith(first);
+    expect(screen.getByLabelText('Your goal')).toHaveValue('Learn Rust ownership');
+    expect(screen.getByRole('radio', { name: /Deep dive/ })).toBeChecked();
+    const oldUpdate = update;
+    await user.click(screen.getByRole('button', { name: 'Create outline' }));
+    expect(mocks.generate.mock.calls[1][1].requestId).not.toBe(first);
+    await act(async () => oldUpdate({ stage: 'repairing', elapsedSeconds: 200, stageSeconds: 0, responseCharacters: 0, modelName: 'Old model' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Starting your course');
+    await act(async () => finish(fail('Course generation timed out while writing the outline. Your inputs are kept.')));
+    expect(await screen.findByRole('alert')).toHaveTextContent('timed out while writing the outline');
+    expect(screen.getByLabelText('Your goal')).toHaveValue('Learn Rust ownership');
+  });
+
   it('opens the builder from the new route, generates a source-backed draft, accepts it, and prepares a lesson after browsing modules', async () => {
     const user = userEvent.setup();
     const draft = program();
@@ -105,10 +144,11 @@ describe('Learning Studio program workflow', () => {
     show('/studio?new=1');
     expect(await screen.findByRole('heading', { name: 'What would you like to learn?' })).toBeVisible();
     await user.type(screen.getByLabelText('Your goal'), 'Understand these ideas and put them to use');
+    await user.click(screen.getByRole('button', { name: 'Add optional materials' }));
     await user.click(await screen.findByRole('checkbox', { name: /Field guide\.pdf/ }));
     await user.click(screen.getByRole('button', { name: 'Create outline' }));
     expect(await screen.findByRole('textbox', { name: 'Program title' })).toHaveValue('A thoughtful course');
-    expect(mocks.generate).toHaveBeenCalledWith({ goal: 'Understand these ideas and put them to use', priorKnowledge: '', minutesPerSession: 30, documentIds: ['document-1'], sourceUrls: [] });
+    expect(mocks.generate).toHaveBeenCalledWith({ goal: 'Understand these ideas and put them to use', priorKnowledge: '', minutesPerSession: 30, documentIds: ['document-1'], sourceUrls: [], courseDepth: 'course' }, expect.objectContaining({ requestId: expect.any(String), onProgress: expect.any(Function) }));
     expect(screen.getByText('Draft outline')).toBeVisible();
     const moduleWorkspace = screen.getByRole('navigation', { name: 'Module workspace' });
     expect(within(moduleWorkspace).getByRole('tab', { name: /^Lessons$/ })).toBeVisible();
@@ -123,10 +163,9 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('button', { name: 'Accept program' }));
     await waitFor(() => expect(mocks.accept).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 0, title: 'My considered plan' }));
     await user.selectOptions(screen.getByLabelText('Module'), 'module-2');
-    expect(screen.getByText(/Putting it together gives the course/)).toBeVisible();
+    expect(screen.getAllByText(/Putting it together gives the course/).some((element) => element.closest('[hidden]') === null)).toBe(true);
     expect(mocks.complete).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /Compare approaches/ }));
-    const compareCard = screen.getByText('Compare approaches').closest('article');
+    const compareCard = screen.getByRole('button', { name: /Compare approaches.*Outline/ }).closest('article');
     expect(compareCard).not.toBeNull();
     await user.click(within(compareCard as HTMLElement).getByRole('button', { name: 'Prepare lesson' }));
     await waitFor(() => expect(mocks.prepare).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-3', expectedRevision: 1 }));

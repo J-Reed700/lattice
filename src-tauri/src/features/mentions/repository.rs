@@ -257,7 +257,7 @@ impl MentionRepositoryPort for MentionRepository {
     }
 
     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<MentionData>, AppError> {
-        let search_pattern = crate::shared::sql_like::contains_pattern(query);
+        let search_pattern = crate::shared::persistence::sql_like::contains_pattern(query);
 
         let rows = sqlx::query(
             r#"

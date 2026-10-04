@@ -84,7 +84,11 @@ export function ActivityComposer({
   onClose,
   onCreated,
   onRequestRuntimeSetup,
+  initialBrief,
+  initialKind,
 }: {
+  initialBrief?: string;
+  initialKind?: LearningPracticalActivityKind;
   program: LearningProgramDto;
   lesson: LearningLessonDto | null;
   profiles: LearningPracticalWorkspaceDto["runtimeProfiles"];
@@ -96,8 +100,8 @@ export function ActivityComposer({
   ) => Promise<void>;
   onRequestRuntimeSetup: () => void;
 }) {
-  const [kind, setKind] = useState<LearningPracticalActivityKind>("code_lab");
-  const [brief, setBrief] = useState("");
+  const [kind, setKind] = useState<LearningPracticalActivityKind>(initialKind ?? "code_lab");
+  const [brief, setBrief] = useState(initialBrief ?? "");
   const [runtimeSelection, setRuntimeSelection] = useState("");
   const [mode, setMode] = useState<LearningPracticeMode>("practice");
   const [aids, setAids] = useState<string[]>(["Saved sources"]);
@@ -184,7 +188,7 @@ export function ActivityComposer({
             </DialogTitle>
             <DialogDescription className="mt-2 text-sm leading-6 text-text-secondary">
               For {lesson?.title ?? "this lesson"}. The brief is generated from
-              the accepted lesson and saved sources.
+              the accepted lesson and any saved sources.
             </DialogDescription>
           </div>
         </div>

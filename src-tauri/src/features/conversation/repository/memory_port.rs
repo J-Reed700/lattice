@@ -10,7 +10,7 @@ use crate::application::ports::conversation_memory::{
     MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions, RecallCandidates,
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage,
 };
 use crate::shared::error::Result;

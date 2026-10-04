@@ -416,6 +416,78 @@ test('acknowledges native quit and prevents further editing while closing', asyn
 
 // Exercise the decomposed sidebar as one renderer flow, backed by a simulated
 // repository. This catches broken prop/hook wiring that isolated hooks miss.
+test('conversation outline navigates long virtualized replies and tracks the reading position', async ({ page }) => {
+  await page.addInitScript((settings) => {
+    const stamp = '2026-10-03T10:00:00Z';
+    const messages = Array.from({ length: 60 }, (_, index) => ({
+      id: `outline-${index}`, conversationId: 'outline-chat', role: index % 2 === 0 ? 'user' : 'assistant',
+      content: index % 2 === 0 ? `Question ${index / 2 + 1}: Explain this part of the project.`
+        : `Answer ${Math.ceil(index / 2)}.\n\n${'This paragraph explains the design in detail, including the choices we made and how they affect the project. '.repeat(12)}\n\n`.repeat(9),
+      tokens: 100, status: 'completed', createdAt: stamp,
+    }));
+    const conversation = { id: 'outline-chat', title: 'Long conversation', modelName: 'test-model', createdAt: stamp, updatedAt: stamp, messageCount: messages.length, totalTokens: 6000, spaceId: 'space_general', isArchived: false };
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command) => {
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
+      if (command === 'plugin:conversation|get_conversation') return { conversation };
+      if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: messages.length };
+      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      throw new Error(`Unsupported outline fixture command: ${command}`);
+    };
+  }, makeAppSettings());
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+  await page.goto('/chat?conversationId=outline-chat');
+  const navigation = page.getByRole('navigation', { name: 'Conversation navigation' });
+  await expect(navigation).toBeVisible();
+  await expect(navigation.getByTitle('Message 60 of 60 · Assistant')).toBeVisible();
+  await navigation.getByRole('button', { name: 'Expand conversation outline' }).click();
+  const checkpoints = navigation.getByLabel('Message checkpoints');
+  await checkpoints.evaluate((element) => { element.scrollTop = 11 * 60; });
+  await navigation.getByRole('button', { name: /^Message 12, Assistant:/ }).click();
+  await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toHaveAttribute('aria-current', 'location');
+
+  // A jump to a very long answer must show its beginning, not its middle.
+  const answer = page.locator('#message-outline-11');
+  await expect.poll(() => answer.evaluate((element) => {
+    const scroller = element.closest('.overflow-y-auto')!;
+    return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top);
+  })).toBeLessThan(50);
+  const scroller = page.locator('.chat-panel .overflow-y-auto').first();
+  await scroller.evaluate((element) => { element.scrollTop += 1000; });
+  await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toHaveAttribute('aria-current', 'location');
+  await answer.evaluate((element) => {
+    const scroll = element.closest('.overflow-y-auto')!;
+    const row = element.closest('.chat-message-row')!;
+    scroll.scrollTop += row.getBoundingClientRect().bottom - scroll.getBoundingClientRect().top + 1;
+  });
+  await expect(navigation.getByRole('button', { name: /^Message 13, You:/ })).toHaveAttribute('aria-current', 'location');
+  await navigation.getByRole('button', { name: 'Previous message' }).click();
+  await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toHaveAttribute('aria-current', 'location');
+  await page.screenshot({ path: 'e2e-results/artifacts/conversation-outline-desktop.png' });
+
+  const beforeCollapse = await scroller.evaluate((element) => element.scrollTop);
+  await navigation.getByRole('button', { name: 'Collapse conversation outline' }).click();
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBeCloseTo(beforeCollapse, 0);
+  await navigation.getByRole('button', { name: 'Jump to latest message' }).click();
+  await expect(page.locator('#message-outline-59')).toBeVisible();
+  await expect.poll(() => scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(100);
+  expect(await page.locator('.chat-message-row').count()).toBeLessThan(20);
+
+  // The outline stays usable in the narrower chat panes used by Explorer.
+  await page.setViewportSize({ width: 760, height: 720 });
+  await navigation.getByRole('button', { name: 'Expand conversation outline' }).click();
+  await expect(checkpoints).toBeVisible();
+  await page.screenshot({ path: 'e2e-results/artifacts/conversation-outline-narrow.png' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.reload();
+  await page.getByRole('button', { name: 'Select conversation: Long conversation', exact: true }).click();
+  await expect(navigation.getByRole('button', { name: 'Collapse conversation outline' })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test('chat sidebar renames a conversation and opens the spaces editor', async ({ page }) => {
   await page.addInitScript((settings) => {
     const stamp = new Date().toISOString();

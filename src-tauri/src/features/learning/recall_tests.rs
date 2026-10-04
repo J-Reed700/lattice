@@ -648,20 +648,3 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
     )
     .is_err());
 }
-
-#[test]
-fn selectors_preserve_unicode_offsets_and_case_insensitive_lexical_hits() -> Result<()> {
-    let text = "🦀 Resolver data preserves Byte order in context.";
-    let offset = super::recall_repository::best_match_byte(text, "byte ORDER");
-    assert_eq!(
-        text.get(offset..).unwrap_or_default().chars().next(),
-        Some('B')
-    );
-    let context = super::recall_repository::context_text(text, offset, 8);
-    assert_eq!(context, "Byte ord");
-    let selector = super::recall_repository::fallback_selector(text, "byte order");
-    let exact = selector
-        .map_err(|error| crate::shared::error::AppError::InternalError(error.to_string()))?;
-    assert_eq!(exact.exact, "Byte");
-    Ok(())
-}

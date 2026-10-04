@@ -14,8 +14,8 @@
 use crate::domain::entities::document::{
     Category, Document as DomainDocument, DocumentStatus, Language,
 };
-use crate::shared::domain_types::{DocumentId, ValidatedFilePath};
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::{DocumentId, ValidatedFilePath};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

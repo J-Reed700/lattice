@@ -14,7 +14,7 @@
 
 use crate::audit_success;
 use crate::domain::download::DownloadOperationState;
-use crate::domain::embedding_constants::default_embedding_model;
+use crate::domain::models::embedding_defaults::default_embedding_model;
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::features::llm::dto::DownloadModelRequestDto;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
@@ -83,7 +83,9 @@ pub async fn download_default_embedding_model_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: download_default_embedding_model - ENTRY");
 
-    let default = default_embedding_model(crate::shared::utils::gpu_acceleration_available());
+    let default = default_embedding_model(
+        crate::infrastructure::ml::compute_device::gpu_acceleration_available(),
+    );
     let model_id = default.curated_id.to_string();
     let model_name = default.display_name.to_string();
 

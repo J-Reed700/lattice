@@ -56,6 +56,61 @@ async function expectNoUnsupportedIpc(page: Page) {
   expect(unsupported).toEqual([]);
 }
 
+test("Learning Studio reference MVP exposes saved lesson evidence at desktop and narrow widths", async ({ page, browserName }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.getByRole("button", { name: "View lesson evidence" }).first().click();
+  const evidence = page.getByRole("region", { name: "Lesson evidence" }).first();
+  await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
+  await evidence.locator("summary").filter({ hasText: "A careful comparison records the chosen measure and observation period." }).click();
+  await expect(evidence.getByText("The saved reference supports this teaching claim.")).toBeVisible();
+  await evidence.locator("details details summary").click();
+  await expect(evidence.getByText(/Saved version/)).toBeVisible();
+  await expect(evidence.getByRole("link", { name: "Open original page" })).toHaveAttribute("href", /^https:/);
+  await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("Learning Studio guided exercise saves, hints, submits and revises in the lesson", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  const guided = page.getByRole("region", { name: "Program workspace content" }).getByLabel("Guided exercise", { exact: true });
+  await guided.getByRole("button", { name: "Start guided exercise" }).click();
+  const answer = guided.getByRole("textbox", { name: "Your working" });
+  await answer.fill("I would compare the same measure over an equal observation period, then note the sample limits.");
+  await guided.getByRole("button", { name: "Check my reasoning" }).click();
+  await expect(guided.getByText("Feedback on your reasoning", { exact: true })).toBeVisible();
+  await guided.getByRole("button", { name: "Give me a hint" }).click();
+  await expect(guided.getByRole("button", { name: "Next hint" })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
+  await expect(answer).toHaveValue(/equal observation period/);
+  await guided.getByRole("button", { name: "Submit guided response" }).click();
+  await expect(guided.getByText("Your feedback and next revision", { exact: true })).toBeVisible();
+  await guided.getByRole("button", { name: "Revise this response" }).click();
+  await expect(answer).toBeEnabled();
+  await expect(answer).toHaveValue(/equal observation period/);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("Learning Studio starting-point tasks save answers before showing actionable feedback", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.getByRole("button", { name: "Check your starting point", exact: true }).click();
+  await page.getByRole("button", { name: "Check my starting point", exact: true }).click();
+  await page.getByRole("textbox", { name: "Your reasoning", exact: true }).fill("I would compare the measurements over the same observation period.");
+  await page.getByRole("button", { name: "Get my starting-point feedback", exact: true }).click();
+  await expect(page.getByText("Worth practicing", { exact: true })).toBeVisible();
+  await expect(page.getByText("Name a consistent observation period before comparing the measurements.", { exact: true })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await expectNoUnsupportedIpc(page);
+});
+
 async function runLearningStudioJourney(
   page: Page,
   width: number,
@@ -2296,5 +2351,77 @@ test("C# files remain readable at 390px and search controls have contrast in bot
     for (const button of contrast) expect(button.ratio, `${theme} ${button.label}`).toBeGreaterThanOrEqual(4.5);
     await page.screenshot({ path: test.info().outputPath(`studio-activity-dialog-${theme}-390px.png`), animations: "disabled" });
   }
+  await expectNoUnsupportedIpc(page);
+});
+
+
+test("topic-only course builder exposes depth, optional Spaces, and a complete syllabus", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await page.goto("/studio?new=1");
+  await expect(page.getByRole("heading", { name: "What would you like to learn?" })).toBeVisible();
+  await page.getByLabel("Your goal", { exact: true }).fill("Learn to design and interpret experiments");
+  await page.getByRole("radio", { name: /Deep dive/ }).check();
+  await expect(page.getByText("6–10 modules · 24–60 lessons")).toBeVisible();
+  await page.getByRole("heading", { name: "What would you like to learn?" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "e2e-results/study-course-builder.png", fullPage: true });
+  await page.getByRole("button", { name: "Add optional materials" }).click();
+  await expect(page.getByLabel("Document Space")).toHaveValue("space_general");
+  await expect(page.getByText("No indexed documents in this Space.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Create outline", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Program title" })).toHaveValue("Learn to design and interpret experiments");
+  await expect(page.getByRole("region", { name: "Course syllabus" })).toBeVisible();
+  await expect(page.getByText("Topic-based course · AI-authored", { exact: false })).toBeVisible();
+  await expectNoUnsupportedIpc(page);
+});
+
+
+test("topic course creation stays usable at 390px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installLearningStudioBackend(page);
+  await page.goto("/studio?new=1");
+  await page.getByLabel("Your goal", { exact: true }).fill("Learn statistics for experiments");
+  await page.getByRole("radio", { name: /Complete course/ }).check();
+  const overflow = await page.evaluate(() => Math.max(...Array.from(document.querySelectorAll("main, main *")).filter((element) => element.clientWidth > 0 && getComputedStyle(element).overflowX !== "hidden").map((element) => element.scrollWidth - element.clientWidth)));
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.getByRole("button", { name: "Create outline", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Program title" })).toHaveValue("Learn statistics for experiments");
+  await expect(page.getByRole("region", { name: "Course syllabus" })).toBeVisible();
+  await expectNoUnsupportedIpc(page);
+});
+
+
+test("course generation shows real stages and permits cancellation without losing the form", async ({ page, browserName }) => {
+  await installLearningStudioBackend(page);
+  await page.goto("/studio?new=1");
+  await page.getByLabel("Your goal").fill("Learn Rust ownership and build a small command-line tool");
+  await page.getByRole("radio", { name: /Deep dive/ }).check();
+  await page.getByRole("button", { name: "Add optional materials" }).click();
+  await page.getByRole("textbox", { name: /Reference URLs/ }).fill("https://doc.rust-lang.org/book/print.html");
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_OUTLINE_TEST__: { hold: boolean } }).__LATTICE_OUTLINE_TEST__.hold = true;
+  });
+  await page.getByRole("button", { name: "Create outline", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Course generation progress" });
+  await expect(panel.getByRole("status")).toHaveText("Reading your references");
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_OUTLINE_TEST__: { update: (value: unknown) => void } }).__LATTICE_OUTLINE_TEST__.update({
+      stage: "repairing", elapsedSeconds: 240, stageSeconds: 95, responseCharacters: 12480, modelName: "Progress fixture model",
+    });
+  });
+  await expect(panel.getByRole("status")).toHaveText("Revising the course outline");
+  await expect(panel.getByText(/12,480 characters received/)).toBeVisible();
+  await panel.scrollIntoViewIfNeeded();
+  if (browserName === "chromium") await page.screenshot({ path: "e2e-results/learning-outline-progress-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  await expect(panel.getByRole("button", { name: "Cancel generation" })).toBeEnabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (browserName === "chromium") await page.screenshot({ path: "e2e-results/learning-outline-progress-mobile.png" });
+  await panel.getByRole("button", { name: "Cancel generation" }).click();
+  await expect(page.getByRole("alert")).toContainText("generation cancelled");
+  await expect(page.getByLabel("Your goal")).toHaveValue("Learn Rust ownership and build a small command-line tool");
+  await expect(page.getByRole("textbox", { name: /Reference URLs/ })).toHaveValue("https://doc.rust-lang.org/book/print.html");
+  await expect(page.getByRole("radio", { name: /Deep dive/ })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Create outline", exact: true })).toBeEnabled();
   await expectNoUnsupportedIpc(page);
 });

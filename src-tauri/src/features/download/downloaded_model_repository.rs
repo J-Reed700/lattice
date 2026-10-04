@@ -2,8 +2,8 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
-use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
-use crate::domain::model_metadata::ModelType;
+use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use crate::domain::models::metadata::ModelType;
 use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};

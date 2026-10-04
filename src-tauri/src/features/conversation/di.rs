@@ -1,5 +1,7 @@
 //! Conversation feature dependency injection.
 
+use crate::features::conversation::context_repository::SqliteConversationContext;
+use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use std::sync::Arc;
 
 use crate::application::ports::ConversationHistoryPort;
@@ -35,13 +37,8 @@ pub struct ConversationDi {
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
-    let document_scope =
-        Arc::new(crate::infrastructure::document_scope::SqliteDocumentScope::new(db_pool.clone()));
-    let conversation_context = Arc::new(
-        crate::infrastructure::conversation_context::SqliteConversationContext::new(
-            db_pool.clone(),
-        ),
-    );
+    let document_scope = Arc::new(SqliteDocumentScope::new(db_pool.clone()));
+    let conversation_context = Arc::new(SqliteConversationContext::new(db_pool.clone()));
     let repository = Arc::new(ConversationRepository::new(db_pool));
     let conversation_memory = repository.clone()
         as Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;

@@ -271,7 +271,7 @@ impl ConversationRepository {
     )
     .bind(journal_space_id)
     .bind(conversation_id)
-    .bind(crate::shared::time::now_db_timestamp())
+    .bind(crate::shared::persistence::timestamps::now_db_timestamp())
     .execute(&self.pool)
     .await
     .map_err(|e| {

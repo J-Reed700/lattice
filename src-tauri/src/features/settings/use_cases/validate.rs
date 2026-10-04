@@ -94,7 +94,7 @@ impl ValidateSettingsUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::MockSettingsRepository;
-    use crate::shared::test_paths;
+    use crate::shared::testing::paths as test_paths;
 
     #[test]
     fn test_validate_default_settings() {

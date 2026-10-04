@@ -36,7 +36,7 @@
 //! ```
 
 use crate::application::ports::model_storage::ModelStoragePort;
-use crate::domain::curated_models::get_all_curated_models;
+use crate::domain::models::curated::get_all_curated_models;
 use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use crate::shared::error::AppError;
@@ -266,7 +266,7 @@ mod tests {
     use crate::application::ports::model_storage::{
         DownloadedModel as StoredModel, MockModelStoragePort,
     };
-    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use crate::infrastructure::persistence::repositories::DownloadedModelRepository as ConcreteRepo;
     use chrono::Utc;
     use sqlx::sqlite::SqlitePoolOptions;

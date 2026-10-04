@@ -46,7 +46,7 @@
 use crate::features::function_calling::dto::CleanArticle;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::stealth;
+use crate::shared::http::stealth;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lazy_regex::regex;
@@ -493,7 +493,7 @@ impl ArticleExtractorService {
             text.to_string()
         } else {
             // Find last space before 200 chars
-            let truncated = &text[..crate::shared::text_utils::floor_char_boundary(text, 200)];
+            let truncated = &text[..crate::shared::text::floor_char_boundary(text, 200)];
             if let Some(last_space) = truncated.rfind(' ') {
                 format!("{}...", &text[..last_space])
             } else {

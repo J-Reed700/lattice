@@ -416,19 +416,43 @@ const MAX_LOCATED: usize = 20;
 ///
 /// A model that has read `contracts/effect_api.hpp` often cites it as
 /// `effect_api.hpp:12`, or with the folder's absolute path. The path itself
-/// wins when it is a file in the folder. Otherwise the files whose relative
-/// path ends with it, segment by segment, come first, then any file with the
-/// same name; each group shortest path first, case ignored. Empty when
-/// nothing in the folder matches.
+/// wins when it is a file in the folder. Otherwise return only paths ending
+/// with every cited segment. If none do, allow omitted intermediate folders,
+/// but still require every named folder in order and the exact filename.
+/// Matching ignores case; equally strong matches are shortest first. A bare
+/// filename can match anywhere, but a directory-qualified reference never
+/// falls back to unrelated files that merely share its filename.
 pub fn locate_file(scope: &Scope, path: &str) -> Result<Vec<String>> {
-    let root = format!("{}/", scope.root_string().trim_end_matches('/'));
-    let wanted = path.trim();
-    let wanted = wanted.strip_prefix(root.as_str()).unwrap_or(wanted);
-    let wanted = wanted.trim_start_matches("./").trim_start_matches('/');
+    locate_file_with_bounds(scope, path, WalkBounds::default())
+}
+
+pub(super) fn locate_file_with_bounds(
+    scope: &Scope,
+    path: &str,
+    bounds: WalkBounds,
+) -> Result<Vec<String>> {
+    let root = format!(
+        "{}/",
+        scope.root_string().replace('\\', "/").trim_end_matches('/')
+    );
+    let normalized = path.trim().replace('\\', "/");
+    let wanted = normalized
+        .strip_prefix(root.as_str())
+        .unwrap_or(&normalized);
+    let wanted = wanted
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
-    if let Ok(found) = scope.resolve(wanted) {
+    if wanted.split('/').any(|part| part == "..") {
+        return Err(AppError::PermissionDenied(format!(
+            "`..` is not allowed in an Explorer path: {path}"
+        )));
+    }
+    if let Ok(found) = scope.resolve(&wanted) {
         if found.canonical.is_file() {
             return Ok(vec![found.relative]);
         }
@@ -436,14 +460,14 @@ pub fn locate_file(scope: &Scope, path: &str) -> Result<Vec<String>> {
 
     let wanted = wanted.to_lowercase();
     let suffix = format!("/{wanted}");
-    let name = wanted.rsplit('/').next().unwrap_or(&wanted).to_string();
-    let name_suffix = format!("/{name}");
-    let deadline = Instant::now() + WalkBounds::default().time_budget;
+    let deadline = Instant::now() + bounds.time_budget;
     let mut visited = 0usize;
-    let (mut by_path, mut by_name) = (Vec::new(), Vec::new());
+    let mut truncated = false;
+    let (mut by_path, mut by_abbreviation) = (Vec::new(), Vec::new());
     walk_files(scope, None, |file| {
         visited += 1;
-        if visited > WalkBounds::default().max_files || Instant::now() >= deadline {
+        if visited > bounds.max_files || Instant::now() >= deadline {
+            truncated = true;
             return false;
         }
         let Some(relative) = scope.relative_of(file) else {
@@ -452,19 +476,35 @@ pub fn locate_file(scope: &Scope, path: &str) -> Result<Vec<String>> {
         let lower = relative.to_lowercase();
         if lower == wanted || lower.ends_with(&suffix) {
             by_path.push(relative);
-        } else if lower == name || lower.ends_with(&name_suffix) {
-            by_name.push(relative);
+        } else {
+            // `src/crash/mod.rs` can mean `src/infrastructure/crash/mod.rs`.
+            // Consume components from the filename back so named folders
+            // cannot match substrings, appear out of order, or be discarded.
+            let mut components = lower.rsplit('/');
+            let mut cited = wanted.rsplit('/');
+            if components.next() == cited.next()
+                && cited.all(|part| components.by_ref().any(|component| component == part))
+            {
+                by_abbreviation.push(relative);
+            }
         }
         true
     });
-    let shortest_first = |paths: &mut Vec<String>| {
-        paths.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    // The viewer automatically opens a sole match. An incomplete walk cannot
+    // establish uniqueness or rule out a stronger match later in the tree.
+    if truncated {
+        return Err(AppError::InvalidInput(
+            "File lookup reached this folder's search limit. Use a more complete path.".to_string(),
+        ));
+    }
+    let mut matches = if by_path.is_empty() {
+        by_abbreviation
+    } else {
+        by_path
     };
-    shortest_first(&mut by_path);
-    shortest_first(&mut by_name);
-    by_path.extend(by_name);
-    by_path.truncate(MAX_LOCATED);
-    Ok(by_path)
+    matches.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    matches.truncate(MAX_LOCATED);
+    Ok(matches)
 }
 
 type PathMatcher = Box<dyn Fn(&str) -> bool>;

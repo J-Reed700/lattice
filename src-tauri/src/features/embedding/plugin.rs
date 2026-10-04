@@ -8,7 +8,7 @@ use crate::{
         self as embeddings, EmbeddingOperation, EmbeddingResponse, EmbeddingState,
     },
     interfaces::di::Container,
-    shared::api_result::ApiError,
+    shared::ipc::ApiError,
 };
 use tauri::{
     plugin::{Builder, TauriPlugin},

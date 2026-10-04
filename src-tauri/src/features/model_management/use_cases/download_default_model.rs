@@ -27,7 +27,7 @@
 //! println!("Downloaded: {} ({} bytes)", response.model_name, response.file_size_bytes);
 //! ```
 
-use crate::domain::embedding_constants::{
+use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
@@ -201,7 +201,7 @@ impl DownloadDefaultModelUseCase {
 mod tests {
     use super::*;
     use crate::domain::download::{DownloadError, DownloadSession};
-    use crate::domain::embedding_constants::{
+    use crate::domain::models::embedding_defaults::{
         DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
     };
     use crate::features::download::manager::DownloadEvent;

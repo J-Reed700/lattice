@@ -5,6 +5,349 @@ that a learner has mastered a subject, is ready for employment, or will retain
 material. A release result is valid only for the exact commit, platform, model,
 and optional runtime named in its retained artifacts.
 
+## Reference collection MVP — 2026-10-04
+
+Learning Studio now uses the same immutable reference collection for lesson
+writing, claim checking, and the “Search related saved material” inspector.
+The configured embedding model supplies persisted passage vectors; keyword BM25
+and cosine rankings are combined with reciprocal rank fusion. The MVP reuses
+`learning_source_retrieval_index`, with an exact scan of the course vectors,
+rather than placing private historical snapshots in global document search.
+The lesson writer retrieves for its objective; the verifier independently
+retrieves for every extracted claim. Ranking scores are not correctness scores.
+
+New course creation retains complete captured source text instead of only its
+outline excerpts. Library documents must finish indexing before capture. Web
+references use the existing safe DNS/redirect/body-limited reader with a separate
+two-million-character allowance; a short chat cache cannot masquerade as a whole
+book. The reference path does not use the bounded browser-display fallback.
+Reference extraction keeps headings, ordered lists, code indentation, and table
+rows. Imports are one page per URL; there is no website crawler or automatic
+source selection. The extraction can still omit information in images, complex tables,
+or dynamic pages. Review the saved source text before relying on it.
+
+Bounds: two million characters per source, twenty million per retrieval collection,
+and the existing source-count limits. Old excerpt-only or truncated active
+sources block new background lesson preparation until replaced with complete
+material. Topic-only outlines are allowed; lesson preparation requires references.
+Completed per-source indexes are reused. Interrupted indexing cannot publish a
+partial version; that version is retried, while completed versions are reused.
+Changing the embedding identity or passage layout rebuilds its cached vectors.
+If no embedding model is ready, the explicit keyword fallback remains available.
+An inference error during indexing/querying fails the operation rather than
+recording a successful hybrid check.
+
+The production CSV branches have been removed. The CSV example remains only a
+regression fixture. Python and JavaScript worked examples still run in restricted
+runtimes. Other languages, including Rust, receive evidence checks, with an
+explicit “not compiled or executed” disclosure in the lesson report.
+
+To try the MVP:
+
+1. Run the current desktop development build (`npm run tauri:dev`).
+2. In Studio, create a focused course. Add an indexed library document or a
+   reference URL in Materials. For a larger Rust collection, use the official
+   [Rust Book print page](https://doc.rust-lang.org/book/print.html). A narrower
+   goal such as ownership and borrowing is easier to evaluate first.
+3. Accept the outline. In Sources, inspect the saved text and use Search related
+   saved material to check that relevant passages can be found. You can also add
+   pasted text, individual recipe pages, or biology reading here.
+4. Prepare a lesson. Open **View lesson evidence** above its teaching sections.
+   Inspect the claim, supporting quote, retrieved passages, original source
+   version, checker, retrieval mode, and execution limitations.
+5. Add/adopt/delete a source, then reopen the report: it should identify the changed
+   collection. In-flight publication rejects any changed active source set. The
+   old lesson retains its historical evidence; automatic re-verification is not
+   part of this MVP.
+
+The public evidence DTO omits assessment claims, private answer keys, and their
+rationales. Existing or imported lessons without a report are explicitly labeled.
+Reports remain bound to lesson content and full source hashes, using
+`lesson-evidence-v2`. The author and checker still use the configured course model;
+independently configured judges, human-calibrated accuracy measurements, curriculum
+coverage evaluation, general website import, and additional executable validators
+remain follow-up work. These are reliability mechanisms, not a correctness guarantee.
+
+Verification results for this MVP:
+
+- Learning backend suite: 130 passed; six opt-in tests skipped in the suite.
+  Focused retrieval and verifier tests were rerun after final fixes.
+- Web-service tests: 75 passed, three opt-in tests skipped. Existing chat verifier:
+  50 passed, one opt-in test skipped.
+- Learning frontend: 154 tests passed. Chromium and WebKit each passed the evidence
+  report journey at desktop and narrow viewport widths.
+- The opt-in live Rust Book fetch passed separately: 1,333,339 characters, no
+  truncation, final appendix present, using the production reference reader.
+- TypeScript, IPC contracts, desktop command permissions, SQL contracts, Rust
+  architecture boundaries, formatting and strict library Clippy passed.
+
+Retained logs and source hashes are under
+`e2e-results/learning-reference-mvp/2026-10-04/`. Browser fixtures validate the UI;
+deterministic embeddings and model fixtures validate retrieval, repair, and
+publication boundaries. The live fetch verifies acquisition, not model quality.
+No live-model lesson-generation or factual-accuracy evaluation was run for this MVP.
+
+## Evidence-gated lesson preparation — 2026-10-04
+
+The first content-verification slice reuses the chat claim checker and passage
+ranker under a strict lesson policy. Preparation now extracts and audits claims,
+checks immutable full-text evidence, executes complete Python/JavaScript worked
+examples, and rechecks one evidence-driven repair. Both publication paths require
+a revision-bound, backend-only report in the same transaction as the ready state.
+The report includes source hashes, coverage findings, checker identity and runtime
+observations; it contains private answer-key claims and is not a learner DTO.
+
+Verification on the local working tree:
+
+- Learning Studio library suite: **129 passed**, five optional container checks
+  skipped. This includes six new verification regressions and real Python/WASI
+  and JavaScript execution.
+- Existing chat verification suite: **50 passed**, one optional live-model check
+  skipped. Legacy chat judgment and lexical fallback behavior remain covered.
+- CSV regression: a scripted checker rejects the false whitespace claim, the
+  repair receives captured evidence and independently authored runtime fixtures,
+  and the corrected revision passes rechecking and persists with its report.
+- Missing/invalid evidence, incomplete claim coverage, fabricated quotes,
+  truncated and uncertain judgments, changed content, inactive sources and
+  absent reports block publication. Failed publication preserves the revision.
+- SQL contracts: 1,226 statements prepared against 32 migrations; 74 dynamic
+  fragments remain covered through repository tests. Rust layer boundaries,
+  formatting, strict library Clippy (`-D warnings`), and patch whitespace checks passed.
+
+Logs and source hashes are retained under
+`e2e-results/learning-verification/2026-10-04/`.
+
+Historical first-slice behavior included automatic Python CSV reference acquisition.
+The reference collection MVP above removes that topic-specific behavior. General
+topic/claim research and independent checker-model selection remain follow-up work;
+all topics require suitable saved references. Existing ready/imported lessons are not
+retroactively certified. These deterministic model fixtures establish pipeline
+and persistence behavior, not live-model factual accuracy or repair quality on
+unseen lessons; the live source-acquisition path and held-out evaluations still
+need separate evidence. See the
+[implementation scope and research plan](../design/2026-10-04-learning-content-verification.md).
+
+## Interactive teaching and placement review — 2026-10-04
+
+The teaching loop now includes saved, in-lesson guided exercises, progressive
+hints, critique, task-specific rubric feedback, and revisions that retain the
+original submission. Revision sessions copy the original task, rubric, sources,
+and answer, expose previous feedback, and remain assisted practice.
+
+Curricula now persist prerequisite links and structured project milestones.
+Lesson authoring receives the course sequence and recent lesson recaps. Curriculum,
+lesson, placement-task, and assessment-item authoring use an additional AI review
+with one repair and re-review. Schema violations and short teaching blocks also
+enter the repair path. Review is calibrated to the authoring stage: outlines do
+not need finished exercises, and later lessons may rely on earlier learning.
+The final review receives the original findings and checks their resolution plus
+concrete newly introduced errors; optional new suggestions do not become
+publication blockers. Unresolved blocking defects prevent publishing the candidate.
+Lesson multiple-choice keys receive an additional blinded check: the model solves
+the questions without seeing the proposed keys or explanations. Disagreements
+and ambiguous options enter the same bounded repair, then are checked again.
+Every lesson section also requires a review finding with an exact quote from its
+body. Missing sections and invented review quotes are rejected, and a section
+marked defective enters repair even when the overall issue list is empty. The
+same factual and product-capability checks apply after repair. This remains an AI
+check, not a guarantee of correctness.
+
+Optional placement uses short performance tasks with private keys, autosaved
+answers, revision conflict recovery, and feedback tied to exact submitted text.
+Recommendations suggest study or an optional module challenge. Challenges can be
+authored from accepted objectives before lesson preparation. The next-step control
+uses unfinished work, placement, missed outcomes, newer evidence, guided and
+independent submissions, and due recall; it never silently completes lessons.
+The lesson-preparation job path accepts an explicitly selected unfinished lesson
+outside course order, preserves ordered batches, and follows a stable retry chain
+after a failure or interruption.
+
+A live Qwen feedback matrix exposed an uncertain response receiving numeric zeros.
+The grader now requires null scores for uncertain judgments and the backend strips
+numeric scores from uncertain results. The retained initial failure is useful
+regression evidence, not a passing model-quality result. The first complete-course
+trial also exposed an overly broad focused-course goal and a reviewer confusing
+outline requirements with prepared lesson content. The reviewer context was fixed,
+and the revised synthetic goal explicitly scopes a small CSV expense summarizer.
+Agent inspection and local Python execution of the first prepared lesson also found incorrect question keys
+and an example whose leading newline changed its output. The general critique
+missed these, motivating the blinded key check and explicit example tracing.
+The initial harness disabled model reasoning; it now forwards the same reasoning
+controls as the production llama.cpp adapter. A retained reasoning-enabled probe
+identified both incorrect keys in that lesson. The earlier non-reasoning runs
+remain labeled as such and cannot establish production model quality.
+
+With production reasoning controls, the initial HTTP-based feedback matrix passed: correct work
+scored 8/8, incorrect work 0/8, partial work 6/8, and uncertain work had null
+scores. The orienting hint did not reveal the solution. These are four synthetic
+answers and one hint, not a broad grading benchmark. A full-lesson request then
+exceeded the former three-minute timeout. Material requests now allow five
+minutes, lesson preparation allows fifteen minutes including review and repair,
+and the command wait allows the worker to finish or report its failure.
+The harness now delegates to the actual llama.cpp streaming/retry adapter rather
+than duplicating its HTTP transport. The first full lesson completed through that
+adapter in 218 seconds. Its general review exhausted the initial 3,000-token
+allowance before producing a judgment, so that review now requests up to 6,000
+tokens within the provider's configured ceiling. Blinded checks also reject
+impossible question premises; the quality review rejects unsupported promises
+that written tutoring will execute code or provide external expert review.
+
+The first actual production-adapter grading run rejected abbreviated evidence
+quotes that used ellipses. Grading now explicitly requests continuous exact
+quotes, budgets output for the rubric size, and makes at most one targeted repair
+before rejecting invalid feedback. Deterministic checks cover successful evidence
+repair and repeated invalid feedback; uncertain judgments still lose all numeric
+scores. The subsequent production-adapter matrix passed all four cases (8/8,
+0/8, 6/8, and null scores) and the orienting hint in 95 seconds. The source
+configuration and saved application settings were not modified.
+
+The nine-lesson live course is **not a passing end-to-end result**. The initial
+review accepted a first lesson that still incorrectly described whitespace
+handling and memory usage, and promised that the written tutor would run code.
+The run was stopped during lesson two after these defects were identified. Its
+saved first lesson is retained as failure evidence, not approved learning
+material. That finding motivated the section-by-section review above and a
+separate opt-in retained-lesson regression. Full-course completion, the final
+checkpoint, and a native learner journey remain unverified for this version.
+
+The retained-lesson regression also **failed** (236 seconds). The stricter review
+identified header-whitespace and tutor-execution defects, but duplicated a section
+index, omitted the recap, and reformatted several quotes. The backend rejected
+that invalid review before repair or publication. The model additionally claimed
+that empty CSV lines produce spurious rows; local Python execution shows that
+`DictReader` skips empty data lines. It also missed the false memory-use claim.
+These findings establish a remaining model-quality limitation. Requiring section
+coverage detects incomplete review output; it does not make a model's factual
+judgments reliable. This run is retained without retrying until it passes, and no
+full-course or Coursera-level content-quality claim is supported by these checks.
+
+
+
+Deterministic and native validation:
+
+- All 151 component tests passed; the additional submission-conflict test also
+  passed (152 unique component tests across the retained runs).
+- All 42 Chromium/WebKit journeys passed, including guided attempts, placement,
+  390px layouts, source selection, drafts, retry, and renderer restart.
+- The final Learning Studio Rust suite passed 123 tests; five optional container tests
+  remained excluded.
+- A fresh isolated macOS app bundle passed all eight native tests,
+  including real Learning Studio IPC, migrations, file access, and close/reopen
+  persistence. Bundled Python and JavaScript runtime checks also passed.
+  A run of the rebuilt bundle first timed out on the reopened Journal title's
+  visibility check, despite the retained screenshot and database containing the
+  saved content. One confirmation run passed all eight checks. Both results are
+  retained; the intermittent visibility failure was not reproduced or explained.
+  That native bundle predates the final generation/review changes, which are covered
+  by the subsequent Rust checks and provider probes rather than that UI run.
+- Application and browser TypeScript checks passed after bindings regeneration.
+  ESLint, IPC contracts, SQL statement checks, command inventory, and patch
+  whitespace checks passed.
+- The native suite validates integration and lifecycle behavior; its course
+  commands use an empty test library. Live course authoring below uses production
+  services and a separate SQLite database, not a full native learner journey.
+
+Logs and reviewed screenshots are retained under
+`e2e-results/teaching-course-review-2026-10-04/`.
+
+The opt-in provider harness reads an explicitly selected OpenCode configuration,
+passes configured credentials only through sensitive HTTP headers, and records
+synthetic prompts, outputs, model identity, latency, and token usage. Ordinary
+tests never contact this endpoint. Reproduce with a provider-compatible config:
+
+```bash
+LATTICE_TEACHING_CONFIG_PATH=/path/to/opencode.json \
+LATTICE_TEACHING_EVAL_DIR=/path/to/new-evaluation-directory \
+SQLX_OFFLINE=true cargo test --manifest-path src-tauri/Cargo.toml \
+  --features bindings-export --test teaching_course_evals \
+  -- --ignored --nocapture --test-threads=1 --skip live_retained_lesson_review
+```
+
+For an interrupted retained evaluation, `LATTICE_TEACHING_RESUME=1` resumes the
+same saved outline and skips already prepared lessons. Optional
+`LATTICE_TEACHING_REPLAY=1` reuses only successful production-adapter calls whose
+model, messages, reasoning effort, and output ceiling match exactly; each reuse
+is printed in the log. Both are evaluation-only controls. Ordinary fresh runs
+contact the provider for every authoring and review stage.
+
+The separate retained-lesson regression requires `LATTICE_TEACHING_REVIEW_CALL`
+to point to a synthetic `call-NNN.json` containing an authored lesson. Run only
+`live_retained_lesson_review` with `--exact --ignored --nocapture`, the provider
+config, and the evaluation directory. It uses the production review/repair path
+and retains the reviewed lesson separately; it does not overwrite the course or
+mark a failed full-course run as passed.
+
+
+The full suite attempts to prepare every lesson in a synthetic course, authors starting-point
+tasks, grades correct/incorrect/partial/uncertain responses, checks an orienting
+hint, then attempts to author and persist a written/application checkpoint. The
+checkpoint requires a successfully completed course; it is not implied by a
+passing grading matrix. Raw answer-key
+artifacts are explicitly named private. These checks do not measure human learning
+outcomes or constitute independent subject-expert review.
+
+## Course authoring and Space selection review — 2026-10-04
+
+The creation form and backend previously required a document or URL. The picker
+read all Library documents without an explicit Space, and lesson generation was
+limited to three teaching blocks and six multiple-choice questions. Written
+practice also discarded lesson-specific assignments in favor of a generic prompt.
+
+Creation now supports a topic without documents, with optional materials selected
+through the same Space-scoped document API used by Chat. The picker starts in the
+currently selected Space (General when none is selected), searches that Space,
+and retains visible, removable selections across Spaces. Only checked IDs are
+sent for acquisition. The same picker is used when adding materials to an
+existing course. A failed acquisition of explicitly selected material never
+silently falls back to general knowledge.
+
+The authoring contract distinguishes topic-based AI content from externally
+sourced material. Topic-only content must not invent citations; source-backed
+content still needs validated quotes. This distinction continues through lessons,
+written practice, practical activities, checkpoints, and recall. Generated recall
+without external references quotes the prepared lesson itself and retains empty
+external source IDs.
+
+Course depth is enforced by the backend: focused courses have 2–3 modules with
+2–3 lessons each, complete courses have 4–6 modules with 3–5 lessons each, and
+deep dives have 6–10 modules with 4–6 lessons each. Older clients retain their
+existing 2–6 module bounds. Session length controls lesson size independently.
+
+New lessons require 8–12 sections: at least two explanations, two worked examples,
+guided practice, an independent assignment, reflection, and a recap. Teaching and
+practice sections have minimum content lengths. The independent assignment is
+frozen as the actual written-practice task. A full syllabus, lesson section links,
+module milestones, written/applied checkpoints, and prefilled project/capstone
+briefs connect the existing workspaces. Existing prepared lessons remain readable.
+
+Verification on the working tree:
+
+- Rust Learning Studio suite: 113 tests passed; five optional container checks
+  were not rerun. New integration coverage exercises topic-only creation,
+  preparation, saved assignments, recall acceptance, checkpoint creation and
+  form startup, depth bounds, rejected thin lessons, and invalid citations.
+- Learning Studio and section error-boundary component suite: 20 files, 140 tests
+  passed in a serial run, including saving generated recall without external sources.
+  An existing recall test timed out under parallel load and passed in isolation
+  and in the complete serial run.
+- The initial Chromium/WebKit suite passed 33 of 36 checks. Two layout checks
+  exposed excessive course-map height at 800×600, which was corrected with a
+  compact expandable map. One Canvas retry click raced with an autosave.
+- All eight follow-up browser checks passed, covering the corrected layout,
+  Canvas retry, topic-only creation, and new 390px creation journeys in both
+  browsers. Reviewed screenshots include the builder and active workspace.
+- ESLint passed for the Learning Studio components and browser fixture/spec.
+- TypeScript checks passed for the application and browser tests.
+- API bindings were regenerated and their consistency check passed.
+- IPC contract guard, Rust formatting, and patch whitespace checks passed.
+
+Logs and reviewed screenshots are retained under
+`e2e-results/study-course-review-2026-10-04/`.
+
+These are deterministic renderer, model-fixture, and real SQLite checks. Live-model pedagogical
+quality, native packaged-app execution, and learning efficacy were not measured
+by this review; course length and section validation alone cannot establish them.
+
 ## Studio usability and draft safety review — 2026-10-02
 
 The local working tree based on `c25d7fb55062e459ba2692783085583215b2fd9f`

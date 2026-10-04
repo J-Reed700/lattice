@@ -27,7 +27,7 @@ use super::format::{self, ArchiveError, STREAM_NONCE_LEN};
 use super::key_store::MasterKeyStore;
 use super::placeholder::{self, FileAvailability};
 use super::snapshot::{self, ExtractedPayload, ProgressEvent};
-use crate::domain::conversation_memory::MEMORY_SCHEMA_VERSION;
+use crate::domain::conversation::memory::MEMORY_SCHEMA_VERSION;
 
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 

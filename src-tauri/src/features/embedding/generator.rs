@@ -15,7 +15,9 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
+use crate::domain::models::embedding_defaults::{
+    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
+};
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::shared::error::{AppError, Result};
 

@@ -29,7 +29,7 @@
 //! ```
 
 use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use std::collections::HashSet;
 
 /// A persisted vector and the source metadata needed by runtime search.

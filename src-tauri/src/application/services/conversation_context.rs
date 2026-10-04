@@ -3,7 +3,7 @@
 use crate::application::ports::conversation_context::ConversationContextPort;
 use crate::application::services::context_window_builder::ContextWindowBuilder;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 use std::sync::Arc;
 
 const LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS: i64 = 10;

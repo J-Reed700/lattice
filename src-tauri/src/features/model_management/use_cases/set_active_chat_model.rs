@@ -42,7 +42,7 @@ impl SetActiveChatModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::downloaded_model::ModelLocation;
+    use crate::domain::models::downloaded::ModelLocation;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {

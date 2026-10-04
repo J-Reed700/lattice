@@ -45,7 +45,7 @@
 //! are now on the same scale.
 
 use crate::shared::error::{AppError, Result, ResultExt};
-use crate::shared::utils::with_autorelease_pool;
+use crate::shared::runtime::with_autorelease_pool;
 use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_nn::{linear, Linear, Module, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config};
@@ -600,7 +600,7 @@ pub(crate) fn resolve_model_dir(path: &Path) -> Result<ResolvedModel> {
 
 /// Match embedding inference: prefer the platform accelerator and retain a CPU fallback.
 pub(crate) fn best_reranker_device() -> Device {
-    crate::shared::utils::best_available_compute_device("reranking")
+    crate::infrastructure::ml::compute_device::best_available_compute_device("reranking")
 }
 
 fn rerank_sync(

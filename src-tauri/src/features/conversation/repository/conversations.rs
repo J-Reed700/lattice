@@ -5,8 +5,8 @@ use crate::domain::conversation::{CompactionRecord, Conversation, ConversationAg
 use crate::features::conversation::persistence_mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
 };
-use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::ConversationId;
 use chrono::Utc;
 
 impl ConversationRepository {

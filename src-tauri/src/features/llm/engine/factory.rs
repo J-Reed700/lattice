@@ -48,7 +48,7 @@ use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// Configuration for LLM client creation.
 ///
@@ -291,7 +291,7 @@ async fn create_local_llm_sidecar(
     let supports_tools = model_path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(crate::domain::curated_models::chat_model_file_supports_tool_calling);
+        .is_some_and(crate::domain::models::curated::chat_model_file_supports_tool_calling);
 
     let client = SidecarLLMClient::new(handle, model_name, generation_config)?;
     info!(

@@ -57,7 +57,7 @@ pub struct DocumentInfo {
 /// # Example
 ///
 /// ```
-/// use lattice::extraction::LinkParser;
+/// use lattice::infrastructure::extraction::LinkParser;
 ///
 /// let parser = LinkParser::new();
 /// let content = "See [[todo]] and [[projects/ml|Machine Learning]]";
@@ -90,7 +90,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use lattice::extraction::LinkParser;
+    /// use lattice::infrastructure::extraction::LinkParser;
     ///
     /// let parser = LinkParser::new();
     /// let content = r#"
@@ -135,9 +135,15 @@ impl LinkParser {
                 .count()
                 + 1;
 
-            // Extract context (50 chars before and after)
-            let start = full_match.start().saturating_sub(50);
-            let end = (full_match.end() + 50).min(content.len());
+            // Keep roughly 50 bytes on either side without splitting UTF-8.
+            let start = crate::shared::text::floor_char_boundary(
+                content,
+                full_match.start().saturating_sub(50),
+            );
+            let end = crate::shared::text::floor_char_boundary(
+                content,
+                full_match.end().saturating_add(50),
+            );
             let context = content[start..end].replace("\n", " ");
 
             links.push(WikiLink {
@@ -174,7 +180,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use lattice::extraction::{LinkParser, DocumentInfo};
+    /// use lattice::infrastructure::extraction::{LinkParser, DocumentInfo};
     ///
     /// let parser = LinkParser::new();
     /// let docs = vec![
@@ -294,7 +300,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use lattice::extraction::LinkParser;
+    /// use lattice::infrastructure::extraction::LinkParser;
     ///
     /// let parser = LinkParser::new();
     ///
@@ -352,6 +358,76 @@ impl Default for LinkParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiline_document_preserves_link_context_and_source() {
+        let content = "# See [[overview]]\n\n- Read [[projects/notes#design|Design notes]]\n> Follow [[next]]";
+        let links = LinkParser::new().parse_document(content, "notes/index.md");
+        assert_eq!(links.len(), 3);
+        assert_eq!(
+            links
+                .iter()
+                .map(|link| link.line_number)
+                .collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
+        assert!(links
+            .iter()
+            .all(|link| link.source_path == "notes/index.md"));
+        assert_eq!(links[1].target, "projects/notes");
+        assert_eq!(links[1].header.as_deref(), Some("design"));
+        assert_eq!(links[1].display_text.as_deref(), Some("Design notes"));
+        assert!(links[1]
+            .context
+            .contains("[[projects/notes#design|Design notes]]"));
+    }
+
+    #[test]
+    fn context_never_splits_multibyte_characters() {
+        let content = format!("{} [[資料#要点|概要]] {}", "文".repeat(30), "🦀".repeat(30));
+        let links = LinkParser::new().parse_document(&content, "日本語.md");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "資料");
+        assert!(links[0].context.contains("[[資料#要点|概要]]"));
+        assert!(links[0].context.len() < content.len());
+    }
+
+    #[test]
+    fn relative_link_prefers_the_source_directory_over_a_fuzzy_candidate() {
+        let documents = vec![
+            DocumentInfo {
+                file_path: "projects/test.md".into(),
+                title: None,
+            },
+            DocumentInfo {
+                file_path: "notes/test.md".into(),
+                title: None,
+            },
+        ];
+        let parser = LinkParser::new();
+        assert_eq!(
+            parser
+                .resolve_link("test", "notes/index.md", &documents)
+                .as_deref(),
+            Some("notes/test.md")
+        );
+        assert!(parser
+            .resolve_link("missing", "notes/index.md", &documents)
+            .is_none());
+    }
+
+    #[test]
+    fn large_document_retains_all_links_in_order() {
+        let content = (0..1000)
+            .map(|index| format!("Line {index}: [[note{index}]]\n"))
+            .collect::<String>();
+        let links = LinkParser::new().parse_document(&content, "large.md");
+        assert_eq!(links.len(), 1000);
+        for (index, link) in links.iter().enumerate() {
+            assert_eq!(link.target, format!("note{index}"));
+            assert_eq!(link.line_number, index + 1);
+        }
+    }
 
     #[test]
     fn test_parse_simple_link() {

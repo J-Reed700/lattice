@@ -4,7 +4,7 @@
 //!
 //! Everything the model returns is untrusted. This module does not decide
 //! whether a quote is real, whether a source belongs to this conversation, or
-//! whether a transition is ordered correctly — `domain::conversation_memory`
+//! whether a transition is ordered correctly — `domain::conversation::memory`
 //! does, and it accepts or rejects a patch as a unit. What lives here is the
 //! plumbing around that: what the model is shown, how a rejection is reported
 //! back to it, and the hard limit on bounded repair attempts.
@@ -12,7 +12,7 @@
 use tracing::{debug, warn};
 
 use crate::application::ports::LLMPort;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     parse_patch, validate_patch, MemoryItem, SourceIndex, SourceMessage, ValidatedPatch,
 };
 

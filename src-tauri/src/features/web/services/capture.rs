@@ -33,7 +33,7 @@ use crate::features::function_calling::dto::UrlPreview;
 use crate::features::web::WebCaptureServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::stealth;
+use crate::shared::http::stealth;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;

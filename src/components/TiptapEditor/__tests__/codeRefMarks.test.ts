@@ -35,6 +35,14 @@ describe('parseCodeRef', () => {
 });
 
 describe('findCodeRefs', () => {
+  it('waits for a reference still being written at the end of a streaming answer', () => {
+    expect(findCodeRefs('Look at src/a.rs:1', { complete: false })).toEqual([]);
+    expect(findCodeRefs('Look at src/a.rs:12 and', { complete: false })).toEqual([
+      { path: 'src/a.rs', startLine: 12, endLine: 12 },
+    ]);
+    expect(findCodeRefs('Look at src/a.rs:12')).toEqual([{ path: 'src/a.rs', startLine: 12, endLine: 12 }]);
+  });
+
   it('finds inline references in order and skips fenced code', () => {
     const markdown = [
       'Start at `src/main.rs:3-6`, then `README.md:1`.',
@@ -61,7 +69,8 @@ function drawnRefs(markdown: string, enabled: boolean): string[] {
   const set = plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
   const refs = set.find().map((decoration) => {
     const attrs = (decoration as unknown as { type: { attrs: Record<string, string> } }).type.attrs;
-    return `${attrs['data-code-ref']}:${attrs['data-code-ref-start']}-${attrs['data-code-ref-end']}`;
+    const lines = attrs['data-code-ref-start'] ? `:${attrs['data-code-ref-start']}-${attrs['data-code-ref-end']}` : '';
+    return `${attrs['data-code-ref']}${lines}`;
   });
   editor.destroy();
   return refs;
@@ -76,5 +85,25 @@ describe('CodeRefMarks', () => {
 
   it('draws nothing outside an explorer conversation', () => {
     expect(drawnRefs(answer, false)).toEqual([]);
+  });
+
+  /** Models do not keep to the backticks the prompt asks for. */
+  it('draws references however the answer formats them', () => {
+    const prose = [
+      'The facade is src/lib/api.ts [package.json:51; src-tauri/Cargo.toml:35-38], registered at',
+      '[src-tauri/src/main.rs:9, 64-67]. The loop is in **src/main.rs**:12 and `lib.rs` line 4;',
+      'see lines 3–9 of `util.ts`, [the entry](src/main.rs#L20-L22) and [the docs](https://example.com/a.rs).',
+    ].join(' ');
+    expect(drawnRefs(prose, true)).toEqual([
+      'src/lib/api.ts',
+      'package.json:51-51',
+      'src-tauri/Cargo.toml:35-38',
+      'src-tauri/src/main.rs:9-9',
+      'src-tauri/src/main.rs:64-67',
+      'src/main.rs:12-12',
+      'lib.rs:4-4',
+      'util.ts:3-9',
+      'src/main.rs:20-22',
+    ]);
   });
 });

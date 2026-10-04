@@ -9,14 +9,13 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::{build_excerpt, safe_truncate};
+use crate::shared::text::{build_excerpt, safe_truncate};
 use futures::StreamExt;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use tauri::Emitter;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
@@ -30,7 +29,7 @@ use super::retrieval::{
 };
 use super::turn_record::{TurnRecorder, TurnStepKind};
 use super::web_steps;
-use super::ChatStreamEventDto;
+use super::{ChatEventSink, ChatStreamEventDto};
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -69,22 +68,18 @@ pub struct ToolLoopOutcome {
 ///
 /// Tagging every emit with `conversation_id` and a per-turn `request_id` lets
 /// each consumer keep only what is addressed to it.
-pub(super) struct StreamEmitter<'a, R: tauri::Runtime> {
-    window: &'a tauri::Window<R>,
+pub(super) struct StreamEmitter<'a> {
+    sink: &'a ChatEventSink,
     conversation_id: String,
     request_id: String,
     /// Whether a terminal `done` has been emitted for this turn.
     done_sent: bool,
 }
 
-impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
-    pub(super) fn new(
-        window: &'a tauri::Window<R>,
-        conversation_id: &str,
-        request_id: &str,
-    ) -> Self {
+impl<'a> StreamEmitter<'a> {
+    pub(super) fn new(sink: &'a ChatEventSink, conversation_id: &str, request_id: &str) -> Self {
         Self {
-            window,
+            sink,
             conversation_id: conversation_id.to_string(),
             request_id: request_id.to_string(),
             done_sent: false,
@@ -115,13 +110,11 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
     }
 
     fn emit(&self, payload: ChatStreamEventDto) -> Result<()> {
-        self.window
-            .emit("llm-stream", payload)
-            .map_err(|e| AppError::InvalidState(format!("Frontend disconnected: {}", e)))
+        (self.sink)(payload)
     }
 }
 
-impl<R: tauri::Runtime> Drop for StreamEmitter<'_, R> {
+impl Drop for StreamEmitter<'_> {
     /// Guarantee a terminal event on **every** exit path, including the error
     /// returns scattered through the tool loop. Without this the UI stays
     /// stuck "generating" unless the outer invoke happens to reject.
@@ -132,13 +125,13 @@ impl<R: tauri::Runtime> Drop for StreamEmitter<'_, R> {
 
 // The tool loop is a turn-level orchestration boundary with explicit runtime inputs.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
+pub(super) async fn run_agentic_tool_loop(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conv_id: &str,
     request_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
-    window: &tauri::Window<R>,
+    sink: &ChatEventSink,
     context: &[String],
     enhanced_message: &str,
     validated_message: &str,
@@ -203,7 +196,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
     // Owns the terminal `done` event via Drop, so no error path can leave the
     // UI generating forever.
-    let mut emitter = StreamEmitter::new(window, conv_id, request_id);
+    let mut emitter = StreamEmitter::new(sink, conv_id, request_id);
     let mut document_progress = document_progress::DocumentProgress::new(sources);
 
     let base_prompt = enhanced_message.to_string();
@@ -295,7 +288,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         // never run, so it is held back from the bubble as it streams.
         let leaked_calls = std::sync::Mutex::new(LeakedCallFilter::new(tools_withdrawn));
         if is_cancel_requested(request_id) {
-            emit_cancelled_stream(window, conv_id, request_id);
+            emit_cancelled_stream(sink, conv_id, request_id);
             return Err(cancellation_error());
         }
         info!(
@@ -457,7 +450,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                 let stream_future = async {
                     loop {
                         if is_cancel_requested(request_id) {
-                            emit_cancelled_stream(window, conv_id, request_id);
+                            emit_cancelled_stream(sink, conv_id, request_id);
                             return Err(cancellation_error());
                         }
 
@@ -629,7 +622,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 ..tool_output_settings.clone()
                             };
                             if is_cancel_requested(request_id) {
-                                emit_cancelled_stream(window, conv_id, request_id);
+                                emit_cancelled_stream(sink, conv_id, request_id);
                                 return Err(cancellation_error());
                             }
                             // A call the model wrote but that cannot be run is
@@ -824,7 +817,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     ToolRun::Finished(result) => result,
                                     ToolRun::Cancelled => {
                                         tool_step.failed(Some("Stopped".into()));
-                                        emit_cancelled_stream(window, conv_id, request_id);
+                                        emit_cancelled_stream(sink, conv_id, request_id);
                                         return Err(cancellation_error());
                                     }
                                     ToolRun::TimedOut => {
@@ -1632,19 +1625,12 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
     }
 }
 
-fn emit_cancelled_stream<R: tauri::Runtime>(
-    window: &tauri::Window<R>,
-    conversation_id: &str,
-    request_id: &str,
-) {
-    if let Err(e) = window.emit(
-        "llm-stream",
-        ChatStreamEventDto {
-            done: true,
-            status: Some("cancelled".to_owned()),
-            ..ChatStreamEventDto::new(conversation_id, request_id)
-        },
-    ) {
+fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id: &str) {
+    if let Err(e) = sink(ChatStreamEventDto {
+        done: true,
+        status: Some("cancelled".to_owned()),
+        ..ChatStreamEventDto::new(conversation_id, request_id)
+    }) {
         warn!("Failed to emit cancellation event: {}", e);
     }
 }
@@ -1653,6 +1639,43 @@ fn emit_cancelled_stream<R: tauri::Runtime>(
 mod tests {
     use super::*;
     use crate::application::ports::llm_port::CompletionInput;
+
+    #[test]
+    fn stream_sink_keeps_turn_identity_and_emits_completion_once() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let sink: ChatEventSink = Arc::new(move |event| {
+            captured.lock().unwrap().push(event);
+            Ok(())
+        });
+        {
+            let mut stream = StreamEmitter::new(&sink, "conversation", "request");
+            stream.content("hello").unwrap();
+            stream.done();
+            stream.done();
+        }
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].content.as_deref(), Some("hello"));
+        assert!(events[1].done);
+        assert!(events
+            .iter()
+            .all(|event| event.conversation_id == "conversation" && event.request_id == "request"));
+    }
+
+    #[test]
+    fn stream_drop_reports_completion_after_early_return() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let sink: ChatEventSink = Arc::new(move |event| {
+            captured.lock().unwrap().push(event);
+            Ok(())
+        });
+        drop(StreamEmitter::new(&sink, "conversation", "request"));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].done);
+    }
 
     #[test]
     fn an_answer_stopped_at_the_output_limit_is_kept_not_failed() {

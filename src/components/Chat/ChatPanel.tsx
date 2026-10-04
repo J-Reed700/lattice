@@ -12,6 +12,7 @@ import { ChatDropStaging } from './ChatDropStaging';
 import { ChatEmptyStateIngestDelta } from './ChatEmptyStateIngestDelta';
 import { ChatModelNotice } from './ChatModelNotice';
 import { ChatStarters } from './ChatStarters';
+import { CompactionStatus } from './CompactionStatus';
 import { ComposerSuggest } from './composer/ComposerSuggest';
 import { describeFocus, FocusChips } from './composer/FocusChips';
 import { ModeChips } from './composer/ModeChips';
@@ -23,6 +24,7 @@ import { useSpaceDocuments } from './composer/useSpaceDocuments';
 import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
 import { ConversationMemoryPanel } from './ConversationMemoryPanel';
+import { ConversationNavigator } from './ConversationNavigator';
 import { ImportFailuresNotice } from './ImportFailuresNotice';
 import { Message } from './Message';
 import { ModelPickerPopover } from './ModelPickerPopover';
@@ -34,6 +36,7 @@ import { useSettingsQuery } from '../../hooks/queries/useSettingsQuery';
 import { conversationKeys } from '../../hooks/useConversationsController';
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
+import { useCompactionStore } from '../../stores/compactionStore';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { toast } from '../../stores/toastStore';
@@ -42,7 +45,7 @@ import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 import { ExplorerIndexNotice } from '../Explorer/ExplorerIndexNotice';
 import { ExplorerSelectionChip } from '../Explorer/ExplorerSelectionChip';
 
-import type { CompactionRecord, CustomToolSettings, SpaceDocument, ToolPreferences } from '../../types';
+import type { CustomToolSettings, SpaceDocument, ToolPreferences } from '../../types';
 import type { SuggestItem } from './composer/ComposerSuggest';
 import type { ModeChipId } from './composer/ModeChips';
 import type { ComposerModeState, SlashCommandId } from './composer/slashCommands';
@@ -208,15 +211,18 @@ export function ChatPanel() {
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [isImportingFiles, setIsImportingFiles] = useState(false);
-  const [isCompacting, setIsCompacting] = useState(false);
   // The memory reader is an overlay off the palette, like the source reader:
   // a read-only look at what was recorded, never a place to edit it.
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [focusDocuments, setFocusDocuments] = useState<SpaceDocument[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [compactionByConversation, setCompactionByConversation] = useState<
-    Record<string, CompactionRecord>
-  >({});
+  // A /compact outlives this panel (it carries on across a switch to
+  // Explorer and back), so where it stands lives in a store.
+  const compactionRun = useCompactionStore((state) =>
+    activeConversationId ? state.runs[activeConversationId] : undefined
+  );
+  const dismissCompaction = useCompactionStore((state) => state.dismiss);
+  const isCompacting = compactionRun?.state === 'running';
   const panelRef = useRef<HTMLDivElement>(null);
   const modelLabelRef = useRef<HTMLButtonElement>(null);
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
@@ -224,7 +230,9 @@ export function ChatPanel() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<VirtualizedMessageListHandle>(null);
   const previousConversationIdRef = useRef<string | null>(null);
+  const previousMessageCountRef = useRef(0);
   const shouldAutoScrollRef = useRef(true);
+  const [visibleMessage, setVisibleMessage] = useState<{ conversationId: string | null; index: number }>({ conversationId: null, index: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Typing is never blocked during a turn (a turn can run for many minutes);
   // only submitting is, in handleSubmit.
@@ -278,6 +286,22 @@ export function ChatPanel() {
     []
   );
 
+  const handleVisibleMessage = useCallback((index: number) => {
+    setVisibleMessage({ conversationId: activeConversationId, index });
+  }, [activeConversationId]);
+
+  const navigateToMessage = useCallback((index: number) => {
+    // Jump to the beginning even when the answer is several screens tall.
+    // Disable following first so a streaming update cannot pull us back down.
+    shouldAutoScrollRef.current = false;
+    messageListRef.current?.scrollToIndex(index, { align: 'start', behavior: 'auto' });
+  }, []);
+
+  const navigateToLatest = useCallback(() => {
+    shouldAutoScrollRef.current = true;
+    messageListRef.current?.scrollToIndex(messages.length - 1, { align: 'end', behavior: 'auto' });
+  }, [messages.length]);
+
   const freshMessageKeys = useMemo(() => {
     const fresh = new Set<string>();
     const tracker = knownMessageIdsRef.current;
@@ -318,7 +342,9 @@ export function ChatPanel() {
 
     const previousConversationId = previousConversationIdRef.current;
     const isConversationChange = previousConversationId !== activeConversationId;
+    const isInitialMessageLoad = previousMessageCountRef.current === 0;
     previousConversationIdRef.current = activeConversationId ?? null;
+    previousMessageCountRef.current = messages.length;
 
     if (isConversationChange) {
       shouldAutoScrollRef.current = true;
@@ -331,7 +357,10 @@ export function ChatPanel() {
     // of here or it happens on every message.
     messageListRef.current?.scrollToIndex(messages.length - 1, {
       align: 'end',
-      behavior: isConversationChange || prefersReducedMotion ? 'auto' : 'smooth',
+      // The conversation can arrive before its messages. Treat that first
+      // batch as a jump too; smooth scrolling through estimated long rows
+      // can stop partway down the history and compete with a navigation click.
+      behavior: isConversationChange || isInitialMessageLoad || prefersReducedMotion ? 'auto' : 'smooth',
     });
   }, [messages, activeConversationId, prefersReducedMotion]);
 
@@ -477,11 +506,11 @@ export function ChatPanel() {
   };
 
   // The applied compaction for the active conversation, if any, drives the
-  // "Context compacted" divider. Local session state (from a /compact run in
-  // this session) takes precedence; otherwise fall back to the persisted
-  // record on the conversation so the divider survives a reload.
+  // "Context compacted" divider. A /compact from this session takes
+  // precedence; otherwise the persisted record on the conversation, so the
+  // divider survives a reload.
   const compactionRecord = activeConversationId
-    ? compactionByConversation[activeConversationId] ??
+    ? (compactionRun?.state === 'done' ? compactionRun.record : null) ??
       conversations.find((conversation) => conversation.id === activeConversationId)
         ?.compaction ??
       null
@@ -489,20 +518,19 @@ export function ChatPanel() {
 
   const handleCompact = useCallback(
     async (conversationId: string) => {
-      if (isCompacting) return;
-      setIsCompacting(true);
-      // Summarizing runs a model call, so it can take a while with nothing else
-      // on screen to show for it.
-      toast.info('Compacting context', {
-        message: 'Summarizing the older messages…',
+      const runs = useCompactionStore.getState();
+      if (!runs.start(conversationId)) return;
+      // The status row lands at the end of the thread: take the reader there,
+      // since a minute of summarizing with nothing in view reads as nothing.
+      shouldAutoScrollRef.current = true;
+      window.requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        container?.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
       });
       try {
-        const record = await compactConversation(conversationId);
-        if (record) {
-          setCompactionByConversation((prev) => ({
-            ...prev,
-            [conversationId]: record,
-          }));
+        const outcome = await compactConversation(conversationId);
+        if (outcome.ok) {
+          useCompactionStore.getState().finish(conversationId, outcome.record);
           // No "lossless"/"complete" framing: compaction summarizes, and the
           // only thing it actually guarantees is that active requirements
           // survive and the raw messages are still searchable.
@@ -510,12 +538,16 @@ export function ChatPanel() {
             message:
               'Older context compacted. Active requirements preserved; original messages remain searchable.',
           });
+        } else {
+          useCompactionStore.getState().fail(conversationId, outcome.error);
         }
-      } finally {
-        setIsCompacting(false);
+      } catch (error) {
+        useCompactionStore
+          .getState()
+          .fail(conversationId, error instanceof Error ? error.message : String(error));
       }
     },
-    [compactConversation, isCompacting]
+    [compactConversation]
   );
 
   /**
@@ -570,6 +602,9 @@ export function ChatPanel() {
       runSlashCommand(typedCommand);
       return;
     }
+    // Compacting rewrites the context the next turn reads; the draft keeps
+    // until it is done.
+    if (isCompacting) return;
 
     // Staged files join the conversation *with* this message: import them
     // first so the turn can already draw on them, and let the message carry
@@ -1203,9 +1238,10 @@ export function ChatPanel() {
         onOpenConversation={(id) => { setIsMemoryOpen(false); void selectConversation(id); }}
       />
       {/* Thread scroll region */}
+      <div className="relative flex min-h-0 flex-1">
       <div
         ref={scrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${messages.length >= 2 ? 'pr-12' : ''}`}
         onScroll={(event) => {
           const container = event.currentTarget;
           const distanceFromBottom =
@@ -1240,6 +1276,7 @@ export function ChatPanel() {
                 scrollElementRef={scrollContainerRef}
                 getKey={getMessageKey}
                 getMessageId={getPersistedMessageId}
+                onVisibleIndexChange={handleVisibleMessage}
                 renderItem={(message, index) => {
                 const key = getMessageKey(message);
                 const previous = index > 0 ? messages[index - 1] : null;
@@ -1277,6 +1314,15 @@ export function ChatPanel() {
             </motion.div>
           )}
 
+          {/* Where a /compact stands: running, then what it did or why not. */}
+          {compactionRun && activeConversationId && (
+            <CompactionStatus
+              key={`${activeConversationId}-${compactionRun.startedAt}`}
+              run={compactionRun}
+              onDismiss={() => dismissCompaction(activeConversationId)}
+            />
+          )}
+
           {/* Sticky sources-in-this-conversation footer, above the composer */}
           <div className="chat-beside-margin px-6">
             <ConversationLinkedDocumentsPanel
@@ -1286,6 +1332,16 @@ export function ChatPanel() {
             />
           </div>
         </div>
+      </div>
+
+        <ConversationNavigator
+          key={activeConversationId}
+          messages={messages}
+          activeIndex={visibleMessage.conversationId === activeConversationId ? visibleMessage.index : messages.length - 1}
+          getKey={getMessageKey}
+          onNavigate={navigateToMessage}
+          onLatest={navigateToLatest}
+        />
       </div>
 
       {/* Composer pinned to the bottom of the panel. */}
@@ -1473,7 +1529,13 @@ export function ChatPanel() {
               </div>
 
               <span className="hidden shrink-0 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:block">
-                {isSending ? 'Generating…' : input.trim() ? '↵ send · ⇧↵ new line' : ''}
+                {isSending
+                  ? 'Generating…'
+                  : isCompacting
+                    ? 'Compacting context…'
+                    : input.trim()
+                      ? '↵ send · ⇧↵ new line'
+                      : ''}
               </span>
 
               {/* Send / Stop */}
@@ -1490,9 +1552,9 @@ export function ChatPanel() {
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim() || isChatUnavailable}
+                  disabled={!input.trim() || isChatUnavailable || isCompacting}
                   aria-label="Send message"
-                  title="Send · Enter"
+                  title={isCompacting ? 'Waiting for the context to finish compacting' : 'Send · Enter'}
                   className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-[hsl(var(--text-disabled))] disabled:shadow-none"
                 >
                   <ArrowUp className="h-4 w-4" strokeWidth={2.2} />

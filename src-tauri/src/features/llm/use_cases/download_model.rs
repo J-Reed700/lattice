@@ -26,12 +26,12 @@ use crate::application::ports::file_system_port::FileSystemPort;
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::application::ports::UnitOfWorkFactory;
-use crate::domain::curated_models::get_all_curated_models;
 use crate::domain::download::DownloadOperationState;
 use crate::domain::entities::model::Model;
 use crate::domain::entities::model_file::ModelFile;
-use crate::domain::model_file_validator::ModelFileValidator;
-use crate::domain::model_paths::ModelPaths;
+use crate::domain::models::curated::get_all_curated_models;
+use crate::domain::models::paths::ModelPaths;
+use crate::domain::models::validation::ModelFileValidator;
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use crate::features::download::manager::{DownloadBatchItem, DownloadManager, DownloadRequest};
@@ -86,7 +86,7 @@ impl DownloadModelUseCase {
         curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &Path,
     ) -> Result<bool, AppError> {
-        use crate::domain::model_file_validator::FileExpectation;
+        use crate::domain::models::validation::FileExpectation;
 
         let mut expectations = Vec::new();
 
@@ -185,8 +185,8 @@ impl DownloadModelUseCase {
         repo_id: &str,
         weights_filename: &str,
         auth_token: Option<&str>,
-    ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
-        use crate::domain::model_metadata::ModelFileMetadata;
+    ) -> Vec<crate::domain::models::metadata::ModelFileMetadata> {
+        use crate::domain::models::metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
         let mut files = vec![
@@ -234,8 +234,8 @@ impl DownloadModelUseCase {
     async fn build_onnx_embedding_file_list(
         repo_id: &str,
         onnx_filename: &str,
-    ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
-        use crate::domain::model_metadata::ModelFileMetadata;
+    ) -> Vec<crate::domain::models::metadata::ModelFileMetadata> {
+        use crate::domain::models::metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
 

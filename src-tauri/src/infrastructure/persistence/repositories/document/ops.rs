@@ -8,8 +8,8 @@ use crate::domain::entities::Document as DocumentEntity;
 use crate::infrastructure::persistence::mappers::{
     ChunkMapper, ChunkModel, DocumentMapper, DocumentModel,
 };
-use crate::shared::domain_types::TagId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::TagId;
 use sqlx::{QueryBuilder, SqliteConnection, SqlitePool};
 use std::time::Instant;
 use tracing::{info, instrument};

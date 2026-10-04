@@ -98,6 +98,6 @@ describe('Learning Studio source continuity', () => {
     expect(await screen.findByText('Earlier saved quote.')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Open this exact version' }));
     await waitFor(() => expect(mocks.version).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' }));
-    expect(screen.getByText(/identifies whether retrieval was semantic or lexical/)).toBeVisible();
+    expect(screen.getByText(/identifies whether retrieval used hybrid search or a keyword fallback/)).toBeVisible();
   });
 });

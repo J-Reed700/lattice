@@ -1,7 +1,7 @@
 //! Acquire immutable, bounded source snapshots for Learning Studio.
 
 use super::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
-use super::repository::LearningRepository;
+use super::dto::{LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto};
 use crate::features::web::traits::WebServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -15,50 +15,80 @@ const MAX_SOURCES: usize = 12;
 const MAX_EXCERPT_CHARS: usize = 2400;
 const MAX_TITLE_CHARS: usize = 180;
 
-fn bounded(mut source: LearningSourceDto) -> LearningSourceDto {
-    source.title = source.title.chars().take(MAX_TITLE_CHARS).collect();
-    source.excerpt = source.excerpt.chars().take(MAX_EXCERPT_CHARS).collect();
-    source
+pub struct InitialReference {
+    pub source_id: String,
+    pub origin: String,
+    pub captured: super::source_library::CapturedLearningSource,
 }
-
-/// Keep at least one acquired passage per selected document where possible,
-/// then spend remaining slots round-robin so a long document cannot crowd out
-/// the rest of the selected material.
-fn select_document_sources(
-    sources: Vec<LearningSourceDto>,
-    limit: usize,
-) -> Vec<LearningSourceDto> {
-    let mut groups: Vec<(String, Vec<LearningSourceDto>)> = Vec::new();
-    for source in sources {
-        let document_id = source
-            .id
-            .split_once(':')
-            .map(|(id, _)| id)
-            .unwrap_or(&source.id)
-            .to_owned();
-        if let Some((_, group)) = groups.iter_mut().find(|(id, _)| id == &document_id) {
-            group.push(source);
-        } else {
-            groups.push((document_id, vec![source]));
-        }
+pub struct AcquiredSources {
+    pub sources: Vec<LearningSourceDto>,
+    pub references: Vec<InitialReference>,
+}
+fn validate_capture(captured: &super::source_library::CapturedLearningSource) -> Result<()> {
+    if captured.text.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "The reference contains no readable text.".into(),
+        ));
     }
-    let mut selected = Vec::new();
-    for passage_index in 0..groups
-        .iter()
-        .map(|(_, group)| group.len())
-        .max()
-        .unwrap_or_default()
-    {
-        for (_, group) in &groups {
-            if let Some(source) = group.get(passage_index) {
-                if selected.len() == limit {
-                    return selected;
-                }
-                selected.push(bounded(source.clone()));
-            }
-        }
+    if captured.truncated || captured.text.chars().count() > super::source_library::MAX_TEXT_CHARS {
+        return Err(AppError::InvalidInput("The reference could not be captured in full. The MVP supports up to two million characters per source. Supply individual chapters or a smaller document.".into()));
     }
-    selected
+    Ok(())
+}
+fn preview(
+    id: &str,
+    captured: &super::source_library::CapturedLearningSource,
+) -> LearningSourceDto {
+    let headings = captured
+        .text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .take(35)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if headings.is_empty() {
+        captured.text.clone()
+    } else {
+        format!(
+            "{}\n\n{}",
+            headings.chars().take(1200).collect::<String>(),
+            captured.text
+        )
+    };
+    LearningSourceDto {
+        id: id.into(),
+        title: captured.title.chars().take(MAX_TITLE_CHARS).collect(),
+        url: captured
+            .resolved_url
+            .clone()
+            .or_else(|| captured.requested_url.clone()),
+        excerpt: text.chars().take(MAX_EXCERPT_CHARS).collect(),
+        acquired_at: chrono::Utc::now().timestamp_millis(),
+    }
+}
+pub(super) async fn capture_document(
+    library: &super::source_library::LearningSourceLibraryRepository,
+    document_id: &str,
+) -> Result<super::source_library::CapturedLearningSource> {
+    let (title, chunks) = library
+        .library_document_text(document_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::InvalidInput(
+                "The document has no indexed text. Let its import finish first.".into(),
+            )
+        })?;
+    let captured = super::source_library::CapturedLearningSource {
+        title,
+        publisher: None,
+        requested_url: None,
+        resolved_url: None,
+        truncated: chunks.len() >= super::source_library::LIBRARY_CAPTURE_CHUNKS,
+        text: chunks.join("\n\n"),
+        extraction_version: "document_chunks_v2".into(),
+    };
+    validate_capture(&captured)?;
+    Ok(captured)
 }
 
 /// Acquire sources selected by document ID and supplied URL. URLs are checked
@@ -68,7 +98,12 @@ fn select_document_sources(
 pub async fn acquire(
     container: &Container,
     request: &GenerateLearningProgramRequestDto,
-) -> Result<Vec<LearningSourceDto>> {
+) -> Result<AcquiredSources> {
+    if request.document_ids.len() + request.source_urls.len() > MAX_SOURCES {
+        return Err(AppError::InvalidInput(
+            "Select at most twelve references.".into(),
+        ));
+    }
     if request.document_ids.len() > MAX_DOCUMENT_IDS {
         return Err(AppError::InvalidInput(format!(
             "Select no more than {MAX_DOCUMENT_IDS} documents for one learning program."
@@ -100,12 +135,20 @@ pub async fn acquire(
         ));
     }
 
-    let document_sources = LearningRepository::new(container.db_pool().clone())
-        .acquire_document_sources(&request.document_ids, &request.goal)
-        .await?;
-    let url_slots = request.source_urls.len().min(MAX_SOURCES);
-    let document_limit = MAX_SOURCES.saturating_sub(url_slots);
-    let mut sources = select_document_sources(document_sources, document_limit);
+    let library =
+        super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone());
+    let mut sources = Vec::new();
+    let mut references = Vec::new();
+    for document_id in &request.document_ids {
+        let captured = capture_document(&library, document_id).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        sources.push(preview(&id, &captured));
+        references.push(InitialReference {
+            source_id: id,
+            origin: document_id.clone(),
+            captured,
+        });
+    }
     let safe_web = container.web_service();
     for supplied_url in &request.source_urls {
         let url = supplied_url.trim();
@@ -119,73 +162,112 @@ pub async fn acquire(
         // This safe host service validates the URL with its public-only
         // resolver, revalidates every redirect, and pins checked DNS answers
         // into the connection before performing the actual read.
-        let article = safe_web.fetch_url_content(url).await.map_err(|error| {
-            AppError::Network(format!("Could not acquire source {url}: {error}"))
-        })?;
-        let excerpt: String = article.content.chars().take(MAX_EXCERPT_CHARS).collect();
-        let title = article.title.as_deref().unwrap_or_default().trim();
-        if title.is_empty() || excerpt.trim().is_empty() {
-            return Err(AppError::InvalidInput(format!(
-                "Source {url} did not contain usable article text."
-            )));
-        }
-        sources.push(LearningSourceDto {
-            id: uuid::Uuid::new_v4().to_string(),
-            title: title.chars().take(MAX_TITLE_CHARS).collect(),
-            url: Some(article.url),
-            excerpt,
-            acquired_at: chrono::Utc::now().timestamp_millis(),
+        let article = safe_web
+            .fetch_reference_content(url)
+            .await
+            .map_err(|error| {
+                AppError::Network(format!("Could not acquire source {url}: {error}"))
+            })?;
+        let captured = super::source_library::CapturedLearningSource {
+            title: article.title.unwrap_or_else(|| url.into()),
+            publisher: None,
+            requested_url: Some(url.into()),
+            resolved_url: Some(article.url),
+            text: article.content,
+            truncated: article.content_truncated,
+            extraction_version: "web_reference_v1".into(),
+        };
+        validate_capture(&captured)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        sources.push(preview(&id, &captured));
+        references.push(InitialReference {
+            source_id: id,
+            origin: url.into(),
+            captured,
         });
     }
-    if sources.is_empty() {
+    if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {
         return Err(AppError::InvalidInput(
-            "Select at least one document or add a public source URL before generating a program."
+            "The selected materials did not provide usable text. Choose different materials or remove them to create a topic-based course."
                 .into(),
         ));
     }
-    Ok(sources)
+    Ok(AcquiredSources {
+        sources,
+        references,
+    })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn acquired_source_snapshot_is_bounded_without_losing_provenance() {
-        let source = LearningSourceDto {
-            id: "stable-id".into(),
-            title: "t".repeat(240),
-            url: Some("https://example.org/reading".into()),
-            excerpt: "x".repeat(5000),
-            acquired_at: 456,
+pub(super) async fn ensure_before_use_sources(
+    container: &Container,
+    program_id: &str,
+) -> crate::shared::error::Result<()> {
+    let repo =
+        super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone());
+    let workspace = repo.workspace(program_id).await?;
+    for source in workspace.sources.iter().filter(|s| {
+        s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse
+    }) {
+        if source.pending_version_id.is_some() {
+            return Err(crate::shared::error::AppError::InvalidInput(format!("A newer version of '{}' is available. Adopt it or change the freshness policy before preparing a lesson.",source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("this source"))));
+        }
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let request = RefreshLearningSourceRequestDto {
+            operation_id: operation_id.clone(),
+            program_id: program_id.into(),
+            source_id: source.id.clone(),
+            expected_revision: source.revision,
         };
-        let bounded = bounded(source);
-        assert_eq!(bounded.excerpt.chars().count(), MAX_EXCERPT_CHARS);
-        assert_eq!(bounded.title.chars().count(), MAX_TITLE_CHARS);
-        assert_eq!(bounded.id, "stable-id");
-        assert_eq!(bounded.url.as_deref(), Some("https://example.org/reading"));
-        assert_eq!(bounded.acquired_at, 456);
-    }
-
-    #[test]
-    fn document_passages_are_selected_round_robin() {
-        let source = |id: &str| LearningSourceDto {
-            id: id.into(),
-            title: id.into(),
-            url: None,
-            excerpt: "passage".into(),
-            acquired_at: 0,
+        let refreshed = async {
+            container
+                .security_context()
+                .rate_limiters()
+                .web_ingest
+                .check_rate_limit("learning_source_before_use")
+                .await
+                .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
+            let url = source.requested_url.as_deref().ok_or_else(|| {
+                crate::shared::error::AppError::Database("Web source has no requested URL".into())
+            })?;
+            let article = container
+                .web_service()
+                .fetch_reference_content(url)
+                .await
+                .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;
+            Ok::<_, crate::shared::error::AppError>(super::source_library::CapturedLearningSource {
+                title: article.title.unwrap_or_else(|| url.into()),
+                publisher: None,
+                requested_url: Some(url.into()),
+                resolved_url: Some(article.url),
+                text: article.content,
+                truncated: article.content_truncated,
+                extraction_version: "web_reference_v1".into(),
+            })
+        }
+        .await;
+        let (captured, failure) = match refreshed {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error.to_string())),
         };
-        let selected = select_document_sources(
-            vec![
-                source("doc-a:chunk-1"),
-                source("doc-a:chunk-2"),
-                source("doc-b:chunk-1"),
-            ],
-            2,
-        );
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].id, "doc-a:chunk-1");
-        assert_eq!(selected[1].id, "doc-b:chunk-1");
+        repo.refresh(&request, captured, failure).await?;
+        let refreshed = repo.workspace(program_id).await?;
+        let latest = refreshed
+            .sources
+            .iter()
+            .find(|s| s.id == source.id)
+            .and_then(|s| s.latest_check.as_ref())
+            .filter(|check| check.operation_id == operation_id);
+        match latest.map(|check| &check.status) {
+            Some(status) => {
+                super::source_library::LearningSourceLibraryRepository::before_use_allows(status)?
+            }
+            None => {
+                return Err(crate::shared::error::AppError::ServiceNotAvailable(format!(
+                    "Could not verify the before-use source '{}'. Retry after the source is reachable.",
+                    source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("web source")
+                )))
+            }
+        }
     }
+    Ok(())
 }

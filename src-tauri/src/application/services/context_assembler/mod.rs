@@ -21,7 +21,7 @@ pub mod plan;
 pub mod render;
 
 use crate::application::ports::llm_port::CompletionInput;
-use crate::domain::conversation_memory::{MemoryItem, MemorySnapshot, SourceMessage};
+use crate::domain::conversation::memory::{MemoryItem, MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
 
 pub use budget::{
@@ -185,7 +185,7 @@ impl ContextAssembler {
             + mandatory_items
                 .iter()
                 .filter(|item| {
-                    item.review == crate::domain::conversation_memory::MemoryReview::Ambiguous
+                    item.review == crate::domain::conversation::memory::MemoryReview::Ambiguous
                 })
                 .count();
 

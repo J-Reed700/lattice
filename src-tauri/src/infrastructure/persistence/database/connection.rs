@@ -1,5 +1,5 @@
 use crate::shared::error::{AppError, Result, ResultExt};
-use crate::shared::utils::{retry_with_backoff, RetryConfig};
+use crate::shared::resilience::{retry_with_backoff, RetryConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
 use std::path::{Path, PathBuf};

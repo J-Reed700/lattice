@@ -28,8 +28,13 @@ belong to their respective adapters, not the sync contracts.
 - `interfaces/di/container.rs` holds only construction and runtime state.
   Each feature exposes its accessors through an `impl Container` registrar
   block in its own `di.rs`, so the accessor surface is owned by the feature.
-- Files over ~700 lines are split into directory modules with a thin façade
-  file that keeps the public path stable.
+- Large modules are split by responsibility with façades that preserve public
+  paths. This is an incremental convention, not an enforced line-count limit.
+  Chat separates wire contracts, routing, tool selection, prompt migration,
+  turn execution, and tests. The sidecar manager separates configuration,
+  process ownership, registry cleanup, startup policy, failure classification,
+  preflight, readiness, and tests. Some workflow and repository files remain
+  large and still need further decomposition.
 - The crate has no blanket `dead_code`, `unused_imports`, `unused_variables`,
   or `deprecated` allowances. Unread fields that must exist (guards,
   `FromRow` columns, serialized DTO fields) carry a targeted `#[allow]` with a
@@ -95,12 +100,45 @@ belong to their respective adapters, not the sync contracts.
   credential command without accessing the OS keychain, plus sink persistence,
   concurrent delivery, bounded history, and logger enable/disable behavior.
 
+## Background work and error contracts
+
+Conversation vector indexing, maintenance compaction, lesson generation, and
+practical runs use `shared/runtime/background`. Shutdown closes admission,
+cancels expensive work, and joins final writes before closing SQLite. Queued
+lesson jobs remain pending for startup recovery; interrupted running jobs retain
+a terminal record and can be retried. Cancellation of a lesson job commits its
+status before signalling its registered token. A shared generation slot bounds
+concurrent lesson inference.
+
+`features/learning/generation_jobs.rs` receives a pool, model loader, and source
+refresh callback instead of the application container. `practical_runs.rs` owns
+runtime execution, cancellation tokens, and workspace cleanup; its repository
+owns transactions. Practical workspace reads return a saved-data snapshot.
+`practical_workspace.rs` probes runtimes and resolves availability from that
+snapshot, including operation replays, without starting processes inside a
+repository read. Tests inject capability snapshots for unavailable runtimes,
+disabled profiles, and activities pinned to an older runtime. Chat streams use a
+typed event sink, with the Tauri window adapter confined to `chat/desktop.rs`. The turn workflow still uses the container
+for several collaborators and remains a candidate for further decomposition.
+
+The serializable `DomainError`, `ApplicationError`, and `AppError` contracts live
+in `shared/error`. Existing domain/application imports re-export those types.
+Driver and LLM conversions live in their respective outer modules, preserving
+IPC shapes without making the shared error contract import those layers.
+
+Empty placeholder suites and orphaned test scaffolding have been removed.
+The active test inventory is in `src-tauri/tests/README.md`. CI explicitly executes
+lifecycle, tag repository, and plugin integration tests; the syntax-aware checker
+rejects empty integration test bodies, Rust test files outside the Cargo module
+graph, and detached spawns in supervised workflows. It also checks the shared
+error contract for reverse dependencies.
+
 ## Conversation memory
 
 Bounded conversation memory follows the same layer rules as everything else.
 Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
 
-- `domain/conversation_memory.rs` owns the memory value types — item identity and
+- `domain/conversation/memory.rs` owns the memory value types — item identity and
   kind, validity, evidence spans, proposed changes, allowed transitions — and all
   deterministic validation. An untrusted model proposal becomes a committable
   candidate only by passing rules that live here. The module is pure: no sqlx,
@@ -324,7 +362,9 @@ release baseline has not completed and must not be reported as passing.
 
 The `sync_persistence` command requires a disposable PostgreSQL `DATABASE_URL`. SQLx creates
 isolated test databases. CI provisions PostgreSQL and runs these tests explicitly;
-ordinary local unit tests do not require a database server.
+ordinary local unit tests do not require a database server. Replay tests cover both
+accepted operations and conflicts after the document head changes. Reusing an
+operation ID with a changed payload rejects the entire transaction.
 
 ## Limits of the current architecture
 
@@ -343,7 +383,7 @@ This is not a claim of “10/10” architecture or production readiness.
 - Some runtime loaders still use concrete downloaded-model persistence adapters;
   live-model compatibility and performance require model/hardware testing beyond
   unit tests.
-- The shared desktop error layer remains a coupling point, and ignored tests
+- The shared desktop error contract is still broad, and ignored tests
   remain coverage gaps. A green library run does not substitute for live desktop,
   migration, packaging, or inference validation.
 - Bounded conversation memory has only limited real-model calibration. The

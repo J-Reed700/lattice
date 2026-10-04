@@ -32,7 +32,7 @@ use mockall::mock;
 use async_trait::async_trait;
 
 #[cfg(test)]
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 #[cfg(test)]
 use crate::application::ports::{
@@ -93,7 +93,7 @@ impl ChunkRepositoryPort for MockChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<Chunk> {
-        use crate::shared::domain_types::DocumentId;
+        use crate::shared::types::DocumentId;
         let doc_id = DocumentId::from("doc-1".to_string());
         Ok(Chunk::new(doc_id, "test content".to_string(), 0))
     }

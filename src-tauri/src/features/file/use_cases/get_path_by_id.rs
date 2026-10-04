@@ -92,7 +92,7 @@ mod tests {
     // `validate_path` resolves it against the current directory, landing
     // outside the configured root. `test_paths::abs` spells the same fake
     // vault the way the running platform spells absolute paths.
-    use crate::shared::test_paths::{abs, abs_str};
+    use crate::shared::testing::paths::{abs, abs_str};
     use async_trait::async_trait;
     use std::path::Path;
 

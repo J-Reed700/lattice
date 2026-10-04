@@ -1,0 +1,108 @@
+.conversation-navigator {
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 34px;
+  max-height: calc(100% - 24px);
+  padding: 2px;
+  border: 1px solid hsl(var(--border-subtle));
+  border-radius: 10px;
+  background: hsl(var(--bg));
+  color: hsl(var(--text-secondary));
+  box-shadow: 0 2px 8px hsl(var(--text-primary) / 0.04);
+}
+
+.conversation-navigator[data-expanded] {
+  width: min(240px, calc(100% - 24px));
+  height: min(420px, calc(100% - 24px));
+  padding: 6px;
+  box-shadow: 0 8px 32px hsl(var(--text-primary) / 0.10);
+}
+
+.conversation-navigator-heading,
+.conversation-navigator-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.conversation-navigator-heading { justify-content: space-between; }
+.conversation-navigator-actions { flex-direction: column; }
+.conversation-navigator[data-expanded] .conversation-navigator-actions {
+  flex-direction: row;
+  border-top: 1px solid hsl(var(--border-subtle));
+  padding-top: 4px;
+  margin-top: 4px;
+}
+.conversation-navigator[data-expanded] .conversation-navigator-actions > :last-child { margin-left: auto; }
+
+.conversation-navigator-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 6px;
+}
+.conversation-navigator-control:hover:not(:disabled) { background: hsl(var(--text-primary) / 0.06); }
+.conversation-navigator-control:disabled { opacity: 0.3; }
+.conversation-navigator-control:focus-visible,
+.conversation-checkpoint:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: -2px;
+}
+
+.conversation-navigator-position {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 5px 0;
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.conversation-navigator[data-expanded] .conversation-navigator-position {
+  align-items: flex-start;
+  padding: 2px 8px 8px;
+  color: hsl(var(--text-muted));
+}
+
+.conversation-checkpoints {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.conversation-checkpoint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 6px;
+  text-align: left;
+}
+.conversation-checkpoint:hover { background: hsl(var(--text-primary) / 0.04); }
+.conversation-checkpoint[aria-current] {
+  background: hsl(var(--accent) / 0.10);
+  box-shadow: inset 2px 0 hsl(var(--accent));
+  color: hsl(var(--text-primary));
+}
+.conversation-checkpoint-number {
+  min-width: 20px;
+  padding-top: 2px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--text-muted));
+}
+.conversation-checkpoint[aria-current] .conversation-checkpoint-number { color: hsl(var(--accent)); }

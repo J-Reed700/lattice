@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -71,7 +71,7 @@ pub struct ExternalModelMetadata {
     /// surface this so users see a "Coming soon" badge instead of starting a
     /// download that will fail.
     #[serde(default)]
-    pub embedding_compatibility: Option<crate::domain::model_management::EmbeddingCompatibility>,
+    pub embedding_compatibility: Option<crate::domain::models::selection::EmbeddingCompatibility>,
 }
 
 impl ExternalModelMetadata {
@@ -294,7 +294,7 @@ impl ExternalModelMetadata {
             // Default to GGUF here. Catalog DTOs from external sources
             // don't carry a format field today; the curated entries set
             // it explicitly. Detection at download time can override.
-            format: crate::domain::model_management::ModelFormat::Gguf,
+            format: crate::domain::models::selection::ModelFormat::Gguf,
         })
     }
 
@@ -916,7 +916,7 @@ mod tests {
             preferred_filename: Some("model.safetensors".into()),
             preferred_size_bytes: None,
             embedding_compatibility: Some(
-                crate::domain::model_management::EmbeddingCompatibility::Compatible {
+                crate::domain::models::selection::EmbeddingCompatibility::Compatible {
                     architecture: "qwen3".into(),
                 },
             ),

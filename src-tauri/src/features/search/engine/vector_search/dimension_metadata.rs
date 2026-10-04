@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::compression::VectorIndexCompression;
 use super::rescore_store::vectors_path_for;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexDimensionMetadata {

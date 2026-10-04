@@ -1,5 +1,5 @@
 use super::model_file::ModelFile;
-use crate::domain::model_metadata::ModelType;
+use crate::domain::models::metadata::ModelType;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

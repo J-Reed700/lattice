@@ -296,7 +296,7 @@ struct SearchResult {
 fn main() {
     ts::export(
         collect_types![search_documents],
-        "../src/lib/bindings.ts"  // today: src/export_bindings.rs, run via `npm run bindings:generate`
+        "../src/lib/bindings.ts"  // today: src/bin/export_bindings/main.rs, run via `npm run bindings:generate`
     ).unwrap();
 }
 ```

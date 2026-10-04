@@ -10,7 +10,7 @@ use crate::application::ports::EmbeddingPort;
 use crate::domain::value_objects::SparseEmbedding;
 use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::SparseSearchTrait;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 
 /// Learned sparse retrieval over `chunk_sparse_terms`.
 ///

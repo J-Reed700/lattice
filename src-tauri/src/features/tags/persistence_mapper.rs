@@ -6,8 +6,8 @@
 //! database model (used by SQLx) and the rich domain entity.
 
 use crate::features::tags::entity::Tag as DomainTag;
-use crate::shared::domain_types::{TagId, TagName};
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::{TagId, TagName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

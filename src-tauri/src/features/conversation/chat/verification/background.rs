@@ -72,9 +72,9 @@ pub(in crate::features::conversation) struct BackgroundVerification {
 
 impl BackgroundVerification {
     pub(in crate::features::conversation) async fn spawn(self) {
-        let cancel = crate::shared::background::cancellation_token();
+        let cancel = crate::shared::runtime::background::cancellation_token();
         let finalizer = self.clone();
-        if crate::shared::background::spawn(self.run(cancel)).is_none() {
+        if crate::shared::runtime::background::spawn(self.run(cancel)).is_none() {
             finalizer.finish_cancelled().await;
         }
     }

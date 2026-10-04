@@ -23,8 +23,8 @@
 
 use crate::domain::entities::chunk::Chunk as DomainChunk;
 use crate::domain::entities::document::Language;
-use crate::shared::domain_types::{ChunkId, DocumentId};
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::{ChunkId, DocumentId};
 use serde::{Deserialize, Serialize};
 
 /// Database model for chunks.

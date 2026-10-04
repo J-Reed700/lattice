@@ -20,7 +20,7 @@
 //! - **Bounded Context Separation**: Keeps acquisition and usage concerns separated
 //! - **Port/Adapter Pattern**: This is a "port" that infrastructure "adapters" implement
 
-use crate::domain::downloaded_model::DownloadedModel;
+use crate::domain::models::downloaded::DownloadedModel;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 

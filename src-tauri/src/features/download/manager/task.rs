@@ -115,7 +115,7 @@ impl DownloadManagerService {
         let shutdown = self.shutdown.clone();
         // Register before the worker can finish/remove itself.
         let mut active = self.active_downloads.write().await;
-        let task_handle = crate::shared::background::spawn(async move {
+        let task_handle = crate::shared::runtime::background::spawn(async move {
             info!(session_id = %session_id_for_task, "Download started");
 
             let resume_from =

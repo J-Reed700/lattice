@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Conversation outline**: a collapsible rail on the right of chat shows your current message, opens numbered previews for jumping through long conversations, and provides previous, next, and latest-message controls. Its expanded preference is remembered.
 - **Explorer** (`/explorer`, ⌘6): a folder from disk beside a chat
   - Pick a folder once; the tree, the viewer and the model's tools stay inside it until you close it
   - Back and forward through the files opened (‹ › above the file, ⌘[ and ⌘])
@@ -33,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Learning Studio's library text read moved behind a repository so the repository-barrier and layer-boundary checks pass
 
 ### Fixed
+- **Explorer file links returned unrelated files**: abbreviated paths such as `crash/mod.rs:57` now open the unique matching path at the cited lines instead of listing every `mod.rs`. Matching keeps all named folders, supports omitted intermediate folders, and offers a choice only among equally strong matches.
+- **Chat messages piled on top of each other and stayed that way** (most often after deleting a message): every window focus, including the one that closes the delete confirmation, called the virtualizer's `measure()`, which forgets every row's height. Rows that did not change size were never measured again, so long answers fell back to the 320px estimate and overlapped. The refresh now re-reads the viewport and re-measures the rows on screen without forgetting the rest (`VirtualizedMessageList.tsx`)
+- **`/compact` was invisible**: it runs the utility model for a minute or more, but the only sign was a toast that vanished after a few seconds, sending stayed open, and a refusal went to a banner elsewhere
+  - A row at the end of the thread says "Compacting context…" with a timer while it runs, then how many messages were summarized (with the summary on request) or why it could not compact, until dismissed
+  - Sending waits while it runs (the composer says so); the draft is kept
+  - The state lives in `compactionStore`, so leaving the chat or Explorer mid-run and coming back still shows it
+- **File references in Explorer answers that were not clickable**: only `path:10-24` written as inline code became a link, so references in brackets, lists, prose or markdown links were plain text
+  - One scanner (`TiptapEditor/extensions/fileRefs.ts`) reads the formats models actually use: `path:12`, `path:10-24` (any dash), `path:12:5`, `path#L10-L24`, `path:L12`, `path(12)`, `path (lines 10–24)`, `path, line 12`, `path L12`, `lines 10–24 of path`, lists such as `[a.rs:1; b.rs:2-3]` and `main.rs:9, 64-67`, bold or backticked paths with lines after them, absolute and Windows paths, `file://` addresses, and file paths named without lines (`src/lib/api.ts`), which open the file
+  - It leaves times, ratios, hosts, URLs, versions and dotted names (`self.status`, "Node.js") alone
+  - A markdown link whose address is a file in the folder (`[the entry](src/main.rs#L20)`) opens it; Tiptap's link check had been dropping such links as it parsed them
+- **Deep research stopped after its first round**: once the first round had found anything, the model lost the web search tool and was never told it was in deep research, so a "second round" could only reopen a link the first had found
+  - Deep research keeps web search (and Wikipedia, when on) after its first round, and the model is told to search again for what that round left uncovered, several calls per reply, without repeating the searches listed
+  - The banner over a later round says what the model went back for ("searching again for …", "reading 1 more page") instead of always promising another round of deep research
 - **Chat answers that stopped mid-thought with raw `<tool_call>` text**
   - The last round's "answer now, no tools" instruction went in as a system message, which llama.cpp merges into the top of the prompt, so the model never read it and kept writing calls as text. It is now the last user message
   - A call written as text in the last round is cut from the answer, which ends with a note that the turn ran out of tool rounds and can be continued

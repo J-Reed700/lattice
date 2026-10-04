@@ -183,6 +183,11 @@ struct ChatCompletionRequest<'a> {
     /// `--jinja`), which is what gives each model its native call format.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a Value>,
+    /// Sent with tools: llama-server lets a reply hold one call unless asked
+    /// for more, so a round that needs three pages would take three
+    /// generations. The remote adapter sends the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parallel_tool_calls: Option<bool>,
     /// Asks for a final usage frame on a stream, so a streamed typed
     /// completion reports tokens the way a non-streamed one does.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -536,6 +541,7 @@ impl SidecarLLMClient {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}})
             }),
             tools: tuning.tools,
+            parallel_tool_calls: tuning.tools.map(|_| true),
             stream_options: stream.then(|| json!({"include_usage": true})),
             return_progress: stream.then_some(true),
             logprobs: tuning.want_logprobs.then_some(true),
@@ -972,6 +978,7 @@ mod tests {
         assert_eq!(messages_json[1]["role"], "user");
         assert_eq!(messages_json[1]["content"], "Hi.");
         assert!(json.get("tools").is_none(), "{json}");
+        assert!(json.get("parallel_tool_calls").is_none(), "{json}");
         assert!(json.get("stream_options").is_none(), "{json}");
     }
 
@@ -1019,6 +1026,7 @@ mod tests {
 
         let json = serde_json::to_value(&body).expect("serialize");
         assert_eq!(json["tools"][0]["function"]["name"], "semantic_search");
+        assert_eq!(json["parallel_tool_calls"], true);
         assert_eq!(json["stream_options"]["include_usage"], true);
         let messages = json["messages"].as_array().expect("messages");
         assert_eq!(messages.len(), 4);

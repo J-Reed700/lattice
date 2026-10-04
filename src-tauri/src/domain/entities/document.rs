@@ -9,8 +9,8 @@
 
 use crate::domain::entities::chunk::Chunk;
 use crate::domain::value_objects::checksum::Checksum;
-use crate::shared::domain_types::{DocumentId, TagId, ValidatedFilePath};
 use crate::shared::error::Result;
+use crate::shared::types::{DocumentId, TagId, ValidatedFilePath};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -193,7 +193,7 @@ impl std::str::FromStr for Category {
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::document::Document;
-/// use lattice::shared::domain_types::{DocumentId, ValidatedFilePath};
+/// use lattice::shared::types::{DocumentId, ValidatedFilePath};
 /// use std::path::PathBuf;
 ///
 /// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();
@@ -285,7 +285,7 @@ impl Document {
     /// - Empty content → 0 chunks (valid)
     /// - Chunks have sequential indices starting at 0
     pub fn from_file(
-        file_path: crate::shared::domain_types::ValidatedFilePath,
+        file_path: crate::shared::types::ValidatedFilePath,
         metadata: crate::domain::value_objects::FileMetadata,
         checksum: crate::domain::value_objects::Checksum,
         content: String,
@@ -293,7 +293,7 @@ impl Document {
     ) -> Result<Self> {
         use crate::shared::error::AppError;
 
-        let document_id = crate::shared::domain_types::DocumentId::new();
+        let document_id = crate::shared::types::DocumentId::new();
 
         let chunks = if content.trim().is_empty() {
             // Empty/whitespace-only content → no chunks (valid state)
@@ -361,7 +361,7 @@ impl Document {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::document::Document;
-    /// use lattice::shared::domain_types::ValidatedFilePath;
+    /// use lattice::shared::types::ValidatedFilePath;
     /// use std::path::PathBuf;
     ///
     /// let path = ValidatedFilePath::new(PathBuf::from("/docs/report.pdf")).unwrap();
@@ -485,7 +485,7 @@ impl Document {
     /// ```rust,no_run
     /// # use lattice::domain::entities::Document;
     /// # use lattice::domain::entities::chunk::Chunk;
-    /// # use lattice::shared::domain_types::TagId;
+    /// # use lattice::shared::types::TagId;
     /// # use lattice::shared::error::Result;
     /// # fn example(metadata: Document, chunks: Vec<Chunk>, tags: Vec<TagId>) -> Result<Document> {
     /// // Repository loads metadata, chunks, and tags separately, then reconstructs:

@@ -1,5 +1,5 @@
 use super::{dto::*, repository::StudyRepository, service};
-use crate::{interfaces::di::Container, shared::api_result::ApiError};
+use crate::{interfaces::di::Container, shared::ipc::ApiError};
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

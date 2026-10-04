@@ -19,6 +19,8 @@
 //! 6. **FileOpsModule** - File system operations
 //! 7. **SystemModule** - Settings, health, backup, cache
 
+use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
+use crate::infrastructure::persistence::repositories::file_library::SqliteFileLibrary;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -429,7 +431,7 @@ async fn resolve_vector_compression(
         );
         return VectorIndexCompression::None;
     };
-    if !crate::domain::curated_models::embedding_model_supports_matryoshka(&model_id) {
+    if !crate::domain::models::curated::embedding_model_supports_matryoshka(&model_id) {
         tracing::warn!(
             model_id = %model_id,
             "Ignoring truncated vector compression: this embedding model does not advertise \
@@ -536,7 +538,7 @@ impl IndexingModule {
             web.ingest_web_url_use_case.clone(),
             web.web_ingestion_service.clone(),
             indexing.uow_factory.clone(),
-            Arc::new(crate::infrastructure::document_scope::SqliteDocumentScope::new(db_pool)),
+            Arc::new(SqliteDocumentScope::new(db_pool)),
         );
 
         Ok(Self {
@@ -980,9 +982,7 @@ impl FileOpsModule {
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
         let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
-        let library = Arc::new(crate::infrastructure::file_library::SqliteFileLibrary::new(
-            db_pool.clone(),
-        ));
+        let library = Arc::new(SqliteFileLibrary::new(db_pool.clone()));
         let file = crate::features::file::di::build(
             document_repo.clone(),
             file_system,
@@ -1089,7 +1089,7 @@ impl SystemModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
     ) -> crate::shared::error::Result<Self> {
-        use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
+        use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
         let settings = crate::features::settings::di::build(core.data_dir()).await?;
 

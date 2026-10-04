@@ -12,9 +12,9 @@
 //! is unambiguously a value the model was asked to read, not a line in the
 //! instructions around it. That is a legibility measure, not a security
 //! boundary — the boundary is deterministic validation in
-//! `domain::conversation_memory`.
+//! `domain::conversation::memory`.
 
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE,
     MAX_QUOTE_BYTES, MEMORY_SCHEMA_VERSION,
 };

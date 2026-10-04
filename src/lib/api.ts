@@ -5,7 +5,7 @@
  * with proper TypeScript types and error handling.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
 // Enhanced API Result types
@@ -332,7 +332,9 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   retry_learning_generation_job: { domain: 'learning', command: 'retry_learning_generation_job' },
   get_learning_generation_job: { domain: 'learning', command: 'get_learning_generation_job' },
   get_learning_program: { domain: 'learning', command: 'get_learning_program' },
+  get_learning_lesson_evidence: { domain: 'learning', command: 'get_learning_lesson_evidence' },
   generate_learning_program: { domain: 'learning', command: 'generate_learning_program' },
+  cancel_learning_outline: { domain: 'learning', command: 'cancel_learning_outline' },
   accept_learning_program: { domain: 'learning', command: 'accept_learning_program' },
   prepare_learning_lesson: { domain: 'learning', command: 'prepare_learning_lesson' },
   complete_learning_lesson: { domain: 'learning', command: 'complete_learning_lesson' },
@@ -2043,7 +2045,14 @@ const VaultAPI = {
   retryLearningGenerationJob: (request: Wire.LearningGenerationJobActionRequestDto): Promise<ApiResult<Wire.LearningGenerationJob>> => apiCall('retry_learning_generation_job', { request }),
   getLearningGenerationJob: (id: string): Promise<ApiResult<Wire.LearningGenerationJob>> => apiCall('get_learning_generation_job', { id }),
   getLearningProgram: (id: string): Promise<ApiResult<Wire.LearningProgramDto>> => apiCall('get_learning_program', { id }),
-  generateLearningProgram: (request: Wire.GenerateLearningProgramRequestDto): Promise<ApiResult<Wire.LearningProgramDto>> => apiCall('generate_learning_program', { request }),
+  getLearningLessonEvidence: (programId: string, lessonId: string): Promise<ApiResult<Wire.LearningLessonEvidenceDto | null>> => apiCall('get_learning_lesson_evidence', { programId, lessonId }),
+  generateLearningProgram: (request: Wire.GenerateLearningProgramRequestDto, options?: {
+    requestId: string; onProgress: (update: Wire.LearningOutlineProgressDto) => void;
+  }): Promise<ApiResult<Wire.LearningProgramDto>> => {
+    const onProgress = new Channel<Wire.LearningOutlineProgressDto>(options?.onProgress);
+    return apiCall('generate_learning_program', { request, requestId: options?.requestId ?? null, onProgress });
+  },
+  cancelLearningOutline: (requestId: string): Promise<ApiResult<boolean>> => apiCall('cancel_learning_outline', { requestId }),
   acceptLearningProgram: (request: Wire.AcceptLearningProgramRequestDto): Promise<ApiResult<Wire.LearningProgramDto>> => apiCall('accept_learning_program', { request }),
   prepareLearningLesson: (request: Wire.PrepareLearningLessonRequestDto): Promise<ApiResult<Wire.LearningProgramDto>> => apiCall('prepare_learning_lesson', { request }),
   completeLearningLesson: (request: Wire.CompleteLearningLessonRequestDto): Promise<ApiResult<Wire.LearningProgramDto>> => apiCall('complete_learning_lesson', { request }),

@@ -38,6 +38,8 @@ pub(super) fn fixture() -> LearningProgramDto {
             });
         }
         modules.push(LearningModuleDto {
+            prerequisite_module_ids: vec![],
+            project: None,
             id: mid,
             title: format!("Module {mi}"),
             summary: "A subject-neutral module".into(),
@@ -95,9 +97,10 @@ fn prepared(lesson_id: &str) -> PreparedLearningLesson {
             explanation: "The source supports the first option.".into(),
         });
     }
-    let _ = lesson_id;
-    PreparedLearningLesson {
+    let mut prepared = PreparedLearningLesson {
+        verification: None,
         blocks: vec![LearningBlockDto {
+            rubric: vec![],
             kind: LearningBlockKind::Explanation,
             title: "Core idea".into(),
             body: "A concise explanation.".into(),
@@ -105,7 +108,11 @@ fn prepared(lesson_id: &str) -> PreparedLearningLesson {
         }],
         questions,
         keys,
-    }
+    };
+    prepared.verification = Some(super::content_verification::tests::attest(
+        lesson_id, &prepared,
+    ));
+    prepared
 }
 
 #[test]
@@ -115,6 +122,7 @@ fn request_validation_keeps_every_selected_source_within_the_snapshot_budget() {
         prior_knowledge: String::new(),
         minutes_per_session: 30,
         document_ids: (0..8).map(|_| id()).collect(),
+        course_depth: None,
         source_urls: (0..5)
             .map(|index| format!("https://example.com/source-{index}"))
             .collect(),
@@ -1260,27 +1268,21 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
 }
 
 #[tokio::test]
-async fn library_document_text_reads_chunks_in_order_and_clips_each_one() -> Result<()> {
-    use super::source_library::{LearningSourceLibraryRepository, LIBRARY_CAPTURE_CHUNKS};
+async fn library_document_capture_keeps_full_ordered_text_and_rejects_incomplete_documents(
+) -> Result<()> {
+    use super::source_library::{LearningSourceLibraryRepository, MAX_TEXT_CHARS};
     let pool = pool().await?;
     let db = |e: sqlx::Error| crate::shared::error::AppError::Database(e.to_string());
     let document_id = id();
     sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum,status) VALUES(?,?,?,?,?,?,?)")
         .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")
-        .bind(22_i64).bind("2026-10-02").bind("checksum").bind("ready")
+        .bind(22_i64).bind("2026-10-02").bind("checksum").bind("indexed")
         .execute(&pool).await.map_err(db)?;
-    // Inserted out of order, one far longer than a capture keeps, and more
-    // chunks than one capture reads.
-    let long = "x".repeat(70_000);
-    let mut chunks = vec![
+    for (index, content) in [
         (1_i64, "second".to_string()),
         (0, "first".to_string()),
-        (2, long),
-    ];
-    chunks.extend(
-        (3..LIBRARY_CAPTURE_CHUNKS as i64 + 5).map(|index| (index, format!("chunk {index}"))),
-    );
-    for (index, content) in &chunks {
+        (2, "x".repeat(70_000)),
+    ] {
         sqlx::query("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES(?,?,?,?)")
             .bind(id())
             .bind(&document_id)
@@ -1290,15 +1292,28 @@ async fn library_document_text_reads_chunks_in_order_and_clips_each_one() -> Res
             .await
             .map_err(db)?;
     }
-    let library = LearningSourceLibraryRepository::new(pool);
+    let library = LearningSourceLibraryRepository::new(pool.clone());
     let (title, text) = library
         .library_document_text(&document_id)
         .await?
         .expect("indexed text");
     assert_eq!(title, "Field notes.txt");
-    assert_eq!(text.len(), LIBRARY_CAPTURE_CHUNKS);
+    assert_eq!(text.len(), 3);
     assert_eq!((text[0].as_str(), text[1].as_str()), ("first", "second"));
-    assert_eq!(text[2].chars().count(), 64_001);
+    assert_eq!(text[2].chars().count(), 70_000);
     assert!(library.library_document_text(&id()).await?.is_none());
+    sqlx::query("UPDATE text_chunks SET content=? WHERE document_id=? AND chunk_index=2")
+        .bind("x".repeat(MAX_TEXT_CHARS + 1))
+        .bind(&document_id)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(library.library_document_text(&document_id).await.is_err());
+    sqlx::query("UPDATE documents SET status='processing' WHERE id=?")
+        .bind(&document_id)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(library.library_document_text(&document_id).await.is_err());
     Ok(())
 }

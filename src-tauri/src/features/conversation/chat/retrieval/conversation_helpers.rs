@@ -103,7 +103,7 @@ fn query_planning_context(
             format!(
                 "{}: {}",
                 message.role,
-                crate::shared::text_utils::build_excerpt(&message.content, &terms, 1000)
+                crate::shared::text::build_excerpt(&message.content, &terms, 1000)
             )
         })
         .collect();

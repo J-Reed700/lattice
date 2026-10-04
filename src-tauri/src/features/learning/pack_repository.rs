@@ -298,6 +298,13 @@ async fn insert_evidence_snapshot(
                                     | "activity_snapshot_json"
                                     | "request_json"
                                     | "result_json"
+                                    | "prompt_json"
+                                    | "response_json"
+                                    | "findings_json"
+                                    | "source_coverage_gaps_json"
+                                    | "evaluation_json"
+                                    | "assistance_json"
+                                    | "details_json"
                             ) {
                                 remap_nested_value(&mut nested, map);
                             }
@@ -315,6 +322,13 @@ async fn insert_evidence_snapshot(
                                     | "activity_snapshot_json"
                                     | "request_json"
                                     | "result_json"
+                                    | "prompt_json"
+                                    | "response_json"
+                                    | "findings_json"
+                                    | "source_coverage_gaps_json"
+                                    | "evaluation_json"
+                                    | "assistance_json"
+                                    | "details_json"
                             ) {
                                 *value = serde_json::Value::String(json_string(&nested)?);
                             }
@@ -828,8 +842,9 @@ impl LearningPackRepository {
             let run_ops=sqlx::query("SELECT operation_id,run_id,kind,payload_hash,created_at FROM learning_practical_run_operations WHERE program_id=? ORDER BY created_at,operation_id").bind(&req.program_id).fetch_all(&self.pool).await.map_err(db)?;
             practical_operations.extend(run_ops.into_iter().map(|r|serde_json::json!({"table":"learning_practical_run_operations","operationId":r.get::<String,_>("operation_id"),"runId":r.get::<String,_>("run_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"createdAt":r.get::<i64,_>("created_at")})));
             let snapshot = PracticalPackSnapshot {
-                activities: practical.activities,
-                runs: practical.runs,
+                // Export saved data; availability is recomputed on the receiving device.
+                activities: practical.workspace.activities,
+                runs: practical.workspace.runs,
                 simulations,
                 simulation_turns,
                 run_snapshots,
@@ -2109,6 +2124,22 @@ fn validate_program(p: &LearningProgramDto) -> Result<()> {
         if !ids.insert(m.id.as_str()) {
             return Err(invalid("Pack has duplicate module IDs."));
         }
+        if m.prerequisite_module_ids
+            .iter()
+            .any(|id| !modules.contains(id.as_str()))
+            || m.prerequisite_module_ids
+                .iter()
+                .collect::<HashSet<_>>()
+                .len()
+                != m.prerequisite_module_ids.len()
+        {
+            return Err(invalid(
+                "Pack prerequisites must reference distinct earlier modules.",
+            ));
+        }
+        if let Some(project) = &m.project {
+            super::teaching::validate_project(project)?;
+        }
         modules.insert(m.id.as_str());
         for l in &m.lessons {
             validate_uuid(&l.id, "lesson")?;
@@ -2117,6 +2148,7 @@ fn validate_program(p: &LearningProgramDto) -> Result<()> {
             }
             lessons.insert(l.id.as_str());
             for block in &l.blocks {
+                super::teaching::validate_saved_rubric(&block.rubric)?;
                 if block
                     .source_ids
                     .iter()
@@ -2756,6 +2788,7 @@ fn remap_nested_value(value: &mut serde_json::Value, map: &HashMap<String, Strin
                         | "activityId"
                         | "runId"
                         | "sessionId"
+                        | "revisesSessionId"
                         | "cardId"
                         | "operationId"
                         | "resultId"
@@ -2781,6 +2814,7 @@ fn remap_nested_value(value: &mut serde_json::Value, map: &HashMap<String, Strin
                         | "sourceIds"
                         | "sourceVersionIds"
                         | "outcomeIds"
+                        | "prerequisiteModuleIds"
                         | "evidenceEventIds"
                 ) {
                     remap_scalar_or_id_array(child, map);
@@ -2832,6 +2866,7 @@ fn rewrite_program(program: &mut LearningProgramDto, map: &HashMap<String, Strin
         .map(|id| remap(map, id));
     for module in &mut program.modules {
         module.id = remap(map, &module.id);
+        remap_refs(map, &mut module.prerequisite_module_ids);
         for lesson in &mut module.lessons {
             lesson.id = remap(map, &lesson.id);
             for block in &mut lesson.blocks {
@@ -2877,14 +2912,14 @@ async fn insert_program(
     sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
         .bind(&summary.id).bind(&summary.title).bind(&summary.goal).bind(status).bind(summary.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&summary.current_lesson_id).bind(summary.created_at).execute(&mut **tx).await.map_err(db)?;
     for (mi, module) in program.modules.iter().enumerate() {
-        sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json) VALUES(?,?,?,?,?,?)").bind(&module.id).bind(&summary.id).bind(mi as i64).bind(&module.title).bind(&module.summary).bind(json_string(&module.outcomes)?).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json,prerequisite_ids_json,project_json) VALUES(?,?,?,?,?,?,?,?)").bind(&module.id).bind(&summary.id).bind(mi as i64).bind(&module.title).bind(&module.summary).bind(json_string(&module.outcomes)?).bind(json_string(&module.prerequisite_module_ids)?).bind(json_string(&module.project)?).execute(&mut **tx).await.map_err(db)?;
         for (li, lesson) in module.lessons.iter().enumerate() {
             sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed) VALUES(?,?,?,?,?,?,?,?,?)")
                 .bind(&lesson.id).bind(&summary.id).bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).bind(if lesson.preparation==LearningPreparation::Ready{"ready"}else{"outline"}).bind(lesson.completed as i64).execute(&mut **tx).await.map_err(db)?;
             for (bi, block) in lesson.blocks.iter().enumerate() {
                 let mut sources = block.source_ids.clone();
                 remap_refs(map, &mut sources);
-                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(bi as i64).bind(super::repository::block_kind(block.kind.clone())).bind(&block.title).bind(&block.body).bind(json_string(&sources)?).execute(&mut **tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(&lesson.id).bind(bi as i64).bind(super::repository::block_kind(block.kind.clone())).bind(&block.title).bind(&block.body).bind(json_string(&sources)?).bind(json_string(&block.rubric)?).execute(&mut **tx).await.map_err(db)?;
             }
             for (qi, question) in lesson.questions.iter().enumerate() {
                 let mut sources = question.source_ids.clone();

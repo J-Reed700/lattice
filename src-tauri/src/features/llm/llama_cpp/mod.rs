@@ -170,6 +170,9 @@ impl LlamaCppLlm {
         }
         if !request.tools.is_empty() {
             body.insert("tools".into(), tool_specs(&request.tools));
+            // llama-server lets a reply hold one call unless asked for more,
+            // so a round that needs three pages would take three generations.
+            body.insert("parallel_tool_calls".into(), json!(true));
         }
         if request.want_logprobs {
             body.insert("logprobs".into(), json!(true));
@@ -465,7 +468,7 @@ fn http_client(connection: &LlamaCppSettingsDto) -> Result<reqwest::Client> {
         value.set_sensitive(true);
         headers.insert(name, value);
     }
-    crate::shared::utils::reqwest_client_builder()
+    crate::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -546,7 +549,7 @@ pub(crate) fn invalid_tool_call_problem(arguments: &Value) -> Option<String> {
     let problem = object.get("error")?.as_str()?;
     Some(format!(
         "Tool call not run: {problem}. You wrote: {}. Call the tool again with a complete JSON object of arguments, or answer from what you have.",
-        crate::shared::text_utils::safe_truncate(raw, 400)
+        crate::shared::text::safe_truncate(raw, 400)
     ))
 }
 

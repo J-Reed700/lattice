@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TurnStep } from '@/types/conversation';
 
-import { deckOf, hasWebResearch, roundLine, type DeckRound, type DeckThinking } from '../research';
+import { deckOf, hasWebResearch, returnLine, roundLine, type DeckRound, type DeckThinking } from '../research';
 
 const step = (overrides: Partial<TurnStep> & Pick<TurnStep, 'id' | 'kind'>): TurnStep => ({
   label: overrides.id,
@@ -137,5 +137,35 @@ describe('research deck', () => {
   it('says found, not read, of a round that has only searched so far', () => {
     const [round] = rounds([search('s', 'q', ['https://a.example/1', 'https://b.example/2'])]);
     expect(roundLine(round)).toBe('1 search · 2 pages found');
+  });
+  /**
+   * The turn this was written for: the banner promised "another round of deep
+   * research" over a round that read one page. It says what the round did.
+   */
+  it('names what the model went back for', () => {
+    const deck = deckOf([
+      search('s1', 'first', ['https://a.example/1', 'https://b.example/2']),
+      step({ id: 'think', kind: 'generate' }),
+      read('p2', 'https://b.example/2', 'done'),
+      step({ id: 'write', kind: 'generate' }),
+    ]);
+    const [think] = deck.items.filter((item): item is DeckThinking => item.type === 'thinking');
+    expect(think.wentBackTo).not.toBeNull();
+    expect(returnLine(think.wentBackTo!)).toBe('Not enough yet — reading 1 more page');
+
+    const [searchedAgain] = rounds([
+      search('s2', 'China typhoon track October 2026', ['https://c.example/3']),
+      search('s3', 'Yangtze flood warnings', ['https://d.example/4']),
+      search('s4', 'Guangdong drought', ['https://e.example/5']),
+    ]);
+    expect(returnLine(searchedAgain)).toBe(
+      'Not enough yet — searching again for “China typhoon track October 2026” and 2 more searches'
+    );
+
+    const [longQuery] = rounds([search('s5', 'x'.repeat(200), ['https://f.example/6'])]);
+    expect(returnLine(longQuery)).toBe(`Not enough yet — searching again for “${'x'.repeat(79)}…”`);
+
+    const [documentsOnly] = rounds([step({ id: 'kb', kind: 'search_documents' })]);
+    expect(returnLine(documentsOnly)).toBe('Not enough yet — going back for another look');
   });
 });

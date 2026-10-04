@@ -511,7 +511,9 @@ pub async fn get_embedding_model_info(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
+    use crate::domain::models::embedding_defaults::{
+        DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME,
+    };
 
     #[tokio::test]
     async fn test_generate_embedding_requires_a_configured_model() {

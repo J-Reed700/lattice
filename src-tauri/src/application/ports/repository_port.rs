@@ -30,7 +30,7 @@
 //! }
 //! ```
 
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 /// Port for repository-based data persistence.

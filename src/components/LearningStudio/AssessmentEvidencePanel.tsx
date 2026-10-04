@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, CircleHelp, Clock3, FileCheck2, LoaderCircle, RotateCcw, Send, ShieldCheck, Sparkles } from 'lucide-react';
 
 import type {
+  LearningProgramDto,
+  LearningModuleDto,
   LearningAssessmentFormDto,
   LearningAssessmentFormSummaryDto,
   LearningAssessmentPurpose,
@@ -13,6 +15,7 @@ import type {
 } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
+import { ModuleCheckpoint } from './ModuleCheckpoint';
 import {
   useAcceptLearningFollowUp,
   useDismissLearningFollowUp,
@@ -269,11 +272,12 @@ function FollowUps({ workspace }: { workspace: LearningAssessmentWorkspaceDto })
       return <section className="rounded-2xl border border-border bg-surface p-5 sm:p-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Next steps</div><h3 className="mt-1 font-serif text-xl text-text-primary">Evidence-based follow-ups</h3></div><span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">{pending.length} pending</span></div>{pending.length === 0 ? <p className="mt-4 rounded-xl bg-background px-4 py-5 text-sm text-text-muted">No pending recommendations. New evidence may suggest a next step later.</p> : <div className="mt-4 space-y-3">{pending.map((item) => <article key={item.id} className="rounded-xl border border-border bg-background/45 p-4"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-accent/10 px-2.5 py-1 text-[10px] font-semibold text-accent">{reasonText[item.reasonCode]}</span>{outcomeName(item.outcomeId) && <span className="text-xs text-text-muted">{outcomeName(item.outcomeId)}</span>}</div><p className="mt-3 text-sm leading-6 text-text-secondary">{item.explanation}</p><div className="mt-4 flex flex-wrap items-center justify-between gap-3"><span className="text-xs font-medium text-text-primary">Suggested: {actionText[item.actionKind]}</span><div className="flex gap-2"><button type="button" disabled={Boolean(busyId)} onClick={() => void decide(item, 'dismiss')} className="rounded-full border border-border px-3.5 py-2 text-xs disabled:opacity-50">Dismiss</button><button type="button" disabled={Boolean(busyId)} onClick={() => void decide(item, 'accept')} className="rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">{busyId === item.id ? 'Saving…' : 'Accept suggestion'}</button></div></div></article>)}</div>}{retryTarget && <p role="alert" className="mt-3 flex flex-wrap items-center gap-2 text-sm text-rose-700">{unwrapError(accept.error ?? dismiss.error)}<button type="button" onClick={() => void decide(retryTarget.item, retryTarget.kind)} className="font-semibold underline">Retry same decision</button></p>}</section>;
 }
 
-export function AssessmentEvidencePanel({ programId }: { programId: string }) {
+export function AssessmentEvidencePanel({ programId, program, module, requestedFormId }: { programId: string; program?: LearningProgramDto; module?: LearningModuleDto; requestedFormId?: string | null }) {
   const workspace = useLearningAssessmentWorkspace(programId);
   const start = useStartLearningAssessmentForm();
   const [purpose, setPurpose] = useState<LearningAssessmentPurpose>('practice');
-  const [selectedFormId, setSelectedFormId] = useState<string | null>(null);
+  const [selectedFormId, setSelectedFormId] = useState<string | null>(requestedFormId ?? null);
+  useEffect(() => { if (requestedFormId) setSelectedFormId(requestedFormId); }, [requestedFormId]);
   const [startError, setStartError] = useState<string | null>(null);
   const [startRetryTarget, setStartRetryTarget] = useState<{ blueprintId: string; retakeOfFormId: string | null } | null>(null);
   const startRequestRef = useRef<{ key: string; request: Parameters<typeof start.mutateAsync>[0] } | null>(null);
@@ -310,6 +314,7 @@ export function AssessmentEvidencePanel({ programId }: { programId: string }) {
   if (selectedFormId && currentForm.data) return <div className="space-y-4"><FormAnswers form={currentForm.data} programId={programId} onExit={() => setSelectedFormId(null)} /></div>;
 
   return <div className="space-y-5" data-testid="assessment-evidence-panel">
+    {program && module && <ModuleCheckpoint key={module.id} program={program} module={module} workspace={workspace.data} onCreated={() => setPurpose('module_test')} />}
     {active.length > 0 && <section className="rounded-2xl border border-accent/25 bg-accent/5 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Continue where you left off</div><h2 className="mt-1 font-serif text-xl text-text-primary">Active assessments</h2></div><span className="rounded-full bg-surface px-3 py-1.5 text-xs text-text-muted">{active.length} in progress</span></div><div className="mt-4 grid gap-3 sm:grid-cols-2">{active.map((form) => <button key={form.id} type="button" onClick={() => setSelectedFormId(form.id)} className="rounded-xl border border-border bg-surface p-4 text-left transition hover:border-accent/45"><span className="text-[10px] font-semibold uppercase tracking-[.14em] text-accent">{purposeNames[form.purpose]} · Autosaved</span><span className="mt-1 block font-serif text-lg text-text-primary">{form.title}</span><span className="mt-2 block text-xs text-text-muted">Revision {form.revision} · Started {validDate(form.createdAt)}</span><span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-accent">Resume <Check size={13} /></span></button>)}</div></section>}
 
     <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm"><header className="relative overflow-hidden border-b border-border bg-[#eee8df] px-5 py-6 dark:bg-[#28251f] sm:px-7 sm:py-8"><div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full border border-accent/20" /><div className="relative max-w-3xl"><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[.17em] text-accent"><ShieldCheck size={14} /> Assess &amp; evidence</div><h2 className="mt-2 font-serif text-3xl leading-tight text-text-primary">A clearer picture than one score</h2><p className="mt-3 text-sm leading-6 text-text-secondary">Choose a purpose, resume a saved form, or review the evidence gathered across different kinds of work. Open responses may receive provisional or uncertain feedback.</p></div></header>

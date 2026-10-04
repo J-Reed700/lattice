@@ -187,9 +187,9 @@ impl LearningAssessmentRepository {
         program_id: &str,
         ids: &[String],
     ) -> Result<()> {
-        if ids.is_empty() || ids.len() > 32 {
+        if ids.len() > 32 {
             return Err(invalid(
-                "Assessments must reference 1–32 frozen source versions.",
+                "Assessments support at most 32 frozen source versions.",
             ));
         }
         let mut seen = HashSet::new();
@@ -434,8 +434,22 @@ impl LearningAssessmentRepository {
             requirements: req.requirements.clone(),
         };
         engine::validate_blueprint(&engine_blueprint)?;
-        if req.source_version_ids.is_empty() || req.source_version_ids.len() > 32 {
-            return Err(invalid("Select between 1 and 32 frozen source versions."));
+        if req.source_version_ids.len() > 32 {
+            return Err(invalid("Select no more than 32 frozen source versions."));
+        }
+        if req.source_version_ids.is_empty() {
+            let has_sources: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM learning_sources WHERE program_id=?)",
+            )
+            .bind(&req.program_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db)?;
+            if has_sources {
+                return Err(invalid(
+                    "Select frozen source versions for this source-backed assessment.",
+                ));
+            }
         }
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
@@ -564,6 +578,20 @@ impl LearningAssessmentRepository {
         if let Some(row)=sqlx::query("SELECT program_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if row.get::<String,_>("program_id")==req.program_id&&row.get::<String,_>("kind")=="create_blueprint"&&row.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used for different assessment data."));}
         Self::active_program(&mut tx, &req.program_id).await?;
         Self::ensure_outcomes(&mut tx, &req.program_id).await?;
+        if req.source_version_ids.is_empty() {
+            let has_sources: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM learning_sources WHERE program_id=?)",
+            )
+            .bind(&req.program_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+            if has_sources {
+                return Err(invalid(
+                    "Select frozen source versions for this source-backed assessment.",
+                ));
+            }
+        }
         Self::verify_sources(&mut tx, &req.program_id, &req.source_version_ids).await?;
         if req.revision == 1 {
             if req.predecessor_revision.is_some() {
@@ -608,6 +636,16 @@ impl LearningAssessmentRepository {
         }
         let mut candidate_ids = HashSet::new();
         for input in candidates {
+            if (!req.source_version_ids.is_empty() && input.source_version_ids.is_empty())
+                || input
+                    .source_version_ids
+                    .iter()
+                    .any(|id| !req.source_version_ids.contains(id))
+            {
+                return Err(invalid(
+                    "Assessment candidate citations must match its frozen blueprint sources.",
+                ));
+            }
             if !candidate_ids.insert(input.id.as_str()) {
                 return Err(invalid("Blueprint repeats a candidate ID."));
             }

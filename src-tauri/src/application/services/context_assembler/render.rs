@@ -16,7 +16,7 @@
 //!   do their own work.
 
 use crate::application::ports::llm_port::CompletionInput;
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     EvidencePurpose, MemoryItem, MemoryReview, SourceMessage, SourceRole,
 };
 
@@ -77,7 +77,7 @@ pub fn render_summary(summary: &str) -> Option<CompletionInput> {
     }
     Some(CompletionInput::Message {
         role: "assistant".into(),
-        content: crate::domain::conversation_memory::frame_generated_summary(summary),
+        content: crate::domain::conversation::memory::frame_generated_summary(summary),
     })
 }
 
@@ -215,7 +215,7 @@ pub fn render_current_input(input: &str) -> CompletionInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::conversation_memory::{
+    use crate::domain::conversation::memory::{
         compute_digest, EvidenceSpan, MemoryId, MemoryKind, MemoryState,
     };
 

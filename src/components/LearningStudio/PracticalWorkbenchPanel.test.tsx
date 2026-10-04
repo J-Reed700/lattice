@@ -184,7 +184,7 @@ const session = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderPractical(chosenLesson = lesson) {
+function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; brief: string }) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity },
@@ -195,7 +195,7 @@ function renderPractical(chosenLesson = lesson) {
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
   return render(
-    <PracticalWorkbenchPanel program={program} lesson={chosenLesson} />,
+    <PracticalWorkbenchPanel program={program} lesson={chosenLesson} projectRequest={projectRequest} />,
     { wrapper },
   );
 }
@@ -413,6 +413,17 @@ describe("Learning Studio Labs & simulations", () => {
       runtimeProfileId: null,
       kind: "code_lab",
     });
+  });
+
+  it("opens a course project with its outcome-based brief already filled in", async () => {
+    const user = userEvent.setup();
+    const brief = "Build a comparison study. Deliver a design and justify its limitations.";
+    renderPractical(lesson, { id: "project-request", brief });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("project");
+    expect(screen.getByLabelText("Your focus for this activity")).toHaveValue(brief);
+    await user.click(screen.getByRole("button", { name: "Generate activity" }));
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledOnce());
+    expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "project", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: null });
   });
 
   it("keeps container selection available for optional project activities", async () => {

@@ -3,8 +3,8 @@
 use crate::features::batch::dto::StartBatchFileImportRequestDto;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
+use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 use tauri::State;
 

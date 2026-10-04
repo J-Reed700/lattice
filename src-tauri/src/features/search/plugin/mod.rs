@@ -10,7 +10,7 @@ use crate::features::search::reranker_setup::{
     download_reranker_impl, reranker_status_impl, RerankerStatusDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,

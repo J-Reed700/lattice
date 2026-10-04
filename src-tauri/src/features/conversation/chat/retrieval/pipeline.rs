@@ -94,6 +94,7 @@ pub(super) async fn run_retrieval_pipeline(
         scope_is_linked: false,
         sufficiency: None,
         pages_read: FetchMemory::default(),
+        web_queries: Vec::new(),
     };
     // A closed-book turn stops here, before a model is loaded or a scope is
     // resolved. Gating each search below instead would leave the next path
@@ -460,6 +461,8 @@ pub(super) struct ExternalSearchResult {
     /// Every page this search tried to open, readable or not, for the tool
     /// loop to start from.
     pub(super) pages: crate::features::conversation::chat::fetch_memory::FetchMemory,
+    /// The queries it ran: the one it was given, then a deep search's own.
+    pub(super) queries: Vec<String>,
 }
 
 impl ExternalLookup<'_> {
@@ -1169,6 +1172,9 @@ impl ExternalLookup<'_> {
                                     self.highlight_terms,
                                     self.excerpt_chars,
                                 );
+                                searched.queries = std::iter::once(web_query.to_string())
+                                    .chain(output.followup_queries.iter().cloned())
+                                    .collect();
 
                                 let (pages, page_memory) =
                                     self.fetch_page_texts(&output.results).await;
@@ -1302,6 +1308,7 @@ pub(super) fn attach_web_results(
 ) {
     outcome.sub_timings.web_search_ms = web.elapsed_ms;
     outcome.pages_read.absorb(web.pages);
+    outcome.web_queries.extend(web.queries);
     if web.error.is_some() {
         outcome.web_search_error = web.error;
     }

@@ -423,7 +423,7 @@ mod late_chunking_tests {
     use super::*;
     use crate::application::ports::embedding_port::EmbeddingTextChunk;
     use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
-    use crate::shared::domain_types::ValidatedFilePath;
+    use crate::shared::types::ValidatedFilePath;
     use std::sync::Mutex;
 
     /// Splits at a fixed byte width and records every text handed to the model,
@@ -761,7 +761,7 @@ mod live_tests {
         let metadata = crate::application::factories::FileMetadataFactory::from_path(&path)?;
         let checksum = crate::application::factories::ChecksumFactory::from_path(&path)?;
         let mut doc = Document::from_file(
-            crate::shared::domain_types::ValidatedFilePath::new(path)?,
+            crate::shared::types::ValidatedFilePath::new(path)?,
             metadata,
             checksum,
             extracted.text.clone(),

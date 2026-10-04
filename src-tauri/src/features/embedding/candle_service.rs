@@ -57,8 +57,8 @@ use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
 use crate::features::embedding::sparse_head::{SparseHead, MAX_PASSAGE_TERMS, MAX_QUERY_TERMS};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
-use crate::shared::utils::with_autorelease_pool;
+use crate::shared::error::Result;
+use crate::shared::runtime::with_autorelease_pool;
 
 /// Encoder families and the Qwen3 decoder supported by the local runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +266,7 @@ impl CandleEmbeddingService {
     /// TODO(settings): there is no user-facing switch for the embedding
     /// strategy yet — `application/contracts/settings.rs` is owned elsewhere.
     /// When a setting lands, read it where the model is loaded
-    /// (`infrastructure/embedding_loading.rs`) and call `with_strategy`.
+    /// (`features/embedding/loading.rs`) and call `with_strategy`.
     /// Flipping it re-generates every vector, because `model_identity()`
     /// changes with the strategy.
     pub fn open(model_dir: impl AsRef<Path>, identity: ArtifactIdentity) -> Result<Self> {
@@ -332,7 +332,8 @@ impl CandleEmbeddingService {
         let pooling = read_pooling_strategy(dir);
         let prefixes = resolve_prefixes(dir, &config_bytes, architecture);
 
-        let device = crate::shared::utils::best_available_compute_device("embedding");
+        let device =
+            crate::infrastructure::ml::compute_device::best_available_compute_device("embedding");
         let dtype = dtype.unwrap_or_else(|| weights_dtype(architecture, &device));
         tracing::info!(
             device = ?device,
@@ -1430,7 +1431,7 @@ pub fn prefixes_for_model_dir(dir: &Path) -> &'static EmbeddingPrefixes {
 /// blocking pool rather than a runtime worker. It also autoreleases
 /// Objective-C objects on every dispatch, which the step's own autorelease
 /// pool releases on return; without it they stayed parked on the worker
-/// thread for the life of the process (see `shared::utils::autorelease`).
+/// thread for the life of the process (see `shared::runtime::autorelease`).
 async fn run_inference<T, F>(f: F) -> Result<T>
 where
     T: Send + 'static,

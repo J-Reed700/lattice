@@ -10,7 +10,7 @@ use crate::features::backup::dto::{
     RestoreBackupResultDto, SetArchiveKeepCountRequestDto, SetArchivePassphraseRequestDto,
 };
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
+use crate::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     AppHandle, Runtime, State,

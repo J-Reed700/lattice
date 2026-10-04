@@ -24,8 +24,8 @@ use crate::infrastructure::persistence::database::{query_with_quick_timeout, que
 use crate::infrastructure::persistence::mappers::{
     ChunkMapper, ChunkModel, DocumentMapper, DocumentModel,
 };
-use crate::shared::domain_types::TagId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::TagId;
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 

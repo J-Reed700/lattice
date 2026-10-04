@@ -30,6 +30,7 @@ pub mod branching_dto;
 pub mod chat;
 pub mod commands;
 pub mod compaction;
+pub mod context_repository;
 pub mod di;
 pub mod dto;
 mod handoff;

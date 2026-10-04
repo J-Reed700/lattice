@@ -1,7 +1,7 @@
 //! Branching a conversation into a sibling thread.
 
 use super::ConversationRepository;
-use crate::domain::conversation_memory::compute_digest;
+use crate::domain::conversation::memory::compute_digest;
 use crate::shared::error::{AppError, Result};
 use chrono::Utc;
 

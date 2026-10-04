@@ -4,7 +4,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::vault::writeback;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::time::now_db_timestamp;
+use crate::shared::persistence::timestamps::now_db_timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

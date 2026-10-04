@@ -1,6 +1,6 @@
 //! Scope, explicit user memory edits and time metadata on the same ledger.
 use super::ConversationRepository;
-use crate::domain::conversation_memory::compute_digest;
+use crate::domain::conversation::memory::compute_digest;
 use crate::features::conversation::knowledge_dto::{
     KnowledgeItemDto, KnowledgeRequestDto, KnowledgeResponseDto,
 };
@@ -377,7 +377,7 @@ impl ConversationRepository {
                 }
                 let state = self.load_memory_state(&item.conversation_id).await?;
                 if !state.is_schema_supported()
-                    || state.validity != crate::domain::conversation_memory::MemoryValidity::Ready
+                    || state.validity != crate::domain::conversation::memory::MemoryValidity::Ready
                 {
                     continue;
                 }

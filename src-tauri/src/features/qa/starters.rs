@@ -20,8 +20,8 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::starters_dto::{ChatStarterDto, ChatStartersDto};
 use crate::interfaces::di::Container;
-use crate::shared::api_result::ApiError;
 use crate::shared::error::{AppError, Result};
+use crate::shared::ipc::ApiError;
 
 /// Bump when the fingerprint algorithm changes so old rows auto-invalidate.
 const FINGERPRINT_VERSION: &str = "starters-v2";

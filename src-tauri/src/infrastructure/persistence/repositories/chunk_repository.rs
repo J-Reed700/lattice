@@ -478,7 +478,7 @@ impl ChunkRepositoryPort for ChunkRepository {
         _start_char: Option<i64>,
         _end_char: Option<i64>,
     ) -> Result<ChunkEntity> {
-        use crate::shared::domain_types::DocumentId;
+        use crate::shared::types::DocumentId;
         let doc_id = DocumentId::from(document_id.to_string());
         let chunk = ChunkEntity::new(doc_id, content.to_string(), index);
         self.save(&chunk).await?;
@@ -646,7 +646,7 @@ impl ChunkRepositoryPort for ChunkRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::domain_types::DocumentId;
+    use crate::shared::types::DocumentId;
 
     /// In-memory pool with the real migrations applied, so the tests exercise the
     /// production `text_chunks` schema (`language`, `token_count`, `word_count`,

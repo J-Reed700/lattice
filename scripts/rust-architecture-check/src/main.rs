@@ -11,10 +11,29 @@ use syn::{
 };
 
 fn test_only(attrs: &[Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("cfg")
-            && a.parse_args::<syn::Path>()
-                .is_ok_and(|p| p.is_ident("test"))
+    fn excluded_from_production(meta: &syn::Meta) -> bool {
+        match meta {
+            syn::Meta::Path(path) => path.is_ident("test") || path.is_ident("doc"),
+            syn::Meta::List(list) if list.path.is_ident("any") || list.path.is_ident("all") => {
+                let Ok(items) = list.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                ) else {
+                    return false;
+                };
+                if list.path.is_ident("any") {
+                    items.iter().all(excluded_from_production)
+                } else {
+                    items.iter().any(excluded_from_production)
+                }
+            }
+            _ => false,
+        }
+    }
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && attr
+                .parse_args::<syn::Meta>()
+                .is_ok_and(|meta| excluded_from_production(&meta))
     })
 }
 
@@ -193,7 +212,10 @@ impl<'ast> Visit<'ast> for RawTokioSpawn {
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-        if segments == ["tokio", "spawn"] || segments == ["tokio", "task", "spawn"] {
+        if segments == ["tokio", "spawn"]
+            || segments == ["tokio", "task", "spawn"]
+            || segments == ["tauri", "async_runtime", "spawn"]
+        {
             self.found = true;
         }
         visit::visit_path(self, path);
@@ -210,6 +232,146 @@ fn has_production_raw_tokio_spawn(source: &str) -> Result<bool, syn::Error> {
     Ok(visitor.found)
 }
 
+// Empty tests inflate the pass count without exercising a contract.
+fn empty_tests(source: &str) -> Result<Vec<String>, syn::Error> {
+    #[derive(Default)]
+    struct EmptyTests(Vec<String>);
+    impl<'ast> Visit<'ast> for EmptyTests {
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            let is_test = item
+                .attrs
+                .iter()
+                .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"));
+            let no_op = match item.block.stmts.as_slice() {
+                [] => true,
+                [syn::Stmt::Expr(syn::Expr::Call(call), _)] => {
+                    matches!(&*call.func, syn::Expr::Path(path) if path.path.is_ident("Ok"))
+                        && matches!(call.args.first(), Some(syn::Expr::Tuple(tuple)) if tuple.elems.is_empty())
+                        && call.args.len() == 1
+                }
+                _ => false,
+            };
+            if is_test && no_op {
+                self.0.push(item.sig.ident.to_string());
+            }
+            visit::visit_item_fn(self, item);
+        }
+    }
+    let mut visitor = EmptyTests::default();
+    visitor.visit_file(&syn::parse_file(source)?);
+    Ok(visitor.0)
+}
+
+fn check_integration_tests(
+    root: &Path,
+    failures: &mut usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tests = root
+        .parent()
+        .ok_or("source root has no parent")?
+        .join("tests");
+    let mut reachable = HashSet::new();
+    for entry in fs::read_dir(&tests)? {
+        let path = entry?.path();
+        let target = if path.is_dir() {
+            path.join("main.rs")
+        } else {
+            path
+        };
+        if target.is_file()
+            && target
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+        {
+            collect_test_modules(&target, true, &mut reachable)?;
+        }
+    }
+    let mut directories = vec![tests];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                if !reachable.contains(&path.canonicalize()?) {
+                    eprintln!(
+                        "VIOLATION: {} is not reachable from a Cargo test target",
+                        path.display()
+                    );
+                    *failures += 1;
+                }
+                for name in empty_tests(&fs::read_to_string(&path)?)? {
+                    eprintln!("VIOLATION: {} test {name} has no behavior", path.display());
+                    *failures += 1;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn test_module_files(items: &[Item], module_dir: &Path, attribute_dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for item in items {
+        let Item::Mod(module) = item else { continue };
+        let name = module.ident.to_string();
+        if let Some((_, items)) = &module.content {
+            files.extend(test_module_files(
+                items,
+                &module_dir.join(&name),
+                &attribute_dir.join(&name),
+            ));
+            continue;
+        }
+        let explicit = module.attrs.iter().find_map(|attribute| {
+            if !attribute.path().is_ident("path") {
+                return None;
+            }
+            let syn::Meta::NameValue(value) = &attribute.meta else {
+                return None;
+            };
+            let syn::Expr::Lit(value) = &value.value else {
+                return None;
+            };
+            let syn::Lit::Str(value) = &value.lit else {
+                return None;
+            };
+            Some(attribute_dir.join(value.value()))
+        });
+        files.push(explicit.unwrap_or_else(|| {
+            let flat = module_dir.join(format!("{name}.rs"));
+            if flat.exists() {
+                flat
+            } else {
+                module_dir.join(name).join("mod.rs")
+            }
+        }));
+    }
+    files
+}
+
+fn collect_test_modules(
+    path: &Path,
+    crate_root: bool,
+    reachable: &mut HashSet<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = path.canonicalize()?;
+    if !reachable.insert(path.clone()) {
+        return Ok(());
+    }
+    let parent = path.parent().ok_or("test source has no parent")?;
+    let module_dir = if crate_root || path.file_stem().is_some_and(|name| name == "mod") {
+        parent.to_path_buf()
+    } else {
+        parent.join(path.file_stem().ok_or("test source has no name")?)
+    };
+    let source = syn::parse_file(&fs::read_to_string(&path)?)?;
+    for child in test_module_files(&source.items, &module_dir, parent) {
+        collect_test_modules(&child, false, reachable)?;
+    }
+    Ok(())
+}
+
 fn check_supervised_background_paths(
     root: &Path,
     failures: &mut usize,
@@ -217,12 +379,17 @@ fn check_supervised_background_paths(
     for path in [
         "features/batch/use_cases/start_url_import.rs",
         "features/conversation/chat/verification/background.rs",
+        "features/conversation/chat/persistence.rs",
+        "features/conversation/compaction.rs",
+        "features/learning/plugin.rs",
+        "features/learning/generation_jobs.rs",
+        "features/learning/practical_runs.rs",
         "features/transcription/engine/whisper.rs",
     ] {
         let file = root.join(path);
         if has_production_raw_tokio_spawn(&fs::read_to_string(&file)?)? {
             eprintln!(
-                "VIOLATION: {} uses raw tokio::spawn; use the shared background supervisor",
+                "VIOLATION: {} uses a detached spawn; use the shared background supervisor",
                 file.display()
             );
             *failures += 1;
@@ -346,7 +513,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut failures = 0;
     check_supervised_background_paths(&root, &mut failures)?;
+    check_integration_tests(&root, &mut failures)?;
     check_feature_entrypoints(&root.join("features"), &mut failures)?;
+    for workflow in [
+        "chat/turn_record.rs",
+        "chat/tool_loop.rs",
+        "chat/turn.rs",
+        "chat/routing.rs",
+        "chat/tools.rs",
+    ] {
+        scan_with_drivers(
+            &root.join("features/conversation").join(workflow),
+            &[],
+            &["tauri"],
+            &mut HashSet::new(),
+            &mut failures,
+        )?;
+    }
+    scan_with_drivers(
+        &root.join("features/learning/generation_jobs.rs"),
+        &["interfaces"],
+        &["tauri"],
+        &mut HashSet::new(),
+        &mut failures,
+    )?;
     for workflow in ["branching.rs", "synthesis.rs"] {
         scan_with_drivers(
             &root.join("features/conversation").join(workflow),
@@ -360,6 +550,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &root.join("features/conversation/repository/workspace"),
         &["interfaces"],
         &["tauri", "axum"],
+        &mut HashSet::new(),
+        &mut failures,
+    )?;
+    scan_with_drivers(
+        &root.join("shared/error"),
+        &[
+            "domain",
+            "application",
+            "features",
+            "infrastructure",
+            "interfaces",
+        ],
+        &["sqlx", "keyring", "ndarray", "tauri"],
         &mut HashSet::new(),
         &mut failures,
     )?;
@@ -401,6 +604,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_inventory_rejects_orphans_and_follows_nested_and_explicit_modules() {
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = Scratch(std::env::temp_dir().join(format!(
+            "lattice-test-inventory-{}-{unique}",
+            std::process::id()
+        )));
+        let source = scratch.0.join("src");
+        let tests = scratch.0.join("tests");
+        for directory in [
+            &source,
+            &tests.join("helpers"),
+            &tests.join("inline"),
+            &tests.join("support"),
+        ] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        fs::write(
+            tests.join("suite.rs"),
+            "mod helpers; mod inline { mod case; } #[path = \"support/custom.rs\"] mod mapped;",
+        )
+        .unwrap();
+        fs::write(tests.join("helpers/mod.rs"), "mod fixtures;").unwrap();
+        fs::write(tests.join("helpers/fixtures.rs"), "const FIXTURE: u32 = 1;").unwrap();
+        fs::write(
+            tests.join("inline/case.rs"),
+            "#[test] fn real() { assert_eq!(1, 1); }",
+        )
+        .unwrap();
+        fs::write(tests.join("support/custom.rs"), "const VALUE: bool = true;").unwrap();
+        let orphan = tests.join("support/unreferenced.rs");
+        fs::write(&orphan, "#[test] fn never_runs() { assert_eq!(1, 1); }").unwrap();
+        let mut failures = 0;
+        check_integration_tests(&source, &mut failures).unwrap();
+        assert_eq!(failures, 1);
+        fs::remove_file(orphan).unwrap();
+        let mut failures = 0;
+        check_integration_tests(&source, &mut failures).unwrap();
+        assert_eq!(failures, 0);
+    }
+
+    #[test]
+    fn rejects_empty_test_bodies_but_keeps_exercised_contracts() {
+        assert_eq!(empty_tests("#[tokio::test] async fn stub() -> Result<()> { Ok(()) } #[test] fn empty() {} #[test] fn real() { exercise().unwrap(); }").unwrap(), vec!["stub", "empty"]);
+    }
+
+    #[test]
+    fn documentation_examples_are_excluded_from_production_dependencies() {
+        assert!(!has_production_raw_tokio_spawn(
+            "#[cfg(any(test, doc))] mod examples { fn run() { tokio::spawn(async {}); } }"
+        )
+        .unwrap());
+        assert!(has_production_raw_tokio_spawn(
+            "#[cfg(any(test, unix))] mod platform { fn run() { tokio::spawn(async {}); } }"
+        )
+        .unwrap());
+    }
+
     #[test]
     fn resumes_after_test_items_and_ignores_comments_and_strings() {
         let (bad, _) = inspect(
@@ -436,6 +707,10 @@ mod tests {
     #[test]
     fn supervised_workflows_reject_production_tokio_spawn_but_allow_tests() {
         assert!(has_production_raw_tokio_spawn("fn run() { tokio::spawn(async {}); }").unwrap());
+        assert!(has_production_raw_tokio_spawn(
+            "fn run() { tauri::async_runtime::spawn(async {}); }"
+        )
+        .unwrap());
         assert!(!has_production_raw_tokio_spawn(
             "#[cfg(test)] mod tests { fn run() { tokio::spawn(async {}); } }"
         )

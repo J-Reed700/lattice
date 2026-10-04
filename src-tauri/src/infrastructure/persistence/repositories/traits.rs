@@ -291,8 +291,6 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 // the trait method, creating infinite recursion → stack overflow.
 // **Migration Complete**: All document repository operations now use the modern
 // RepositoryPort<Document> pattern. See document_repository.rs for current implementation.
-// **Test Infrastructure**: Test factories (tests/helpers/factories.rs) have been
-// updated to use domain entities and RepositoryPort directly.
 // This legacy trait is kept only for interface definition (other code may still
 // reference the trait). The broken implementation has been completely removed.
 

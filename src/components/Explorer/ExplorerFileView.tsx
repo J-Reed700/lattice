@@ -20,9 +20,9 @@ const FILE_CACHE = { staleTime: 60_000, gcTime: 30 * 60_000 } as const;
 
 /**
  * The open path named no file. Answers often cite a file by its name alone
- * (`effect_api.hpp:12`) or by a path that has lost a folder, so the folder is
- * searched for what it meant: one match opens at the same lines, several are
- * offered, and none says so.
+ * (`effect_api.hpp:12`) or by an abbreviated path. The resolver returns only
+ * the strongest matches that respect its named folders: one opens at the same
+ * lines, several are offered, and none says so.
  */
 function MissingFile({ root, path, message }: { root: string; path: string; message: string }) {
   const retarget = useExplorerStore((state) => state.retarget);
@@ -44,13 +44,13 @@ function MissingFile({ root, path, message }: { root: string; path: string; mess
   }, [only, path, retarget]);
 
   if (located.isPending || only) {
-    return <p className="px-4 py-3 text-xs text-text-muted">Looking for {path.split('/').pop()} in this folder…</p>;
+    return <p className="px-4 py-3 text-xs text-text-muted">Looking for {path} in this folder…</p>;
   }
   if (matches.length > 1) {
     return (
-      <div className="px-4 py-3">
+      <div className="h-full overflow-y-auto px-4 py-3">
         <p className="text-xs text-text-secondary">
-          <code className="font-mono">{path}</code> isn’t a path in this folder. It could be:
+          More than one file matches <code className="font-mono">{path}</code>. Choose one:
         </p>
         <ul className="mt-2 flex flex-col gap-0.5">
           {matches.map((match) => (
@@ -71,8 +71,8 @@ function MissingFile({ root, path, message }: { root: string; path: string; mess
   }
   return (
     <p role="alert" className="px-4 py-3 text-xs text-danger-fg">
-      {message}
-      {located.data && !located.data.exists && ' Nothing else in this folder has that name.'}
+      {located.error?.message ?? message}
+      {located.data && !located.data.exists && ' No file in this folder matches that path.'}
     </p>
   );
 }

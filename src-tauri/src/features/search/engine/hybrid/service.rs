@@ -9,7 +9,7 @@ use crate::features::search::engine::fusion::{
 use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
 use crate::features::search::engine::reranker::{blend_rerank_scores, Reranker};
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;

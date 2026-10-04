@@ -37,7 +37,7 @@ pub struct GenerateSingleEmbeddingRequestDto {
 /// # Example
 /// ```rust
 /// # use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingResponseDto;
-/// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+/// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 /// let response = GenerateSingleEmbeddingResponseDto {
 ///     embedding: vec![0.1, 0.2, 0.3], // DEFAULT_EMBEDDING_DIM values
 ///     dimension: DEFAULT_EMBEDDING_DIM,
@@ -103,7 +103,7 @@ pub struct GenerateBatchEmbeddingsResponseDto {
 /// # Example
 /// ```rust
 /// # use lattice::application::dtos::embedding_dto::EmbeddingModelInfoDto;
-/// use lattice::domain::embedding_constants::{
+/// use lattice::domain::models::embedding_defaults::{
 ///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
 /// };
 /// let info = EmbeddingModelInfoDto {

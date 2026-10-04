@@ -56,7 +56,7 @@ impl TagGenerator {
         let content_preview = if content.len() > 10000 {
             format!(
                 "{}... [truncated]",
-                &content[..crate::shared::text_utils::floor_char_boundary(content, 10000)]
+                &content[..crate::shared::text::floor_char_boundary(content, 10000)]
             )
         } else {
             content.to_string()

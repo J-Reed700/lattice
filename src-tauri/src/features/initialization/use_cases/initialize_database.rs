@@ -30,7 +30,7 @@
 
 use crate::features::initialization::dto::InitializeDatabaseResponseDto;
 use crate::shared::error::AppError;
-use crate::shared::result::Result;
+use crate::shared::error::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 

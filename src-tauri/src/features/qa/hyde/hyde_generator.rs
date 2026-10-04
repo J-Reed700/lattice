@@ -32,7 +32,7 @@ use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use crate::application::ports::LLMPort;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::safe_truncate;
+use crate::shared::text::safe_truncate;
 use lazy_regex::regex;
 use std::collections::HashSet;
 use std::sync::Arc;

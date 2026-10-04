@@ -13,8 +13,6 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use serde::Serialize;
-use tauri::Emitter;
-use tracing::warn;
 
 use super::ChatStreamEventDto;
 
@@ -212,30 +210,13 @@ impl std::fmt::Debug for TurnRecorder {
 }
 
 impl TurnRecorder {
-    pub fn new<R: tauri::Runtime>(
-        window: &tauri::Window<R>,
-        conversation_id: &str,
-        request_id: &str,
-    ) -> Self {
-        let window = window.clone();
-        Self::with_emitter(
-            conversation_id,
-            request_id,
-            Box::new(move |payload| {
-                if let Err(error) = window.emit("llm-stream", payload) {
-                    warn!(%error, "Failed to emit a turn step");
-                }
-            }),
-        )
-    }
-
     /// A recorder that accumulates and sends nothing. For tests, and for any
     /// turn with no window to speak to.
     pub fn silent(conversation_id: &str, request_id: &str) -> Self {
         Self::with_emitter(conversation_id, request_id, Box::new(|_| {}))
     }
 
-    fn with_emitter(
+    pub(super) fn with_emitter(
         conversation_id: &str,
         request_id: &str,
         emit: Box<dyn Fn(ChatStreamEventDto) + Send + Sync>,
@@ -440,7 +421,7 @@ fn capped(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
 }
 
 fn clip(text: &str) -> String {
-    crate::shared::text_utils::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
+    crate::shared::text::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
 }
 
 #[cfg(test)]

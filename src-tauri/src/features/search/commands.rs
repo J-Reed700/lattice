@@ -275,8 +275,8 @@ async fn search_fast_impl(
     container: &Container,
     query: String,
     limit: usize,
-) -> crate::shared::api_result::ApiResult<Vec<(String, f32)>> {
-    use crate::shared::api_result::{ApiResult, ErrorCode};
+) -> crate::shared::ipc::ApiResult<Vec<(String, f32)>> {
+    use crate::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container
@@ -487,8 +487,8 @@ pub async fn search_fast(
 pub async fn semantic_search_impl(
     container: &Container,
     request: SearchRequestDto,
-) -> crate::shared::api_result::ApiResult<SearchResponseDto> {
-    use crate::shared::api_result::{ApiResult, ErrorCode};
+) -> crate::shared::ipc::ApiResult<SearchResponseDto> {
+    use crate::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container
@@ -630,8 +630,8 @@ pub async fn hybrid_search_impl(
     query: String,
     limit: usize,
     search_mode: String,
-) -> crate::shared::api_result::ApiResult<Vec<SearchResultDto>> {
-    use crate::shared::api_result::{ApiResult, ErrorCode};
+) -> crate::shared::ipc::ApiResult<Vec<SearchResultDto>> {
+    use crate::shared::ipc::{ApiResult, ErrorCode};
 
     // Rate limiting check
     if let Err(e) = container

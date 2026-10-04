@@ -28,11 +28,6 @@ pub fn validate_request(request: &GenerateLearningProgramRequestDto) -> Result<(
             "Session length must be between 10 and 240 minutes.".into(),
         ));
     }
-    if request.document_ids.is_empty() && request.source_urls.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Select at least one document or source URL.".into(),
-        ));
-    }
     if request.document_ids.len() > 8 || request.source_urls.len() > 8 {
         return Err(AppError::InvalidInput(
             "Select no more than eight documents and eight source URLs.".into(),
@@ -72,8 +67,37 @@ pub async fn generate(
     request: GenerateLearningProgramRequestDto,
     sources: Vec<LearningSourceDto>,
 ) -> Result<LearningProgramDto> {
+    generate_with_references(repo, llm, request, sources, &[]).await
+}
+
+pub async fn generate_with_references(
+    repo: &LearningRepository,
+    llm: &dyn LLMPort,
+    request: GenerateLearningProgramRequestDto,
+    sources: Vec<LearningSourceDto>,
+    references: &[super::sources::InitialReference],
+) -> Result<LearningProgramDto> {
+    generate_with_references_and_progress(
+        repo,
+        llm,
+        request,
+        sources,
+        references,
+        &super::outline_progress::OutlineProgress::default(),
+    )
+    .await
+}
+
+pub async fn generate_with_references_and_progress(
+    repo: &LearningRepository,
+    llm: &dyn LLMPort,
+    request: GenerateLearningProgramRequestDto,
+    sources: Vec<LearningSourceDto>,
+    references: &[super::sources::InitialReference],
+    progress: &super::outline_progress::OutlineProgress,
+) -> Result<LearningProgramDto> {
     validate_request(&request)?;
-    if sources.is_empty() {
+    if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {
         return Err(AppError::InvalidInput(
             "No learning sources could be acquired.".into(),
         ));
@@ -81,11 +105,11 @@ pub async fn generate(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let modules = tokio::time::timeout(
-        std::time::Duration::from_secs(180),
-        super::generation::generate_outline(llm, &request, &sources),
+        std::time::Duration::from_secs(600),
+        super::generation::generate_outline_with_progress(llm, &request, &sources, progress),
     )
     .await
-    .map_err(|_| AppError::ServiceNotAvailable("Program outline generation timed out.".into()))??;
+    .map_err(|_| progress.timeout_error())??;
     validate_outline(&modules, &sources)?;
     let first = modules
         .first()
@@ -111,14 +135,16 @@ pub async fn generate(
         sources,
         attempts: vec![],
     };
-    repo.create(&program).await?;
+    progress.check_cancelled()?;
+    progress.stage(super::outline_progress::OutlineStage::Saving);
+    repo.create_with_references(&program, references).await?;
     Ok(program)
 }
 
 fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]) -> Result<()> {
-    if !(2..=6).contains(&modules.len()) {
+    if !(2..=10).contains(&modules.len()) {
         return Err(AppError::InvalidInput(
-            "Generated outline must contain 2–6 modules.".into(),
+            "Generated outline must contain 2–10 modules.".into(),
         ));
     }
     let mut ids = std::collections::HashSet::new();
@@ -203,8 +229,9 @@ pub async fn prepare(
             "Accept this program before preparing lessons.".into(),
         ));
     }
-    program.sources = repo.active_sources(&request.program_id).await?;
-    if program.sources.is_empty() {
+    let had_sources = repo.has_source_history(&request.program_id).await?;
+    program.sources = repo.verification_sources(&request.program_id).await?;
+    if had_sources && program.sources.is_empty() {
         return Err(AppError::InvalidInput(
             "This program has no active source versions available for lesson preparation.".into(),
         ));
@@ -221,7 +248,7 @@ pub async fn prepare(
         ));
     }
     let prepared = tokio::time::timeout(
-        std::time::Duration::from_secs(180),
+        std::time::Duration::from_secs(900),
         super::generation::prepare_lesson(llm, &program, lesson),
     )
     .await
@@ -251,9 +278,10 @@ pub(super) fn validate_prepared(
     let mut question_ids = std::collections::HashSet::new();
     let mut keys = std::collections::HashSet::new();
     for b in &p.blocks {
+        super::teaching::validate_saved_rubric(&b.rubric)?;
         bounded(&b.title, "Block title", 160, true)?;
         bounded(&b.body, "Block text", 8000, true)?;
-        if b.source_ids.is_empty()
+        if (b.source_ids.is_empty() && !source_ids.is_empty())
             || b.source_ids
                 .iter()
                 .any(|id| !source_ids.contains(id.as_str()))
@@ -290,7 +318,7 @@ pub(super) fn validate_prepared(
                 "Question options must be unique.".into(),
             ));
         }
-        if q.source_ids.is_empty()
+        if (q.source_ids.is_empty() && !source_ids.is_empty())
             || q.source_ids
                 .iter()
                 .any(|id| !source_ids.contains(id.as_str()))

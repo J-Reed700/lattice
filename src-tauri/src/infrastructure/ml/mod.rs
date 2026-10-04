@@ -1,8 +1,11 @@
-//! Machine Learning Infrastructure aggregator.
+//! Shared machine-learning infrastructure and embedding exports.
 //!
 //! The embedding engine lives in `features/embedding/`. This module
 //! re-exports its public types so legacy consumer paths
 //! (`crate::infrastructure::ml::*`) continue to resolve.
+
+pub mod compute_device;
+pub(crate) mod model_cache;
 
 pub use crate::features::embedding::candle_service::CandleEmbeddingService;
 pub use crate::features::embedding::generator::{EmbeddingGenerator, ModelConfig};

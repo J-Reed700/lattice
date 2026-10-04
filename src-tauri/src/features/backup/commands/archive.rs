@@ -12,8 +12,8 @@ use crate::features::backup::archive::restore::RestoreOutcome;
 use crate::features::backup::dto::{archive_outcome, ArchiveRunDto, RestoreArchiveResultDto};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ErrorCode};
 use crate::shared::error::AppError;
+use crate::shared::ipc::{ApiError, ErrorCode};
 
 /// Write one archive now.
 ///

@@ -9,7 +9,7 @@ pub mod model_manager;
 pub mod router;
 pub mod startup_reconciliation;
 // Validated path used by FileCleanupService (download manager dep). Distinct
-// from `shared::domain_types::ValidatedFilePath`; do not consolidate without
+// from `shared::types::ValidatedFilePath`; do not consolidate without
 // migrating FileCleanupService's API expectations.
 pub mod validated_path;
 

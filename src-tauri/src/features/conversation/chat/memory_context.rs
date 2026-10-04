@@ -22,7 +22,7 @@ use crate::application::services::context_assembler::{
     BudgetAllocation, ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence,
     TokenAccounting,
 };
-use crate::domain::conversation_memory::{MemorySnapshot, SourceMessage};
+use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
 
 use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequest};
@@ -204,7 +204,7 @@ pub async fn build_memory_plan_for_query(
     // with documents. Compare against the raw query before removing it.
     if recent.last().is_some_and(|m| {
         m.status == "pending"
-            && m.role == crate::domain::conversation_memory::SourceRole::User
+            && m.role == crate::domain::conversation::memory::SourceRole::User
             && m.content == query
     }) {
         recent.pop();

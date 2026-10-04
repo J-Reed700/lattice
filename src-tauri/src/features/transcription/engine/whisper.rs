@@ -26,7 +26,7 @@ use crate::application::ports::transcription_port::{
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
 use crate::shared::error::AppError;
-use crate::shared::utils::with_autorelease_pool;
+use crate::shared::runtime::with_autorelease_pool;
 
 /// How long a loaded model is kept resident after the last transcription.
 pub const TRANSCRIPTION_IDLE_TTL: Duration = Duration::from_secs(300);
@@ -148,7 +148,7 @@ impl WhisperTranscriptionService {
     async fn resolve_model(&self) -> Result<Option<ResolvedModel>, AppError> {
         let mut best: Option<(chrono::DateTime<chrono::Utc>, ResolvedModel)> = None;
 
-        for meta in crate::domain::curated_models::get_curated_transcription_models() {
+        for meta in crate::domain::models::curated::get_curated_transcription_models() {
             if !self.models.is_downloaded(&meta.id).await? {
                 continue;
             }
@@ -186,7 +186,7 @@ impl WhisperTranscriptionService {
         let last_used = Arc::clone(&self.last_used);
         let permits = Arc::clone(&self.permits);
         let idle_timer_active = Arc::clone(&self.idle_timer_active);
-        let cancel = crate::shared::background::cancellation_token();
+        let cancel = crate::shared::runtime::background::cancellation_token();
 
         let task = async move {
             loop {
@@ -235,7 +235,7 @@ impl WhisperTranscriptionService {
                 return;
             }
         };
-        if crate::shared::background::spawn(task).is_none() {
+        if crate::shared::runtime::background::spawn(task).is_none() {
             self.idle_timer_active.store(false, Ordering::Release);
         }
     }
@@ -327,7 +327,7 @@ fn collect_language_tokens(tokenizer: &Tokenizer) -> Vec<(u32, String)> {
 /// Use the same platform policy as embeddings: Metal on Apple Silicon,
 /// CPU on Intel Macs, with recoverable accelerator initialization.
 fn best_device() -> Device {
-    crate::shared::utils::compute_device::best_available_compute_device("transcription")
+    crate::infrastructure::ml::compute_device::best_available_compute_device("transcription")
 }
 
 fn load_whisper(resolved: &ResolvedModel) -> Result<LoadedWhisper, AppError> {

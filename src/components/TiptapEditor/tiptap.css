@@ -179,6 +179,24 @@
   background: hsl(var(--accent) / 0.18);
 }
 
+/* The same reference written as prose (`see src/foo.rs:10-24`, `lines 3–9 of
+   lib.rs`): accent text with a quiet underline, since there is no code span
+   to tint. */
+.tiptap-viewer .code-ref-chip {
+  color: hsl(var(--accent));
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--accent) / 0.35);
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--duration-fast) var(--ease-out);
+}
+.tiptap-viewer .code-ref-chip:hover {
+  text-decoration-color: hsl(var(--accent));
+}
+.tiptap-viewer code > .code-ref-chip {
+  text-decoration: none;
+}
+
 /* ------------------------------------------------------------------ *
  * 5. Code blocks
  * ------------------------------------------------------------------ */

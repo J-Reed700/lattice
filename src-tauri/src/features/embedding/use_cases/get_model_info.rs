@@ -23,7 +23,7 @@
 use std::sync::Arc;
 
 use crate::application::ports::EmbeddingPort;
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::features::embedding::dto::EmbeddingModelInfoDto;
 use crate::shared::error::Result;
 
@@ -80,7 +80,7 @@ impl GetEmbeddingModelInfoUseCase {
     /// println!("  Max Tokens: {}", info.max_tokens);
     ///
     /// // Use info to validate embeddings
-    /// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    /// use lattice::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     /// if info.dimension != DEFAULT_EMBEDDING_DIM {
     ///     println!("Warning: Unexpected dimension!");
     /// }
@@ -105,7 +105,7 @@ impl GetEmbeddingModelInfoUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
     use async_trait::async_trait;
 
     /// Mock embedding service for testing

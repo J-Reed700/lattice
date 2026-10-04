@@ -16,8 +16,8 @@ use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
+use crate::shared::types::ValidatedFilePath;
 
 /// Maximum file size: 50MB
 const MAX_FILE_SIZE: i64 = 50 * 1024 * 1024;
@@ -618,7 +618,7 @@ mod tests {
         };
         use crate::domain::entities::document::Document;
         use crate::features::embedding::entity::Embedding;
-        use crate::shared::result::Result as AppResult;
+        use crate::shared::error::Result as AppResult;
         use std::path::Path;
 
         struct MockFileStorage;

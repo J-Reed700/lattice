@@ -34,15 +34,7 @@ pub(super) use self::background::{pending_metadata, BackgroundVerification};
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
 
-/// How a claim stands against the passages it cites.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ClaimVerdict {
-    Supported,
-    Contradicted,
-    Unsupported,
-    /// Nothing checked it. See [`UnverifiedReason`].
-    Unverified,
-}
+use crate::application::services::claim_verification::ClaimVerdict;
 
 impl ClaimVerdict {
     pub(super) fn as_str(self) -> &'static str {

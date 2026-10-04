@@ -132,7 +132,7 @@ mod tests {
     // `validate_path` resolves it against the current directory, which then
     // falls outside the configured root and turns every success case into an
     // `InvalidInput`. `test_paths::abs` spells it per-platform instead.
-    use crate::shared::test_paths::{abs, abs_str};
+    use crate::shared::testing::paths::{abs, abs_str};
     use async_trait::async_trait;
     use std::path::Path;
     use std::sync::{Arc, Mutex};

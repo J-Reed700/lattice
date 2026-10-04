@@ -4,7 +4,7 @@
 
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

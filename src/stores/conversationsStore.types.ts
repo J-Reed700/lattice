@@ -26,6 +26,9 @@ import type {
  */
 export type GenerationOutcome = 'answered' | 'busy' | 'cancelled' | 'failed';
 
+/** How a `/compact` ended: the record it applied, or why it did not run. */
+export type CompactionResult = { ok: true; record: CompactionRecord } | { ok: false; error: string };
+
 export type ConversationFilterMode =
   | 'all'
   | 'saved'
@@ -155,12 +158,12 @@ export interface ConversationsState {
   /**
    * Fold the conversation's oldest messages into an LLM summary so the context
    * window carries the distilled past. Resolves with the applied compaction
-   * record, or `null` on failure (surfaced via the store's `error`).
+   * record, or with why it could not run: the chat says either one in place.
    */
   compactConversation: (
     _conversationId: string,
     _keepRecentMessages?: number
-  ) => Promise<CompactionRecord | null>;
+  ) => Promise<CompactionResult>;
   setComposerDraft: (_draft: string | null) => void;
   cancelGeneration: (_conversationId?: string | null) => Promise<void>;
   deleteMessage: (_conversationId: string, _messageId: string) => Promise<void>;

@@ -9,8 +9,7 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::error::ApplicationError;
-use crate::domain::error::DomainError;
+use super::{ApplicationError, DomainError};
 
 /// Main error type for the Lattice application.
 ///
@@ -668,27 +667,6 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
-/// Auto-convert from sqlx::Error
-impl From<sqlx::Error> for AppError {
-    fn from(err: sqlx::Error) -> Self {
-        AppError::Database(err.to_string())
-    }
-}
-
-/// Auto-convert from ndarray::ShapeError
-impl From<ndarray::ShapeError> for AppError {
-    fn from(err: ndarray::ShapeError) -> Self {
-        AppError::Other(format!("Array shape error: {}", err))
-    }
-}
-
-/// Auto-convert from keyring::Error
-impl From<keyring::Error> for AppError {
-    fn from(err: keyring::Error) -> Self {
-        AppError::KeyringError(err.to_string())
-    }
-}
-
 /// Auto-convert from String to AppError
 impl From<String> for AppError {
     fn from(msg: String) -> Self {
@@ -711,81 +689,9 @@ impl From<anyhow::Error> for AppError {
 }
 
 /// Auto-convert from DomainTypeError to AppError
-impl From<crate::shared::domain_types::DomainTypeError> for AppError {
-    fn from(e: crate::shared::domain_types::DomainTypeError) -> Self {
+impl From<crate::shared::types::DomainTypeError> for AppError {
+    fn from(e: crate::shared::types::DomainTypeError) -> Self {
         AppError::ValidationFailed(e.to_string())
-    }
-}
-
-/// Auto-convert from LLMError to AppError
-impl From<crate::features::llm::engine::types::LLMError> for AppError {
-    fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
-        use crate::features::llm::engine::types::LLMError;
-        match e {
-            LLMError::ModelNotLoaded => AppError::ModelLoadFailed("Model not loaded".to_string()),
-            LLMError::GenerationFailed(msg) => {
-                AppError::Other(format!("LLM generation failed: {}", msg))
-            }
-            LLMError::ClientUnavailable(msg) => AppError::ServiceNotAvailable(msg),
-            LLMError::Network(msg) => AppError::Network(msg),
-            LLMError::InvalidConfig(msg) => AppError::InvalidConfig(msg),
-            LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
-            LLMError::InsufficientMemory(msg) => AppError::ModelLoadFailed(msg),
-            LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
-            // Not `ModelLoadFailed`: nothing is wrong with the model.
-            LLMError::SidecarBinaryUnusable(msg) => AppError::ServiceNotAvailable(msg),
-            LLMError::Io(e) => AppError::Io {
-                message: e.to_string(),
-                kind: format!("{:?}", e.kind()),
-            },
-            LLMError::Reqwest(e) => AppError::Network(e.to_string()),
-            LLMError::Other(msg) => AppError::Other(format!("LLM error: {}", msg)),
-        }
-    }
-}
-
-/// Auto-convert from DownloadError to AppError
-impl From<crate::domain::download::DownloadError> for AppError {
-    fn from(e: crate::domain::download::DownloadError) -> Self {
-        use crate::domain::download::DownloadError;
-        match e {
-            DownloadError::InvalidUrl(msg) => AppError::InvalidUrl(msg),
-            DownloadError::InvalidDestination(msg) => AppError::InvalidInput(msg),
-            DownloadError::InvalidStateTransition { from, to } => AppError::InvalidState(format!(
-                "Invalid download state transition from {:?} to {:?}",
-                from, to
-            )),
-            DownloadError::SessionNotFound(id) => {
-                AppError::NotFound(format!("Download session not found: {}", id))
-            }
-            DownloadError::ChecksumMismatch { expected, actual } => AppError::InvalidData(format!(
-                "Checksum mismatch: expected {}, got {}",
-                expected, actual
-            )),
-            DownloadError::NetworkError(msg) => AppError::Network(msg),
-            DownloadError::IoError(msg) => AppError::FileSystem(msg),
-            DownloadError::Cancelled => AppError::Other("Download cancelled".to_string()),
-            DownloadError::MaxRetriesExceeded => {
-                AppError::Other("Maximum retry attempts exceeded".to_string())
-            }
-            DownloadError::HttpError { status, message } => {
-                AppError::Network(format!("HTTP error {}: {}", status, message))
-            }
-            DownloadError::InvalidResponse(msg) => {
-                AppError::Network(format!("Invalid HTTP response: {}", msg))
-            }
-            DownloadError::ValidationFailed(msg) => AppError::ValidationFailed(msg),
-            DownloadError::EngineInitializationError(msg) => {
-                AppError::InternalError(format!("Failed to initialize download engine: {}", msg))
-            }
-            DownloadError::InsufficientDiskSpace {
-                required,
-                available,
-            } => AppError::FileSystem(format!(
-                "Insufficient disk space: required {} bytes, available {} bytes",
-                required, available
-            )),
-        }
     }
 }
 

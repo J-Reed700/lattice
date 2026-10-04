@@ -167,7 +167,7 @@ plugin_restore_archive(request: RestoreArchiveRequestDto) -> RestoreArchiveResul
 
 Capabilities: add `backup:allow-plugin-<name>` for each in
 `src-tauri/capabilities/main.json`. Register each in
-`src-tauri/src/export_bindings.rs` and `features/backup/plugin.rs`.
+`src-tauri/src/bin/export_bindings/main.rs` and `features/backup/plugin.rs`.
 Regenerate `src/lib/bindings.ts` with `npm run bindings:generate`.
 
 ## Frontend

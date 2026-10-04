@@ -16,7 +16,7 @@
 //! The raw stored message is never modified. Segmentation exists only to bound
 //! one model call.
 
-use crate::domain::conversation_memory::{SourceMessage, SourceRole};
+use crate::domain::conversation::memory::{SourceMessage, SourceRole};
 
 /// Primary bytes in one segment. A message at or under this is sent whole,
 /// which is the case that matters: splitting a message is what puts a negation

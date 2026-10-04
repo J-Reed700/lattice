@@ -7,8 +7,8 @@
 //! This separation keeps domain pure while allowing efficient vector storage.
 
 use crate::features::embedding::entity::Embedding;
-use crate::shared::domain_types::ChunkId;
 use crate::shared::error::{AppError, Result};
+use crate::shared::types::ChunkId;
 use chrono::{DateTime, Utc};
 
 /// Database representation with vector data
@@ -92,7 +92,7 @@ impl EmbeddingMapper {
 mod tests {
     use super::*;
     use crate::features::embedding::entity::Embedding;
-    use crate::shared::domain_types::ChunkId;
+    use crate::shared::types::ChunkId;
 
     #[test]
     fn test_round_trip_conversion() {

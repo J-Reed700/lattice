@@ -3897,12 +3897,6 @@
           "markdownDescription": "Enables the explorer_index_close command without any pre-configured scope."
         },
         {
-          "description": "Enables the explorer_index_forget command without any pre-configured scope.",
-          "type": "string",
-          "const": "explorer:allow-explorer-index-forget",
-          "markdownDescription": "Enables the explorer_index_forget command without any pre-configured scope."
-        },
-        {
           "description": "Enables the explorer_index_open command without any pre-configured scope.",
           "type": "string",
           "const": "explorer:allow-explorer-index-open",
@@ -3997,12 +3991,6 @@
           "type": "string",
           "const": "explorer:deny-explorer-index-close",
           "markdownDescription": "Denies the explorer_index_close command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the explorer_index_forget command without any pre-configured scope.",
-          "type": "string",
-          "const": "explorer:deny-explorer-index-forget",
-          "markdownDescription": "Denies the explorer_index_forget command without any pre-configured scope."
         },
         {
           "description": "Denies the explorer_index_open command without any pre-configured scope.",
@@ -4833,6 +4821,12 @@
           "markdownDescription": "Enables the cancel_learning_generation_job command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_learning_outline command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-cancel-learning-outline",
+          "markdownDescription": "Enables the cancel_learning_outline command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_learning_pack_import_preview command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-cancel-learning-pack-import-preview",
@@ -4981,6 +4975,12 @@
           "type": "string",
           "const": "learning:allow-get-learning-generation-job",
           "markdownDescription": "Enables the get_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_learning_lesson_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-lesson-evidence",
+          "markdownDescription": "Enables the get_learning_lesson_evidence command without any pre-configured scope."
         },
         {
           "description": "Enables the get_learning_memory command without any pre-configured scope.",
@@ -5355,6 +5355,12 @@
           "markdownDescription": "Denies the cancel_learning_generation_job command without any pre-configured scope."
         },
         {
+          "description": "Denies the cancel_learning_outline command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-cancel-learning-outline",
+          "markdownDescription": "Denies the cancel_learning_outline command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_learning_pack_import_preview command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-cancel-learning-pack-import-preview",
@@ -5503,6 +5509,12 @@
           "type": "string",
           "const": "learning:deny-get-learning-generation-job",
           "markdownDescription": "Denies the get_learning_generation_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_lesson_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-lesson-evidence",
+          "markdownDescription": "Denies the get_learning_lesson_evidence command without any pre-configured scope."
         },
         {
           "description": "Denies the get_learning_memory command without any pre-configured scope.",

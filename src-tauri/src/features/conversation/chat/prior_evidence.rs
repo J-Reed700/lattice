@@ -11,7 +11,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
-use crate::shared::text_utils::build_excerpt;
+use crate::shared::text::build_excerpt;
 
 use super::retrieval::WEB_SOURCE_PREFIX;
 

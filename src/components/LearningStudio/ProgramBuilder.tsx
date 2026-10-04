@@ -1,73 +1,72 @@
 import { type FormEvent, useState } from 'react';
 
-import { ArrowRight, BookOpen, Link2, Sparkles } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, Clock3, Layers3, Link2, Sparkles } from 'lucide-react';
 
-import { useLibraryDocumentsQuery } from '@/hooks/queries/useLibraryDocumentsQuery';
-import type { GenerateLearningProgramRequestDto } from '@/lib/bindings';
+import type { GenerateLearningProgramRequestDto, LearningCourseDepth, LearningOutlineProgressDto } from '@/lib/bindings';
 
-export function ProgramBuilder({ pending, error, onGenerate, onCancel }: {
+import { LearningDocumentPicker, type LearningDocumentSelection } from './LearningDocumentPicker';
+import { OutlineGenerationProgress } from './OutlineGenerationProgress';
+
+const depths: { id: LearningCourseDepth; title: string; modules: string; lessons: string; description: string }[] = [
+  { id: 'focused', title: 'Focused course', modules: '2–3 modules', lessons: '4–9 lessons', description: 'Build one specific skill and put it into practice.' },
+  { id: 'course', title: 'Complete course', modules: '4–6 modules', lessons: '12–30 lessons', description: 'A full progression from foundations to a final project.' },
+  { id: 'deep_dive', title: 'Deep dive', modules: '6–10 modules', lessons: '24–60 lessons', description: 'Explore the subject in depth, with advanced applications and synthesis.' },
+];
+
+export function ProgramBuilder({ pending, error, onGenerate, onCancel, progress, onStop, cancelling, cancelError }: {
+  progress?: LearningOutlineProgressDto | null; onStop?: () => void; cancelling?: boolean; cancelError?: string;
   pending: boolean; error?: string; onGenerate: (request: GenerateLearningProgramRequestDto) => void; onCancel: () => void;
 }) {
-  const { documents, isLoading, error: documentsError, refreshFiles } = useLibraryDocumentsQuery();
   const [goal, setGoal] = useState('');
   const [prior, setPrior] = useState('');
   const [minutes, setMinutes] = useState(30);
+  const [depth, setDepth] = useState<LearningCourseDepth>('course');
   const [urls, setUrls] = useState('');
-  const [documentIds, setDocumentIds] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<LearningDocumentSelection[]>([]);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
   const [formError, setFormError] = useState('');
+  const course = depths.find((item) => item.id === depth)!;
+  const hasSources = documents.length > 0 || urls.trim().length > 0;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const sourceUrls = urls.split(/[\n,]/).map((url) => url.trim()).filter(Boolean);
-    if (!goal.trim()) return setFormError('Describe what you want to be able to do.');
+    const sourceUrls = [...new Set(urls.split(/\n/).map((url) => url.trim()).filter(Boolean))];
+    if (goal.trim().length < 3) return setFormError('Describe what you want to be able to do in at least 3 characters.');
     if (goal.trim().length > 500) return setFormError('Keep your learning goal to 500 characters or fewer.');
-    if (documentIds.length > 8) return setFormError('Choose no more than 8 library documents.');
+    if (documents.length > 8) return setFormError('Choose no more than 8 library documents.');
     if (sourceUrls.length > 8) return setFormError('Add no more than 8 reference URLs.');
-    if (documentIds.length + sourceUrls.length > 12) return setFormError('Choose no more than 12 sources in total.');
-    if (!documentIds.length && !sourceUrls.length) return setFormError('Choose at least one document or reference URL to ground the program.');
+    if (documents.length + sourceUrls.length > 12) return setFormError('Choose no more than 12 sources in total.');
     for (const url of sourceUrls) {
       try { if (!['http:', 'https:'].includes(new URL(url).protocol)) throw new Error(); }
       catch { return setFormError(`Use a complete http or https URL: ${url}`); }
     }
     setFormError('');
-    onGenerate({ goal: goal.trim(), priorKnowledge: prior.trim(), minutesPerSession: minutes, documentIds, sourceUrls });
+    onGenerate({ goal: goal.trim(), priorKnowledge: prior.trim(), minutesPerSession: minutes, documentIds: documents.map((item) => item.id), sourceUrls, courseDepth: depth });
   };
 
-  return (
-    <div className="mx-auto grid max-w-6xl gap-8 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <form onSubmit={submit} className="rounded-2xl border border-border/70 bg-surface p-7 shadow-sm sm:p-9">
-        <button type="button" onClick={onCancel} className="mb-8 text-sm text-text-muted hover:text-text-primary">← Back to programs</button>
-        <div className="mb-7 flex items-center gap-3 text-accent"><Sparkles size={18} /><span className="text-xs font-semibold uppercase tracking-[.18em]">Build a learning program</span></div>
-        <h2 className="font-serif text-3xl leading-tight text-text-primary sm:text-[2.5rem]">What would you like to learn?</h2>
-        <p className="mt-3 max-w-xl text-sm leading-6 text-text-secondary">Studio will shape your sources into a course outline you can review before any lesson is prepared.</p>
-
-        <label className="mt-8 block text-sm font-medium text-text-primary" htmlFor="learning-goal">Your goal</label>
-        <textarea id="learning-goal" value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} maxLength={500} placeholder="For example: understand the core ideas in these materials and use them to build a small project" className="mt-2 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/15" /><div className="mt-1 text-right text-[10px] tabular-nums text-text-muted">{goal.length}/500</div>
-        <label className="mt-5 block text-sm font-medium text-text-primary" htmlFor="prior-knowledge">What do you already know?</label>
-        <textarea id="prior-knowledge" value={prior} onChange={(e) => setPrior(e.target.value)} rows={2} maxLength={1200} placeholder="A little context helps set a useful starting point. You can leave this blank." className="mt-2 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 outline-none focus:border-accent focus:ring-2 focus:ring-accent/15" />
-        <label className="mt-5 block text-sm font-medium text-text-primary" htmlFor="session-time">Time for each session</label>
-        <div className="mt-2 flex items-center gap-3"><input id="session-time" type="range" min="15" max="90" step="5" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="w-52 accent-accent" /><span className="text-sm tabular-nums text-text-secondary">{minutes} minutes</span></div>
-
-        <div className="mt-8 border-t border-border pt-6">
-          <h3 className="text-sm font-semibold text-text-primary">Choose your materials</h3>
-          <p className="mt-1 text-xs leading-5 text-text-muted">Program content will be grounded in sources you select here.</p>
-          {documentsError && <div role="alert" className="mt-3 flex items-center justify-between rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700"><span>Library could not be loaded: {documentsError}</span><button type="button" onClick={() => void refreshFiles()} className="underline">Retry</button></div>}
-          {isLoading ? <p className="mt-4 text-sm text-text-muted">Loading your library…</p> : documents.length ? (
-            <div className="mt-3 max-h-52 space-y-1 overflow-y-auto rounded-xl border border-border p-2">
-              {documents.map((document) => <label key={document.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm hover:bg-background"><input type="checkbox" checked={documentIds.includes(document.id)} disabled={!documentIds.includes(document.id) && documentIds.length >= 8} onChange={(e) => setDocumentIds((ids) => e.target.checked ? [...ids, document.id] : ids.filter((id) => id !== document.id))} className="accent-accent" /><BookOpen size={15} className="shrink-0 text-text-muted" /><span className="truncate text-text-secondary">{document.fileName}</span></label>)}
-            </div>
-          ) : !documentsError ? <p className="mt-3 rounded-lg bg-background p-3 text-xs text-text-muted">No library documents yet. Add a reference URL below to continue.</p> : null}
-          {documentIds.length >= 8 && <p className="mt-2 text-[10px] text-text-muted">Maximum 8 selected documents. Remove one to choose another.</p>}
-          <label className="mt-4 block text-xs font-medium text-text-secondary" htmlFor="reference-urls">Reference URLs <span className="font-normal text-text-muted">(one per line)</span></label>
-          <div className="mt-2 flex items-start gap-2 rounded-xl border border-border bg-background px-3 py-2"><Link2 size={15} className="mt-1 shrink-0 text-text-muted" /><textarea id="reference-urls" value={urls} onChange={(e) => setUrls(e.target.value)} rows={2} placeholder="https://…" className="w-full resize-y bg-transparent text-sm outline-none placeholder:text-text-muted" /></div>
-        </div>
-        {(formError || error) && <p role="alert" className="mt-5 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{formError || `The outline could not be generated: ${error}`}</p>}
-        <div className="mt-7 flex items-center justify-between gap-4"><span className="text-xs text-text-muted">Your outline starts as a draft. No progress is recorded yet.</span><button type="submit" disabled={pending} className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95 disabled:cursor-wait disabled:opacity-60">{pending ? 'Building outline…' : 'Create outline'} {!pending && <ArrowRight size={16} />}</button></div>
+  return <div className="mx-auto max-w-6xl">
+    <button type="button" disabled={pending} onClick={onCancel} className="mb-6 min-h-10 text-sm text-text-muted hover:text-text-primary disabled:opacity-50">← Back to programs</button>
+    <div className="mb-8 max-w-3xl"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-accent"><Sparkles size={16} /> Your personal classroom</div><h2 className="mt-4 font-serif text-4xl leading-tight text-text-primary sm:text-5xl">What would you like to learn?</h2><p className="mt-4 text-base leading-7 text-text-secondary">Start with an ambition. Build a course that takes you from understanding the ideas to using them independently.</p></div>
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <form onSubmit={submit} className="min-w-0 rounded-2xl border border-border/70 bg-surface p-6 shadow-sm sm:p-8">
+        <fieldset disabled={pending} className="min-w-0 disabled:opacity-70">
+          <legend className="text-xs font-semibold uppercase tracking-[.15em] text-accent">01 · Your destination</legend>
+          <label className="mt-5 block text-sm font-medium text-text-primary" htmlFor="learning-goal">Your goal</label>
+          <textarea id="learning-goal" value={goal} onChange={(event) => setGoal(event.target.value)} rows={3} maxLength={500} placeholder="For example: Learn statistics well enough to design an experiment, interpret the results, and explain my conclusions." className="mt-2 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 outline-none focus:border-accent focus:ring-2 focus:ring-accent/15" /><div className="mt-1 text-right text-xs tabular-nums text-text-muted">{goal.length}/500</div>
+          <label className="mt-4 block text-sm font-medium text-text-primary" htmlFor="prior-knowledge">What do you already know?</label>
+          <textarea id="prior-knowledge" value={prior} onChange={(event) => setPrior(event.target.value)} rows={2} maxLength={2000} placeholder="Your experience, skills you want to strengthen, and how you hope to use them. Leave blank to start from the foundations." className="mt-2 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 outline-none focus:border-accent focus:ring-2 focus:ring-accent/15" />
+          <div className="mt-8 border-t border-border pt-7"><h3 className="text-xs font-semibold uppercase tracking-[.15em] text-accent">02 · Depth and pace</h3><fieldset className="mt-4"><legend className="mb-3 text-sm font-medium text-text-primary">How far do you want to go?</legend><div className="grid gap-3 sm:grid-cols-3">{depths.map((item) => <label key={item.id} className={`relative cursor-pointer rounded-xl border p-4 transition ${depth === item.id ? 'border-accent bg-accent/5 ring-1 ring-accent/30' : 'border-border hover:border-accent/40'}`}><input type="radio" name="course-depth" value={item.id} checked={depth === item.id} onChange={() => setDepth(item.id)} className="mb-3 accent-accent" /><span className="block text-sm font-semibold text-text-primary">{item.title}</span><span className="mt-1 block text-xs font-medium text-accent">{item.modules}</span><span className="mt-3 block text-xs leading-5 text-text-secondary">{item.description}</span></label>)}</div></fieldset>
+            <label className="mt-5 block text-sm font-medium text-text-primary" htmlFor="session-time">Time for each session</label><div className="mt-3 flex items-center gap-3"><input id="session-time" type="range" min="15" max="90" step="5" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="min-w-0 flex-1 accent-accent" /><span className="w-24 text-right text-sm tabular-nums text-text-secondary">{minutes} minutes</span></div><p className="mt-2 text-xs leading-5 text-text-muted">Short sessions break the subject into smaller steps. They don’t reduce the depth of your course.</p>
+          </div>
+          <div className="mt-8 border-t border-border pt-7"><h3 className="text-xs font-semibold uppercase tracking-[.15em] text-accent">03 · Materials, if you have them</h3><p className="mt-3 text-sm leading-6 text-text-secondary">Use textbooks, papers, notes, or reference pages you trust. You can create an outline from a topic alone; preparing lessons requires saved references.</p><button type="button" aria-expanded={materialsOpen} aria-controls="course-materials" onClick={() => setMaterialsOpen(!materialsOpen)} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl border border-border px-4 text-sm font-medium text-text-primary hover:bg-background"><BookOpen size={16} />{materialsOpen ? 'Hide materials' : 'Add optional materials'}{documents.length > 0 && ` · ${documents.length} selected`}</button>
+            <div id="course-materials" hidden={!materialsOpen} className="mt-5 space-y-4">{materialsOpen && <LearningDocumentPicker selected={documents} onChange={setDocuments} />}<label className="block text-xs font-medium text-text-secondary" htmlFor="reference-urls">Reference URLs (one per line; each URL saves one page)<div className="mt-2 flex items-start gap-2 rounded-xl border border-border bg-background px-3 py-2"><Link2 size={15} className="mt-1 shrink-0 text-text-muted" /><textarea id="reference-urls" value={urls} onChange={(event) => setUrls(event.target.value)} rows={2} placeholder="https://…" className="w-full resize-y bg-transparent text-sm outline-none" /></div></label></div>
+          </div>
+          {!pending && (formError || error) && <p role="alert" className="mt-5 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{formError || `The outline could not be generated: ${error}`}</p>}
+          {!pending && <div className="mt-8 border-t border-border pt-6"><button type="submit" className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-accent-fg transition hover:brightness-95">Create outline<ArrowRight size={17} /></button><p className="mt-3 text-center text-xs leading-5 text-text-muted">Writing and reviewing can take several minutes, depending on your model and course depth. You can follow each step and cancel while it runs.</p></div>}
+        </fieldset>
+        {pending && <OutlineGenerationProgress progress={progress} cancelling={cancelling} onCancel={onStop} cancelError={cancelError} deepDive={depth === 'deep_dive'} />}
       </form>
-      <aside className="hidden rounded-2xl bg-[#eee8df] p-7 xl:block dark:bg-white/5">
-        <div className="text-xs font-semibold uppercase tracking-[.16em] text-accent">A considered course</div><h3 className="mt-5 font-serif text-2xl leading-snug text-text-primary">Made from what matters to you.</h3><p className="mt-4 text-sm leading-6 text-text-secondary">First, review the complete module journey and outcomes. Then prepare lessons one at a time, when you are ready to work through them.</p>
-        <div className="mt-8 space-y-4 border-t border-black/10 pt-5 dark:border-white/10">{['Specific outcomes', 'Sources in context', 'Your pace, your call'].map((item, i) => <div className="flex gap-3" key={item}><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/70 font-serif text-sm text-accent dark:bg-white/10">0{i + 1}</span><span className="pt-1 text-sm text-text-secondary">{item}</span></div>)}</div>
-      </aside>
+      <aside className="rounded-2xl border border-border/60 bg-[#eee8df] p-6 xl:sticky xl:top-6 dark:bg-white/5"><div className="text-xs font-semibold uppercase tracking-[.15em] text-accent">Your course at a glance</div><h3 className="mt-4 font-serif text-2xl text-text-primary">{course.title}</h3><div className="mt-4 space-y-2 text-sm text-text-secondary"><p className="flex items-center gap-2"><Layers3 size={15} />{course.modules} · {course.lessons}</p><p className="flex items-center gap-2"><Clock3 size={15} />{minutes}-minute sessions</p></div><div className="mt-6 border-t border-border pt-5"><h4 className="text-sm font-semibold text-text-primary">A complete learning cycle</h4><ol className="mt-4 space-y-4">{[['Understand', 'In-depth explanations and worked examples.'], ['Apply', 'Guided exercises, then an independent assignment.'], ['Check', 'Lesson quizzes and cumulative module checks.'], ['Build', 'Projects that bring your skills together.'], ['Remember', 'Notes, recall cards, and spaced review.']].map(([title, description], index) => <li key={title} className="flex gap-3"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface/70 text-xs font-medium text-accent">{index + 1}</span><div><div className="text-sm font-medium text-text-primary">{title}</div><p className="mt-1 text-xs leading-5 text-text-secondary">{description}</p></div></li>)}</ol></div><p className="mt-6 flex items-start gap-2 rounded-xl bg-surface/60 p-3 text-xs leading-5 text-text-secondary"><Check size={15} className="mt-0.5 shrink-0 text-accent" />{hasSources ? 'The selected materials ground the course. You can add more after accepting the outline.' : 'Topic-based outline. Add references in Sources after accepting the outline, before preparing lessons.'}</p></aside>
     </div>
-  );
+  </div>;
 }

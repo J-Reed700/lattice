@@ -7,6 +7,7 @@
 //! - Vector Search
 //! - Chat/Q&A
 
+#![cfg(any(test, doc))]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 

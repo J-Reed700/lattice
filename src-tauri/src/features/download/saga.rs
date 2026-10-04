@@ -1,10 +1,10 @@
 use crate::application::ports::unit_of_work::ModelFileRepositoryPort;
 use crate::application::ports::UnitOfWorkFactory;
-use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use crate::domain::value_objects::model_status::FileStatus;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::events::model_download_events::*;
-use crate::infrastructure::event_bus::EventBus;
+use crate::infrastructure::events::event_bus::EventBus;
 use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -500,8 +500,8 @@ impl DownloadSaga {
 #[cfg(test)]
 mod tests {
     use super::DownloadSaga;
-    use crate::domain::downloaded_model::ModelLocation;
     use crate::domain::entities::model_file::ModelFile;
+    use crate::domain::models::downloaded::ModelLocation;
     use crate::domain::value_objects::model_status::FileStatus;
     use chrono::Utc;
     use std::path::PathBuf;
@@ -599,7 +599,7 @@ mod tests {
         use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
         use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
         use crate::features::embedding::artifact_identity;
-        use crate::infrastructure::event_bus::EventBus;
+        use crate::infrastructure::events::event_bus::EventBus;
         use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
         use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
         use std::sync::Arc;
@@ -689,7 +689,7 @@ mod tests {
         file_status: &str,
     ) -> (DownloadSaga, sqlx::SqlitePool) {
         use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-        use crate::infrastructure::event_bus::EventBus;
+        use crate::infrastructure::events::event_bus::EventBus;
         use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
         use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
         use std::sync::Arc;

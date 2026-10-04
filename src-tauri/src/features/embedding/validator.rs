@@ -87,7 +87,7 @@ pub fn validate_embedding_compatibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
     #[test]
     fn test_validate_embedding_dimension_success() {

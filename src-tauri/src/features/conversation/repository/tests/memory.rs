@@ -12,7 +12,7 @@ use crate::application::ports::conversation_memory::{
     MemoryCommitCandidate, MemoryCommitPreconditions, SourceReadLimits, SourceSpanRef,
     SummaryUpdate,
 };
-use crate::domain::conversation_memory::{
+use crate::domain::conversation::memory::{
     compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem, MemoryKind,
     MemoryReview, MemoryState, MemoryValidity, SourceRole,
 };

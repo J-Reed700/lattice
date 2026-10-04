@@ -2,12 +2,12 @@ import { useCallback } from 'react';
 
 
 import { VaultAPI } from '@/lib/api';
-import type { ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
+import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
 import { conversationUiStore } from '@/stores/conversationUiStore';
 import type {
   ConversationLinkedDocumentDto, ConversationWebSourceDto,
 } from '@/types';
-import type { CompactionRecord, Conversation, ConversationMessage } from '@/types/conversation';
+import type { Conversation, ConversationMessage } from '@/types/conversation';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 
 import { conversationKeys, type ConversationListParams } from '../queries/conversationKeys';
@@ -486,18 +486,16 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
    *
    * The backend keeps the raw messages for display and only switches the LLM
    * context to the summary. On success the lists are refreshed and the applied
-   * record is returned so the caller can render a divider; on failure the error
-   * is surfaced and `null` is returned.
+   * record is returned so the caller can render a divider. A refusal ("nothing
+   * to compact", no model) is returned rather than raised: the chat says it in
+   * place, where `/compact` was typed.
    */
   const compactConversation = useCallback(async (
     conversationId: string,
     keepRecentMessages?: number
-  ): Promise<CompactionRecord | null> => {
+  ): Promise<CompactionResult> => {
     const result = await VaultAPI.compactConversation(conversationId, keepRecentMessages);
-    if (!result.ok) {
-      setUiError(result.error);
-      return null;
-    }
+    if (!result.ok) return { ok: false, error: result.error };
     await Promise.all([
       invalidateLists(),
       // The detail read is what carries the compaction back after a reload.
@@ -505,7 +503,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
         queryKey: conversationKeys.detail(conversationId),
       }),
     ]);
-    return result.data.compaction;
+    return { ok: true, record: result.data.compaction };
   }, [invalidateLists, queryClient]);
 
   const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {

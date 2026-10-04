@@ -192,7 +192,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     set({ expanded });
   },
 
-  openFile: (path) => {
+  openFile: (cited) => {
+    const path = get().aliases[cited] ?? cited;
     if (get().openPath === path) return;
     set({ ...leaving(get()), openPath: path, selection: null, highlight: null });
   },
