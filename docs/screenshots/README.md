@@ -1,25 +1,29 @@
-# Screenshot capture checklist
+# App screenshots
 
-Images for the root `README.md` live in this folder as PNGs. Capture them
-from a working `npm run tauri:dev` session with a small, realistic library
-loaded — a handful of notes, a PDF or two, and one conversation with a few
-cited answers. Avoid placeholder data and empty states; the README should
-show the app doing something.
+The root `README.md` uses these PNGs, captured from the running macOS app
+on October 3, 2026. The external black strips above Home and the journal
+have been cropped; the app pixels and original resolution are preserved.
 
-| File | What to capture |
+| File | Contents |
 | --- | --- |
-| `dashboard.png` | The Home page: the document/folder/storage tiles, recent documents, and a resumable conversation. |
-| `search.png` | A search with results, showing the highlighted match and the file it came from. |
-| `chat.png` | A chat answer with its source citations visible, and the retrieval trace open if it fits. |
-| `studio.png` | Studio's Flashcards section mid-review, with the card's source citation shown. |
-| `explorer.png` | Explorer with a folder open: the tree, a file in the viewer, and a chat about that folder with citations. |
-| `neighborhood.png` | A document open with the "Related" panel: backlinks, similar documents, and where it's cited. |
-| `settings.png` | Settings with the model catalog or local model roles, showing a downloaded model. |
+| [dashboard.png](dashboard.png) | Home with library statistics, recent conversations, and quick actions. |
+| [explorer.png](explorer.png) | A folder tree and Rust source file beside a chat about the code. |
+| [journal.png](journal.png) | A journal synthesis with inline citations and its sources panel. |
+| [studio.png](studio.png) | Learning Studio's program and flashcard creation screen. |
 
-Conventions:
+## Future captures
+
+Useful additions include search results, a library chat with citations,
+an active Studio lesson or flashcard review, a document's Related panel,
+and model settings. Add images to the root README only once the files exist.
+
+Capture conventions:
 
 - Capture at the app's default window size, 2x scale, in one theme (dark is
   fine) so the set reads as one session.
+- Crop external black bars and desktop chrome without cutting into the app.
+- Use a small, realistic library and show populated views where possible.
 - Crop out anything identifying: file names, note contents, and paths should
   be generic or fictional.
-- Keep each image under ~500 KB; downscale rather than recompress hard.
+- Optimize PNGs losslessly and keep text readable; preserve native resolution
+  when practical.
