@@ -11,7 +11,7 @@ import {
   recallLocation,
   rememberLocation,
   timestampSectionStartSeconds,
-} from '../passageLocator';
+} from '@/shared/sources/passageLocator';
 
 describe('normalizeForMatch', () => {
   it('collapses whitespace and folds case', () => {

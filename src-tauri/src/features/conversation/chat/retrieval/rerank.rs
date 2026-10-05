@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use tracing::{info, warn};
 
+use crate::features::conversation::chat::ports::ChatRetrieval;
 use crate::features::search::dto::SearchResponseDto;
 use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::interfaces::di::Container;
 use crate::shared::text::safe_truncate;
 
 /// Rerank the shortlist, reporting whether cross-encoder scores were actually
@@ -15,7 +15,7 @@ use crate::shared::text::safe_truncate;
 /// is unavailable or fails are ranks, and thresholding ranks would invent
 /// confidence the pipeline does not have.
 pub(super) async fn apply_rerank_stage(
-    container: &Container,
+    container: &dyn ChatRetrieval,
     validated_message: &str,
     interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
     mut search_response: SearchResponseDto,

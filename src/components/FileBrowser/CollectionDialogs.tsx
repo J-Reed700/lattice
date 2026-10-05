@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 
 import { FolderPlus, Search } from 'lucide-react';
 
-import { metaLine } from './docMeta';
+import { metaLine } from '@/features/files/model/documentMetadata';
+
 import { FileIcon } from './FileIcon';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '../../hooks/queries/useCustomCollectionsQuery';
 import { toast } from '../../stores/toastStore';

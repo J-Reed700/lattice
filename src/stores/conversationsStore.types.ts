@@ -105,8 +105,8 @@ export interface ConversationsState {
     _messageId: string,
     _title?: string | null,
     _note?: string | null
-  ) => Promise<void>;
-  unbookmarkMessage: (_conversationId: string, _messageId: string) => Promise<void>;
+  ) => Promise<boolean>;
+  unbookmarkMessage: (_conversationId: string, _messageId: string) => Promise<boolean>;
   moveConversationToSpace: (_id: string, _spaceId: string) => Promise<void>;
   loadConversationLinkedDocuments: (_conversationId: string) => Promise<void>;
   loadConversationWebSources: (_conversationId: string) => Promise<void>;

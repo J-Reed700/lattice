@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it, vi } from 'vitest';
 
-import { sentencesByOccurrence } from '../../Chat/reader/answerSentences';
+import { sentencesByOccurrence } from '@/features/chat/components/reader/answerSentences';
+
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
 import { TiptapEditor } from '../TiptapEditor';

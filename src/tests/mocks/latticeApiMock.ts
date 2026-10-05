@@ -266,6 +266,7 @@ export function createVaultAPIMock() {
         updatedAt: '2026-01-01T00:00:00.000Z',
       },
     }),
+    captureReference: vi.fn().mockResolvedValue({ ok: true, data: { noteId: 'note', noteTitle: 'Journal', linkedDocumentCount: 0, snapshotId: 'snapshot' } }),
     updateWorkspaceNote: vi.fn().mockImplementation(async (note) => ({
       ok: true,
       data: note,

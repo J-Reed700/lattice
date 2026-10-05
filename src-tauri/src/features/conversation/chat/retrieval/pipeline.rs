@@ -51,7 +51,7 @@ fn dominant_result_terms(
 // This orchestration boundary exposes the complete per-turn retrieval configuration.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     request_id: &str,
@@ -414,7 +414,7 @@ const MAX_PAGE_FETCH_WAVES: usize = 3;
 const DEEP_RESEARCH_PAGE_MULTIPLIER: usize = 2;
 
 struct ExternalLookup<'a> {
-    container: &'a Container,
+    container: &'a dyn ChatRuntime,
     conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &'a str,
     request_id: &'a str,

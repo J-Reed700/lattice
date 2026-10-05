@@ -617,6 +617,8 @@ mod tests {
         let request = &sent[0];
         assert!(request.want_logprobs);
         assert!(request.json_schema.is_none());
+        assert_eq!(request.reasoning_effort.as_deref(), Some("none"));
+        assert!(!request.no_time_limit);
         // A verdict is a classification. Sampling one from the chat model's
         // distribution made the same claim against the same passage come back
         // supported, unsupported and contradicted across repeats of one request;

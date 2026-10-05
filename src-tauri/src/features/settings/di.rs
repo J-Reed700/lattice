@@ -83,7 +83,10 @@ impl Container {
     }
 
     pub fn import_settings_use_case(&self) -> Arc<ImportSettingsUseCase> {
-        Arc::clone(self.system.import_settings_use_case())
+        Arc::new(ImportSettingsUseCase::with_side_effects(
+            self.system.settings_repo().clone(),
+            self.settings_side_effects.clone(),
+        ))
     }
 
     pub fn validate_settings_use_case(&self) -> Arc<ValidateSettingsUseCase> {

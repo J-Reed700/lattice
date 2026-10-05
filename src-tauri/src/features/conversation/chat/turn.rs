@@ -60,7 +60,7 @@ use super::*;
 /// console.log(`Context messages: ${followUp.contextUsed}`);
 /// ```
 pub(super) async fn run_turn(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: Option<ToolPreferences>,
@@ -211,11 +211,7 @@ pub(super) async fn run_turn(
     let conv_service = container.conversation_service();
 
     let settings_start = Instant::now();
-    let settings = container
-        .get_settings_use_case()
-        .execute()
-        .await
-        .unwrap_or_default();
+    let settings = container.settings().await.unwrap_or_default();
     flow_metrics.settings_load_ms = elapsed_ms(settings_start);
     let prompt_settings = normalize_prompt_settings(settings.llm.prompts.clone());
     let tool_output_settings = settings.llm.tool_output.clone();
@@ -776,7 +772,7 @@ pub(super) async fn run_turn(
             }
             Ok(turn)
         },
-        || compaction::compact_for_turn(container, conv_id.as_str()),
+        || container.compact_for_turn(conv_id.as_str()),
     )
     .await;
 

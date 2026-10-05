@@ -72,8 +72,9 @@ impl LlamaCppLlm {
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
         let body = self.body(request, true)?;
-        let budget = request.effective_time_budget();
-        let deadline = tokio::time::Instant::now() + budget;
+        let deadline = request
+            .wall_clock_budget()
+            .map(|budget| tokio::time::Instant::now() + budget);
         let generation = async {
             for attempt in 1..=MAX_ATTEMPTS {
                 let mut emitted = false;
@@ -98,8 +99,9 @@ impl LlamaCppLlm {
                             .min(Duration::from_secs(30));
                         // A backoff the budget cannot pay for would be reported as an
                         // expiry, hiding the cause the server already told us.
-                        if deadline.saturating_duration_since(tokio::time::Instant::now()) <= delay
-                        {
+                        if deadline.is_some_and(|deadline| {
+                            deadline.saturating_duration_since(tokio::time::Instant::now()) <= delay
+                        }) {
                             return Err(error);
                         }
                         if let Some(reset) = on_retry {
@@ -118,14 +120,9 @@ impl LlamaCppLlm {
             }
             unreachable!("bounded attempts always return")
         };
-        tokio::time::timeout_at(deadline, generation)
-            .await
-            .map_err(|_| {
-                AppError::ServiceNotAvailable(format!(
-                    "llama.cpp generation exceeded its {}-minute time budget",
-                    budget.as_secs().div_ceil(60).max(1)
-                ))
-            })?
+        request.within_time_budget(generation).await.map_err(|_| {
+            AppError::ServiceNotAvailable("llama.cpp generation exceeded its time budget".into())
+        })?
     }
 
     async fn attempt(
@@ -185,8 +182,16 @@ impl LlamaCppLlm {
             let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|error| Failure::Retry(network_error(error), None))?;
             generating |= watch.carries_generated_delta(&chunk);
-            // Malformed protocol, output limits and invalid tools are not transient.
-            for text in decoder.push(&chunk).map_err(Failure::Permanent)? {
+            // Malformed protocol and invalid tools are permanent; explicit
+            // transient server statuses inside SSE follow the HTTP retry path.
+            let deltas = decoder.push(&chunk).map_err(|error| {
+                if decoder.retryable_error() {
+                    Failure::Retry(error, None)
+                } else {
+                    Failure::Permanent(error)
+                }
+            })?;
+            for text in deltas {
                 *emitted = true;
                 on_text(text).map_err(Failure::Permanent)?;
             }

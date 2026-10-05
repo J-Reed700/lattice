@@ -31,7 +31,8 @@ export interface ApiSuccess<T> {
  */
 export interface ApiFailure {
   ok: false;
-  error: ApiError;
+  error: string;
+  details?: ApiError;
 }
 
 /**
@@ -43,7 +44,7 @@ export interface ApiFailure {
  * if (result.ok) {
  *   console.log(result.data.name); // Type-safe access
  * } else {
- *   console.error(result.error.code); // Type-safe error handling
+ *   console.error(result.details?.code); // Type-safe error handling
  * }
  * ```
  */
@@ -61,4 +62,19 @@ export function isSuccess<T>(result: ApiResult<T>): result is ApiSuccess<T> {
  */
 export function isFailure<T>(result: ApiResult<T>): result is ApiFailure {
   return result.ok === false;
+}
+
+/** Preserve structured backend details when crossing a promise-based boundary. */
+export class ApiRequestError extends Error {
+  readonly details?: ApiError;
+  constructor(failure: ApiFailure) {
+    super(failure.error);
+    this.name = 'ApiRequestError';
+    this.details = failure.details;
+  }
+}
+
+export function unwrapApiResult<T>(result: ApiResult<T>): T {
+  if (!result.ok) throw new ApiRequestError(result);
+  return result.data;
 }

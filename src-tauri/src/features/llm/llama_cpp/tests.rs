@@ -855,6 +855,42 @@ async fn reasoning_only_empty_and_transient_failures_retry_identical_request() {
 }
 
 #[tokio::test]
+async fn transient_sse_errors_retry_but_context_errors_do_not() {
+    let server = sequence_server(vec![
+        ResponseTemplate::new(200).set_body_string(
+            "data: {\"error\":{\"code\":500,\"type\":\"server_error\",\"message\":\"private\"}}\n\n",
+        ),
+        sse_response(json!({"content":"Recovered"})),
+    ])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let attempts = std::sync::Mutex::new(Vec::new());
+    let response = client
+        .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|attempt| {
+            attempts.lock().unwrap().push(attempt);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Recovered");
+    assert_eq!(*attempts.lock().unwrap(), vec![2]);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests[0].body, requests[1].body);
+
+    let server = sequence_server(vec![ResponseTemplate::new(200).set_body_string(
+        "data: {\"error\":{\"code\":400,\"type\":\"exceed_context_size_error\",\"message\":\"private\"}}\n\n",
+    )])
+    .await;
+    let error = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("exceed_context_size_error"));
+    assert!(!error.to_string().contains("private"));
+}
+
+#[tokio::test]
 async fn failed_partial_draft_is_reset_before_recovery_and_tools_are_returned_once() {
     let truncated = ResponseTemplate::new(200).set_body_string(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Discard this\",\"tool_calls\":[{\"index\":0,\"id\":\"partial\",\"function\":{\"name\":\"search\",\"arguments\":\"{\"}}]}}]}\n\n"
@@ -1101,4 +1137,33 @@ fn calls_made_in_one_round_replay_as_one_assistant_message() {
     assert_eq!(roles, ["user", "assistant", "tool", "tool", "assistant"]);
     assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 2);
     assert_eq!(messages[4]["tool_calls"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            sse_response(json!({"content":"Completed"})).set_delay(Duration::from_millis(150)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let result = client
+        .complete(&CompletionRequest {
+            time_budget: Some(Duration::from_millis(10)),
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.text, "Completed");
+    assert!(
+        !serde_json::from_slice::<Value>(&server.received_requests().await.unwrap()[0].body)
+            .unwrap()
+            .to_string()
+            .contains("no_time_limit")
+    );
 }

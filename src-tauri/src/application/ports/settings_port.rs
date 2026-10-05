@@ -154,7 +154,7 @@ pub trait SettingsRepositoryPort: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Settings structure after import
+    /// Validated, persisted settings and the transition observed under the write lock.
     ///
     /// # Errors
     ///
@@ -163,7 +163,7 @@ pub trait SettingsRepositoryPort: Send + Sync {
     /// - Cannot read file
     /// - Invalid JSON format
     /// - Invalid settings structure
-    async fn import(&self, path: &str, merge: bool) -> Result<SettingsDto>;
+    async fn import(&self, path: &str, merge: bool) -> Result<SettingsImportOutcome>;
 
     /// Validate settings structure and values.
     ///
@@ -186,6 +186,12 @@ pub trait SettingsRepositoryPort: Send + Sync {
     ///
     /// `true` if path exists and is a readable directory
     fn validate_folder_path(&self, path: &str) -> bool;
+}
+
+/// The committed import and its vault transition, observed in one serialized mutation.
+pub struct SettingsImportOutcome {
+    pub settings: SettingsDto,
+    pub vault_just_enabled: bool,
 }
 
 /// Mock implementation for testing.
@@ -384,8 +390,11 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         Ok(())
     }
 
-    async fn import(&self, _path: &str, _merge: bool) -> Result<SettingsDto> {
-        Ok(self.settings.read().await.clone())
+    async fn import(&self, _path: &str, _merge: bool) -> Result<SettingsImportOutcome> {
+        Ok(SettingsImportOutcome {
+            settings: self.settings.read().await.clone(),
+            vault_just_enabled: false,
+        })
     }
 
     fn validate(&self, settings: &SettingsDto) -> ValidationResult {

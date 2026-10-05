@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::{ConversationMessage, MessageRole};
+use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
-use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use crate::shared::text::build_excerpt;
 
@@ -22,7 +22,7 @@ const PASSAGE_CHARS: usize = 2400;
 /// An old citation is not excluded merely because newer research followed it.
 /// Document evidence still obeys the current scope and explicit focus.
 pub(super) async fn recall(
-    container: &Container,
+    container: &dyn ChatStorage,
     conversation_id: &str,
     question: &str,
     allowed_documents: &HashSet<String>,

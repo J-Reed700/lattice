@@ -2,12 +2,12 @@ mod document_evidence;
 mod document_progress;
 mod scoped_document_tools;
 
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::{build_excerpt, safe_truncate};
 use futures::StreamExt;
@@ -126,7 +126,7 @@ impl Drop for StreamEmitter<'_> {
 // The tool loop is a turn-level orchestration boundary with explicit runtime inputs.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_agentic_tool_loop(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conv_id: &str,
     request_id: &str,

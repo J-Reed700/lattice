@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useSidebarBookmarksQuery } from '@/components/Chat/sidebar/workspaceQueries';
+import { useSidebarBookmarksQuery } from '@/features/chat/components/sidebar/workspaceQueries';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS } from '@/hooks/useConversationsController';
 import { VaultAPI } from '@/lib/api';

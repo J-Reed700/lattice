@@ -14,6 +14,7 @@
 //! - **Import/Export**: Support for settings backup and transfer
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
+use crate::application::ports::settings_port::SettingsImportOutcome;
 use crate::application::ports::{merge_json_update, SettingsRepositoryPort};
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
@@ -83,15 +84,14 @@ fn resolve_out_of_range_values(settings: &mut SettingsDto) {
 ///
 /// # Thread Safety
 ///
-/// Multiple concurrent reads are safe. `update` and `reset` hold
+/// Multiple concurrent reads are safe. `update`, `reset`, and `import` hold
 /// `write_lock` across their whole read-merge-write cycle, so concurrent
 /// updates to different categories cannot lose each other. Each write goes
 /// to a uniquely-named temp file before an atomic rename, so a write that
 /// is interrupted never leaves partial JSON in place.
 ///
-/// Note that `save_all` on its own is *not* serialized against `update` —
-/// it is a whole-document overwrite, and the caller is responsible for
-/// having read the state it is overwriting.
+/// `save_all` also takes the lock, but intentionally replaces the whole document.
+/// Callers changing individual fields should use `update` to preserve other writes.
 ///
 /// # Example
 ///
@@ -108,9 +108,9 @@ fn resolve_out_of_range_values(settings: &mut SettingsDto) {
 pub struct SettingsRepository {
     /// Path to settings file
     settings_path: PathBuf,
-    /// Serializes the read-modify-write cycle in `update` / `reset`.
+    /// Serializes settings mutations, including import and secret restoration.
     ///
-    /// Those operations are `get_all()` → merge one category → `save_all()`.
+    /// Read-modify-write operations hold it from `get_all()` through `persist()`.
     /// Without a lock, two concurrent updates to different categories both
     /// read the same base state and the second write silently reverts the
     /// first — the UI reports success for both. The repository is shared
@@ -161,6 +161,70 @@ impl SettingsRepository {
         }
 
         Ok(repository)
+    }
+
+    /// Validate and atomically replace the file. The caller holds `write_lock`.
+    async fn persist(&self, settings: &SettingsDto) -> Result<()> {
+        let validation = self.validate_settings(settings);
+        if validation.has_errors() {
+            return Err(AppError::ValidationFailed(format!(
+                "Settings validation failed: {:?}",
+                validation.errors
+            )));
+        }
+
+        let settings_file = SettingsFile {
+            version: SETTINGS_VERSION,
+            settings: settings.clone(),
+        };
+
+        self.write_settings_file(&settings_file).await
+    }
+
+    async fn import_settings(
+        &self,
+        mut imported_settings: SettingsDto,
+        merge: bool,
+    ) -> Result<SettingsImportOutcome> {
+        // An export taken before the stall-timeout rework is otherwise rejected
+        // wholesale over one repurposed number.
+        resolve_out_of_range_values(&mut imported_settings);
+
+        let _guard = self.write_lock.lock().await;
+        let existing = self.get_all().await?;
+        let previous_vault_enabled = existing.vault.enabled;
+        restore_redacted_secrets(&mut imported_settings, &existing);
+
+        let validation = self.validate_settings(&imported_settings);
+        if validation.has_errors() {
+            return Err(AppError::ValidationFailed(format!(
+                "Imported settings validation failed: {:?}",
+                validation.errors
+            )));
+        }
+
+        let final_settings = if merge {
+            let mut existing = existing;
+
+            existing.indexing = imported_settings.indexing;
+            existing.search = imported_settings.search;
+            existing.llm = imported_settings.llm;
+            existing.ui = imported_settings.ui;
+            existing.sync = imported_settings.sync;
+            existing.backup = imported_settings.backup;
+            existing.privacy = imported_settings.privacy;
+
+            existing
+        } else {
+            imported_settings
+        };
+
+        self.persist(&final_settings).await?;
+
+        Ok(SettingsImportOutcome {
+            vault_just_enabled: !previous_vault_enabled && final_settings.vault.enabled,
+            settings: final_settings,
+        })
     }
 
     /// Read settings file from disk.
@@ -988,21 +1052,8 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn save_all(&self, settings: &SettingsDto) -> Result<()> {
-        // Validate before saving
-        let validation = self.validate_settings(settings);
-        if validation.has_errors() {
-            return Err(AppError::ValidationFailed(format!(
-                "Settings validation failed: {:?}",
-                validation.errors
-            )));
-        }
-
-        let settings_file = SettingsFile {
-            version: SETTINGS_VERSION,
-            settings: settings.clone(),
-        };
-
-        self.write_settings_file(&settings_file).await
+        let _guard = self.write_lock.lock().await;
+        self.persist(settings).await
     }
 
     async fn update(
@@ -1081,7 +1132,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             }
         }
 
-        self.save_all(&settings).await?;
+        self.persist(&settings).await?;
 
         Ok(settings)
     }
@@ -1109,7 +1160,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             }
         }
 
-        self.save_all(&settings).await?;
+        self.persist(&settings).await?;
 
         Ok(settings)
     }
@@ -1123,7 +1174,6 @@ impl SettingsRepositoryPort for SettingsRepository {
         settings.llm.ollama_auth_header_value.clear();
         settings.llm.llama_cpp.auth_header_value.clear();
 
-        // Serialize to JSON with pretty printing
         let json = serde_json::to_string_pretty(&settings)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
 
@@ -1134,53 +1184,16 @@ impl SettingsRepositoryPort for SettingsRepository {
         Ok(())
     }
 
-    async fn import(&self, path: &str, merge: bool) -> Result<SettingsDto> {
+    async fn import(&self, path: &str, merge: bool) -> Result<SettingsImportOutcome> {
         let content = fs::read_to_string(path)
             .await
             .map_err(|e| AppError::Storage(format!("Failed to read import file: {}", e)))?;
 
-        // Deserialize
-        let mut imported_settings: SettingsDto = serde_json::from_str(&content).map_err(|e| {
+        let imported_settings: SettingsDto = serde_json::from_str(&content).map_err(|e| {
             AppError::Deserialization(format!("Failed to deserialize settings: {}", e))
         })?;
 
-        // An export taken before the stall-timeout rework is otherwise rejected
-        // wholesale over one repurposed number.
-        resolve_out_of_range_values(&mut imported_settings);
-
-        let existing = self.get_all().await?;
-        restore_redacted_secrets(&mut imported_settings, &existing);
-
-        let validation = self.validate_settings(&imported_settings);
-        if validation.has_errors() {
-            return Err(AppError::ValidationFailed(format!(
-                "Imported settings validation failed: {:?}",
-                validation.errors
-            )));
-        }
-
-        let final_settings = if merge {
-            // Merge with existing settings
-            let mut existing = existing;
-
-            // Merge each category (imported values override existing)
-            existing.indexing = imported_settings.indexing;
-            existing.search = imported_settings.search;
-            existing.llm = imported_settings.llm;
-            existing.ui = imported_settings.ui;
-            existing.sync = imported_settings.sync;
-            existing.backup = imported_settings.backup;
-            existing.privacy = imported_settings.privacy;
-
-            existing
-        } else {
-            // Replace all settings
-            imported_settings
-        };
-
-        self.save_all(&final_settings).await?;
-
-        Ok(final_settings)
+        self.import_settings(imported_settings, merge).await
     }
 
     fn validate(&self, settings: &SettingsDto) -> ValidationResult {
@@ -1291,6 +1304,46 @@ mod tests {
         assert!(
             settings.privacy.telemetry_enabled,
             "privacy update was lost"
+        );
+    }
+
+    #[tokio::test]
+    async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes() {
+        let (repo, _dir) = create_test_repository().await;
+        let mut imported = repo.get_all().await.unwrap();
+        imported.llm.ollama_auth_header_name = "Authorization".into();
+        imported.llm.ollama_auth_header_value.clear();
+        imported.search.max_results = 42;
+
+        let held = repo.write_lock.lock().await;
+        let mut importing = Box::pin(repo.import_settings(imported, true));
+        assert!(futures::poll!(&mut importing).is_pending());
+        let mut current = repo.get_all().await.unwrap();
+        current.vault.enabled = true;
+        current.llm.ollama_auth_header_name = "Authorization".into();
+        current.llm.ollama_auth_header_value = "Bearer newly-rotated-token".into();
+        repo.persist(&current).await.unwrap();
+        drop(held);
+
+        let result = importing.await.unwrap();
+        assert!(
+            result.settings.vault.enabled,
+            "merge must retain the preceding vault update"
+        );
+        assert!(
+            !result.vault_just_enabled,
+            "transition must use the state under the lock"
+        );
+        assert_eq!(
+            result.settings.llm.ollama_auth_header_value,
+            "Bearer newly-rotated-token"
+        );
+        let saved = repo.get_all().await.unwrap();
+        assert_eq!(saved.search.max_results, 42);
+        assert!(saved.vault.enabled);
+        assert_eq!(
+            saved.llm.ollama_auth_header_value,
+            "Bearer newly-rotated-token"
         );
     }
 
@@ -1478,7 +1531,8 @@ mod tests {
         let imported = repo
             .import(export_path.to_str().unwrap(), false)
             .await
-            .unwrap();
+            .unwrap()
+            .settings;
 
         assert_eq!(imported.search.max_results, 25);
     }
@@ -1503,7 +1557,8 @@ mod tests {
         let imported = repo
             .import(export_path.to_str().unwrap(), false)
             .await
-            .unwrap();
+            .unwrap()
+            .settings;
         assert_eq!(
             imported.llm.ollama_auth_header_value,
             "Bearer ollama-secret"
@@ -1542,7 +1597,8 @@ mod tests {
         let merged = repo
             .import(export_path.to_str().unwrap(), true)
             .await
-            .unwrap();
+            .unwrap()
+            .settings;
 
         assert_eq!(merged.search.max_results, 15);
         // Note: Current implementation replaces categories, so chunk_size will be reset

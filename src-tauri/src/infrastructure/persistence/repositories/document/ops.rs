@@ -10,7 +10,7 @@ use crate::infrastructure::persistence::mappers::{
 };
 use crate::shared::error::{AppError, Result};
 use crate::shared::types::TagId;
-use sqlx::{QueryBuilder, SqliteConnection, SqlitePool};
+use sqlx::{QueryBuilder, SqliteConnection};
 use std::time::Instant;
 use tracing::{info, instrument};
 
@@ -42,7 +42,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
         "#,
     )
     .bind(id)
-    .fetch_optional(conn)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| {
         AppError::Database(format!(
@@ -52,7 +52,9 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
     })?;
 
     match db_model {
-        Some(model) => Ok(Some(DocumentMapper::to_entity(&model)?)),
+        Some(model) => Ok(Some(
+            hydrate(conn, DocumentMapper::to_entity(&model)?).await?,
+        )),
         None => Ok(None),
     }
 }
@@ -176,7 +178,7 @@ pub async fn find_by_checksum(
     }
 }
 
-pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>> {
+pub async fn list_metadata(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>> {
     let db_models: Vec<DocumentModel> = sqlx::query_as::<_, DocumentModel>(
         r#"
         SELECT
@@ -663,38 +665,6 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
     Ok(())
 }
 
-pub async fn find_aggregate_by_checksum_pool(
-    pool: &SqlitePool,
-    checksum: &str,
-) -> Result<Option<DocumentEntity>> {
-    let doc_model: Option<DocumentModel> = sqlx::query_as::<_, DocumentModel>(
-        r#"
-        SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at,
-               indexed_at, checksum, status, language, category, quality_score,
-               access_count, last_accessed_at, word_count, source_context
-        FROM documents
-        WHERE checksum = ?
-        LIMIT 1
-        "#,
-    )
-    .bind(checksum)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| AppError::Database(format!("Failed to find document by checksum: {}", e)))?;
-
-    match doc_model {
-        Some(model) => {
-            let doc_entity = DocumentMapper::to_entity(&model)?;
-            let mut conn = pool.acquire().await?;
-            let chunks = fetch_chunks_for_document(&mut conn, doc_entity.id().as_str()).await?;
-            let tags = fetch_tags_for_document(&mut conn, doc_entity.id().as_str()).await?;
-            let aggregate = doc_entity.from_parts(chunks, tags)?;
-            Ok(Some(aggregate))
-        }
-        None => Ok(None),
-    }
-}
-
 pub async fn find_aggregate_by_checksum_tx(
     conn: &mut SqliteConnection,
     checksum: &str,
@@ -726,97 +696,12 @@ pub async fn find_aggregate_by_checksum_tx(
     }
 }
 
-/// Optimized batch save for multiple documents
-/// Uses bulk INSERT with QueryBuilder to reduce database round-trips
-#[instrument(skip(conn, entities), fields(document_count = entities.len()))]
-pub async fn save_batch_optimized(
-    conn: &mut SqliteConnection,
-    entities: &[DocumentEntity],
-) -> Result<()> {
-    use sqlx::QueryBuilder;
-    use std::time::Instant;
-    use tracing::info;
-
-    if entities.is_empty() {
-        return Ok(());
+/// A batch has exactly the same aggregate semantics as repeated saves.
+/// The caller owns the surrounding transaction.
+pub async fn save_batch(conn: &mut SqliteConnection, entities: &[DocumentEntity]) -> Result<()> {
+    for entity in entities {
+        save_aggregate(conn, entity).await?;
     }
-
-    let start = Instant::now();
-    const DOCUMENT_BATCH_SIZE: usize = 100; // SQLite parameter limit safe
-
-    let models: Vec<DocumentModel> = entities.iter().map(DocumentMapper::to_model).collect();
-    let batch_count = models.len().div_ceil(DOCUMENT_BATCH_SIZE);
-
-    for batch in models.chunks(DOCUMENT_BATCH_SIZE) {
-        let mut query_builder = QueryBuilder::new(
-            "INSERT INTO documents (
-                id, file_path, file_name, file_type, mime_type,
-                size_bytes, modified_at, indexed_at, checksum, status,
-                language, category, quality_score, access_count, last_accessed_at, word_count
-            ) ",
-        );
-
-        query_builder.push_values(batch, |mut b, model| {
-            b.push_bind(&model.id)
-                .push_bind(&model.file_path)
-                .push_bind(&model.file_name)
-                .push_bind(&model.file_type)
-                .push_bind(&model.mime_type)
-                .push_bind(model.size_bytes)
-                .push_bind(&model.modified_at)
-                .push_bind(&model.indexed_at)
-                .push_bind(&model.checksum)
-                .push_bind(&model.status)
-                .push_bind(&model.language)
-                .push_bind(&model.category)
-                .push_bind(model.quality_score)
-                .push_bind(model.access_count)
-                .push_bind(&model.last_accessed_at)
-                .push_bind(model.word_count);
-        });
-
-        query_builder.push(
-            " ON CONFLICT(file_path) DO UPDATE SET \
-             file_name = excluded.file_name, \
-             file_type = excluded.file_type, \
-             mime_type = excluded.mime_type, \
-             size_bytes = excluded.size_bytes, \
-             modified_at = excluded.modified_at, \
-             indexed_at = excluded.indexed_at, \
-             checksum = excluded.checksum, \
-             status = excluded.status, \
-             language = excluded.language, \
-             category = excluded.category, \
-             quality_score = excluded.quality_score, \
-             access_count = excluded.access_count, \
-             last_accessed_at = excluded.last_accessed_at, \
-             word_count = excluded.word_count, \
-             updated_at = CURRENT_TIMESTAMP",
-        );
-
-        query_builder
-            .build()
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to insert document batch: {}", e)))?;
-    }
-
-    let elapsed = start.elapsed();
-    let docs_per_second = if elapsed.as_secs_f64() > 0.0 {
-        entities.len() as f64 / elapsed.as_secs_f64()
-    } else {
-        0.0
-    };
-
-    info!(
-        duration_ms = elapsed.as_millis(),
-        document_count = entities.len(),
-        batch_count = batch_count,
-        batch_size = DOCUMENT_BATCH_SIZE,
-        docs_per_second = format!("{:.1}", docs_per_second),
-        "Documents saved successfully using bulk INSERT"
-    );
-
     Ok(())
 }
 
@@ -857,5 +742,84 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
         "Documents deleted successfully using bulk DELETE"
     );
 
+    Ok(())
+}
+
+async fn hydrate(conn: &mut SqliteConnection, document: DocumentEntity) -> Result<DocumentEntity> {
+    let chunks = fetch_chunks_for_document(conn, document.id().as_str()).await?;
+    let tags = fetch_tags_for_document(conn, document.id().as_str()).await?;
+    document.from_parts(chunks, tags)
+}
+
+pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>> {
+    let metadata = list_metadata(conn).await?;
+    let mut documents = Vec::with_capacity(metadata.len());
+    for document in metadata {
+        documents.push(hydrate(conn, document).await?);
+    }
+    Ok(documents)
+}
+
+pub async fn find_by_filter(
+    conn: &mut SqliteConnection,
+    filter: &crate::application::ports::DocumentFilter,
+) -> Result<Vec<DocumentEntity>> {
+    use crate::application::ports::Filter;
+    filter.validate()?;
+    let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE 1=1");
+    if let Some(pattern) = &filter.path_pattern {
+        query.push(" AND file_path LIKE ").push_bind(pattern);
+    }
+    if let Some(status) = &filter.status {
+        query.push(" AND status = ").push_bind(status);
+    }
+    query
+        .push(" ORDER BY indexed_at DESC LIMIT ")
+        .push_bind(filter.limit.unwrap_or(1000) as i64);
+    let models = query
+        .build_query_as::<DocumentModel>()
+        .fetch_all(&mut *conn)
+        .await?;
+    let mut documents = Vec::with_capacity(models.len());
+    for model in models {
+        documents.push(hydrate(conn, DocumentMapper::to_entity(&model)?).await?);
+    }
+    Ok(documents)
+}
+
+pub async fn find_metadata_by_ids(
+    conn: &mut SqliteConnection,
+    ids: &[String],
+) -> Result<Vec<DocumentEntity>> {
+    let mut documents = Vec::with_capacity(ids.len());
+    for batch in ids.chunks(500) {
+        let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE id IN (");
+        let mut values = query.separated(", ");
+        for id in batch {
+            values.push_bind(id);
+        }
+        values.push_unseparated(")");
+        let models = query
+            .build_query_as::<DocumentModel>()
+            .fetch_all(&mut *conn)
+            .await?;
+        for model in models {
+            documents.push(DocumentMapper::to_entity(&model)?);
+        }
+    }
+    Ok(documents)
+}
+
+pub async fn rename(conn: &mut SqliteConnection, id: &str, name: &str) -> Result<()> {
+    let result = sqlx::query(
+        "UPDATE documents SET file_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(name)
+    .bind(id)
+    .execute(conn)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("Document not found: {id}")));
+    }
     Ok(())
 }

@@ -163,10 +163,7 @@ impl TagServiceTrait for TagServiceImpl {
     async fn apply_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<Vec<Tag>> {
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
-        let existing_tags = tag_repo
-            .get_tags_for_document(document_id)
-            .await
-            .unwrap_or_default();
+        let existing_tags = tag_repo.get_tags_for_document(document_id).await?;
         let existing_tag_names: Vec<String> =
             existing_tags.iter().map(|t| t.name().to_string()).collect();
 
@@ -189,6 +186,16 @@ impl TagServiceTrait for TagServiceImpl {
             .get_tags_for_document(document_id)
             .await
             .map_err(|e| AppError::Database(format!("Failed to get updated tags: {}", e)))
+    }
+
+    async fn replace_tags(
+        &self,
+        document_id: &str,
+        tag_names: Vec<String>,
+    ) -> crate::shared::error::Result<()> {
+        crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
+            .replace_document_tags(document_id, tag_names)
+            .await
     }
 
     async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()> {

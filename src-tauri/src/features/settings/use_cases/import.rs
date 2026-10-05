@@ -1,6 +1,9 @@
 //! Import Settings Use Case
 
-use crate::application::ports::SettingsRepositoryPort;
+use crate::application::ports::settings_side_effects_port::SettingsTransitionHints;
+use crate::application::ports::{
+    NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
+};
 use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
 use crate::shared::error::Result;
 use std::path::Path;
@@ -16,6 +19,7 @@ use std::sync::Arc;
 /// - Handle file I/O errors
 pub struct ImportSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
+    side_effects: Arc<dyn SettingsSideEffectsPort>,
 }
 
 impl ImportSettingsUseCase {
@@ -25,7 +29,17 @@ impl ImportSettingsUseCase {
     ///
     /// * `repository` - Settings repository port implementation
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
-        Self { repository }
+        Self::with_side_effects(repository, Arc::new(NoopSettingsSideEffects))
+    }
+
+    pub fn with_side_effects(
+        repository: Arc<dyn SettingsRepositoryPort>,
+        side_effects: Arc<dyn SettingsSideEffectsPort>,
+    ) -> Self {
+        Self {
+            repository,
+            side_effects,
+        }
     }
 
     /// Execute the use case to import settings.
@@ -70,22 +84,19 @@ impl ImportSettingsUseCase {
         &self,
         request: ImportSettingsRequestDto,
     ) -> Result<ImportSettingsResponseDto> {
-        // Validate path before attempting import
         self.validate_import_path(&request.path)?;
 
-        // Perform import through repository
-        let settings = self.repository.import(&request.path, request.merge).await?;
-
-        let validation = self.repository.validate(&settings);
-        if !validation.valid {
-            return Err(crate::shared::error::AppError::InvalidInput(format!(
-                "Imported settings validation failed: {:?}",
-                validation.errors
-            )));
-        }
-
-        // If validation passed, save the settings
-        self.repository.save_all(&settings).await?;
+        // Import validates and persists once, with merge and secret restoration
+        // serialized against other settings writes. Never save its result again.
+        let imported = self.repository.import(&request.path, request.merge).await?;
+        self.side_effects
+            .on_settings_updated(
+                None,
+                SettingsTransitionHints {
+                    vault_just_enabled: imported.vault_just_enabled,
+                },
+            )
+            .await;
 
         let status = if request.merge {
             "Settings imported and merged successfully"
@@ -94,7 +105,7 @@ impl ImportSettingsUseCase {
         };
 
         Ok(ImportSettingsResponseDto {
-            settings,
+            settings: imported.settings,
             status: status.to_string(),
         })
     }
@@ -140,70 +151,130 @@ impl ImportSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::MockSettingsRepository;
+    use crate::features::settings::{
+        dto::{SettingsCategory, SettingsDto},
+        repository::SettingsRepository,
+    };
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
 
-    fn temp_path(file_name: &str) -> String {
-        std::env::temp_dir()
-            .join(file_name)
-            .to_string_lossy()
-            .to_string()
+    struct ObservedEffects {
+        repository: Arc<SettingsRepository>,
+        observed: Mutex<Vec<(Option<SettingsCategory>, bool, SettingsDto)>>,
+    }
+    #[async_trait]
+    impl SettingsSideEffectsPort for ObservedEffects {
+        async fn on_settings_updated(
+            &self,
+            category: Option<SettingsCategory>,
+            hints: SettingsTransitionHints,
+        ) {
+            let saved = self.repository.get_all().await.unwrap();
+            self.observed
+                .lock()
+                .push((category, hints.vault_just_enabled, saved));
+        }
     }
 
     #[tokio::test]
-    async fn test_import_settings_replace() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = ImportSettingsUseCase::new(repository);
-
-        let request = ImportSettingsRequestDto {
-            path: temp_path("test-settings.json"),
-            merge: false,
-        };
-
-        let result = use_case.execute(request).await;
-
-        // Will fail because /tmp/test-settings.json doesn't exist
-        assert!(result.is_err());
+    async fn successful_import_refreshes_runtime_after_persist_in_both_modes() {
+        for merge in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let repository = Arc::new(
+                SettingsRepository::new(dir.path().to_path_buf())
+                    .await
+                    .unwrap(),
+            );
+            let effects = Arc::new(ObservedEffects {
+                repository: repository.clone(),
+                observed: Mutex::new(vec![]),
+            });
+            let use_case =
+                ImportSettingsUseCase::with_side_effects(repository.clone(), effects.clone());
+            let mut imported = repository.get_all().await.unwrap();
+            imported.search.max_results = 42;
+            imported.llm.ollama_url = "http://localhost:11435".into();
+            imported.vault.enabled = true;
+            let path = dir.path().join("import.json");
+            tokio::fs::write(&path, serde_json::to_vec(&imported).unwrap())
+                .await
+                .unwrap();
+            let response = use_case
+                .execute(ImportSettingsRequestDto {
+                    path: path.to_string_lossy().into(),
+                    merge,
+                })
+                .await
+                .unwrap();
+            assert_eq!(response.settings.search.max_results, 42);
+            let observed = effects.observed.lock();
+            assert_eq!(observed.len(), 1);
+            assert_eq!(
+                observed[0].0, None,
+                "all runtime settings must be refreshed"
+            );
+            assert_eq!(
+                observed[0].1, !merge,
+                "merge preserves the existing vault category"
+            );
+            assert_eq!(observed[0].2.llm.ollama_url, imported.llm.ollama_url);
+            assert_eq!(
+                observed[0].2.search.max_results, 42,
+                "effects must see committed settings"
+            );
+        }
     }
 
     #[tokio::test]
-    async fn test_import_settings_merge() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = ImportSettingsUseCase::new(repository);
-
-        let request = ImportSettingsRequestDto {
-            path: temp_path("test-settings.json"),
-            merge: true,
-        };
-
-        let result = use_case.execute(request).await;
-
-        // Will fail because file doesn't exist
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_import_path_empty() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = ImportSettingsUseCase::new(repository);
-
-        let result = use_case.validate_import_path("");
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_import_path_nonexistent() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = ImportSettingsUseCase::new(repository);
-
-        let result = use_case.validate_import_path("/nonexistent/file.json");
-
-        assert!(result.is_err());
+    async fn invalid_import_neither_persists_nor_refreshes_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = Arc::new(
+            SettingsRepository::new(dir.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+        let effects = Arc::new(ObservedEffects {
+            repository: repository.clone(),
+            observed: Mutex::new(vec![]),
+        });
+        let use_case =
+            ImportSettingsUseCase::with_side_effects(repository.clone(), effects.clone());
+        let before = serde_json::to_value(repository.get_all().await.unwrap()).unwrap();
+        let mut imported = repository.get_all().await.unwrap();
+        imported.indexing.chunk_size = 0;
+        let path = dir.path().join("invalid.json");
+        tokio::fs::write(&path, serde_json::to_vec(&imported).unwrap())
+            .await
+            .unwrap();
+        assert!(use_case
+            .execute(ImportSettingsRequestDto {
+                path: path.to_string_lossy().into(),
+                merge: false
+            })
+            .await
+            .is_err());
+        assert!(effects.observed.lock().is_empty());
+        assert_eq!(
+            serde_json::to_value(repository.get_all().await.unwrap()).unwrap(),
+            before
+        );
     }
 
     #[tokio::test]
-    async fn test_import_validation_failure() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let _use_case = ImportSettingsUseCase::new(repository);
+    async fn import_requires_an_existing_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = Arc::new(
+            SettingsRepository::new(dir.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+        let use_case = ImportSettingsUseCase::new(repository);
+        assert!(use_case.validate_import_path("").is_err());
+        assert!(use_case
+            .validate_import_path(dir.path().join("missing.json").to_str().unwrap())
+            .is_err());
+        assert!(use_case
+            .validate_import_path(dir.path().to_str().unwrap())
+            .is_err());
     }
 }

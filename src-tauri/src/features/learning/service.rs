@@ -84,6 +84,7 @@ pub async fn generate_with_references(
         sources,
         references,
         &super::outline_progress::OutlineProgress::default(),
+        None,
     )
     .await
 }
@@ -95,6 +96,7 @@ pub async fn generate_with_references_and_progress(
     sources: Vec<LearningSourceDto>,
     references: &[super::sources::InitialReference],
     progress: &super::outline_progress::OutlineProgress,
+    web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
 ) -> Result<LearningProgramDto> {
     validate_request(&request)?;
     if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {
@@ -104,18 +106,35 @@ pub async fn generate_with_references_and_progress(
     }
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let modules = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
-        super::generation::generate_outline_with_progress(llm, &request, &sources, progress),
-    )
-    .await
-    .map_err(|_| progress.timeout_error())??;
+    // No overall deadline: a completed draft and repair must not consume the
+    // time available to the final review. Cancellation and transport failures still apply.
+    // Library previews are display data. Authoring must be able to retrieve
+    // evidence from anywhere in each immutable capture, including later chapters.
+    let authoring_sources: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            let mut source = source.clone();
+            if let Some(reference) = references.iter().find(|r| r.source_id == source.id) {
+                source.excerpt = reference.captured.text.clone();
+            }
+            source
+        })
+        .collect();
+    let (raw, _, _) =
+        super::generation::draft_outline(llm, &request, &authoring_sources, progress).await?;
+    let modules = super::generation::decode_outline(&raw, &request, &authoring_sources, false)?;
+    let draft = super::outline_draft::OutlineDraft::new(
+        request.clone(),
+        super::generation::parse_json(&raw)?,
+        &authoring_sources,
+    );
     validate_outline(&modules, &sources)?;
     let first = modules
         .first()
         .and_then(|m| m.lessons.first())
         .map(|l| l.id.clone());
     let program = LearningProgramDto {
+        outline_review: Some(draft.review.clone()),
         summary: LearningProgramSummaryDto {
             id,
             title: request.goal.trim().chars().take(120).collect(),
@@ -136,9 +155,11 @@ pub async fn generate_with_references_and_progress(
         attempts: vec![],
     };
     progress.check_cancelled()?;
-    progress.stage(super::outline_progress::OutlineStage::Saving);
-    repo.create_with_references(&program, references).await?;
-    Ok(program)
+    let _run = super::outline_draft::DraftRun::acquire(&program.summary.id)?;
+    repo.create_outline_draft(&program, references, Some(&draft))
+        .await?;
+    progress.saved(&program.summary.id);
+    super::outline_draft::finish(repo, llm, program, draft, authoring_sources, progress, web).await
 }
 
 fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]) -> Result<()> {
@@ -208,6 +229,7 @@ pub async fn accept(
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
     bounded(&request.title, "Program title", 120, true)?;
+    let _run = super::outline_draft::DraftRun::acquire(&request.program_id)?;
     repo.accept(&request).await?;
     repo.get(&request.program_id).await
 }

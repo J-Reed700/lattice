@@ -1,4 +1,4 @@
-import type { ApiError } from './api/result';
+export type { ApiResult } from './api/result';
 
 
 export type { SearchResultMetadata, SearchFilter, PerformanceStats, PerformanceReport } from './metadata';
@@ -31,10 +31,6 @@ export interface IndexingStats {
 }
 
 export type { IndexedFolder, IndexingActivity, IndexFileResponse } from './api/files';
-
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; details?: ApiError };
 
 export interface WebIngestResponse {
   documentId: string;

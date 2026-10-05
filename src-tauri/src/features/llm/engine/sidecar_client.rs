@@ -249,6 +249,7 @@ pub struct RequestTuning<'a> {
     pub json_schema: Option<&'a Value>,
     /// Wall-clock allowance for the whole exchange, when the caller sets one.
     pub time_budget: Option<Duration>,
+    pub no_time_limit: bool,
     /// Sampling for this request, over the client's configured defaults.
     pub sampling: Option<SamplingOverride>,
     /// Output ceiling for this request. Only ever tightens the configured one,
@@ -566,15 +567,18 @@ impl SidecarLLMClient {
             non_stream_timeout(tuning.time_budget)
         };
 
-        let response = timeout(
-            request_timeout,
-            self.http
-                .post(self.endpoint_for("/v1/chat/completions"))
-                .json(&body)
-                .send(),
-        )
-        .await
-        .map_err(|_| LLMError::Timeout)?
+        let send = self
+            .http
+            .post(self.endpoint_for("/v1/chat/completions"))
+            .json(&body)
+            .send();
+        let response = if tuning.no_time_limit && !stream {
+            send.await
+        } else {
+            timeout(request_timeout, send)
+                .await
+                .map_err(|_| LLMError::Timeout)?
+        }
         .map_err(|err| LLMError::Network(format!("HTTP error to sidecar: {err}")))?;
 
         Ok((redacted_status(response).await?, prefill))
@@ -1095,6 +1099,7 @@ mod tests {
                 reasoning_effort: Some("none"),
                 json_schema: None,
                 time_budget: None,
+                no_time_limit: false,
                 sampling: None,
                 max_output_tokens: None,
                 tools: None,
@@ -1118,6 +1123,7 @@ mod tests {
                 reasoning_effort: Some("low"),
                 json_schema: None,
                 time_budget: None,
+                no_time_limit: false,
                 sampling: None,
                 max_output_tokens: None,
                 tools: None,

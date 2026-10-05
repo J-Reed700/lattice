@@ -57,11 +57,9 @@ export const queryClient = new QueryClient({
       refetchOnMount: true,
     },
     mutations: {
-      // Retry mutations once on network errors
-      retry: 1,
-
-      // Retry delay for mutations (2 seconds)
-      retryDelay: 2000,
+      // A failed response can follow a committed write. Only mutations with
+      // durable idempotency guarantees may opt in to automatic retries.
+      retry: false,
     },
   },
 });

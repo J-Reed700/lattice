@@ -170,20 +170,20 @@ impl CloudLlm {
     async fn send(
         &self,
         body: &Value,
-        deadline: Instant,
+        deadline: Option<Instant>,
         bound_body: bool,
     ) -> Result<reqwest::Response> {
         let mut last_error = None;
         for attempt in 0..3u32 {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
+            let remaining =
+                deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            if remaining.is_some_and(|remaining| remaining.is_zero()) {
                 return Err(last_error.unwrap_or_else(|| self.budget_error()));
             }
             let request = self.client.post(&self.endpoint).json(body);
-            let request = if bound_body {
-                request.timeout(remaining)
-            } else {
-                request
+            let request = match remaining.filter(|_| bound_body) {
+                Some(remaining) => request.timeout(remaining),
+                None => request,
             };
             let request = if self.provider == LLMProvider::Openai {
                 request.bearer_auth(&self.key)
@@ -193,12 +193,12 @@ impl CloudLlm {
                     .header("anthropic-version", "2023-06-01")
             };
             let send = request.send();
-            let response = if bound_body {
-                send.await
-            } else {
+            let response = if let Some(remaining) = remaining.filter(|_| !bound_body) {
                 tokio::time::timeout(remaining, send)
                     .await
                     .map_err(|_| self.budget_error())?
+            } else {
+                send.await
             }
             .map_err(|e| {
                 if e.is_timeout() {
@@ -231,7 +231,9 @@ impl CloudLlm {
             );
             // Sleeping past the deadline would report a budget expiry instead of
             // the provider's own reason for refusing.
-            if deadline.saturating_duration_since(Instant::now()) <= delay {
+            if deadline
+                .is_some_and(|deadline| deadline.saturating_duration_since(Instant::now()) <= delay)
+            {
                 return Err(error);
             }
             last_error = Some(error);
@@ -285,7 +287,9 @@ impl LLMPort for CloudLlm {
         true
     }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let deadline = Instant::now() + request.effective_time_budget();
+        let deadline = request
+            .wall_clock_budget()
+            .map(|budget| Instant::now() + budget);
         let response = self
             .send(&self.body(request, false)?, deadline, true)
             .await?;
@@ -329,7 +333,9 @@ impl LLMPort for CloudLlm {
         let request = self.legacy_request(prompt, context, images)?;
         // The streamed body is bounded by stall detection below, but waiting for
         // the status line is bounded by nothing else.
-        let deadline = Instant::now() + request.effective_time_budget();
+        let deadline = request
+            .wall_clock_budget()
+            .map(|budget| Instant::now() + budget);
         let response = self
             .send(&self.body(&request, true)?, deadline, false)
             .await?;
@@ -693,6 +699,29 @@ mod transport_tests {
         client.endpoint = format!("{}/responses", server.uri());
         client
     }
+    #[tokio::test]
+    async fn interactive_completion_can_disable_the_wall_clock_budget() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(150)).set_body_json(json!({
+                "status":"completed", "output":[{"type":"message","content":[{"type":"output_text","text":"Completed"}]}]
+            }))).mount(&server).await;
+        let client = client(&server).await;
+        let request = CompletionRequest {
+            time_budget: Some(Duration::from_millis(10)),
+            ..Default::default()
+        };
+        assert!(client.complete(&request).await.is_err());
+        let response = client
+            .complete(&CompletionRequest {
+                no_time_limit: true,
+                ..request
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.text, "Completed");
+    }
+
     #[tokio::test]
     async fn streams_text_and_requires_terminal_event() {
         let server = MockServer::start().await;

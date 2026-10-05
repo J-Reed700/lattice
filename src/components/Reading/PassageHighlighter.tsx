@@ -4,7 +4,7 @@ import {
   approximateScrollRatio,
   buildNeedles,
   normalizeForMatch,
-} from './passageLocator';
+} from '@/shared/sources/passageLocator';
 import './reading.css';
 
 import type { PassageLocator, PassageMatchTier } from '../../types/conversation';

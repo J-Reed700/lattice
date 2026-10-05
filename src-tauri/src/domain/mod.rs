@@ -76,5 +76,4 @@ pub use models::classifier::{
     ClassificationStrategy, ModelIdentifier, ModelTypeClassification, ModelTypeClassifier,
 };
 
-pub use models::paths::ModelPaths;
 pub use models::validation::ModelFileValidator;

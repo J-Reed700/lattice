@@ -107,6 +107,9 @@ pub trait TagServiceTrait: Send + Sync {
         tag_names: Vec<String>,
     ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
+    /// Replace all document tags atomically. A failed replacement preserves the old set.
+    async fn replace_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<()>;
+
     /// Remove a tag from a document
     ///
     /// # Arguments

@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::{debug, warn};
 
+use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::function_calling::dto::WebSearchResult;
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::SearchResultDto;
-use crate::interfaces::di::Container;
 use crate::shared::text::build_excerpt;
 
 /// Marks a `SourceDto` that came from the web rather than the user's vault.
@@ -193,7 +193,7 @@ pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
 
 pub(super) async fn build_source_citations(
     results: &[SearchResultDto],
-    container: &Container,
+    container: &dyn ChatStorage,
     highlight_terms: &[String],
 ) -> Vec<SourceDto> {
     if results.is_empty() {

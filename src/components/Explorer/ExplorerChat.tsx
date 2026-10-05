@@ -4,9 +4,9 @@ import { Check, ChevronDown, MessageSquarePlus } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { cn } from '@/lib/utils';
 
-import { ChatPanel } from '../Chat/ChatPanel';
 
 import type { ExplorerThreads } from './useExplorerThread';
 

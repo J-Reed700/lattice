@@ -353,7 +353,8 @@ fn sidecar_tuning<'a>(
     crate::features::llm::engine::sidecar_client::RequestTuning {
         reasoning_effort: request.reasoning_effort.as_deref(),
         json_schema: request.json_schema.as_ref(),
-        time_budget: Some(request.effective_time_budget()),
+        time_budget: request.wall_clock_budget(),
+        no_time_limit: request.no_time_limit,
         sampling: request.sampling,
         max_output_tokens: request.max_output_tokens,
         tools,
@@ -392,22 +393,18 @@ impl LLMPort for SidecarPortAdapter {
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
     ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
         let (messages, tools) = self.typed_parts(request)?;
-        let budget = request.effective_time_budget();
-        tokio::time::timeout(
-            budget,
-            self.client.complete_typed_streaming(
+        request
+            .within_time_budget(self.client.complete_typed_streaming(
                 messages,
                 sidecar_tuning(request, tools.as_ref()),
                 on_text,
-            ),
-        )
-        .await
-        .map_err(|_| {
-            AppError::ServiceNotAvailable(format!(
-                "Local model generation exceeded its {}-minute time budget",
-                budget.as_secs().div_ceil(60).max(1)
             ))
-        })?
+            .await
+            .map_err(|_| {
+                AppError::ServiceNotAvailable(
+                    "Local model generation exceeded its time budget".into(),
+                )
+            })?
     }
 
     async fn generate(

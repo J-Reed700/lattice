@@ -4,8 +4,8 @@ import { Bookmark, Combine, FileText, MessageSquare, NotebookPen, Plus, Search }
 import { useNavigate } from 'react-router';
 
 import { ContentViewer } from '@/components/ContentViewer';
-import { weekPageTitle } from '@/components/Journal/synthesisTargets';
-import { describeWeekCandidates } from '@/components/Journal/SynthesizePopover';
+import { describeWeekCandidates } from '@/features/journal/components/SynthesizePopover';
+import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import {
   useCorpusShapeQuery,
   useDashboardQuery,

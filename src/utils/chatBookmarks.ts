@@ -9,7 +9,7 @@ export interface BookmarkPayload {
   sourceReferences: ChatReferenceSource[];
   /**
    * Full rich source metadata from the resolved message, suitable for
-   * rendering with {@link components/Chat/SourceCitations}. May be empty
+   * rendering with {@link features/chat/components/SourceCitations}. May be empty
    * when the resolved message carried no structured sources.
    */
   sources: SourceWithMetadata[];

@@ -1,5 +1,6 @@
 //! Follow-up document tools obey the same scope as initial chat retrieval.
 use crate::features::conversation::chat::focus::FocusScope;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::dto::{
@@ -7,7 +8,6 @@ use crate::features::function_calling::dto::{
     SemanticSearchOutput,
 };
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 
 /// Tools that can reach the user's own documents, and therefore may only run
@@ -25,7 +25,7 @@ pub(super) fn reads_the_vault(name: &str) -> bool {
 }
 
 pub(super) async fn execute(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     focus: &FocusScope,
     call: FunctionCall,
@@ -188,7 +188,7 @@ pub(super) async fn execute(
 /// particular documents does not get to enumerate its way out of the pin, and a
 /// document whose text never extracted is not offered as something to read.
 async fn list_attachments(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     allowed: &std::collections::HashSet<String>,
 ) -> Result<FunctionResult> {

@@ -8,7 +8,8 @@ import { useCallback, memo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MoreHorizontal } from 'lucide-react';
 
-import { metaLine } from './docMeta';
+import { metaLine } from '@/features/files/model/documentMetadata';
+
 import { CorpusEmptyState, ErrorState, FilterEmptyState } from './EmptyStates';
 import { FileIcon } from './FileIcon';
 import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';

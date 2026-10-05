@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use tracing::{debug, warn};
 
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
 use crate::features::search::dto::SearchResultDto;
-use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 
 pub(super) async fn load_space_document_scope(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
 ) -> Option<super::SpaceDocumentScope> {
     let repository = crate::features::conversation::repository::ConversationRepository::new(
@@ -236,7 +236,7 @@ pub(super) fn followup_reference(
 }
 
 pub(super) async fn load_recent_document_metadata(
-    container: &Container,
+    container: &dyn ChatRuntime,
     document_context: &[crate::domain::conversation::DocumentReference],
 ) -> Option<super::RecentDocumentMetadata> {
     let last_ref = followup_reference(document_context)?;

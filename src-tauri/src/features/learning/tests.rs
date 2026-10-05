@@ -8,6 +8,9 @@ use sqlx::{
 pub(super) async fn pool() -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
+        // A long model call must not retire the only in-memory database connection.
+        .idle_timeout(None)
+        .max_lifetime(None)
         .connect(":memory:")
         .await
         .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
@@ -49,6 +52,7 @@ pub(super) fn fixture() -> LearningProgramDto {
     }
     let current = modules[0].lessons[0].id.clone();
     LearningProgramDto {
+        outline_review: None,
         summary: LearningProgramSummaryDto {
             id: id(),
             title: "A generic learning program".into(),

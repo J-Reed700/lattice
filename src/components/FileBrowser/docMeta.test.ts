@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TYPE_BUCKETS, typeBucket } from './docMeta';
+import { TYPE_BUCKETS, typeBucket } from '@/features/files/model/documentMetadata';
 
 import type { DocumentMetadata } from '../../types/fileBrowser';
 

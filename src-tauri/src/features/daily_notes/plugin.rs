@@ -3,10 +3,11 @@
 //! Provides persistent SQLite-backed CRUD operations for the Daily Notes workspace.
 
 use crate::features::daily_notes::commands::{
-    create_workspace_note_impl, delete_workspace_note_impl, get_daily_notes_range_impl,
-    get_next_daily_note_impl, get_previous_daily_note_impl, get_today_note_impl,
-    list_workspace_notes_impl, quick_capture_impl, update_daily_note_content_impl,
-    update_workspace_note_impl, CreateWorkspaceNoteRequestDto, DailyNoteCompatDto,
+    capture_reference_impl, create_workspace_note_impl, delete_workspace_note_impl,
+    get_daily_notes_range_impl, get_next_daily_note_impl, get_previous_daily_note_impl,
+    get_today_note_impl, list_workspace_notes_impl, quick_capture_impl,
+    update_daily_note_content_impl, update_workspace_note_impl, CaptureReferenceRequestDto,
+    CaptureReferenceResultDto, CreateWorkspaceNoteRequestDto, DailyNoteCompatDto,
     DailyNoteCursorRequestDto, DailyNotesRangeRequestDto, DeleteWorkspaceNoteRequestDto,
     ListWorkspaceNotesRequestDto, ListWorkspaceNotesResponseDto, QuickCaptureResultDto,
     UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
@@ -18,6 +19,17 @@ use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,
 };
+
+#[tauri::command]
+#[specta::specta]
+pub async fn capture_reference(
+    request: CaptureReferenceRequestDto,
+    container: State<'_, Container>,
+) -> Result<CaptureReferenceResultDto, ApiError> {
+    capture_reference_impl(container.inner(), request)
+        .await
+        .map_err(ApiError::from)
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -137,6 +149,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             get_today_note,
             quick_capture,
+            capture_reference,
             get_daily_notes_range,
             get_previous_daily_note,
             get_next_daily_note,

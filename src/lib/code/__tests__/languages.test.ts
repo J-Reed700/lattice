@@ -1,4 +1,4 @@
-import { LanguageSupport, syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, LanguageSupport, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
 import { describe, expect, it } from 'vitest';
 
@@ -113,7 +113,10 @@ describe('loadLanguage', () => {
     await loadLanguage(resolveLanguage('main.cpp')!);
     const doc = '# Build\n\n```cpp\n#include <vector>\nint main() { return 0; }\n```\n';
     const state = EditorState.create({ doc, extensions: markdown });
-    const node = syntaxTree(state).resolveInner(doc.indexOf('int main'), 1);
-    expect(node.name).toBe('PrimitiveType');
+    // Initial parsing is time-budgeted; wait for the nested grammar under load.
+    const tree = ensureSyntaxTree(state, doc.length, 1_000);
+    expect(tree).not.toBeNull();
+    const node = tree?.resolveInner(doc.indexOf('int main'), 1);
+    expect(node?.name).toBe('PrimitiveType');
   });
 });

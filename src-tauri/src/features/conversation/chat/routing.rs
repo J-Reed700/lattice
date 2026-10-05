@@ -60,7 +60,7 @@ pub(super) const INTENT_CONTEXT_TURNS: usize = 4;
 /// a toggle, a turn mode, a closed book — because inference exists to fill in
 /// defaults, not to second-guess a decision.
 pub(super) async fn infer_turn_intent_flags(
-    container: &Container,
+    container: &dyn ChatRuntime,
     chat_llm: &Arc<dyn crate::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     search_flags: SearchFlags,
@@ -155,7 +155,7 @@ pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) 
 /// ever saw. Both now reach the turn record, and the only paths that report no
 /// router are the ones where no router ran.
 pub(super) async fn resolve_router_decision(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     validated_message: &str,
     search_flags: SearchFlags,

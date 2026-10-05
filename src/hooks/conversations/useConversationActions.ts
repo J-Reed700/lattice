@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 
+import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
 import { VaultAPI } from '@/lib/api';
 import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
 import { conversationUiStore } from '@/stores/conversationUiStore';
@@ -283,15 +284,23 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     title?: string | null,
     note?: string | null
   ) => {
-    const result = await VaultAPI.bookmarkConversationMessage({ conversationId, messageId, title, note });
-    if (!result.ok) setUiError(result.error);
-    else await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
+    try {
+      await saveBookmark(queryClient, { conversationId, messageId, title, note });
+      return true;
+    } catch (error) {
+      setUiError(error);
+      return false;
+    }
   }, [queryClient]);
 
   const unbookmarkMessage = useCallback(async (conversationId: string, messageId: string) => {
-    const result = await VaultAPI.unbookmarkConversationMessage({ conversationId, messageId });
-    if (!result.ok) setUiError(result.error);
-    else await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
+    try {
+      await removeBookmark(queryClient, { conversationId, messageId });
+      return true;
+    } catch (error) {
+      setUiError(error);
+      return false;
+    }
   }, [queryClient]);
 
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {

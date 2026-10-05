@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 
+import { typeBucket } from '@/features/files/model/documentMetadata';
+
 import { type DocumentMetadata } from '../../../types/fileBrowser';
-import { typeBucket } from '../docMeta';
 
 
 export interface TypeBucket {

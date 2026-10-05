@@ -14,10 +14,11 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { EyeOff, LayoutGrid, Layers, List, ListTree, MessageSquare, PanelRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
+import { isHttpUrl, isWebDocument, pathBasename, typeBucket } from '@/features/files/model/documentMetadata';
+
 import { AddToCollectionDialog, CollectionDocumentsDialog, RenameCollectionDialog } from './CollectionDialogs';
 import { ContentSearchCache } from './contentSearchCache';
 import { ContextMenu } from './ContextMenu';
-import { isHttpUrl, isWebDocument, pathBasename, typeBucket } from './docMeta';
 import { GridView } from './GridView';
 import { useCorpusIdentity } from './hooks/useCorpusIdentity';
 import { LibraryRail } from './LibraryRail';

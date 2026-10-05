@@ -15,8 +15,8 @@ use std::collections::HashSet;
 
 use tracing::{info, warn};
 
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::interfaces::di::Container;
 
 /// The documents a turn is confined to, after the space scope has had its say.
 #[derive(Debug, Clone, Default)]
@@ -35,7 +35,7 @@ impl FocusScope {
     /// vault whatever the request says, and `closed_book` has to keep winning
     /// over every other preference.
     pub(super) async fn resolve(
-        container: &Container,
+        container: &dyn ChatRuntime,
         conversation_id: &str,
         requested_ids: Option<&Vec<String>>,
         closed_book: bool,

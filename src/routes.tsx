@@ -18,12 +18,12 @@ import { RootLayout } from './components/RootLayout';
 const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
 const SearchInterface = lazy(() => import('./components/SearchInterface').then((m) => ({ default: m.SearchInterface })));
 const FileTree = lazy(() => import('./components/FileTree').then((m) => ({ default: m.FileTree })));
-const ChatView = lazy(() => import('./components/Chat').then((m) => ({ default: m.ChatView })));
+const ChatView = lazy(() => import('@/features/chat').then((m) => ({ default: m.ChatView })));
 const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ default: m.IngestHub })));
-const JournalWorkspace = lazy(() => import('./components/Journal').then((m) => ({ default: m.JournalWorkspace })));
-const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then((m) => ({ default: m.ReferenceInbox })));
+const JournalWorkspace = lazy(() => import('@/features/journal').then((m) => ({ default: m.JournalWorkspace })));
+const ReferenceInbox = lazy(() => import('@/features/references').then((m) => ({ default: m.ReferenceInbox })));
 const ExplorerPage = lazy(() => import('./components/Explorer').then((m) => ({ default: m.ExplorerPage })));
-const LearningStudioPage = lazy(() => import('./components/LearningStudio').then((m) => ({ default: m.LearningStudioPage })));
+const LearningStudioPage = lazy(() => import('@/features/learning').then((m) => ({ default: m.LearningStudioPage })));
 const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
 const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
 

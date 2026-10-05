@@ -8,6 +8,7 @@ import {
 
 const buildNote = (overrides: Partial<WorkspaceNote>): WorkspaceNote => ({
   id: 'note_default',
+  revision: 0,
   title: 'Default Note',
   journalId: null,
   content: '',

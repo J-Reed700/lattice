@@ -131,6 +131,8 @@ pub use conversation_memory::{
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
+mod document_filter;
+pub use document_filter::DocumentFilter;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
 pub use favorites_port::FavoritesRepositoryPort;

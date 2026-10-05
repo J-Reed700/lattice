@@ -56,6 +56,80 @@ async function expectNoUnsupportedIpc(page: Page) {
   expect(unsupported).toEqual([]);
 }
 
+test("Study activity remains interactive across tabs and handles a slow reference failure", async ({ page, browserName }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  await page.evaluate(() => {
+    const win = window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown> };
+      __STUDY_ACTIVITY_TEST__: { fail: () => void; release: () => void };
+    };
+    const original = win.__TAURI_INTERNALS__.invoke;
+    win.__TAURI_INTERNALS__.invoke = (command, args) => {
+      if (command !== 'plugin:learning|refresh_learning_source') return original(command, args);
+      return new Promise((resolve, reject) => {
+        win.__STUDY_ACTIVITY_TEST__ = {
+          fail: () => reject('The reference website did not respond.'),
+          release: () => resolve(original(command, args)),
+        };
+      });
+    };
+  });
+  await openStudioSection(page, 'Sources');
+  await page.getByRole('button', { name: 'Check for changes', exact: true }).click();
+  const activity = page.getByRole('region', { name: 'Study activity' });
+  await expect(activity.getByText('Checking your reference for updates')).toBeVisible();
+  await expect(activity.getByText(/Elapsed/)).toBeVisible();
+  await openStudioSection(page, 'Notebook');
+  await activity.getByRole('button', { name: /Collapse activity/ }).click();
+  await expect(activity.getByText('Checking your reference for updates')).toBeHidden();
+  await activity.getByRole('button', { name: /Expand activity/ }).click();
+  await activity.getByText('Task details').click();
+  await expect(activity.getByText(/not live completion indicators/)).toBeVisible();
+  await expect(activity.getByRole('progressbar')).toHaveCount(0);
+  await page.screenshot({ path: `e2e-results/study-activity-${browserName}.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await activity.getByRole('button', { name: 'Open task', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Sources', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.evaluate(() => (window as unknown as { __STUDY_ACTIVITY_TEST__: { fail: () => void } }).__STUDY_ACTIVITY_TEST__.fail());
+  await expect(activity.getByText('The reference website did not respond.')).toBeVisible();
+  await expect(activity.getByText(/Took/)).toBeVisible();
+  await page.screenshot({ path: `e2e-results/study-activity-narrow-${browserName}.png`, fullPage: true });
+  await activity.getByRole('button', { name: 'Return to task to retry' }).click();
+  await page.getByRole('button', { name: 'Check for changes', exact: true }).click();
+  await expect(activity.getByText('Waiting for the result')).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __STUDY_ACTIVITY_TEST__: { release: () => void } }).__STUDY_ACTIVITY_TEST__.release());
+  await expect(activity.getByText('Request completed')).toBeVisible();
+  await activity.getByRole('button', { name: 'Clear finished activity' }).click();
+  await expect(activity).toHaveCount(0);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("Learning Studio saved draft findings can be repaired at desktop and narrow widths", async ({ page, browserName }) => {
+  await installLearningStudioBackend(page);
+  await page.goto("/studio");
+  await expect(page.getByRole("button", { name: /Reasoning from field observations/ })).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __LATTICE_OUTLINE_TEST__: { makeUnresolvedDraft(): void } }).__LATTICE_OUTLINE_TEST__.makeUnresolvedDraft());
+  await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
+  const review = page.getByRole("region", { name: "Outline review" });
+  await expect(review.getByText("Saved draft · 1 unresolved finding")).toBeVisible();
+  await expect(review.getByText("This unsupported statement is retained for review.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept program" })).toBeDisabled();
+  await page.screenshot({ path: `e2e-results/learning-draft-${browserName}.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(review.getByRole("button", { name: "Repair remaining issues" })).toBeVisible();
+  const description = await review.getByText("Completed corrections are saved. One finding remains unresolved.").boundingBox();
+  const repairButton = await review.getByRole("button", { name: "Repair remaining issues" }).boundingBox();
+  expect(repairButton!.y).toBeGreaterThan(description!.y + description!.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `e2e-results/learning-draft-narrow-${browserName}.png`, fullPage: true });
+  await review.getByRole("button", { name: "Repair remaining issues" }).click();
+  await expect(review.getByText("Outline checks passed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept program" })).toBeEnabled();
+  await expectNoUnsupportedIpc(page);
+});
+
 test("Learning Studio reference MVP exposes saved lesson evidence at desktop and narrow widths", async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await openProgram(page);
@@ -323,9 +397,9 @@ async function runLearningStudioJourney(
         }
       ).__LATTICE_LEARNING_STATE__,
   );
-  // One user action is retried once automatically, then the explicit UI retry
-  // reuses the same operation ID and is applied once by the mock scheduler.
-  expect(reviewCalls.reviewRequests).toHaveLength(3);
+  // The explicit UI retry reuses the same operation ID, and the mock
+  // scheduler applies it once. Mutations do not retry implicitly.
+  expect(reviewCalls.reviewRequests).toHaveLength(2);
   expect(reviewCalls.reviewRequests[0]).toMatchObject({
     cardId: "accepted-draft-learning-1",
     expectedReviews: 0,
@@ -333,7 +407,6 @@ async function runLearningStudioJourney(
   });
   expect(reviewCalls.reviewRequests.map((request) => request.reviewId)).toEqual(
     [
-      reviewCalls.reviewRequests[0].reviewId,
       reviewCalls.reviewRequests[0].reviewId,
       reviewCalls.reviewRequests[0].reviewId,
     ],
@@ -2058,6 +2131,9 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   });
   expect(curriculum).toEqual({ title: "Compare field measurements", objective: "Record a measure and the period used to observe it.", draft: null });
 
+  await openStudioSection(page, "Lessons");
+  await expect(page.getByRole("button", { name: /^Compare field measurements/ })).toBeVisible();
+
   await openStudioSection(page, "Code & simulations");
   const labs = page.getByTestId("practical-workbench-panel");
   await expect(labs.getByRole("heading", { name: "Work through a real brief" })).toBeVisible();
@@ -2422,6 +2498,30 @@ test("course generation shows real stages and permits cancellation without losin
   await expect(page.getByLabel("Your goal")).toHaveValue("Learn Rust ownership and build a small command-line tool");
   await expect(page.getByRole("textbox", { name: /Reference URLs/ })).toHaveValue("https://doc.rust-lang.org/book/print.html");
   await expect(page.getByRole("radio", { name: /Deep dive/ })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Create outline", exact: true })).toBeEnabled();
+  await expectNoUnsupportedIpc(page);
+});
+
+
+test("course generation preserves structured backend errors and retry inputs", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await page.goto("/studio?new=1");
+  await page.getByLabel("Your goal").fill("Learn Rust and build a command-line tool");
+  await page.getByRole("radio", { name: /Complete course/ }).check();
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_OUTLINE_TEST__: { hold: boolean } }).__LATTICE_OUTLINE_TEST__.hold = true;
+  });
+  await page.getByRole("button", { name: "Create outline", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Course generation progress" })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_OUTLINE_TEST__: { fail: (error: unknown) => void } }).__LATTICE_OUTLINE_TEST__.fail({
+      code: "TIMEOUT", message: "Course generation timed out while checking the revised outline. Your inputs are kept. Try a focused course or a faster model.",
+    });
+  });
+  await expect(page.getByRole("alert")).toContainText("timed out while checking the revised outline");
+  await expect(page.getByRole("alert")).not.toContainText("Service not available");
+  await expect(page.getByLabel("Your goal")).toHaveValue("Learn Rust and build a command-line tool");
+  await expect(page.getByRole("radio", { name: /Complete course/ })).toBeChecked();
   await expect(page.getByRole("button", { name: "Create outline", exact: true })).toBeEnabled();
   await expectNoUnsupportedIpc(page);
 });

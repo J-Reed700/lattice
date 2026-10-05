@@ -1,4 +1,5 @@
 use crate::domain::qa::hyde::QueryType;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
@@ -7,7 +8,6 @@ use crate::features::settings::dto::{
     RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
 };
 use crate::infrastructure::services::router::RouterAction;
-use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use crate::shared::text::safe_truncate;
 use serde::Serialize;
@@ -311,7 +311,7 @@ struct SpaceDocumentScope {
 // This facade mirrors the implementation's complete per-turn retrieval configuration.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     request_id: &str,
@@ -395,7 +395,7 @@ fn elapsed_ms(start: Instant) -> u64 {
 // This facade mirrors the knowledge-base retrieval policy inputs.
 #[allow(clippy::too_many_arguments)]
 async fn run_kb_retrieval(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
@@ -428,7 +428,7 @@ async fn run_kb_retrieval(
 }
 
 async fn apply_rerank_stage(
-    container: &Container,
+    container: &dyn ChatRuntime,
     validated_message: &str,
     interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
     search_response: SearchResponseDto,
@@ -447,7 +447,7 @@ async fn apply_rerank_stage(
 }
 
 async fn load_space_document_scope(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
 ) -> Option<SpaceDocumentScope> {
     load_space_document_scope_impl(container, conversation_id).await
@@ -462,7 +462,7 @@ async fn load_space_document_scope(
 /// reference by id, with no search — and so no scope filter — in between.
 /// An unresolvable scope keeps nothing, as KB retrieval does.
 pub(super) async fn confine_document_context(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     references: Vec<crate::domain::conversation::DocumentReference>,
 ) -> Vec<crate::domain::conversation::DocumentReference> {
@@ -528,7 +528,7 @@ pub(super) struct RecentDocumentMetadata {
 }
 
 pub(super) async fn load_recent_document_metadata(
-    container: &Container,
+    container: &dyn ChatRuntime,
     document_context: &[crate::domain::conversation::DocumentReference],
 ) -> Option<RecentDocumentMetadata> {
     load_recent_document_metadata_impl(container, document_context).await
@@ -612,7 +612,7 @@ pub(super) fn extract_acronym_context_terms(
     terms
 }
 async fn build_followup_context(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     document_context: &[crate::domain::conversation::DocumentReference],
@@ -673,7 +673,7 @@ pub(super) fn citation_ids_by_chunk(
 /// `SourceDto` entries with full citation metadata for frontend display.
 async fn build_source_citations(
     results: &[crate::features::search::dto::SearchResultDto],
-    container: &Container,
+    container: &dyn ChatRuntime,
     highlight_terms: &[String],
 ) -> Vec<SourceDto> {
     build_source_citations_impl(results, container, highlight_terms).await

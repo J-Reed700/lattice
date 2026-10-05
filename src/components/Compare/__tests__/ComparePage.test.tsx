@@ -29,7 +29,7 @@ vi.mock('@/stores/toastStore', () => ({
   },
 }));
 
-vi.mock('@/components/Chat/FilePreviewModal', () => ({
+vi.mock('@/features/chat/components/FilePreviewModal', () => ({
   FilePreviewModal: () => null,
 }));
 
