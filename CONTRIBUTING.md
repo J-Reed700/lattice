@@ -20,7 +20,9 @@ entry points. Put implementation and operational helpers in their owning folders
 
 | Location | Responsibility |
 | --- | --- |
-| `src/` | React frontend |
+| `src/features/<feature>/` | React feature views, hooks, models, and API clients |
+| `src/shared/` | Shared IPC transport and cross-feature primitives |
+| `src/components/` | Shared UI and remaining feature views during migration |
 | `src-tauri/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
 | `src-tauri/src/application/` | Cross-feature contracts, ports, and orchestration |
 | `src-tauri/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
@@ -64,6 +66,12 @@ one is missing. Filesystem access is appropriate for user-selected imports and
 artifact cleanup; exceptions to the automated check require an inline
 `repository-barrier-allow` comment explaining why.
 
+Frontend command wrappers live in `src/features/<feature>/api/client.ts`.
+`src/lib/api.ts` is the public facade, and `src/shared/ipc/` owns routing,
+transport, and error normalization. Keep shared persisted queries and mutations
+with their feature; every mutation must update or invalidate all relevant query
+keys. Stores and model helpers must not import views.
+
 In the frontend, use React Query for state owned by the backend. Zustand is for
 UI-only preferences such as panel state, sorting, and theme. Do not mirror
 backend state in a client store or `localStorage`.
@@ -89,6 +97,9 @@ Schema changes go in a new dated migration,
 has been applied, including the squashed `20260916000000_init_schema.sql`;
 sqlx checksums applied migrations and startup refuses a changed history.
 Lattice is pre-release, so don't add compatibility code for old local data.
+Full workspace-note edits must include the revision read by the editor. Captures
+append inside a repository transaction; do not implement read/modify/write of a
+whole note in the renderer. A conflict must retain the draft and surface an error.
 
 ## Before opening a pull request
 

@@ -110,7 +110,7 @@ a terminal record and can be retried. Cancellation of a lesson job commits its
 status before signalling its registered token. A shared generation slot bounds
 concurrent lesson inference.
 
-`features/learning/generation_jobs.rs` receives a pool, model loader, and source
+`features/learning/lessons/generation_jobs.rs` receives a pool, model loader, and source
 refresh callback instead of the application container. `practical_runs.rs` owns
 runtime execution, cancellation tokens, and workspace cleanup; its repository
 owns transactions. Practical workspace reads return a saved-data snapshot.
@@ -118,8 +118,9 @@ owns transactions. Practical workspace reads return a saved-data snapshot.
 snapshot, including operation replays, without starting processes inside a
 repository read. Tests inject capability snapshots for unavailable runtimes,
 disabled profiles, and activities pinned to an older runtime. Chat streams use a
-typed event sink, with the Tauri window adapter confined to `chat/desktop.rs`. The turn workflow still uses the container
-for several collaborators and remains a candidate for further decomposition.
+typed event sink, with the Tauri window adapter confined to `chat/desktop.rs`. Chat workflows depend on the feature's model, storage, retrieval, and policy
+contracts. The desktop composition adapter implements those contracts; workflow
+modules cannot reach into the application container.
 
 The serializable `DomainError`, `ApplicationError`, and `AppError` contracts live
 in `shared/error`. Existing domain/application imports re-export those types.
@@ -431,3 +432,23 @@ initial context. User controls use React Query; their writes invalidate both
 memory views and conversation messages. The original extraction, repeated
 compaction and continuation evaluation remains the model-quality gate, separate
 from deterministic repository and budget tests.
+
+## Feature ownership and mutation contracts
+
+Learning Studio groups planning, lessons, references, practice, assessment,
+recall, canvas, runtime, and portability under their owning modules. Its public
+feature facade remains stable; command adapters are grouped under `plugin/`.
+Web-source validation, replay handling, and persistence orchestration live in the
+source workflow, with guarded fetching supplied by the command adapter.
+
+The document pool and transaction adapters share SQL operations. Aggregate reads
+include chunks and tags; explicit metadata reads omit children. Batch saves have
+the same semantics as individual saves, with one transaction around the batch.
+Document tag replacement is also one transaction, including missing-tag creation.
+
+Daily-note capture holds a write transaction while selecting or creating a target
+and merging the capture. Full edits compare a persisted revision. A database
+trigger advances that revision for every writer, including vault imports and
+content-only updates. Model path resolution and symlink confinement belong to
+the filesystem adapter, and domain checks reject direct environment or filesystem
+access outside tests.

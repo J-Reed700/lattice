@@ -49,9 +49,14 @@ impl Dependencies<'_> {
             && segments
                 .get(1)
                 .is_some_and(|s| self.forbidden.contains(&s.as_str())))
-            || segments
-                .first()
-                .is_some_and(|s| self.drivers.contains(&s.as_str()))
+            || self.drivers.iter().any(|driver| {
+                let prefix: Vec<_> = driver.split("::").collect();
+                segments.len() >= prefix.len()
+                    && segments
+                        .iter()
+                        .zip(prefix)
+                        .all(|(actual, expected)| actual == expected)
+            })
         {
             self.violations.push(segments.join("::"));
         }
@@ -382,8 +387,8 @@ fn check_supervised_background_paths(
         "features/conversation/chat/persistence.rs",
         "features/conversation/compaction.rs",
         "features/learning/plugin.rs",
-        "features/learning/generation_jobs.rs",
-        "features/learning/practical_runs.rs",
+        "features/learning/lessons/generation_jobs.rs",
+        "features/learning/practice/practical_runs.rs",
         "features/transcription/engine/whisper.rs",
     ] {
         let file = root.join(path);
@@ -531,7 +536,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
     scan_with_drivers(
-        &root.join("features/learning/generation_jobs.rs"),
+        &root.join("features/learning/lessons/generation_jobs.rs"),
+        &["interfaces"],
+        &["tauri"],
+        &mut HashSet::new(),
+        &mut failures,
+    )?;
+    scan_with_drivers(
+        &root.join("features/conversation/chat/turn.rs"),
         &["interfaces"],
         &["tauri"],
         &mut HashSet::new(),
@@ -563,6 +575,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "interfaces",
         ],
         &["sqlx", "keyring", "ndarray", "tauri"],
+        &mut HashSet::new(),
+        &mut failures,
+    )?;
+    scan_with_drivers(
+        &root.join("domain"),
+        &[],
+        &["std::fs", "std::env", "tokio::fs", "crate::shared::fs"],
         &mut HashSet::new(),
         &mut failures,
     )?;
@@ -715,6 +734,19 @@ mod tests {
             "#[cfg(test)] mod tests { fn run() { tokio::spawn(async {}); } }"
         )
         .unwrap());
+    }
+
+    #[test]
+    fn domain_io_rule_checks_qualified_paths_and_grouped_imports() {
+        let (bad, _) = inspect_with_drivers(
+            r#"use std::{fs as disk, env};
+                fn resolve() { crate::shared::fs::confinement::confine_to_root(); }
+                #[cfg(test)] mod tests { use std::fs; }"#,
+            &[],
+            &["std::fs", "std::env", "crate::shared::fs"],
+        )
+        .unwrap();
+        assert_eq!(bad.len(), 3);
     }
 
     #[test]

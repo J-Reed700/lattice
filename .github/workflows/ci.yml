@@ -135,7 +135,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         working-directory: src-tauri
         timeout-minutes: 20
-        run: cargo test --features bindings-export --lib features::learning::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
+        run: cargo test --features bindings-export --lib features::learning::runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
 
       - name: Verify container staging and containment
         if: matrix.os == 'ubuntu-latest'
@@ -146,7 +146,7 @@ jobs:
           image_id="$(docker image inspect --format '{{.Id}}' python:3.13.16-slim)"
           LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
             LATTICE_LAB_SMOKE_ENGINE=docker \
-            cargo test --features bindings-export --lib features::learning::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
+            cargo test --features bindings-export --lib features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
       - name: Audit and credential backend integration tests
         working-directory: src-tauri

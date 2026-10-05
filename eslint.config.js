@@ -287,11 +287,11 @@ export default [
     },
   },
 
-  // Exception: lib/api.ts is allowed to use invoke()
+  // The shared IPC transport owns invoke().
   {
-    files: ['src/lib/api.ts'],
+    files: ['src/shared/ipc/transport.ts'],
     rules: {
-      'no-restricted-imports': 'off', // lib/api.ts needs invoke() to wrap commands
+      'no-restricted-imports': 'off', // Transport is the only wrapper around invoke().
     },
   },
 
@@ -305,9 +305,10 @@ export default [
         {
           patterns: [
             {
-              group: ['@/lib/api', '**/lib/api', '@/lib/bindings', '**/lib/bindings', '@tauri-apps/**'],
+              group: ['@/lib/api', '**/lib/api', '@/lib/bindings', '**/lib/bindings', '@/features/**/api/**', '**/features/**/api/**', '@/shared/ipc/**', '**/shared/ipc/**', '@tauri-apps/**'],
               message: 'Backend access is prohibited in Zustand stores. Use a React Query hook or service.',
             },
+            { group: ['@/components/**', '**/components/**', '@/features/**/components/**'], message: 'Stores cannot depend on view modules.' },
           ],
         },
       ],
@@ -317,12 +318,33 @@ export default [
   // Sidebar surfaces compose query-backed workflows; transport access belongs
   // in workspaceQueries.ts so sibling views share cache invalidation.
   {
-    files: ['src/components/Chat/ConversationSidebar.tsx', 'src/components/Chat/sidebar/**/*.tsx'],
+    files: ['src/features/chat/components/ConversationSidebar.tsx', 'src/features/chat/components/sidebar/**/*.tsx'],
     ignores: ['**/__tests__/**', '**/*.test.tsx'],
     rules: {
       'no-restricted-imports': ['error', { patterns: [{
-        group: ['@/lib/api', '**/lib/api', '@/lib/bindings', '**/lib/bindings', '@tauri-apps/**'],
+        group: ['@/lib/api', '**/lib/api', '@/lib/bindings', '**/lib/bindings', '@/features/**/api/**', '**/features/**/api/**', '@/shared/ipc/**', '**/shared/ipc/**', '@tauri-apps/**'],
         message: 'Use the sidebar query/mutation hooks instead of accessing the backend from a view.',
+      }] }],
+    },
+  },
+
+  // Feature API boundaries must make every asynchronous outcome explicit.
+  {
+    files: ['src/features/*/api/*.{ts,tsx}', 'src/shared/ipc/*.ts'],
+    ignores: ['**/*.test.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+    },
+  },
+  {
+    files: ['src/utils/**/*.{ts,tsx}', 'src/features/*/model/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{
+        group: ['@/components/**', '**/components/**', '@/features/**/components/**'],
+        message: 'State and model helpers cannot depend on views. Move the shared operation to its feature model or shared module.',
+
       }] }],
     },
   },
