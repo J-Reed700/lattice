@@ -1,58 +1,74 @@
 //! Durable, subject-neutral Learning Studio program workflow.
-pub mod assessment_engine;
-pub mod assessment_generation;
-pub mod assessment_repository;
-pub mod canvas_repository;
-pub(crate) mod content_verification;
-pub mod curriculum;
-pub mod curriculum_repository;
-pub mod diagnostic_generation;
+
+pub mod assessment;
+pub mod canvas;
 pub mod dto;
-pub mod embedded_runtime;
-pub mod generation;
-mod generation_jobs;
-pub mod lab_runtime;
-pub mod lesson_evidence;
-pub mod outline_progress;
-pub mod pack;
-pub mod pack_repository;
-pub mod plan_dto;
+pub mod lessons;
+pub mod planning;
 pub mod plugin;
-pub mod portability_dto;
-pub mod practical_dto;
-pub mod practical_generation;
-pub mod practical_repository;
-pub mod practical_runs;
-mod practical_workspace;
-pub mod practice_generation;
-pub mod practice_repository;
-pub mod python_runtime;
-pub mod recall_repository;
-pub mod reference_collection;
+pub mod portability;
+pub mod practice;
+pub mod recall;
+pub mod references;
 pub mod repository;
-pub mod runtime_catalog;
+pub mod runtime;
 pub mod service;
-pub mod source_library;
-pub mod source_selector;
-pub mod sources;
-pub mod teaching;
+
+// Public feature facade; implementations remain grouped by capability.
+pub use assessment::assessment_engine;
+pub use assessment::assessment_generation;
+pub use assessment::assessment_repository;
+pub use canvas::canvas_repository;
+pub use lessons::generation;
+pub use lessons::lesson_evidence;
+pub use lessons::reference_collection;
+pub use lessons::teaching;
+pub use planning::curriculum;
+pub use planning::curriculum_repository;
+pub use planning::diagnostic_generation;
+pub use planning::outline_draft;
+pub use planning::outline_progress;
+pub use planning::plan_dto;
+pub use portability::pack;
+pub use portability::pack_repository;
+pub use portability::portability_dto;
+pub use practice::practical_dto;
+pub use practice::practical_generation;
+pub use practice::practical_repository;
+pub use practice::practical_runs;
+pub use practice::practice_generation;
+pub use practice::practice_repository;
+pub use recall::recall_repository;
+pub use references::source_library;
+pub use references::source_selector;
+pub use references::sources;
+pub use runtime::embedded_runtime;
+pub use runtime::lab_runtime;
+pub use runtime::python_runtime;
+pub use runtime::runtime_catalog;
+
+use lessons::answer_review;
+pub(crate) use lessons::content_verification;
+use lessons::generation_jobs;
+use lessons::lesson_drafts;
+use lessons::lesson_progress;
+use lessons::review_evidence;
+use lessons::teaching_review;
+use planning::outline_citations;
+use planning::outline_draft_repository;
+use planning::outline_evidence;
+use planning::outline_repair;
+use planning::outline_research;
+use planning::outline_review_scope;
+use practice::practical_workspace;
+use references::source_identity;
+use references::source_workflows;
 
 #[cfg(test)]
-mod assessment_tests;
-#[cfg(test)]
 mod backend_boundary_tests;
-#[cfg(test)]
-mod canvas_tests;
-#[cfg(test)]
-mod pack_tests;
-#[cfg(test)]
-mod practical_tests;
-#[cfg(test)]
-mod practice_tests;
-#[cfg(test)]
-mod recall_tests;
+
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-mod course_generation_tests;
+mod consistency_tests;

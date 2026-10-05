@@ -1,0 +1,38 @@
+[
+  {
+    "domain": "biology",
+    "claim": "All mammals give birth to live young.",
+    "passages": ["Most mammals give birth to live young. Monotremes, including platypuses and echidnas, lay eggs."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "biology",
+    "claim": "Monotremes, including platypuses and echidnas, lay eggs.",
+    "passages": ["Most mammals give birth to live young. Monotremes, including platypuses and echidnas, lay eggs."],
+    "expected": "supported"
+  },
+  {
+    "domain": "baking",
+    "claim": "Every apple pie must be baked for exactly 60 minutes at 180 degrees Celsius, regardless of the recipe or pan.",
+    "passages": ["This example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling. Those instructions apply to this recipe; other recipes may specify different temperatures and durations."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "baking",
+    "claim": "The example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling.",
+    "passages": ["This example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling. Those instructions apply to this recipe; other recipes may specify different temperatures and durations."],
+    "expected": "supported"
+  },
+  {
+    "domain": "programming",
+    "claim": "Inside an existing Git repository, cargo new never creates a new Git repository, regardless of the --vcs setting.",
+    "passages": ["Inside an existing version-control repository, cargo new defaults to creating no new version-control repository. Explicitly passing --vcs git initializes a new Git repository even inside an existing one."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "programming",
+    "claim": "Explicitly passing --vcs git to cargo new initializes a new Git repository even inside an existing one.",
+    "passages": ["Inside an existing version-control repository, cargo new defaults to creating no new version-control repository. Explicitly passing --vcs git initializes a new Git repository even inside an existing one."],
+    "expected": "supported"
+  }
+]

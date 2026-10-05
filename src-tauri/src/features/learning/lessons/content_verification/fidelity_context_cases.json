@@ -1,0 +1,88 @@
+[
+  {
+    "claim": "It creates a directory containing Cargo.toml, src/main.rs, and initializes a VCS repository (defaulting to git)",
+    "passages": [
+      "The `cargo new` command creates a template containing a Cargo.toml manifest, a sample source file (src/main.rs by default), and a VCS ignore file.",
+      "If the target directory is not already in a VCS repository, `cargo new` initializes a new VCS repository with git as the default."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "What exactly does `cargo new my_project` do when you run it in an empty directory?"
+      ]
+    },
+    "expected": "unsupported"
+  },
+  {
+    "claim": "It creates a directory containing Cargo.toml, src/main.rs, and initializes a VCS repository (defaulting to git)",
+    "passages": [
+      "The `cargo new` command creates a template containing a Cargo.toml manifest, a sample source file (src/main.rs by default), and a VCS ignore file.",
+      "If the target directory is not already in a VCS repository, `cargo new` initializes a new VCS repository with git as the default."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "What does `cargo new my_project` do in an empty directory outside any existing VCS repository?"
+      ]
+    },
+    "expected": "supported"
+  },
+  {
+    "claim": "The pan is not being heated by the oven.",
+    "passages": [
+      "If a pan is outside the heated oven, that oven is not heating the pan."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "The baking pan is empty. Is it being heated by the oven?"
+      ]
+    },
+    "expected": "unsupported"
+  },
+  {
+    "claim": "The pan is not being heated by the oven.",
+    "passages": [
+      "If a pan is outside the heated oven, that oven is not heating the pan."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "The baking pan is outside the heated oven. Is it being heated by that oven?"
+      ]
+    },
+    "expected": "supported"
+  },
+  {
+    "claim": "The sample is classified as the dark treatment.",
+    "passages": [
+      "If the growth chamber lights are off, the experiment classifies the sample as the dark treatment."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "The sample contains no bioluminescent cells. How does this experiment classify the sample?"
+      ]
+    },
+    "expected": "unsupported"
+  },
+  {
+    "claim": "The sample is classified as the dark treatment.",
+    "passages": [
+      "If the growth chamber lights are off, the experiment classifies the sample as the dark treatment."
+    ],
+    "context": {
+      "correctIndex": 0,
+      "targetField": "/options/0",
+      "question": [
+        "The growth chamber lights are off. How does this experiment classify the sample?"
+      ]
+    },
+    "expected": "supported"
+  }
+]

@@ -139,6 +139,8 @@ pub struct LearningAttemptDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningProgramDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline_review: Option<super::outline_draft::LearningOutlineReviewDto>,
     pub summary: LearningProgramSummaryDto,
     pub prior_knowledge: String,
     pub minutes_per_session: i64,

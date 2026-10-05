@@ -1,0 +1,160 @@
+[
+  {
+    "units": [
+      {
+        "content": {
+          "body": "Most mammals give birth to live young, but monotremes lay eggs."
+        },
+        "statements": [
+          "Mammals give birth to live young."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ]
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "All mammals give birth to live young, with no exceptions."
+        },
+        "statements": [
+          "All mammals give birth to live young, with no exceptions."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "Rest this dough for 30 minutes. That guarantees a crisp crust every time, regardless of the oven temperature or ingredients."
+        },
+        "statements": [
+          "The dough is rested for 30 minutes."
+        ],
+        "nonFactualReason": "The recipe specifies an activity."
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ]
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "This recipe specifies 30 minutes of resting for its stated ingredients and pan; other recipes may specify different durations."
+        },
+        "statements": [
+          "This recipe specifies 30 minutes of resting for its stated ingredients and pan; other recipes may specify different durations."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "For this observation exercise, submit exactly three observations and a brief explanation of each."
+        },
+        "statements": [],
+        "nonFactualReason": "The instructor stipulates the exercise deliverables; this does not assert an empirical result."
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "Using the same ingredients guarantees that every batch contains the same ingredients and that all batches rise identically."
+        },
+        "statements": [
+          "Using the same ingredients guarantees that every batch contains the same ingredients."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "rise"
+      ]
+    }
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "body": "Each seed has the same DNA, guaranteeing that all the mature plants have identical heights."
+        },
+        "statements": [
+          "Each seed has the same DNA."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "height"
+      ]
+    }
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "kind": "assessment",
+          "prompt": "A solution is saturated at a fixed temperature. What happens to additional solute added without changing the temperature?",
+          "options": [
+            "It remains undissolved.",
+            "It all dissolves."
+          ],
+          "correctIndex": 0,
+          "explanation": "In a saturated solution at unchanged temperature, additional solute remains undissolved."
+        },
+        "statements": [
+          "Additional solute remains undissolved in a saturated solution at unchanged temperature."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "units": [
+      {
+        "content": {
+          "kind": "assessment",
+          "prompt": "A solution is saturated at a fixed temperature. What happens to additional solute added without changing the temperature?",
+          "options": [
+            "It remains undissolved.",
+            "It all dissolves."
+          ],
+          "correctIndex": 0,
+          "explanation": "In a saturated solution at unchanged temperature, additional solute remains undissolved."
+        },
+        "statements": [
+          "Additional solute remains undissolved in some solutions."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ]
+  }
+]

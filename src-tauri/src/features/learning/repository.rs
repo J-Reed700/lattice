@@ -1,7 +1,8 @@
 //! SQL persistence for Learning Studio. Domain orchestration never issues SQL.
 use super::dto::*;
 use crate::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
+use std::collections::HashMap;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -79,7 +80,7 @@ fn parse_assessment(s: &str) -> Result<LearningAssessmentKind> {
 
 #[derive(Clone)]
 pub struct LearningRepository {
-    pool: SqlitePool,
+    pub(super) pool: SqlitePool,
 }
 
 impl LearningRepository {
@@ -165,6 +166,15 @@ impl LearningRepository {
         program: &LearningProgramDto,
         references: &[super::sources::InitialReference],
     ) -> Result<()> {
+        self.create_outline_draft(program, references, None).await
+    }
+
+    pub(super) async fn create_outline_draft(
+        &self,
+        program: &LearningProgramDto,
+        references: &[super::sources::InitialReference],
+        draft: Option<&super::outline_draft::OutlineDraft>,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let s = &program.summary;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
@@ -185,6 +195,9 @@ impl LearningRepository {
                 references.iter().find(|r| r.source_id == source.id),
             )
             .await?;
+        }
+        if let Some(draft) = draft {
+            super::outline_draft_repository::insert(&mut tx, program, draft).await?;
         }
         tx.commit().await.map_err(db)
     }
@@ -219,9 +232,20 @@ impl LearningRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<LearningProgramDto> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let program = Self::get_on(&mut tx, id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(program)
+    }
+
+    /// Read through the caller's snapshot, including when composing a pack export.
+    pub(super) async fn get_on(
+        connection: &mut SqliteConnection,
+        id: &str,
+    ) -> Result<LearningProgramDto> {
         let p = sqlx::query("SELECT * FROM learning_programs WHERE id=?")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *connection)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -229,13 +253,36 @@ impl LearningRepository {
             "SELECT * FROM learning_lessons WHERE program_id=? ORDER BY module_id,ordinal",
         )
         .bind(id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
+        // Batch children once per program instead of issuing two queries per lesson.
+        let mut blocks_by_lesson: HashMap<String, Vec<LearningBlockDto>> = HashMap::new();
+        for b in sqlx::query("SELECT b.* FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? ORDER BY b.lesson_id,b.ordinal")
+            .bind(id).fetch_all(&mut *connection).await.map_err(db)? {
+            blocks_by_lesson.entry(b.get("lesson_id")).or_default().push(LearningBlockDto {
+                kind: parse_block(b.get("kind"))?,
+                title: b.get("title"),
+                body: b.get("body"),
+                source_ids: decode(b.get("source_ids_json"))?,
+                rubric: decode(b.get("rubric_json"))?,
+            });
+        }
+        let mut questions_by_lesson: HashMap<String, Vec<LearningQuestionDto>> = HashMap::new();
+        for q in sqlx::query("SELECT q.* FROM learning_questions q JOIN learning_lessons l ON l.id=q.lesson_id WHERE l.program_id=? ORDER BY q.lesson_id,q.kind,q.ordinal")
+            .bind(id).fetch_all(&mut *connection).await.map_err(db)? {
+            questions_by_lesson.entry(q.get("lesson_id")).or_default().push(LearningQuestionDto {
+                id: q.get("id"),
+                kind: parse_assessment(q.get("kind"))?,
+                prompt: q.get("prompt"),
+                options: decode(q.get("options_json"))?,
+                source_ids: decode(q.get("source_ids_json"))?,
+            });
+        }
         let mut modules = Vec::new();
         for m in sqlx::query("SELECT * FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(id)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
         {
@@ -246,43 +293,8 @@ impl LearningRepository {
                 .filter(|l| l.get::<String, _>("module_id") == mid)
             {
                 let lid: String = l.get("id");
-                let blocks =
-                    sqlx::query("SELECT * FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal")
-                        .bind(&lid)
-                        .fetch_all(&self.pool)
-                        .await
-                        .map_err(db)?;
-                let block_vec = blocks
-                    .into_iter()
-                    .map(|b| {
-                        Ok(LearningBlockDto {
-                            kind: parse_block(b.get("kind"))?,
-                            title: b.get("title"),
-                            body: b.get("body"),
-                            source_ids: decode(b.get("source_ids_json"))?,
-                            rubric: decode(b.get("rubric_json"))?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let questions = sqlx::query(
-                    "SELECT * FROM learning_questions WHERE lesson_id=? ORDER BY kind,ordinal",
-                )
-                .bind(&lid)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db)?;
-                let qvec = questions
-                    .into_iter()
-                    .map(|q| {
-                        Ok(LearningQuestionDto {
-                            id: q.get("id"),
-                            kind: parse_assessment(q.get("kind"))?,
-                            prompt: q.get("prompt"),
-                            options: decode(q.get("options_json"))?,
-                            source_ids: decode(q.get("source_ids_json"))?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                let block_vec = blocks_by_lesson.remove(&lid).unwrap_or_default();
+                let qvec = questions_by_lesson.remove(&lid).unwrap_or_default();
                 ls.push(LearningLessonDto {
                     id: lid,
                     title: l.get("title"),
@@ -312,7 +324,7 @@ impl LearningRepository {
                 OR EXISTS(SELECT 1 FROM learning_card_drafts d WHERE d.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_origins o WHERE o.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=s.id))
             ) ORDER BY s.rowid")
-                .bind(id).fetch_all(&self.pool).await.map_err(db)?
+                .bind(id).fetch_all(&mut *connection).await.map_err(db)?
                 .into_iter().map(|r| LearningSourceDto {
                     id: r.get("id"),
                     title: r.get("title"),
@@ -325,7 +337,7 @@ impl LearningRepository {
             "SELECT * FROM learning_attempts WHERE program_id=? ORDER BY submitted_at,id",
         )
         .bind(id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?
         .into_iter()
@@ -350,6 +362,9 @@ impl LearningRepository {
             .filter(|l| l.completed)
             .count() as i64;
         Ok(LearningProgramDto {
+            outline_review: Self::outline_draft_on(connection, id)
+                .await?
+                .map(|draft| draft.review),
             summary: LearningProgramSummaryDto {
                 id: p.get("id"),
                 title: p.get("title"),
@@ -373,6 +388,12 @@ impl LearningRepository {
 
     pub async fn accept(&self, req: &AcceptLearningProgramRequestDto) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
+        let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_outline_drafts WHERE program_id=? AND json_extract(state_json,'$.review.status') IS NOT 'passed')").bind(&req.program_id).fetch_one(&mut *tx).await?;
+        if pending {
+            return Err(AppError::InvalidInput(
+                "Resolve the saved outline findings before accepting this course.".into(),
+            ));
+        }
         let r=sqlx::query("UPDATE learning_programs SET title=?,status='active',revision=revision+1 WHERE id=? AND revision=? AND status='draft'").bind(req.title.trim()).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if r.rows_affected() != 1 {
             return Err(AppError::InvalidInput(
@@ -1112,7 +1133,7 @@ pub(crate) async fn ensure_memory_resources(
 
 use sha2::Digest;
 
-async fn insert_source(
+pub(super) async fn insert_source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     program_id: &str,
     source: &LearningSourceDto,

@@ -1,0 +1,33 @@
+[
+  {
+    "requirements": {"goal": "Learn mammalian reproduction", "exercise": "Ask the learner to classify two examples and explain their classification."},
+    "sources": [{"id": "biology-source", "title": "Controlled biology reference", "url": null, "acquiredAt": 0, "excerpt": "Most mammals give birth to live young. Monotremes, including platypuses and echidnas, lay eggs."}],
+    "candidate": {"blocks": [{"body": "All mammals give birth to live young. Exercise: name a mammal."}], "questions": []},
+    "issues": [
+      "The explanation incorrectly says all mammals give birth to live young; it must account for egg-laying monotremes.",
+      "The required exercise must ask for two classifications with explanations, but the candidate only asks for one name.",
+      "The lesson must say echidnas give birth to live young because all mammals do."
+    ],
+    "expected": [
+      "The explanation incorrectly says all mammals give birth to live young; it must account for egg-laying monotremes.",
+      "The required exercise must ask for two classifications with explanations, but the candidate only asks for one name."
+    ]
+  },
+  {
+    "requirements": {"goal": "Follow the supplied example apple pie recipe"},
+    "sources": [{"id": "recipe-source", "title": "Controlled example recipe", "url": null, "acquiredAt": 0, "excerpt": "This example apple pie recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling. Those instructions apply to this recipe; other recipes may specify different temperatures and durations."}],
+    "candidate": {"blocks": [{"body": "For the supplied example recipe, bake for 30 minutes at 180 degrees Celsius. Other recipes may use different temperatures and durations."}], "questions": []},
+    "issues": [
+      "The supplied example recipe requires 60 minutes, so the lesson's 30-minute instruction misrepresents it.",
+      "Remove the caveat about other recipes: all apple pies must be baked for exactly 60 minutes at 180 degrees Celsius."
+    ],
+    "expected": ["The supplied example recipe requires 60 minutes, so the lesson's 30-minute instruction misrepresents it."]
+  },
+  {
+    "requirements": {"goal": "Complete a three-step observation exercise"},
+    "sources": [],
+    "candidate": {"blocks": [{"body": "Submit exactly three observations in this exercise; never submit four."}, {"body": "For that same exercise, submit exactly four observations; three is not sufficient."}], "questions": []},
+    "issues": ["The same exercise demands exactly three and exactly four observations; these instructions conflict."],
+    "expected": ["The same exercise demands exactly three and exactly four observations; these instructions conflict."]
+  }
+]
