@@ -52,7 +52,7 @@ visit(bindings, node => {
             contracts.set(call.arguments[0].text, { type: checker.getTypeFromTypeNode(response), text: response.getText(bindings), params: node.parameters.map(p => ({ name: p.name.getText(bindings), type: checker.getTypeAtLocation(p) })) });
     });
 });
-const api = program.getSourceFile(path.join(root, 'src/lib/api.ts')), routes = new Map();
+const api = program.getSourceFile(path.join(root, 'src/shared/ipc/routes.ts')), routes = new Map();
 visit(api, node => {
     if (!ts.isVariableDeclaration(node) || node.name.getText(api) !== 'COMMAND_DOMAIN_MAP')
         return;

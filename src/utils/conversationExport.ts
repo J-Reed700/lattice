@@ -11,7 +11,7 @@
  * and the toasts.
  */
 
-import { formatSourceLocation } from '@/components/Reading/passageLocator';
+import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import {
   MessageVerificationSummarySchema,
   SourceWithMetadataSchema,

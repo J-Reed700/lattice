@@ -410,6 +410,7 @@ fn main() {
                     "list_workspace_notes",
                     "create_workspace_note",
                     "update_workspace_note",
+                    "capture_reference",
                     "delete_workspace_note",
                 ]),
             )
@@ -501,6 +502,7 @@ fn main() {
                     "get_learning_lesson_evidence",
                     "generate_learning_program",
                     "cancel_learning_outline",
+                    "repair_learning_outline",
                     "accept_learning_program",
                     "prepare_learning_lesson",
                     "complete_learning_lesson",

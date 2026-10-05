@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
 
-import { pathBasename } from './docMeta';
+import { pathBasename } from '@/features/files/model/documentMetadata';
+
 import { useIndexedFoldersQuery } from '../../hooks/queries/useIndexedFoldersQuery';
 import { type ClusterDto, type ClusterProgressPayload } from '../../types';
 import {

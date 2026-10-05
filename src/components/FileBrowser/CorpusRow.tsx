@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 import { Edit3, MoreHorizontal, Trash2 } from 'lucide-react';
 
-import { metaLine } from './docMeta';
+import { metaLine } from '@/features/files/model/documentMetadata';
+
 import { FileIcon } from './FileIcon';
 import { type DocumentMetadata } from '../../types/fileBrowser';
 

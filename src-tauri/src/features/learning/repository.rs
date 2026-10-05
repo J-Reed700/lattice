@@ -694,6 +694,7 @@ impl LearningRepository {
         let note_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let note = crate::features::daily_notes::repository::WorkspaceNoteRecord {
+            revision: 0,
             id: note_id.clone(),
             title: title.trim().to_owned(),
             journal_id: Some(journal_id),

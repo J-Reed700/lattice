@@ -3,9 +3,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { Columns3 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { FilePreviewModal } from '@/components/Chat/FilePreviewModal';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/ui';
+import { FilePreviewModal } from '@/features/chat/components/FilePreviewModal';
 import { useCompareQuery } from '@/hooks/queries/useCompareQuery';
 import VaultAPI from '@/lib/api';
 import { toast } from '@/stores/toastStore';

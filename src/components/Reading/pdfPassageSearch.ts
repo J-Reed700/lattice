@@ -7,7 +7,7 @@
  * resolved, never guessed.
  */
 
-import { buildNeedles, normalizeForMatch } from './passageLocator';
+import { buildNeedles, normalizeForMatch } from '@/shared/sources/passageLocator';
 
 /** Pages scanned before giving up. A very long PDF is not worth a stall. */
 const DEFAULT_MAX_PAGES = 400;

@@ -85,6 +85,7 @@ async fn insert_journal(pool: &SqlitePool, id: &str, name: &str) {
 
 fn record(id: &str, title: &str, content: &str, updated_at: &str) -> WorkspaceNoteRecord {
     WorkspaceNoteRecord {
+        revision: 0,
         id: id.to_string(),
         title: title.to_string(),
         journal_id: None,
@@ -355,14 +356,16 @@ async fn hydration_compare_and_swap_does_not_overwrite_a_concurrent_note_edit() 
 }
 
 #[test]
-fn older_workspace_note_payloads_default_to_no_sources() {
-    let note: WorkspaceNoteDto = serde_json::from_value(serde_json::json!({
-        "id": "n", "title": "Page", "journalId": null, "content": "",
+fn workspace_note_payloads_require_revision_and_default_to_no_sources() {
+    let mut payload = serde_json::json!({
+        "id": "n", "revision": 0, "title": "Page", "journalId": null, "content": "",
         "linkedDocumentIds": [], "linkedConversationIds": [], "highlights": [],
         "stickyNotes": [], "conversationSnapshots": [], "createdAt": "now", "updatedAt": "now"
-    }))
-    .unwrap();
+    });
+    let note: WorkspaceNoteDto = serde_json::from_value(payload.clone()).unwrap();
     assert!(note.sources.is_empty());
+    payload.as_object_mut().unwrap().remove("revision");
+    assert!(serde_json::from_value::<WorkspaceNoteDto>(payload).is_err());
 }
 
 #[tokio::test]
@@ -666,4 +669,99 @@ async fn todays_page_is_looked_up_inside_one_journal() {
             .id,
         "unowned"
     );
+}
+
+fn capture_request(message_id: &str) -> super::dto::CaptureReferenceRequestDto {
+    super::dto::CaptureReferenceRequestDto {
+        conversation_id: "conversation-1".into(),
+        conversation_title: "Research".into(),
+        message_id: message_id.into(),
+        message_role: "assistant".into(),
+        message_content: format!("Content for {message_id}"),
+        document_ids: vec![format!("document-{message_id}")],
+        captured_at: "2026-10-05T12:00:00Z".into(),
+        inbox_title: "Research Inbox · 2026-10-05".into(),
+        preferred_note_id: None,
+        add_snapshot: true,
+    }
+}
+
+#[tokio::test]
+async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
+    let pool = fresh_pool().await;
+    let left = DailyNotesRepository::new(pool.clone());
+    let right = DailyNotesRepository::new(pool);
+    let (first, second) = tokio::join!(
+        left.capture_reference(capture_request("first")),
+        right.capture_reference(capture_request("second"))
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_eq!(first.note_id, second.note_id);
+    let note = row_to_dto(left.get(&first.note_id).await.unwrap()).unwrap();
+    assert!(note.content.contains("Content for first"));
+    assert!(note.content.contains("Content for second"));
+    assert_eq!(note.conversation_snapshots.len(), 2);
+    assert_eq!(note.linked_document_ids.len(), 2);
+    assert_eq!(left.list().await.unwrap().len(), 1);
+    left.capture_reference(capture_request("first"))
+        .await
+        .unwrap();
+    let replay = row_to_dto(left.get(&first.note_id).await.unwrap()).unwrap();
+    assert_eq!(replay.conversation_snapshots.len(), 2);
+    assert_eq!(replay.content.matches("Content for first").count(), 1);
+}
+
+#[tokio::test]
+async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
+    let repository = fresh_repository().await;
+    let first = repository
+        .capture_reference(capture_request("first"))
+        .await
+        .unwrap();
+    let mut stale = repository.get(&first.note_id).await.unwrap();
+    repository
+        .capture_reference(capture_request("second"))
+        .await
+        .unwrap();
+    stale.content = "Stale editor draft".into();
+    assert!(matches!(
+        repository.update(&stale).await,
+        Err(AppError::InvalidState(_))
+    ));
+    let saved = repository.get(&first.note_id).await.unwrap();
+    assert!(saved.content.contains("Content for second"));
+    repository
+        .upsert_from_vault(super::repository::VaultNoteUpsert {
+            id: &saved.id,
+            title: &saved.title,
+            content: "Vault edit",
+            created_at: &saved.created_at,
+            updated_at: &saved.updated_at,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository.update(&saved).await,
+        Err(AppError::InvalidState(_))
+    ));
+}
+
+#[tokio::test]
+async fn capture_preserves_markdown_and_replaces_legacy_wrappers() {
+    let repository = fresh_repository().await;
+    let request = capture_request("first");
+    let first = repository.capture_reference(request.clone()).await.unwrap();
+    let mut row = repository.get(&first.note_id).await.unwrap();
+    row.content = "<!-- lattice-capture-start:conversation-1::first -->old content<!-- lattice-capture-end:conversation-1::first -->".into();
+    repository.update(&row).await.unwrap();
+    let table = "| Name | Score |\n| --- | ---: |\n| Alpha | 10 |";
+    repository
+        .capture_reference(super::dto::CaptureReferenceRequestDto {
+            message_content: table.into(),
+            ..request
+        })
+        .await
+        .unwrap();
+    assert_eq!(repository.get(&first.note_id).await.unwrap().content, table);
 }

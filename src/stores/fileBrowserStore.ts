@@ -7,7 +7,8 @@
 
 import { create } from 'zustand';
 
-import { typeBucket } from '../components/FileBrowser/docMeta';
+import { typeBucket } from '@/features/files/model/documentMetadata';
+
 import {
   type CustomCollection,
   type FileBrowserActions,

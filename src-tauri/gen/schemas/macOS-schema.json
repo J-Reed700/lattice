@@ -3501,6 +3501,12 @@
           "markdownDescription": "Denies the credentials_store command without any pre-configured scope."
         },
         {
+          "description": "Enables the capture_reference command without any pre-configured scope.",
+          "type": "string",
+          "const": "dailynotes:allow-capture-reference",
+          "markdownDescription": "Enables the capture_reference command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_workspace_note command without any pre-configured scope.",
           "type": "string",
           "const": "dailynotes:allow-create-workspace-note",
@@ -3559,6 +3565,12 @@
           "type": "string",
           "const": "dailynotes:allow-update-workspace-note",
           "markdownDescription": "Enables the update_workspace_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the capture_reference command without any pre-configured scope.",
+          "type": "string",
+          "const": "dailynotes:deny-capture-reference",
+          "markdownDescription": "Denies the capture_reference command without any pre-configured scope."
         },
         {
           "description": "Denies the create_workspace_note command without any pre-configured scope.",
@@ -5127,6 +5139,12 @@
           "markdownDescription": "Enables the reject_learning_practice_proposal command without any pre-configured scope."
         },
         {
+          "description": "Enables the repair_learning_outline command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-repair-learning-outline",
+          "markdownDescription": "Enables the repair_learning_outline command without any pre-configured scope."
+        },
+        {
           "description": "Enables the request_learning_tutor_response command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-request-learning-tutor-response",
@@ -5659,6 +5677,12 @@
           "type": "string",
           "const": "learning:deny-reject-learning-practice-proposal",
           "markdownDescription": "Denies the reject_learning_practice_proposal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the repair_learning_outline command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-repair-learning-outline",
+          "markdownDescription": "Denies the repair_learning_outline command without any pre-configured scope."
         },
         {
           "description": "Denies the request_learning_tutor_response command without any pre-configured scope.",

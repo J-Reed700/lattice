@@ -35,7 +35,7 @@ export default defineConfig({
         functions: 47,
         branches: 47,
         statements: 52,
-        'src/components/LearningStudio/**': {
+        'src/features/learning/{workspace,curriculum,lessons,memory,sources,practice,assessment,recall,canvas,portability}/**': {
           lines: 87,
           functions: 75,
           branches: 67,

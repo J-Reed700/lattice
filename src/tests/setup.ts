@@ -10,6 +10,15 @@ const testWindow = (globalThis as typeof globalThis & { jsdom: { window: Window 
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: testWindow.localStorage });
 Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: testWindow.sessionStorage });
 
+// jsdom has no range layout. CodeMirror measures ranges on animation frames,
+// including when mounted indirectly by Explorer; every editor test needs these.
+if (!Range.prototype.getClientRects) {
+  Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] });
+}
+if (!Range.prototype.getBoundingClientRect) {
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect(0, 0, 0, 16) });
+}
+
 vi.mock('../lib/api', () => apiMock);
 vi.mock('@/lib/api', () => apiMock);
 

@@ -8,8 +8,9 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronDown, ChevronRight, Folder } from 'lucide-react';
 
+import { isWebDocument } from '@/features/files/model/documentMetadata';
+
 import { CorpusRow, ROW_HEIGHT } from './CorpusRow';
-import { isWebDocument } from './docMeta';
 import { CorpusEmptyState, ErrorState, FilterEmptyState } from './EmptyStates';
 import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useFileBrowserStore } from '../../stores/fileBrowserStore';

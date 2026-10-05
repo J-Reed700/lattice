@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router';
 
-import { useSpaceEditor } from '@/components/Chat/sidebar/useSpaceEditor';
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
+import { useSpaceEditor } from '@/features/chat/components/sidebar/useSpaceEditor';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 

@@ -402,6 +402,14 @@ async cancelLearningOutline(requestId: string) : Promise<Result<boolean, ApiErro
     else return { status: "error", error: e  as any };
 }
 },
+async repairLearningOutline(request: RepairLearningOutlineRequestDto, requestId: string | null, onProgress: TAURI_CHANNEL<LearningOutlineProgressDto>) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repair_learning_outline", { request, requestId, onProgress }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("accept_learning_program", { request }) };
@@ -3550,6 +3558,14 @@ async updateWorkspaceNote(note: WorkspaceNoteDto) : Promise<Result<WorkspaceNote
     else return { status: "error", error: e  as any };
 }
 },
+async captureReference(request: CaptureReferenceRequestDto) : Promise<Result<CaptureReferenceResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("capture_reference", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteWorkspaceNote(request: DeleteWorkspaceNoteRequestDto) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_workspace_note", { request }) };
@@ -4647,6 +4663,12 @@ export type CancelBatchJobResponseDto = {
 cancelledCount: number }
 export type CancelLearningPackImportPreviewRequestDto = { operationId: string; previewId: string }
 export type CancelLearningPracticalRunRequestDto = { operationId: string; programId: string; runId: string }
+export type CaptureReferenceRequestDto = { conversationId: string; conversationTitle: string; messageId: string; messageRole: string; messageContent: string; documentIds: string[]; capturedAt: string;
+/**
+ * Display title based on the user's local date.
+ */
+inboxTitle: string; preferredNoteId: string | null; addSnapshot: boolean }
+export type CaptureReferenceResultDto = { noteId: string; noteTitle: string; linkedDocumentCount: number; snapshotId: string | null }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 export type ChangeLearningRecallSchedulerRequestDto = { operationId: string; programId: string; cardId: string; expectedReviewCount: number; schedulerVersion: LearningRecallSchedulerVersion }
 /**
@@ -6461,7 +6483,15 @@ export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number; schedulerVersion: string }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
-export type LearningOutlineProgressDto = { stage: OutlineStage; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+export type LearningOutlineIssueDto = {
+/**
+ * JSON pointer into the saved candidate. Empty means the entire curriculum.
+ */
+path: string; kind: LearningOutlineIssueKind; claim: string; quote: string; sourceId: string | null; message: string }
+export type LearningOutlineIssueKind = "quote" | "content"
+export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string }
+export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
 export type LearningPackConflictDto = { entityKind: string; incomingId: string; incomingTitle: string; existingId: string; existingTitle: string; resolution: string }
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
@@ -6473,7 +6503,11 @@ export type LearningPackManifest = { format: string; version: number; packId: st
 export type LearningPackManifestEntry = { path: string; kind: LearningPackEntryKind; sha256: string; bytes: number }
 export type LearningPackPreviewStatus = "pending" | "applied" | "cancelled" | "stale"
 export type LearningPackPrivacyManifest = { includesPrivateChat: boolean; includesCredentials: boolean; includesFullSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean; includesAnswerKeys: boolean; includesHiddenEvaluators: boolean; includesLearnerEvidence: boolean; includesPracticalArtifacts: boolean; omittedItems: string[] }
-export type LearningPlanDto = { programId: string; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
+export type LearningPlanDto = { programId: string;
+/**
+ * Concurrency token for program mutations; independent of curriculum revision numbers.
+ */
+programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; revision: number; createdAt: number; updatedAt: number }
 export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
@@ -6512,7 +6546,7 @@ export type LearningPracticeTaskKind = "independent" | "guided"
 export type LearningPracticeTutorTurnDto = { id: string; prompt: string; response: string; requestKind: LearningTutorRequestKind; hintLevel: LearningPracticeHintLevel | null; citations: LearningPracticeCitationDto[]; proposalIds: string[]; modelName: string; createdAt: number }
 export type LearningPracticeWorkspaceDto = { programId: string; sessions: LearningPracticeSessionSummaryDto[] }
 export type LearningPreparation = "outline" | "ready"
-export type LearningProgramDto = { summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[]; attempts: LearningAttemptDto[] }
+export type LearningProgramDto = { outlineReview?: LearningOutlineReviewDto | null; summary: LearningProgramSummaryDto; priorKnowledge: string; minutesPerSession: number; modelName: string; modules: LearningModuleDto[]; sources: LearningSourceDto[]; attempts: LearningAttemptDto[] }
 export type LearningProgramStatus = "draft" | "active"
 export type LearningProgramSummaryDto = { id: string; title: string; goal: string; status: LearningProgramStatus; revision: number; moduleCount: number; lessonCount: number; completedLessons: number; currentLessonId: string | null; createdAt: number }
 export type LearningProjectMilestoneDto = { title: string; brief: string; deliverables: string[]; successCriteria: string[] }
@@ -6928,7 +6962,7 @@ contentPath: string;
  */
 title?: string | null }
 export type OpenLearningPracticeSourceRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; sourceId: string; versionId: string }
-export type OutlineStage = "reading_sources" | "loading_model" | "drafting" | "reviewing" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
+export type OutlineStage = "reading_sources" | "loading_model" | "drafting" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 /**
  * Response for wikilink parsing (for frontend compatibility).
  */
@@ -7084,6 +7118,7 @@ message: string;
  * The new name that was applied
  */
 new_name: string }
+export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
  * Whether reranking is switched on, and whether it could run if it were.
@@ -8388,7 +8423,11 @@ export type WikiLinkDto = { target: string; displayText: string | null; header: 
  * One "word 7 was ___" answer.
  */
 export type WordConfirmationDto = { index: number; word: string }
-export type WorkspaceNoteDto = { id: string; title: string;
+export type WorkspaceNoteDto = {
+/**
+ * Revision of the persisted snapshot; full edits must match it.
+ */
+revision: number; id: string; title: string;
 /**
  * Owning journal, or `None` for an unfiled page.
  */

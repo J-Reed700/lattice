@@ -429,7 +429,8 @@ export async function installLearningStudioBackend(page: Page) {
       // The app retries mutations once automatically before surfacing its
       // recoverable error, so two transport failures reach the explicit retry UI.
       generationFailuresRemaining: 1,
-      reviewFailuresRemaining: 2,
+      // Mutations surface the failure; the next user attempt reuses the review ID.
+      reviewFailuresRemaining: 1,
       reviewRequests: [] as Array<{
         reviewId: string;
         cardId: string;
@@ -473,6 +474,7 @@ export async function installLearningStudioBackend(page: Page) {
       assessmentForms: new Map<string, Record<string, unknown>>(),
       planWorkspace: {
         programId: program.summary.id,
+        programRevision: program.summary.revision,
         acceptedRevision: null,
         draftRevision: null,
         previewChanges: [],
@@ -725,10 +727,18 @@ export async function installLearningStudioBackend(page: Page) {
       window as unknown as { __LATTICE_LEARNING_STATE__: typeof state }
     ).__LATTICE_LEARNING_STATE__ = state;
 
-    let pendingOutline: { id: string; reject: (error: Error) => void; send: (update: LearningOutlineProgressDto) => void } | null = null;
+    let pendingOutline: { id: string; reject: (error: unknown) => void; send: (update: LearningOutlineProgressDto) => void } | null = null;
     const outlineControl = {
       hold: false,
+      makeUnresolvedDraft() {
+        program.summary.status = "draft";
+        program.modules.forEach((module) => module.lessons.forEach((lesson) => {
+          lesson.preparation = "outline"; lesson.completed = false; lesson.blocks = []; lesson.questions = [];
+        }));
+        program.outlineReview = { status: "needs_repair", repairPasses: 1, updatedAt: Date.now(), contentHash: "draft-fixture", note: "Completed corrections are saved. One finding remains unresolved.", issues: [{ path: "/modules/0/lessons/0", kind: "quote", claim: "A comparison always establishes causality.", quote: "This unsupported statement is retained for review.", sourceId: source.id, message: "The reference does not support this universal claim." }] };
+      },
       update(update: LearningOutlineProgressDto) { pendingOutline?.send(update); },
+      fail(error: unknown) { pendingOutline?.reject(error); pendingOutline = null; },
     };
     (window as unknown as { __LATTICE_OUTLINE_TEST__: typeof outlineControl }).__LATTICE_OUTLINE_TEST__ = outlineControl;
 
@@ -1005,7 +1015,7 @@ export async function installLearningStudioBackend(page: Page) {
       if (command === "plugin:file|list_all_documents") return [];
       if (command === "plugin:learning|cancel_learning_outline") {
         if (!pendingOutline || pendingOutline.id !== getArg<string>(args, "requestId")) return false;
-        pendingOutline.reject(new Error("Course generation cancelled. Your inputs are kept."));
+        pendingOutline.reject({ code: "SERVICE_NOT_AVAILABLE", message: "Course generation cancelled. Your inputs are kept." });
         pendingOutline = null;
         return true;
       }
@@ -1035,6 +1045,14 @@ export async function installLearningStudioBackend(page: Page) {
           lesson.blocks = [];
           lesson.questions = [];
         }));
+        return program;
+      }
+      if (command === "plugin:learning|repair_learning_outline") {
+        const request = getArg<{ programId: string; expectedRevision: number }>(args, "request");
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Draft changed");
+        program.summary.revision += 1;
+        program.modules[0].lessons[0].objective = "Compare observations and explain why they alone do not establish causality.";
+        program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately." };
         return program;
       }
       if (command === "plugin:learning|list_learning_programs")
@@ -1850,6 +1868,7 @@ export async function installLearningStudioBackend(page: Page) {
             lessonId: lesson.id,
             note: {
               id: "note-learning-1",
+              revision: 0,
               title: lesson.title,
               journalId: memory.journalId,
               content: "",
@@ -1869,11 +1888,13 @@ export async function installLearningStudioBackend(page: Page) {
       if (command === "plugin:dailynotes|update_workspace_note") {
         await new Promise((resolve) => window.setTimeout(resolve, 125));
         const note = getArg<WorkspaceNoteDto>(args, "note");
-        const saved = { ...note, updatedAt: now() };
+        const saved = { ...note, revision: note.revision + 1, updatedAt: now() };
         const linked = memory.lessonNotes.find(
           (item) => item.note.id === note.id,
         );
         if (!linked) throw new Error("Unknown notebook note");
+        if (linked.note.revision !== note.revision)
+          throw new Error("This page changed elsewhere; keep your draft and reload.");
         linked.note = saved;
         state.noteWrites += 1;
         return saved;
@@ -2098,10 +2119,15 @@ export async function installLearningStudioBackend(page: Page) {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
       }
-      if (command === "plugin:learning|get_learning_plan")
+      if (command === "plugin:learning|get_learning_plan") {
+        state.planWorkspace.programRevision = program.summary.revision;
         return state.planWorkspace;
+      }
       if (command === "plugin:learning|preview_learning_curriculum_revision") {
         const request = getRequest<Record<string, unknown>>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
+          throw new Error("Program changed; reload and retry.");
+        state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const revision = planState.acceptedRevision as Record<string, unknown>;
         const next = JSON.parse(JSON.stringify(revision)) as Record<string, unknown>;
@@ -2121,9 +2147,21 @@ export async function installLearningStudioBackend(page: Page) {
       }
       if (command === "plugin:learning|accept_learning_curriculum_revision") {
         const request = getRequest<Record<string, unknown>>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
+          throw new Error("Program changed; reload and retry.");
+        state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const draft = planState.draftRevision as Record<string, unknown> | null;
         if (!draft || draft.id !== request.revisionId) throw new Error("Curriculum revision is no longer available.");
+        const revisedModules = draft.modules as Array<{ lessons: Array<{ id: string; title: string; objective: string; estimatedMinutes: number }> }>;
+        for (const module of program.modules) {
+          for (const lesson of module.lessons) {
+            const revised = revisedModules.flatMap((item) => item.lessons).find((item) => item.id === lesson.id);
+            if (revised) Object.assign(lesson, { title: revised.title, objective: revised.objective, estimatedMinutes: revised.estimatedMinutes });
+          }
+        }
+        program.summary.revision += 1;
+        state.planWorkspace.programRevision = program.summary.revision;
         planState.acceptedRevision = { ...draft, status: "accepted", acceptedAt: Date.now() };
         planState.draftRevision = null;
         planState.previewChanges = [];

@@ -21,7 +21,7 @@ export {
   recallLocation,
   rememberLocation,
   timestampSectionStartSeconds,
-} from './passageLocator';
+} from '@/shared/sources/passageLocator';
 export {
   buildPassageTextRenderer,
   escapeHtml,
