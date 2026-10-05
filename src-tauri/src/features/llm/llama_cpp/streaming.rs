@@ -8,6 +8,7 @@ pub(crate) struct Decoder {
     buffer: Vec<u8>,
     received_bytes: usize,
     done: bool,
+    retryable_error: bool,
     finish_reason: Option<String>,
     allow_tool_calls: bool,
     content: String,
@@ -48,6 +49,9 @@ impl Decoder {
     pub fn done(&self) -> bool {
         self.done
     }
+    pub fn retryable_error(&self) -> bool {
+        self.retryable_error
+    }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         self.received_bytes = self.received_bytes.saturating_add(bytes.len());
         if self.received_bytes > 16 * 1024 * 1024 {
@@ -76,6 +80,12 @@ impl Decoder {
             let event: Value = serde_json::from_str(data.trim())
                 .map_err(|_| AppError::Network("Invalid llama.cpp stream event".into()))?;
             if let Some(error) = event.get("error") {
+                // HTTP 200 can still carry a server failure inside SSE. Keep
+                // its structured status; never classify free-form messages.
+                self.retryable_error = matches!(
+                    error.get("code").and_then(Value::as_u64),
+                    Some(408 | 429 | 500 | 502 | 503 | 504)
+                );
                 return Err(AppError::Network(format!(
                     "llama.cpp reported a generation error{}",
                     error_kind(error)

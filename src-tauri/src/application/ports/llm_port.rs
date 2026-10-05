@@ -423,6 +423,10 @@ pub struct CompletionRequest {
     /// so this only needs to exceed the longest legitimate generation.
     #[serde(skip)]
     pub time_budget: Option<Duration>,
+    /// Interactive, cancellable workflows may opt out of elapsed-time limits.
+    /// Transport errors, stall detection, and retry limits still apply.
+    #[serde(skip)]
+    pub no_time_limit: bool,
     /// Ask for the log-probabilities of the first generated token and its top
     /// alternatives. A classifier reads its answer's probability from these
     /// rather than trusting one sampled word. Providers that cannot report
@@ -434,6 +438,20 @@ pub struct CompletionRequest {
 impl CompletionRequest {
     pub fn effective_time_budget(&self) -> Duration {
         self.time_budget.unwrap_or(DEFAULT_COMPLETION_TIME_BUDGET)
+    }
+
+    pub fn wall_clock_budget(&self) -> Option<Duration> {
+        (!self.no_time_limit).then(|| self.effective_time_budget())
+    }
+
+    pub async fn within_time_budget<F: std::future::Future>(
+        &self,
+        work: F,
+    ) -> std::result::Result<F::Output, tokio::time::error::Elapsed> {
+        match self.wall_clock_budget() {
+            Some(budget) => tokio::time::timeout(budget, work).await,
+            None => Ok(work.await),
+        }
     }
 
     /// The output ceiling to send, given the provider's own configured limit.
@@ -494,6 +512,30 @@ pub fn first_token_logprobs(logprobs: &serde_json::Value) -> Option<Vec<(String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn interactive_completions_can_opt_out_without_changing_default_limits() {
+        let request = CompletionRequest {
+            time_budget: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+        assert!(request
+            .within_time_budget(tokio::time::sleep(Duration::from_secs(2)))
+            .await
+            .is_err());
+        let request = CompletionRequest {
+            no_time_limit: true,
+            ..request
+        };
+        request
+            .within_time_budget(tokio::time::sleep(Duration::from_secs(3600)))
+            .await
+            .unwrap();
+        assert_eq!(
+            CompletionRequest::default().wall_clock_budget(),
+            Some(DEFAULT_COMPLETION_TIME_BUDGET)
+        );
+    }
 
     #[test]
     fn a_request_output_cap_can_tighten_the_providers_limit_but_never_raise_it() {

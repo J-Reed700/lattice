@@ -291,20 +291,21 @@ impl OllamaClient {
         use crate::features::llm::engine::types::OllamaChatResponse;
 
         let body = self.typed_chat_request(request)?;
-        let budget = request.effective_time_budget();
+        let budget = request.wall_clock_budget();
         let call = async {
             let _permit = self
                 .acquire_request_permit("typed_chat")
                 .await
                 .map_err(|error| OllamaClientError::Api(error.to_string()))?;
-            let response = self
+            let http_request = self
                 .client
                 .post(format!("{}/api/chat", self.base_url))
-                .json(&body)
-                .timeout(budget)
-                .send()
-                .await
-                .map_err(OllamaClientError::from)?;
+                .json(&body);
+            let http_request = match budget {
+                Some(budget) => http_request.timeout(budget),
+                None => http_request,
+            };
+            let response = http_request.send().await.map_err(OllamaClientError::from)?;
             if !response.status().is_success() {
                 return Err(OllamaClientError::Api(format!(
                     "Ollama chat returned HTTP {}",
@@ -316,7 +317,10 @@ impl OllamaClient {
                 .await
                 .map_err(OllamaClientError::from)
         };
-        let response = match timeout(budget, self.circuit_breaker.call(call)).await {
+        let response = match request
+            .within_time_budget(self.circuit_breaker.call(call))
+            .await
+        {
             Err(_) => {
                 return Err(AppError::ServiceNotAvailable(
                     "Ollama typed completion exceeded its time budget".into(),
@@ -379,20 +383,21 @@ impl OllamaClient {
 
         let mut body = self.typed_chat_request(request)?;
         body.stream = true;
-        let budget = request.effective_time_budget();
-        let result = timeout(budget, async {
+        let budget = request.wall_clock_budget();
+        let call = async {
             let _permit = self.acquire_request_permit("typed_chat_stream").await?;
             let response = self
                 .circuit_breaker
                 .call(async {
-                    let response = self
+                    let http_request = self
                         .client
                         .post(format!("{}/api/chat", self.base_url))
-                        .json(&body)
-                        .timeout(budget)
-                        .send()
-                        .await
-                        .map_err(OllamaClientError::from)?;
+                        .json(&body);
+                    let http_request = match budget {
+                        Some(budget) => http_request.timeout(budget),
+                        None => http_request,
+                    };
+                    let response = http_request.send().await.map_err(OllamaClientError::from)?;
                     if !response.status().is_success() {
                         return Err(OllamaClientError::Api(format!(
                             "Ollama chat returned HTTP {}",
@@ -554,9 +559,8 @@ impl OllamaClient {
                 provider_output,
                 first_token_logprobs: None,
             })
-        })
-        .await
-        .map_err(|_| {
+        };
+        let result = request.within_time_budget(call).await.map_err(|_| {
             AppError::ServiceNotAvailable("Ollama typed completion exceeded its time budget".into())
         })?;
         result
@@ -2316,6 +2320,21 @@ mod tests {
 
         let error = LLMPort::complete(&client, &request).await.unwrap_err();
         assert!(error.to_string().contains("time budget"));
+        let request = CompletionRequest {
+            no_time_limit: true,
+            ..request
+        };
+        assert_eq!(
+            LLMPort::complete(&client, &request).await.unwrap().text,
+            "late"
+        );
+        assert_eq!(
+            LLMPort::complete_with_progress(&client, &request, &|_| Ok(()))
+                .await
+                .unwrap()
+                .text,
+            "late"
+        );
     }
 
     #[tokio::test]
