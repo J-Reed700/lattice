@@ -6,9 +6,9 @@ use tracing::warn;
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use crate::domain::entities::document::Document;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
-use crate::interfaces::di::Container;
 use crate::shared::text::{build_excerpt, safe_truncate};
 
 use super::super::document_text::{assemble_document_text, truncate_to_token_budget};
@@ -43,7 +43,7 @@ impl FollowupDocument {
 }
 
 pub(super) async fn build_followup_context(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn ConversationServiceTrait>,
     conversation_id: &str,
     document_context: &[DocumentReference],

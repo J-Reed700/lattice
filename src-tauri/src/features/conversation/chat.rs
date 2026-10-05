@@ -31,12 +31,11 @@
 
 use crate::application::services::conversation_context::build_conversation_context;
 use crate::domain::qa::hyde::QueryType;
-use crate::features::conversation::compaction;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::settings::dto::{CustomToolSettingsDto, RouterSettingsDto};
 use crate::infrastructure::services::intent::{IntentClassifier, IntentInput, TurnIntent};
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::extract_highlight_terms;
 use std::collections::HashSet;
@@ -45,6 +44,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 mod desktop;
+pub mod ports;
 pub use desktop::chat_with_conversation_impl;
 
 /// Transport-independent delivery of a typed chat event.
@@ -182,25 +182,15 @@ fn generation_subtimings_or_default(
         .unwrap_or_default()
 }
 
-async fn validate_and_guard_chat_request(container: &Container, message: &str) -> Result<String> {
-    container
-        .security_context()
-        .rate_limiters()
-        .qa
-        .check_rate_limit(message)
-        .await
-        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
-
-    let validated_message = container
-        .security_context()
-        .input_validator()
-        .validate_chat_message(message)?;
-
-    Ok(validated_message)
+async fn validate_and_guard_chat_request(
+    runtime: &dyn ChatRuntime,
+    message: &str,
+) -> Result<String> {
+    runtime.validate_message(message).await
 }
 
 async fn get_or_create_conversation_id(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
@@ -208,13 +198,12 @@ async fn get_or_create_conversation_id(
     match conversation_id {
         Some(id) => Ok(id),
         None => {
-            let create_uc = container.create_conversation_use_case();
             let request = CreateConversationRequestDto {
                 title: generate_title(validated_message),
                 model_name: llm.model_name().to_string(),
                 system_prompt: None,
             };
-            let response = create_uc.execute(request).await?;
+            let response = container.create_conversation(request).await?;
             Ok(response.conversation.id)
         }
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::conversation::chat::ports::ChatRetrieval;
 
 pub(super) const CORE_TOOL_NAMES: [&str; 3] = ["semantic_search", "get_document", "list_documents"];
 pub(super) const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 4] = [
@@ -86,7 +87,7 @@ pub(super) fn optional_builtin_tool_allowed(
 }
 
 pub(super) fn build_llm_tool_definitions(
-    container: &Container,
+    container: &dyn ChatRetrieval,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     tool_preferences: Option<&ToolPreferences>,
     custom_tools: &[CustomToolSettingsDto],

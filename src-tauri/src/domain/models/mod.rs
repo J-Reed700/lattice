@@ -6,6 +6,5 @@ pub mod curated;
 pub mod downloaded;
 pub mod embedding_defaults;
 pub mod metadata;
-pub mod paths;
 pub mod selection;
 pub mod validation;

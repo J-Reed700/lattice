@@ -6,10 +6,10 @@
 //! wins — and later reads of the same URL in the same conversation are served
 //! from the archive instead of the network.
 
+use crate::features::conversation::chat::ports::{ChatRuntime, ChatStorage};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::dto::FetchUrlContentOutput;
 use crate::features::qa::dto::{SourceDto, WebSnapshotDto};
-use crate::interfaces::di::Container;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -25,7 +25,7 @@ const CITATION_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The page as the conversation archived it, or `None` when it never read it.
 pub(super) async fn archived_page(
-    container: &Container,
+    container: &dyn ChatStorage,
     conversation_id: &str,
     url: &str,
 ) -> Option<FetchUrlContentOutput> {
@@ -56,7 +56,7 @@ pub(super) async fn archived_page(
 
 /// Read a snapshot in the citation DTO shape without changing source excerpts.
 pub(super) async fn web_snapshot(
-    container: &Container,
+    container: &dyn ChatStorage,
     conversation_id: &str,
     url: &str,
 ) -> Option<WebSnapshotDto> {
@@ -83,7 +83,7 @@ pub(super) async fn web_snapshot(
 /// Store a page against the URL the citation points to. Fetches can redirect;
 /// retaining the requested URL lets a later citation resolve its own archive.
 pub(super) async fn archive_page_for_url(
-    container: &Container,
+    container: &dyn ChatStorage,
     conversation_id: &str,
     citation_url: &str,
     page: &FetchUrlContentOutput,
@@ -146,7 +146,7 @@ pub(super) async fn with_archived_page_text(
 /// cited. If a search snippet was cited without a page read, make one bounded
 /// capture attempt now; the answer remains successful if capture fails.
 pub(super) async fn attach_cited_web_snapshots(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     response: &str,
     sources: &mut [SourceDto],
@@ -210,7 +210,7 @@ pub(super) async fn attach_cited_web_snapshots(
 /// Add snapshots to older message metadata on read. This only consults the
 /// requested conversation's archive and never reaches the network.
 pub(crate) async fn hydrate_message_metadata(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     metadata: Option<String>,
 ) -> Option<String> {

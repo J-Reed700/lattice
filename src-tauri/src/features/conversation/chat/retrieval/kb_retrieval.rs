@@ -7,16 +7,16 @@ use tracing::{info, warn};
 use crate::application::contracts::search::CorpusDocument;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::focus::FocusScope;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::interfaces::di::Container;
 
 // Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_kb_retrieval(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
@@ -506,7 +506,7 @@ fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
 /// failed search — so the caller keeps the evidence it already has.
 #[allow(clippy::too_many_arguments)]
 async fn corrective_pass(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
@@ -615,7 +615,7 @@ impl SummaryTier {
 
 /// Load the summary tier for this turn.
 async fn summary_tier(
-    container: &Container,
+    container: &dyn ChatRuntime,
     message: &str,
     scope: &super::SpaceDocumentScope,
 ) -> SummaryTier {

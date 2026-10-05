@@ -1,11 +1,11 @@
-//! Model Paths Value Object
+//! Model storage path adapter
 //!
-//! Centralized path management for model storage.
+//! Resolves the configured home directory and enforces filesystem confinement.
 
 use crate::shared::error::AppError;
 use std::path::{Path, PathBuf};
 
-/// Value object for model storage paths.
+/// Infrastructure adapter for model storage paths.
 ///
 /// Every model lives under the single unified location
 /// (`~/.cache/lattice/models/`).
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 /// # Example
 ///
 /// ```rust,no_run
-/// use lattice::domain::models::paths::ModelPaths;
+/// use lattice::infrastructure::adapters::fs::model_paths::ModelPaths;
 ///
 /// let paths = ModelPaths::new("phi-3-mini")?;
 /// println!("Unified path: {}", paths.unified_path().display());
@@ -88,7 +88,7 @@ impl ModelPaths {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::domain::models::paths::ModelPaths;
+    /// use lattice::infrastructure::adapters::fs::model_paths::ModelPaths;
     ///
     /// let paths = ModelPaths::new("phi-3-mini")?;
     /// let file_path = paths.file_path("model.gguf")?;

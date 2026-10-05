@@ -3,9 +3,9 @@
 //! Production adapter using filesystem for model storage.
 
 use crate::application::ports::model_storage::{DownloadedModel, ModelStoragePort};
-use crate::domain::models::paths::ModelPaths;
 use crate::domain::models::validation::ModelFileValidator;
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
+use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

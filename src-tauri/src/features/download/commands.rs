@@ -1,6 +1,6 @@
 use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
-use crate::domain::models::paths::ModelPaths;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use crate::infrastructure::security::RateLimiter;
 use crate::shared::fs::confinement::confine_to_root;
 use crate::shared::ValidatedFilePath;

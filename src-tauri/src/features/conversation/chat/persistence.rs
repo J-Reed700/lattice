@@ -1,5 +1,5 @@
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::qa::dto::SourceDto;
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -60,7 +60,7 @@ pub(super) async fn persist_user_message_pending(
 // Turn finalization deliberately keeps its persisted inputs explicit at this boundary.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_successful_turn(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     user_message_id: &str,
@@ -123,13 +123,10 @@ pub(super) async fn finalize_successful_turn(
     .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
-    crate::features::conversation::compaction::consolidate_after_turn(
-        container.clone(),
-        conversation_id.to_string(),
-    );
+    container.consolidate_after_turn(conversation_id.to_string());
 
     spawn_memory_indexing(
-        container.clone(),
+        container.share(),
         conversation_id.to_string(),
         vec![
             MemoryToIndex {
@@ -279,7 +276,7 @@ const CITED_WEB_SOURCES_KEPT_PER_TURN: usize = 8;
 /// Failure here is logged and dropped. The turn is already finished and
 /// answered; losing tomorrow's context must not retract today's answer.
 async fn record_cited_web_sources(
-    container: &Container,
+    container: &dyn ChatRuntime,
     conversation_id: &str,
     sources: &[SourceDto],
 ) {
@@ -378,7 +375,7 @@ pub(super) async fn mark_user_message_failed(
 }
 
 fn spawn_memory_indexing(
-    container: Container,
+    container: Arc<dyn ChatRuntime>,
     conversation_id: String,
     memories: Vec<MemoryToIndex>,
 ) {
@@ -693,7 +690,7 @@ mod cited_web_source_tests {
 
 /// Explicit user memory notes use the same embedding writer as chat turns.
 pub(crate) fn index_memory_note(
-    container: Container,
+    container: Arc<dyn ChatRuntime>,
     conversation_id: String,
     message_id: String,
     content: String,

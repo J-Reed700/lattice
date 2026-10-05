@@ -831,7 +831,7 @@ pub async fn manage_knowledge_impl(
             if let Some(evidence) = item.evidence.first() {
                 if let Some(text) = &evidence.text {
                     crate::features::conversation::chat::index_memory_note(
-                        container.clone(),
+                        std::sync::Arc::new(container.clone()),
                         request.conversation_id.clone(),
                         evidence.message_id.clone(),
                         text.clone(),
