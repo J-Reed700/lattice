@@ -5,7 +5,6 @@
 
 use crate::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
 use crate::domain::entities::Document as DocumentEntity;
-use crate::infrastructure::persistence::mappers::DocumentModel;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::{Sqlite, Transaction};
@@ -41,12 +40,12 @@ impl SqliteDocumentRepositoryTx {
         &self,
         file_path: &str,
     ) -> Result<Option<DocumentEntity>> {
-        let entity = self.find_by_path(file_path).await?;
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        let entity = ops::find_by_path(&mut tx, file_path).await?;
 
         match entity {
             Some(doc_entity) => {
-                let tx_arc = self.get_transaction()?;
-                let mut tx = tx_arc.lock().await;
                 let chunks =
                     ops::fetch_chunks_for_document(&mut tx, doc_entity.id().as_str()).await?;
                 let tags = ops::fetch_tags_for_document(&mut tx, doc_entity.id().as_str()).await?;
@@ -91,55 +90,13 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
     }
 
     async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<DocumentEntity>> {
-        filter.validate()?;
-
-        let filter_any = filter.as_any();
-        if let Some(doc_filter) = filter_any.downcast_ref::<super::implementation::DocumentFilter>()
-        {
-            let path_pattern = doc_filter.path_pattern.clone();
-            let status = doc_filter.status.clone();
-            let limit = doc_filter.limit.unwrap_or(1000);
-
-            let mut query = String::from(
-                "SELECT id, file_path, file_name, file_type, mime_type, size_bytes,
-                 modified_at, indexed_at, checksum, status, language, category,
-                 quality_score, access_count, last_accessed_at, word_count FROM documents WHERE 1=1",
-            );
-
-            if path_pattern.is_some() {
-                query.push_str(" AND file_path LIKE ?");
-            }
-            if status.is_some() {
-                query.push_str(" AND status = ?");
-            }
-            query.push_str(" ORDER BY indexed_at DESC LIMIT ?");
-
-            let mut query_builder = sqlx::query_as::<_, DocumentModel>(&query);
-
-            if let Some(pattern) = &path_pattern {
-                query_builder = query_builder.bind(pattern);
-            }
-            if let Some(s) = &status {
-                query_builder = query_builder.bind(s);
-            }
-            query_builder = query_builder.bind(limit as i64);
-
-            let tx_arc = self.get_transaction()?;
-            let mut tx = tx_arc.lock().await;
-            let db_models = query_builder.fetch_all(&mut **tx).await.map_err(|e| {
-                AppError::Database(format!("Failed to find documents by filter: {}", e))
-            })?;
-
-            Ok(
-                crate::infrastructure::persistence::mappers::DocumentMapper::to_entities(
-                    &db_models,
-                ),
-            )
-        } else {
-            let tx_arc = self.get_transaction()?;
-            let mut tx = tx_arc.lock().await;
-            ops::find_all(&mut tx).await
-        }
+        let filter = filter
+            .as_any()
+            .downcast_ref::<crate::application::ports::DocumentFilter>()
+            .ok_or_else(|| AppError::InvalidInput("Expected DocumentFilter".into()))?;
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::find_by_filter(&mut tx, filter).await
     }
 
     async fn find_all(&self) -> Result<Vec<DocumentEntity>> {
@@ -161,7 +118,7 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
 
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
-        ops::save_batch_optimized(&mut tx, entities).await?;
+        ops::save_batch(&mut tx, entities).await?;
 
         Ok(())
     }
@@ -199,6 +156,22 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
 
 #[async_trait]
 impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
+    async fn list_metadata(&self) -> Result<Vec<DocumentEntity>> {
+        let tx_arc = self.get_transaction()?;
+        let mut conn = tx_arc.lock().await;
+        ops::list_metadata(&mut conn).await
+    }
+    async fn find_metadata_by_ids(&self, ids: &[String]) -> Result<Vec<DocumentEntity>> {
+        let tx_arc = self.get_transaction()?;
+        let mut conn = tx_arc.lock().await;
+        ops::find_metadata_by_ids(&mut conn, ids).await
+    }
+    async fn rename(&self, id: &str, name: &str) -> Result<()> {
+        let tx_arc = self.get_transaction()?;
+        let mut conn = tx_arc.lock().await;
+        ops::rename(&mut conn, id, name).await
+    }
+
     async fn find_file_path_by_id(&self, document_id: &str) -> Result<String> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
@@ -229,7 +202,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
     ) -> Result<Option<crate::domain::entities::Document>> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
-        ops::find_by_checksum(&mut tx, checksum).await
+        ops::find_aggregate_by_checksum_tx(&mut tx, checksum.as_str()).await
     }
 
     async fn count_documents(&self) -> Result<i64> {

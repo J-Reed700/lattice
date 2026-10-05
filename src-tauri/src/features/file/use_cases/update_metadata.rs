@@ -43,23 +43,8 @@ impl UpdateFileMetadataUseCase {
             .acquire_lock_with_timeout(&request.document_id)
             .await?;
 
-        let existing_tags = self
-            .tag_service
-            .get_tags_for_document(&request.document_id)
-            .await?;
-
-        for tag in existing_tags {
-            self.tag_service
-                .remove_tag_from_document(&request.document_id, tag.id().as_str())
-                .await?;
-        }
-
-        if tags.is_empty() {
-            return Ok(());
-        }
-
         self.tag_service
-            .apply_tags(&request.document_id, tags)
+            .replace_tags(&request.document_id, tags)
             .await?;
 
         Ok(())

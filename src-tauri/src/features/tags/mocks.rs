@@ -5,7 +5,7 @@
 #[cfg(test)]
 use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
 #[cfg(test)]
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 // Removed: use crate::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
 #[cfg(test)]
 pub use crate::features::tags::service::DocumentLockGuard;
@@ -158,6 +158,24 @@ impl TagServiceTrait for MockTagService {
         }
 
         Ok(all_tags)
+    }
+
+    async fn replace_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<()> {
+        let names = tag_names
+            .into_iter()
+            .map(|name| {
+                crate::shared::types::TagName::new(name.trim().to_lowercase())
+                    .map(|name| name.to_string())
+                    .map_err(|error| AppError::InvalidInput(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for name in &names {
+            self.get_or_create(name, "#6366f1").await?;
+        }
+        self.document_tags
+            .write()
+            .insert(document_id.to_string(), names.into_iter().collect());
+        Ok(())
     }
 
     async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()> {

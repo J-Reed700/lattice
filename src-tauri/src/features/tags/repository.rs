@@ -391,6 +391,48 @@ impl TagRepository {
         Ok(tags)
     }
 
+    /// Validate before writing, then replace memberships and create missing tags
+    /// in one transaction. The write reservation serializes competing replacements.
+    pub async fn replace_document_tags(&self, document_id: &str, names: Vec<String>) -> Result<()> {
+        let names = names
+            .into_iter()
+            .map(|name| {
+                TagName::new(name.trim().to_lowercase())
+                    .map_err(|error| AppError::InvalidInput(format!("Invalid tag name: {error}")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("DELETE FROM document_tags WHERE document_id = ?")
+            .bind(document_id)
+            .execute(&mut *tx)
+            .await?;
+        for name in names {
+            let existing =
+                sqlx::query_scalar::<_, String>("SELECT id FROM tags WHERE LOWER(name) = LOWER(?)")
+                    .bind(name.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let tag_id = if let Some(id) = existing {
+                id
+            } else {
+                let tag = TagEntity::new(name, "#6366f1".into());
+                let model = TagMapper::to_model(&tag);
+                sqlx::query("INSERT INTO tags (id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+                    .bind(&model.id).bind(&model.name).bind(&model.color)
+                    .bind(&model.created_at).bind(&model.updated_at)
+                    .execute(&mut *tx).await?;
+                model.id
+            };
+            sqlx::query("INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)")
+                .bind(document_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Get tags for multiple documents (optimized batch query).
     ///
     /// Handles SQLite's 999 parameter limit by batching.
@@ -1200,5 +1242,55 @@ mod tests {
         assert_eq!(results.len(), 2); // rust and ruby
         assert!(results.iter().any(|t| t.name().as_str() == "rust"));
         assert!(results.iter().any(|t| t.name().as_str() == "ruby"));
+    }
+}
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn replacement_rolls_back_deletions_and_new_tags_when_an_insert_fails() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, modified_at, indexed_at, checksum, status) VALUES ('doc', '/doc.txt', 'doc.txt', 'text/plain', 1, '2026-10-05', '2026-10-05', 'checksum', 'pending')").execute(&pool).await.unwrap();
+        let repository = TagRepository::new(pool.clone());
+        repository
+            .replace_document_tags("doc", vec!["old".into()])
+            .await
+            .unwrap();
+        sqlx::query("CREATE TRIGGER reject_broken_tag BEFORE INSERT ON document_tags WHEN NEW.tag_id = (SELECT id FROM tags WHERE name = 'broken') BEGIN SELECT RAISE(ABORT, 'injected failure'); END").execute(&pool).await.unwrap();
+        assert!(repository
+            .replace_document_tags("doc", vec!["new".into(), "broken".into()])
+            .await
+            .is_err());
+        let tags = repository.get_tags_for_document("doc").await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name().as_str(), "old");
+        assert!(repository.find_by_name("new").await.unwrap().is_none());
+        assert!(repository
+            .replace_document_tags("doc", vec![" ".into()])
+            .await
+            .is_err());
+        assert_eq!(
+            repository.get_tags_for_document("doc").await.unwrap().len(),
+            1
+        );
+        repository
+            .replace_document_tags("doc", vec![" Rust ".into(), "RUST".into()])
+            .await
+            .unwrap();
+        let tags = repository.get_tags_for_document("doc").await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name().as_str(), "rust");
+        repository
+            .replace_document_tags("doc", vec![])
+            .await
+            .unwrap();
+        assert!(repository
+            .get_tags_for_document("doc")
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

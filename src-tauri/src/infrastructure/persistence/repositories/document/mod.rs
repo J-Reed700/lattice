@@ -15,5 +15,9 @@ pub mod implementation;
 pub mod ops;
 pub mod tx;
 
-pub use implementation::{DocumentFilter, SqliteDocumentRepository};
+pub use crate::application::ports::DocumentFilter;
+pub use implementation::SqliteDocumentRepository;
+
+#[cfg(test)]
+mod tests;
 pub use tx::SqliteDocumentRepositoryTx;

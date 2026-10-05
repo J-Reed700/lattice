@@ -5,7 +5,6 @@
 
 pub mod batch_job_repository;
 pub mod chunk_repository;
-pub mod document_repository;
 pub mod document_scope;
 pub mod file_library;
 
@@ -30,7 +29,7 @@ pub use crate::features::embedding::repository::{Embedding, EmbeddingRepository}
 pub use crate::features::mentions::repository::MentionRepository;
 pub use crate::features::settings::repository::SettingsRepository;
 pub use crate::features::tags::repository::TagRepository;
-pub use document_repository::DocumentRepository; // Repository only, not the old Document type
+pub use document::SqliteDocumentRepository as DocumentRepository; // Repository only, not the old Document type
 
 // Type aliases for DI container compatibility
 pub type DocumentRepositoryImpl = DocumentRepository;
