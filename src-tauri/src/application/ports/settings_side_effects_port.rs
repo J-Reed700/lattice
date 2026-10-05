@@ -1,4 +1,4 @@
-//! Cache-invalidation + transition reactions fired by `UpdateSettingsUseCase`
+//! Cache-invalidation + transition reactions fired by settings mutation use cases
 //! after a successful write. Implementations are best-effort —
 //! failures must not propagate, the user's setting has already been
 //! persisted.
@@ -15,7 +15,7 @@ pub struct SettingsTransitionHints {
 #[async_trait]
 pub trait SettingsSideEffectsPort: Send + Sync {
     /// `category` is `Some` for single-category updates, `None` for
-    /// global update or reset.
+    /// global update, import, or reset.
     async fn on_settings_updated(
         &self,
         category: Option<SettingsCategory>,
