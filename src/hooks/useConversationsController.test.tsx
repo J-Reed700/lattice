@@ -238,7 +238,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sending: Promise<void> | undefined;
+    let sending: Promise<unknown> | undefined;
     act(() => { sending = result.current.sendMessage('Try again'); });
     await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
     const requestId = api.chatWithConversation.mock.calls[0][3];
@@ -340,7 +340,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sending: Promise<void> | undefined;
+    let sending: Promise<unknown> | undefined;
     act(() => { sending = result.current.sendMessage('Search my notes'); });
     await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
     const requestId = api.chatWithConversation.mock.calls[0][3];
@@ -369,7 +369,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<unknown> | undefined;
     act(() => {
       sendPromise = result.current.sendMessage('Stop this response');
     });
@@ -398,7 +398,7 @@ describe('useConversationsController optimistic cleanup', () => {
     }));
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<unknown> | undefined;
     act(() => { sendPromise = result.current.sendMessage('Where is the draft?'); });
     await waitFor(() => expect(result.current.inFlightGenerations.size).toBe(1));
     api.getConversationMessages = vi.fn().mockResolvedValue({
@@ -494,7 +494,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sending!: Promise<void>;
+    let sending!: Promise<unknown>;
     act(() => { sending = result.current.sendMessage('Must not return after deletion', conversation.id); });
     await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
     await waitFor(() => expect(listen).toHaveBeenCalled());
@@ -566,7 +566,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(2));
 
-    let deletingFirst!: Promise<void>;
+    let deletingFirst!: Promise<unknown>;
     act(() => { deletingFirst = result.current.deleteConversation(conversation.id); });
     await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith(conversation.id));
     await act(async () => { await result.current.deleteConversation(other.id); });
@@ -702,11 +702,11 @@ describe('useConversationsController optimistic cleanup', () => {
     api.deleteConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveDelete = resolve; }));
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
-    let sending!: Promise<void>;
+    let sending!: Promise<unknown>;
     act(() => { sending = result.current.sendMessage('Keep this turn', conversation.id); });
     await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
 
-    let deleting!: Promise<void>;
+    let deleting!: Promise<unknown>;
     act(() => { deleting = result.current.deleteConversation(conversation.id); });
     await waitFor(() => expect(api.deleteConversation).toHaveBeenCalled());
     expect(result.current.activeConversationId).toBeNull();
@@ -743,7 +743,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const { result, unmount } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     const preferences = { knowledgeBase: false, webSearch: true, turnMode: 'query' as const };
-    let sending!: Promise<void>;
+    let sending!: Promise<unknown>;
     act(() => {
       sending = result.current.sendMessage('Keep this unsaved prompt', conversation.id, preferences, ['Guide.pdf'], ['doc-guide']);
     });

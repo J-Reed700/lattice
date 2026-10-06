@@ -85,6 +85,8 @@ pub struct ConversationDto {
     /// path. Set only on Explorer threads; Chat leaves them out of its list
     /// so a thread is never continued without its folder.
     pub explorer_root: Option<String>,
+    /// Present while this transcript lives in its parent's Tangents panel.
+    pub tangent_parent_id: Option<String>,
 }
 
 /// Conversation message representation.
@@ -344,6 +346,7 @@ mod tests {
             forked_from_conversation_id: None,
             forked_from_message_id: None,
             explorer_root: None,
+            tangent_parent_id: None,
         };
 
         let json = serde_json::to_string(&conversation).unwrap();

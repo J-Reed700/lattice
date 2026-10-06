@@ -44,6 +44,7 @@ pub mod plugin_impl;
 pub mod space_dto;
 pub mod space_repository;
 mod synthesis;
+pub mod tangent_dto;
 pub mod trait_def;
 pub mod use_cases;
 pub mod workspace_dto;

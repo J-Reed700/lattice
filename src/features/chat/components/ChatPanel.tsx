@@ -32,6 +32,7 @@ import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresN
 import { Message } from '@/features/chat/components/Message';
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
 import { GENERAL_SPACE_ID, SpacePickerPopover, useOpenSpaces } from '@/features/chat/components/SpacePickerPopover';
+import { ConversationTangents } from '@/features/chat/components/tangents/ConversationTangents';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
 import { VirtualizedMessageList, type VirtualizedMessageListHandle } from '@/features/chat/components/VirtualizedMessageList';
 import { useChatFileDrop } from '@/features/chat/hooks/useChatFileDrop';
@@ -1214,6 +1215,7 @@ export function ChatPanel() {
   }
 
   return (
+    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={toolPreferences} unavailable={isChatUnavailable}>
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
@@ -1563,5 +1565,6 @@ export function ChatPanel() {
         </form>
       </div>
     </div>
+    </ConversationTangents>
   );
 }

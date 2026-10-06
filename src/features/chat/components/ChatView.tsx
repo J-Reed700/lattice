@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, PanelLeft } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
@@ -9,11 +10,13 @@ import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
 import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
+import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { conversationUiStore } from '@/stores/conversationUiStore';
 import { toast } from '@/stores/toastStore';
+import type { Conversation } from '@/types/conversation';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
@@ -49,6 +52,7 @@ function writeSidebarCollapsed(value: boolean): void {
 }
 
 export function ChatView() {
+  const queryClient = useQueryClient();
   const {
     loadConversations,
     loadSpaces,
@@ -271,11 +275,17 @@ export function ChatView() {
 
     selectingConversationRef.current = requestedConversationId;
     void selectConversation(requestedConversationId).finally(() => {
+      const detail = queryClient.getQueryData<Conversation>(conversationKeys.detail(requestedConversationId));
+      if (detail?.tangentParentId) {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.set('conversationId', detail.tangentParentId);
+        setSearchParams(nextParams, { replace: true });
+      }
       if (selectingConversationRef.current === requestedConversationId) {
         selectingConversationRef.current = null;
       }
     });
-  }, [activeConversationId, searchParams, selectConversation]);
+  }, [activeConversationId, queryClient, searchParams, selectConversation, setSearchParams]);
 
   useEffect(() => {
     const requestedConversationId = searchParams.get('conversationId');

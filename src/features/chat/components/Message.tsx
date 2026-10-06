@@ -26,6 +26,7 @@ import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { MessageEditor } from '@/features/chat/components/MessageEditor';
 import { SourceCitations } from '@/features/chat/components/SourceCitations';
+import { TangentSelection } from '@/features/chat/components/tangents/TangentSelection';
 import { TurnRecord } from '@/features/chat/components/turn/TurnRecord';
 import { provenanceLabel, sourceProvenance } from '@/features/chat/model/sourceProvenance';
 import { verificationSummaryLine } from '@/features/chat/model/verificationSummary';
@@ -83,6 +84,7 @@ export const Message = memo(({
 }: MessageProps) => {
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
   const verificationPanelId = useId();
   const [isVerificationPanelExpanded, setIsVerificationPanelExpanded] = useState(false);
   const [showAllVerifiedClaims, setShowAllVerifiedClaims] = useState(false);
@@ -984,6 +986,7 @@ export const Message = memo(({
           />
         ) : (
         <div
+          ref={answerRef}
           onClick={isUser ? undefined : handleBodyClick}
           onMouseOver={isUser ? undefined : handleBodyMouseOver}
           onMouseLeave={isUser ? undefined : handleBodyMouseLeave}
@@ -993,12 +996,14 @@ export const Message = memo(({
               : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'
           }`}
         >
+          <TangentSelection conversationId={conversationId} messageId={messageId} enabled={!isUser && !isPending && !isFailed && message.status !== 'processing'}>
           <TiptapViewer
             content={normalizedMarkdownContent}
             citationNumbers={citationNumbers}
             claims={isUser ? undefined : claimVerdicts}
             codeRefs={showsCodeRefs}
           />
+          </TangentSelection>
           {/* Streaming cursor — spec §3.7 */}
           {!isUser && isPending && (
             <span
@@ -1059,6 +1064,9 @@ export const Message = memo(({
           onTryWithModel={handleTryWithModel}
           onEdit={() => setIsEditing(true)}
           onBranch={handleBranch}
+          tangentSource={!isUser && !isPending && !isFailed && message.status !== 'processing' && conversationId && messageId ? {
+            conversationId, messageId, getText: () => answerRef.current?.innerText || normalizedMarkdownContent,
+          } : undefined}
           answerSources={isAssistantWithSources ? sources : undefined}
           answerMarkdown={isUser ? undefined : normalizedMarkdownContent}
           answerVerification={verificationSummary ?? null}

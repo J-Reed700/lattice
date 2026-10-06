@@ -5,6 +5,7 @@ import { ArrowUpRight, Bookmark, Check, Copy, Cpu, GitBranch, Pencil, RefreshCw,
 
 import { AnswerActionsMenu } from '@/features/chat/components/actions/AnswerActionsMenu';
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
+import { TangentReplyAction, type TangentReplySource } from '@/features/chat/components/tangents/TangentReplyAction';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -48,6 +49,7 @@ interface MessageActionsProps {
   onTryWithModel?: (_modelId: string, _modelLabel: string) => Promise<void> | void;
   onEdit?: () => void;
   onBranch?: () => Promise<void> | void;
+  tangentSource?: TangentReplySource;
 }
 
 // CHAT-POLISH-COMPONENTS §5: low contrast and full opacity always. Hiding the
@@ -79,6 +81,7 @@ export function MessageActions({
   onTryWithModel,
   onEdit,
   onBranch,
+  tangentSource,
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
 
@@ -151,6 +154,8 @@ export function MessageActions({
           {isBookmarked ? 'Referenced' : 'Reference'}
         </button>
       )}
+
+      {!isUser && tangentSource && <TangentReplyAction source={tangentSource} className={ACTION_CLASS} disabled={isBusy} />}
 
       {/* Always here, never behind a hover: the verbs that carry an answer into
           the rest of the work are the point of a research tool, and a menu

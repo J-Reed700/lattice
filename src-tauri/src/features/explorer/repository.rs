@@ -257,7 +257,7 @@ pub async fn delete_folder(pool: &SqlitePool, root: &str) -> Result<()> {
 pub async fn thread_counts(pool: &SqlitePool) -> Result<HashMap<String, u32>> {
     let rows = sqlx::query(
         "SELECT explorer_root, COUNT(*) AS threads FROM conversations
-         WHERE explorer_root IS NOT NULL GROUP BY explorer_root",
+         WHERE explorer_root IS NOT NULL AND tangent_parent_id IS NULL GROUP BY explorer_root",
     )
     .fetch_all(pool)
     .await
@@ -274,11 +274,14 @@ pub async fn thread_counts(pool: &SqlitePool) -> Result<HashMap<String, u32>> {
         .collect())
 }
 
-/// The ids of the folder's threads.
+/// The ids of the folder's top-level threads. Their tangents cascade with
+/// them, so returning both would try to delete a child that is already gone.
 pub async fn folder_threads(pool: &SqlitePool, root: &str) -> Result<Vec<String>> {
-    sqlx::query_scalar("SELECT id FROM conversations WHERE explorer_root = ?")
-        .bind(root)
-        .fetch_all(pool)
-        .await
-        .map_err(folder_error("list the Explorer threads"))
+    sqlx::query_scalar(
+        "SELECT id FROM conversations WHERE explorer_root = ? AND tangent_parent_id IS NULL",
+    )
+    .bind(root)
+    .fetch_all(pool)
+    .await
+    .map_err(folder_error("list the Explorer threads"))
 }

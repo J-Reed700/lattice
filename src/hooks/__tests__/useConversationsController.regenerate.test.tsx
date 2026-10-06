@@ -93,6 +93,7 @@ describe('regenerateResponse — a turn that runs', () => {
   });
 
   it('reports "failed" and hands the question back when the backend refuses', async () => {
+    conversationUiStore.setState({ activeConversationId: CONVERSATION_ID });
     regenerate.mockResolvedValue({ ok: false, error: 'no model loaded' });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },

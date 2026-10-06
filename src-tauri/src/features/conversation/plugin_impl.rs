@@ -32,7 +32,8 @@ use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
 
 pub use super::branching::{
-    fork_conversation_impl, regenerate_response_impl, truncate_conversation_after_impl,
+    create_conversation_tangent_impl, fork_conversation_impl, list_conversation_tangents_impl,
+    promote_conversation_tangent_impl, regenerate_response_impl, truncate_conversation_after_impl,
 };
 pub use super::handoff::continue_in_new_conversation_impl;
 pub use super::synthesis::synthesize_journal_entries_impl;

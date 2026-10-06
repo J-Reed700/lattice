@@ -5,6 +5,139 @@ import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
+for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'], [620, 'reply']] as const) {
+  test(`chat tangents via ${entry} preserve the parent, reopen after reload, and promote at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const settings = makeAppSettings();
+    settings.llm.provider = 'llamacpp';
+    settings.llm.llamaCpp.model = 'qwen-test.gguf';
+    await page.addInitScript(({ settings, entry }) => {
+      localStorage.setItem('chat.sidebar.collapsed', '1');
+      const stamp = '2026-10-06T00:00:00Z';
+      const parent = { id: 'tangent-parent', title: 'Main discussion', modelName: '__llamacpp_server__', createdAt: stamp, updatedAt: stamp, messageCount: 2, totalTokens: 50, spaceId: 'space_general', isArchived: false };
+      const sourceMessages = [
+        { id: 'source-question', conversationId: parent.id, role: 'user', content: 'What is a tangent?', tokens: 10, status: 'completed', createdAt: stamp },
+        { id: 'source-answer', conversationId: parent.id, role: 'assistant', content: 'A tangent explores one idea without changing the main conversation.', tokens: 40, status: 'completed', createdAt: stamp },
+      ];
+      type Message = typeof sourceMessages[number];
+      type Tangent = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string; contextMessageCount: number };
+      type State = { tangents: Tangent[]; messages: Message[]; promoted: boolean; failPromotion: boolean };
+      const saved = localStorage.getItem('test:tangents');
+      const state: State = saved ? JSON.parse(saved) : { tangents: [], messages: [], promoted: false, failPromotion: true };
+      let cancelPending: ((_reason: unknown) => void) | null = null;
+      const persist = () => localStorage.setItem('test:tangents', JSON.stringify(state));
+      const expectedPassage = entry === 'reply' ? sourceMessages[1].content : 'explores one idea';
+      const conversation = () => ({ ...parent, id: 'tangent-1', title: expectedPassage, messageCount: state.messages.length, tangentParentId: state.promoted ? null : parent.id });
+      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+        const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
+        if (command === 'plugin:settings|get_settings') return settings;
+        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 };
+        if (command === 'plugin:conversation|get_conversation') return { conversation: request?.conversationId === parent.id ? parent : conversation() };
+        if (command === 'plugin:conversation|get_conversation_messages') return { messages: request?.conversationId === parent.id ? sourceMessages : state.messages, total: request?.conversationId === parent.id ? 2 : state.messages.length };
+        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+        if (command === 'plugin:conversation|list_conversation_tangents') return state.tangents;
+        if (command === 'plugin:conversation|create_conversation_tangent') {
+          if (request?.conversationId !== parent.id || request.messageId !== 'source-answer' || request.selectedText !== expectedPassage) throw new Error('Tangent lost the exact source selection');
+          const tangent: Tangent = { conversationId: 'tangent-1', parentConversationId: parent.id, sourceConversationId: parent.id, sourceMessageId: request.messageId, selectedText: request.selectedText, title: request.selectedText, createdAt: stamp, updatedAt: stamp, contextMessageCount: 2 };
+          state.tangents.push(tangent);
+          state.messages = sourceMessages.map(message => ({ ...message, id: `copy-${message.id}`, conversationId: tangent.conversationId }));
+          persist();
+          return tangent;
+        }
+        if (command === 'plugin:conversation|chat_with_conversation') {
+          const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
+          if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
+          if (turn.cancelOnly) {
+            cancelPending?.({ code: 'INVALID_STATE', message: 'Generation cancelled' });
+            cancelPending = null;
+            return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 2 };
+          }
+          if (turn.message === 'Cancel this tangent request') return new Promise((_resolve, reject) => { cancelPending = reject; });
+          state.messages.push({ ...sourceMessages[0], id: 'tangent-question', conversationId: turn.conversationId, content: turn.message },
+            { ...sourceMessages[1], id: 'tangent-answer', conversationId: turn.conversationId, content: 'You can explore that idea on its own.' });
+          persist();
+          return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 4 };
+        }
+        if (command === 'plugin:conversation|promote_conversation_tangent') {
+          if (state.failPromotion) { state.failPromotion = false; persist(); throw new Error('Promotion temporarily unavailable'); }
+          state.promoted = true; state.tangents = []; persist(); return conversation();
+        }
+        if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+        throw new Error(`Unsupported tangent fixture command: ${command}`);
+      };
+    }, { settings, entry });
+    const errors: Error[] = [];
+    page.on('pageerror', error => errors.push(error));
+    await page.goto('/chat?conversationId=tangent-parent');
+    const composer = page.getByRole('textbox', { name: 'Message composer' });
+    await composer.fill('Keep my main draft');
+    const answer = page.locator('#message-source-answer .tiptap-viewer p');
+    await expect(answer).toBeVisible();
+    const replyAction = page.locator('#message-source-answer').getByRole('button', { name: 'Start a tangent from this reply' });
+    await expect(replyAction).toBeVisible();
+    if (entry === 'reply') {
+      await replyAction.focus();
+      await replyAction.press('Enter');
+    } else {
+      await answer.evaluate(element => {
+        const text = element.firstChild!;
+        const start = text.textContent!.indexOf('explores one idea');
+        const range = document.createRange(); range.setStart(text, start); range.setEnd(text, start + 'explores one idea'.length);
+        window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+      });
+      if (entry === 'menu') {
+        await answer.dispatchEvent('contextmenu', { clientX: 300, clientY: 200 });
+        await page.getByRole('menuitem', { name: 'Ask in a tangent' }).click();
+      } else {
+        const action = page.getByRole('toolbar', { name: 'Selected passage' }).getByRole('button', { name: 'Ask in a tangent' });
+        await expect(action).toBeVisible();
+        await page.screenshot({ path: '/tmp/lattice-tangent-selection.png', animations: 'disabled' });
+        await action.click();
+      }
+    }
+    const panel = page.getByRole('complementary', { name: 'Tangents', exact: true });
+    const expectedPassage = entry === 'reply' ? 'A tangent explores one idea without changing the main conversation.' : 'explores one idea';
+    await expect(panel.getByRole('blockquote')).toHaveText(expectedPassage);
+    await expect(composer).toHaveValue('Keep my main draft');
+    const tangentComposer = panel.getByRole('textbox', { name: 'Ask in this tangent' });
+    await tangentComposer.fill('Cancel this tangent request');
+    await tangentComposer.press('Enter');
+    await panel.getByRole('button', { name: 'Stop tangent response' }).click();
+    await expect(tangentComposer).toHaveValue('Cancel this tangent request');
+    await expect(composer).toHaveValue('Keep my main draft');
+    await tangentComposer.fill('What does that mean?');
+    await tangentComposer.press('Enter');
+    await expect(panel.getByText('You can explore that idea on its own.')).toBeVisible();
+    await tangentComposer.fill('Keep this tangent draft');
+    await panel.getByRole('button', { name: 'Close tangents' }).click();
+    await expect(composer).toHaveValue('Keep my main draft');
+    await page.getByRole('button', { name: 'Tangents · 1', exact: true }).click();
+    await expect(tangentComposer).toHaveValue('Keep this tangent draft');
+    await page.screenshot({ path: `/tmp/lattice-tangents-${width}-${entry}.png`, animations: 'disabled' });
+    if (width === 1440) {
+      await page.goto('/chat?conversationId=tangent-1&messageId=tangent-answer');
+    } else {
+      await page.goto('/chat?conversationId=tangent-parent');
+      await page.getByRole('button', { name: 'Tangents · 1', exact: true }).click();
+      await panel.getByRole('button', { name: `${expectedPassage} ${expectedPassage}` }).click();
+    }
+    await expect(panel.getByText('You can explore that idea on its own.')).toBeVisible();
+    await panel.getByRole('button', { name: 'Make conversation' }).click();
+    await expect(page.getByText("Couldn't make this a conversation")).toBeVisible();
+    await expect(panel).toBeVisible();
+    await panel.getByRole('button', { name: 'Make conversation' }).click();
+    await expect(panel).not.toBeVisible();
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('test:tangents')!));
+    expect(stored.promoted).toBe(true);
+    expect(stored.messages).toHaveLength(4);
+    await page.getByRole('button', { name: 'Show sidebar' }).click();
+    await expect(page.getByText(expectedPassage, { exact: true }).first()).toBeVisible();
+    await expect(page.locator('#message-source-answer')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
@@ -433,7 +566,7 @@ test('conversation outline navigates long virtualized replies and tracks the rea
       if (command === 'plugin:conversation|get_conversation') return { conversation };
       if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: messages.length };
       if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
       throw new Error(`Unsupported outline fixture command: ${command}`);
     };
   }, makeAppSettings());
@@ -940,7 +1073,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };
       }
-      if (command === 'plugin:conversation|list_journals' || command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
+      if (command === 'plugin:conversation|list_journals' || command === 'plugin:conversation|list_conversation_tangents' || command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
       throw new Error(`Unsupported failure fixture command: ${command}`);
     };
   }, settings);
@@ -1035,7 +1168,7 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
         localStorage.setItem('test:retrieval-messages', JSON.stringify(messages));
         return { conversationId: conversation.id, messages, contextUsed: 0, sources: [] };
       }
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
       throw new Error(`Unsupported retrieval fixture command: ${command}`);
     };
   }, settings);

@@ -33,6 +33,20 @@ impl ConversationRepository {
         new_id: &str,
         new_title: &str,
     ) -> Result<(String, u32)> {
+        self.fork_with_tangent(conversation_id, up_to_message_id, new_id, new_title, None)
+            .await
+    }
+
+    /// Both kinds of branch commit their transcript, sources and ownership
+    /// together. A tangent must never briefly appear as a top-level chat.
+    pub(super) async fn fork_with_tangent(
+        &self,
+        conversation_id: &str,
+        up_to_message_id: Option<&str>,
+        new_id: &str,
+        new_title: &str,
+        tangent_selection: Option<&str>,
+    ) -> Result<(String, u32)> {
         let mut tx = self
             .pool
             .begin()
@@ -45,11 +59,12 @@ impl ConversationRepository {
             system_prompt: Option<String>,
             space_id: String,
             explorer_root: Option<String>,
+            tangent_parent_id: Option<String>,
         }
 
         let source = sqlx::query_as::<_, SourceConversationRow>(
             r#"
-            SELECT model_name, system_prompt, space_id, explorer_root
+            SELECT model_name, system_prompt, space_id, explorer_root, tangent_parent_id
             FROM conversations
             WHERE id = ?
             "#,
@@ -82,7 +97,7 @@ impl ConversationRepository {
         };
         let forked_from_message_id = anchor.as_ref().and(up_to_message_id);
 
-        let rows: Vec<CopyRow> = match up_to_message_id {
+        let mut rows: Vec<CopyRow> = match up_to_message_id {
             Some(_) => match &anchor {
                 Some(anchor) => sqlx::query_as::<_, CopyRow>(
                     r#"
@@ -119,14 +134,37 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to read messages to copy: {}", e)))?,
         };
 
+        if let Some(selection) = tangent_selection {
+            let selected = rows.last_mut().ok_or_else(|| {
+                AppError::InvalidInput("Select a saved assistant reply to start a tangent.".into())
+            })?;
+            if selected.role != "assistant" || selected.status != "completed" {
+                return Err(AppError::InvalidInput(
+                    "Select a completed assistant reply to start a tangent.".into(),
+                ));
+            }
+            // Keep the source answer and preceding context, and carry the
+            // selection as quoted conversational data (never a system prompt).
+            let quote = selection
+                .lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let focus =
+                format!("\n\nThe user selected this passage for a separate follow-up:\n\n{quote}");
+            selected.tokens += (focus.chars().count() as i64 + 3) / 4;
+            selected.content.push_str(&focus);
+        }
+
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             r#"
             INSERT INTO conversations
                 (id, title, model_name, system_prompt, space_id, explorer_root,
                  created_at, updated_at, message_count, total_tokens,
-                 forked_from_conversation_id, forked_from_message_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+                 forked_from_conversation_id, forked_from_message_id,
+                 tangent_parent_id, tangent_selection, tangent_context_message_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(new_id)
@@ -141,6 +179,18 @@ impl ConversationRepository {
         .bind(&now)
         .bind(conversation_id)
         .bind(forked_from_message_id)
+        .bind(tangent_selection.map(|_| {
+            source
+                .tangent_parent_id
+                .as_deref()
+                .unwrap_or(conversation_id)
+        }))
+        .bind(tangent_selection)
+        .bind(if tangent_selection.is_some() {
+            rows.len() as i64
+        } else {
+            0
+        })
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create branch conversation: {}", e)))?;

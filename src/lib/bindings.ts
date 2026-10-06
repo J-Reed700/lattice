@@ -1934,6 +1934,30 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
     else return { status: "error", error: e  as any };
 }
 },
+async createConversationTangent(request: CreateTangentRequestDto) : Promise<Result<ConversationTangentDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_conversation_tangent", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listConversationTangents(request: GetConversationRequestDto) : Promise<Result<ConversationTangentDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_conversation_tangents", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async promoteConversationTangent(request: GetConversationRequestDto) : Promise<Result<ConversationDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("promote_conversation_tangent", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Summarize a conversation and open a new one in the same space that starts
  * from the summary. Takes minutes on a local model: it is one or more full
@@ -5093,7 +5117,11 @@ forkedFromMessageId: string | null;
  * path. Set only on Explorer threads; Chat leaves them out of its list
  * so a thread is never continued without its folder.
  */
-explorerRoot: string | null }
+explorerRoot: string | null;
+/**
+ * Present while this transcript lives in its parent's Tangents panel.
+ */
+tangentParentId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
@@ -5170,6 +5198,11 @@ export type ConversationMessageBookmarkDto = { id: string; conversationId: strin
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
 export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationSpaceMemberDto = { spaceId: string; memberId: string; displayName: string; email: string | null; avatarUrl: string | null; role: string; createdAt: string; updatedAt: string }
+export type ConversationTangentDto = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string;
+/**
+ * The inherited transcript is context, not the tangent's own discussion.
+ */
+contextMessageCount: number }
 export type ConversationWebSourceDto = { id: string; url: string; normalizedUrl: string; title: string | null; excerpt: string | null; relevanceScore: number | null; addedAt: string }
 /**
  * Vault-wide type mix and recent growth.
@@ -5217,6 +5250,7 @@ export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: st
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
+export type CreateTangentRequestDto = { conversationId: string; messageId: string; selectedText: string }
 export type CreateWorkspaceNoteRequestDto = { title: string | null;
 /**
  * The journal this page belongs to. Omitted for an unfiled page.

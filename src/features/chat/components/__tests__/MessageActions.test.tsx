@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageActions } from '@/features/chat/components/MessageActions';
+import { TangentSelectionContext } from '@/features/chat/components/tangents/TangentSelection';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
@@ -102,6 +103,55 @@ describe('MessageActions', () => {
     expect(screen.getByLabelText('Copy message to clipboard').className).toContain(
       'focus-visible:ring-2'
     );
+  });
+
+  it('starts a tangent from the visible reply action without selecting text', () => {
+    const create = vi.fn();
+    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => 'The whole reply.' };
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
+    </TangentSelectionContext.Provider>);
+    const button = screen.getByRole('button', { name: 'Start a tangent from this reply' });
+    expect(button).toBeVisible();
+    expect(button).toHaveTextContent('Tangent');
+    fireEvent.click(button);
+    expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: 'The whole reply.' });
+  });
+
+  it('lets a long reply be narrowed without requiring text selection or silently truncating it', async () => {
+    const create = vi.fn();
+    const longReply = 'A long reply. '.repeat(700);
+    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => longReply };
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
+    </TangentSelectionContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    expect(create).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Choose a starting passage' })).toBeVisible();
+    const passage = screen.getByRole('textbox', { name: 'Passage to explore' });
+    expect(passage).toHaveValue(longReply.trim());
+    expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start a tangent from this reply' })).toHaveFocus());
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Passage to explore' }), { target: { value: 'The part I want to discuss.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start tangent' }));
+    expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: 'The part I want to discuss.' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('does not offer a tangent on a user message and waits for pending creation', () => {
+    const create = vi.fn();
+    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => 'Reply' };
+    const content = (role: string, creating: boolean) => <TangentSelectionContext.Provider value={{ create, creating }}>
+      <MessageActions {...baseProps} role={role} isLastTurn tangentSource={tangentSource} />
+    </TangentSelectionContext.Provider>;
+    const view = render(content('user', false));
+    expect(screen.queryByRole('button', { name: 'Start a tangent from this reply' })).not.toBeInTheDocument();
+    view.rerender(content('assistant', true));
+    expect(screen.getByRole('button', { name: 'Start a tangent from this reply' })).toBeDisabled();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('offers a way to carry a grounded answer out of the chat', () => {

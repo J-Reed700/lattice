@@ -24,6 +24,7 @@ mod memory_vectors;
 mod messages;
 mod port;
 mod pruning;
+mod tangents;
 mod workspace;
 
 #[cfg(test)]

@@ -315,6 +315,9 @@ export const COMMAND_DOMAIN_MAP: Record<
     command: 'truncate_conversation_after',
   },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
+  create_conversation_tangent: { domain: 'conversation', command: 'create_conversation_tangent' },
+  list_conversation_tangents: { domain: 'conversation', command: 'list_conversation_tangents' },
+  promote_conversation_tangent: { domain: 'conversation', command: 'promote_conversation_tangent' },
   continue_in_new_conversation: {
     domain: 'conversation',
     command: 'continue_in_new_conversation',
