@@ -76,7 +76,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   );
   const { journals } = useJournalsQuery();
   const forkLineage = useForkLineage(conversations);
-  const { synthesizeConversationToJournal, synthesizingConversationId, continueConversationInNewChat, continuingConversationId } = synthesis;
+  const { synthesizeConversationToJournal, synthesizingConversationId, isSynthesizing, continueConversationInNewChat, continuingConversationId } = synthesis;
   const {
     copyConversationAsMarkdown,
     saveConversationToJournal,
@@ -410,6 +410,12 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                     {metaLine && (
                       <p className="mt-0.5 truncate text-xs text-text-muted">{metaLine}</p>
                     )}
+                    {synthesizingConversationId === conversation.id && (
+                      <p className="mt-1 flex items-center gap-1.5 text-xs text-accent">
+                        <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                        Synthesizing to Journal…
+                      </p>
+                    )}
                     {/* A branch and its parent are near-identical threads until
                         one of them says which is which. Nothing is drawn when
                         the parent has been deleted — a dangling id is ordinary,
@@ -500,7 +506,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                               <button
                                 type="button"
                                 className={MENU_ITEM_CLASS}
-                                disabled={synthesizingConversationId === conversation.id}
+                                disabled={isSynthesizing}
                                 onClick={() => {
                                   setOpenActionsId(null);
                                   void synthesizeConversationToJournal(conversation.id, conversation.title);

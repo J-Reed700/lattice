@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createJournal } from '@/features/journal/api/queries';
-import { buildSynthesisBlock } from '@/features/journal/model/synthesisTargets';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { VaultAPI } from '@/lib/api';
 import type { ApiResult } from '@/types';
@@ -55,20 +54,5 @@ export function useSidebarBookmarksQuery(query: string, spaceId: string | null, 
       const bookmarks = Array.isArray(response) ? [] : response.bookmarks;
       return spaceId ? bookmarks.filter(bookmark => bookmark.spaceId === spaceId) : bookmarks;
     },
-  });
-}
-export function useSynthesizeConversationMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, title }: { id: string; title: string }) => {
-      const result = value(await VaultAPI.synthesizeJournalEntries({ conversationIds: [id], scope: 'conversation', maxEntries: 1 }));
-      return value(await VaultAPI.quickCapture(buildSynthesisBlock({
-        heading: title,
-        entryCount: result.entryCount,
-        synthesis: result.synthesis,
-        citations: result.citations,
-      }), result.sources ?? [], result.conversationIds));
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: ['workspace-notes'] }),
   });
 }

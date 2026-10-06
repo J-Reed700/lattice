@@ -3352,9 +3352,9 @@ async listJournalConversations(query: ListJournalConversationsQueryDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
+async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto, onProgress: TAURI_CHANNEL<SynthesisProgressDto>) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("synthesize_journal_entries", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("synthesize_journal_entries", { request, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7927,6 +7927,11 @@ syncOnStartup: boolean }
  * "note"; `id` is that source's own id.
  */
 export type SynthesisCitationDto = { kind: string; id: string; title: string }
+/**
+ * Actual synthesis work boundaries, rather than an estimated completion percent.
+ */
+export type SynthesisProgressDto = { stage: SynthesisStage; entryCount: number | null; chunkIndex: number | null; chunkCount: number | null }
+export type SynthesisStage = "gathering" | "reading" | "writing"
 export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
 /**

@@ -525,10 +525,17 @@ pub async fn list_journal_conversations(
 #[specta::specta]
 pub async fn synthesize_journal_entries(
     request: SynthesizeJournalEntriesRequestDto,
+    on_progress: tauri::ipc::Channel<super::workspace_dto::SynthesisProgressDto>,
     container: State<'_, Container>,
     window: tauri::Window,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    conversation_impl::synthesize_journal_entries_impl(request, container.inner(), window).await
+    conversation_impl::synthesize_journal_entries_impl(
+        request,
+        container.inner(),
+        window,
+        on_progress,
+    )
+    .await
 }
 
 /// Delete every message after `message_id` (and it too when `inclusive`),

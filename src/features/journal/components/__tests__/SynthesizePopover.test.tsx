@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SynthesizePopover } from '@/features/journal/components/SynthesizePopover';
+import { useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
 
 async function openPopover(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /synthesize…/i }));
@@ -12,6 +13,7 @@ async function openPopover(user: ReturnType<typeof userEvent.setup>) {
 describe('SynthesizePopover', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSynthesisStore.setState({ job: null, minimized: false });
   });
 
   it('shows four scopes and defaults to "current" without a conversation', async () => {
@@ -111,5 +113,30 @@ describe('SynthesizePopover', () => {
     await user.click(screen.getByRole('button', { name: 'Synthesize' }));
 
     await waitFor(() => expect(onSynthesize).toHaveBeenCalledWith('week'));
+  });
+
+  it('shows progress instead of starting a second synthesis after a remount', async () => {
+    const user = userEvent.setup();
+    const onSynthesize = vi.fn();
+    useSynthesisStore.setState({ minimized: true, job: {
+      id: 'running', title: 'Research', conversationIds: ['entry_1'], status: 'running', stage: 'writing', startedAt: Date.now(),
+    } });
+    render(<SynthesizePopover selectedEntryId="entry_1" pinnedCount={1} deckCount={2} onSynthesize={onSynthesize} />);
+    await user.click(screen.getByRole('button', { name: 'Synthesizing…' }));
+    expect(useSynthesisStore.getState().minimized).toBe(false);
+    expect(onSynthesize).not.toHaveBeenCalled();
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  });
+
+  it('recovers the submit button after an unexpected rejection', async () => {
+    const user = userEvent.setup();
+    const onSynthesize = vi.fn().mockRejectedValueOnce(new Error('Model unavailable')).mockResolvedValueOnce(true);
+    render(<SynthesizePopover selectedEntryId="entry_1" pinnedCount={1} deckCount={2} onSynthesize={onSynthesize} />);
+    await openPopover(user);
+    await user.click(screen.getByRole('button', { name: 'Synthesize' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Model unavailable');
+    expect(screen.getByRole('button', { name: 'Synthesize' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Synthesize' }));
+    expect(onSynthesize).toHaveBeenCalledTimes(2);
   });
 });

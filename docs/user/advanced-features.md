@@ -66,6 +66,7 @@ Other chat controls:
 - **Verify responses** (**Settings > AI > Prompts**) marks verified and unverified claims in assistant messages.
 - **Remember requirements in a conversation** (**Settings > AI > Chat**, on by default) records the constraints and decisions you state, each with its source quotation, and keeps them in later prompts. **Show conversation memory** in the command palette (⌘K) lists them. See the [FAQ](faq.md#does-a-chat-remember-what-i-told-it-earlier) for what it does and doesn't promise.
 - **The conversation menu** offers **Copy as Markdown**, **Save to journal**, **Synthesize to journal**, **Create flashcards** and **Continue in new chat**. Continue in new chat starts a fresh conversation from a summary.
+- **Synthesis progress** shows the current stage and elapsed time. Choose **Keep working** to minimize it; it stays available when you switch screens. When saving finishes, choose **Open journal page**. If saving fails, **Retry saving** reuses the finished synthesis.
 - **Spaces** scope a conversation. A conversation in a space searches only the documents in that space.
 
 ---

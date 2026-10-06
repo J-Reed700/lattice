@@ -213,6 +213,136 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+for (const width of [1440, 620]) {
+  test(`conversation synthesis shows real progress and survives navigation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const settings = makeAppSettings();
+    settings.llm.provider = 'auto';
+    settings.llm.llamaCpp.model = 'qwen-test.gguf';
+    await page.addInitScript(settings => {
+      const native = (window as unknown as { __TAURI_INTERNALS__: { transformCallback: (fn: (...args: unknown[]) => unknown) => number } }).__TAURI_INTERNALS__;
+      const callbacks = new Map<number, (...args: unknown[]) => unknown>();
+      const transform = native.transformCallback.bind(native);
+      native.transformCallback = fn => { const id = transform(fn); callbacks.set(id, fn); return id; };
+      const stamp = new Date().toISOString();
+      const conversation = { id: 'synthesis-chat', title: 'Forest research', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 2, totalTokens: 50 };
+      const messages = [
+        { id: 'question', conversationId: conversation.id, role: 'user', content: 'What did we learn about the forest?', tokens: 10, status: 'completed', createdAt: stamp },
+        { id: 'answer', conversationId: conversation.id, role: 'assistant', content: 'The canopy provides shade and helps retain moisture.', tokens: 40, status: 'completed', createdAt: stamp },
+      ];
+      let note = { id: 'synthesis-note', title: 'Forest notes', journalId: 'research-journal', content: '', revision: 0, linkedDocumentIds: [], linkedConversationIds: [] as string[], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: stamp, updatedAt: stamp };
+      let captureAttempts = 0;
+      let synthesisCalls = 0;
+      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+        if (command === 'plugin:settings|get_settings') return settings;
+        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations' || command === 'plugin:conversation|list_journal_conversations') return { conversations: [conversation], total: 1 };
+        if (command === 'plugin:conversation|get_conversation') return { conversation };
+        if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: 2 };
+        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+        if (command === 'plugin:conversation|list_journals') return [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }];
+        if (command === 'plugin:dailynotes|list_workspace_notes') return { notes: [note] };
+        if (command === 'plugin:dailynotes|update_workspace_note') {
+          const next = (args as { note: typeof note }).note;
+          if (!next || next.id !== note.id || next.revision !== note.revision) throw new Error('Conflicting page write');
+          note = { ...next, revision: next.revision + 1 };
+          document.documentElement.dataset.synthesisSavedPage = note.id;
+          return note;
+        }
+        if (command === 'plugin:conversation|synthesize_journal_entries') {
+          synthesisCalls += 1;
+          document.documentElement.dataset.synthesisCalls = String(synthesisCalls);
+          const { onProgress } = args as { onProgress: { id: number } };
+          let index = 0;
+          const report = (stage: string, chunkIndex: number | null) => callbacks.get(onProgress.id)?.({ index: index++, message: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
+          report('gathering', null);
+          window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
+          window.addEventListener('test:synthesis-second', () => report('reading', 2), { once: true });
+          window.addEventListener('test:synthesis-writing', () => report('writing', null), { once: true });
+          await new Promise<void>(resolve => window.addEventListener('test:synthesis-finish', () => resolve(), { once: true }));
+          return { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] };
+        }
+        if (command === 'plugin:dailynotes|quick_capture') {
+          captureAttempts += 1;
+          if (captureAttempts === 1) throw new Error('The journal could not be saved.');
+          await new Promise<void>(resolve => window.addEventListener('test:synthesis-save', () => resolve(), { once: true }));
+          const capture = args as { content: string; conversationIds: string[] };
+          note = { ...note, content: capture.content, linkedConversationIds: capture.conversationIds, revision: note.revision + 1 };
+          return { noteId: note.id, noteTitle: note.title, created: false };
+        }
+        if (['plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:references|list_passage_references', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+        throw new Error(`Unsupported synthesis fixture command: ${command}`);
+      };
+    }, settings);
+    const errors: Error[] = [];
+    page.on('pageerror', error => errors.push(error));
+    await page.goto('/chat?conversationId=synthesis-chat');
+    const composer = page.getByRole('textbox', { name: 'Message composer' });
+    await composer.fill('Keep my next question');
+    const showSidebar = page.getByRole('button', { name: 'Show sidebar' });
+    if (await showSidebar.isVisible()) await showSidebar.click();
+    const row = page.getByRole('button', { name: 'Select conversation: Forest research', exact: true });
+    await row.hover();
+    await row.getByRole('button', { name: 'Actions for Forest research' }).click();
+    await page.getByRole('button', { name: 'Synthesize to journal', exact: true }).click();
+    const progress = page.getByRole('complementary', { name: 'Conversation synthesis' });
+    await expect(progress.getByRole('heading', { name: 'Synthesizing to Journal' })).toBeVisible();
+    await expect(row.getByText('Synthesizing to Journal…')).toBeVisible();
+    await row.hover();
+    await row.getByRole('button', { name: 'Actions for Forest research' }).click();
+    await expect(page.getByRole('button', { name: 'Synthesize to journal', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-reading')));
+    await expect(progress.getByText('Reviewing part 1 of 2', { exact: true })).toBeVisible();
+    await page.screenshot({ path: `/tmp/lattice-synthesis-${width}.png`, animations: 'disabled' });
+    await progress.getByRole('button', { name: 'Keep working' }).click();
+    await expect(composer).toHaveValue('Keep my next question');
+    // Route changes keep the same running operation and status panel.
+    await page.keyboard.press('ControlOrMeta+3');
+    await expect(page).toHaveURL(/\/journals/);
+    await progress.getByRole('button', { name: /Show synthesis progress/ }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-second')));
+    await expect(progress.getByText('Reviewing part 2 of 2', { exact: true })).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-writing')));
+    await expect(progress.getByText('Writing your synthesis', { exact: true })).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-finish')));
+    await expect(progress.getByRole('heading', { name: 'Synthesis needs saving' })).toBeVisible();
+    await progress.getByRole('button', { name: 'Retry saving' }).click();
+    await expect(progress.getByText('Saving to Journal', { exact: true })).toBeVisible();
+    await expect(progress.getByRole('button', { name: 'Open journal page' })).toHaveCount(0);
+    expect(await page.locator('html').getAttribute('data-synthesis-calls')).toBe('1');
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-save')));
+    await expect(progress.getByRole('heading', { name: 'Synthesis ready' })).toBeVisible();
+    await progress.getByRole('button', { name: 'Open journal page' }).click();
+    await expect(progress).toHaveCount(0);
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    // Journal scopes use the same progress and save to their original page,
+    // even after their editor unmounts.
+    const showContext = page.getByRole('button', { name: 'Show conversation and highlights' });
+    if (await showContext.isVisible()) await showContext.click();
+    await page.getByRole('button', { name: 'Synthesize…', exact: true }).click();
+    await page.getByRole('radio', { name: /Recent entries/ }).check();
+    await page.getByRole('button', { name: 'Synthesize', exact: true }).click();
+    await expect(progress.getByRole('heading', { name: 'Synthesizing to Journal' })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Synthesizing…', exact: true })).toBeVisible();
+    await progress.getByRole('button', { name: 'Keep working' }).click();
+    await page.keyboard.press('ControlOrMeta+4');
+    await expect(page).toHaveURL(/\/chat/);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('test:synthesis-writing'));
+      window.dispatchEvent(new Event('test:synthesis-finish'));
+    });
+    await progress.getByRole('button', { name: 'Show synthesis progress: Synthesis ready' }).click();
+    await expect(page).toHaveURL(/\/chat/);
+    expect(await page.locator('html').getAttribute('data-synthesis-saved-page')).toBe('synthesis-note');
+    await progress.getByRole('button', { name: 'Open journal page' }).click();
+    await expect(page.getByText('The second synthesis adds a comparison of tree species.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
 test('renders the application shell and navigates to settings', async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on('pageerror', (error) => pageErrors.push(error));

@@ -269,6 +269,13 @@ between them.
 - **Ask in Chat, filed under this journal** starts a conversation linked to the
   journal.
 
+Synthesis can take a few minutes. Its progress panel shows the current stage,
+including each part of a longer review, and the elapsed time. **Keep working**
+minimizes the panel while you use another screen. When it finishes, choose
+**Open journal page**. The result stays on the page chosen when you started.
+If saving fails, **Retry saving** keeps the finished synthesis without running
+the model again.
+
 To keep plain Markdown copies of your notes outside Lattice, turn on
 **Mirror notes to disk** in **Settings > Vault**. Notes go to `~/Lattice` unless
 you choose another folder. Turn on **Watch for external edits** to bring

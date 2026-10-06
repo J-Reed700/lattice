@@ -1,3 +1,5 @@
+import { Channel } from '@tauri-apps/api/core';
+
 import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
@@ -592,11 +594,13 @@ export const chatApi = {
    */
   synthesizeJournalEntries: async (
     request: SynthesizeJournalEntriesRequest,
+    onProgress?: (progress: Wire.SynthesisProgressDto) => void,
   ): Promise<ApiResult<SynthesizeJournalEntriesResponse>> =>
     apiCall<Wire.SynthesizeJournalEntriesResponseDto>(
       'synthesize_journal_entries',
       {
         request,
+        onProgress: new Channel<Wire.SynthesisProgressDto>(onProgress),
       },
     ),
 

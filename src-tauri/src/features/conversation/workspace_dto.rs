@@ -74,6 +74,24 @@ pub struct SynthesizeJournalEntriesRequestDto {
     pub max_entries: Option<usize>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SynthesisStage {
+    Gathering,
+    Reading,
+    Writing,
+}
+
+/// Actual synthesis work boundaries, rather than an estimated completion percent.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesisProgressDto {
+    pub stage: SynthesisStage,
+    pub entry_count: Option<usize>,
+    pub chunk_index: Option<usize>,
+    pub chunk_count: Option<usize>,
+}
+
 /// One source a synthesis drew on. `kind` is "conversation", "reference" or
 /// "note"; `id` is that source's own id.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
