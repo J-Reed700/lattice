@@ -39,6 +39,30 @@ function setup() {
 
 beforeEach(() => vi.resetAllMocks());
 
+it('shows the saved preparation job after acknowledgement while the lesson remains an outline', async () => {
+  const queued: LearningPlanDto = { ...plan, jobs: [{
+    id: 'job', programId: 'program', operationId: 'prepare', kind: 'lesson_preparation',
+    status: 'pending', baseRevisionNumber: 9, payloadSha256: 'fixture', resultId: null, retryOfJobId: null,
+    progressCompleted: 0, progressTotal: 1, progressMessage: 'Request saved',
+    createdAt: 1, startedAt: null, finishedAt: null, error: null, activity: null,
+  }] };
+  vi.mocked(VaultAPI.getLearningPlan).mockResolvedValue(ok(plan));
+  vi.mocked(VaultAPI.prepareLearningLesson).mockImplementation(async () => {
+    vi.mocked(VaultAPI.getLearningPlan).mockResolvedValue(ok(queued));
+    return ok(program);
+  });
+  const { client, wrapper } = setup();
+  const { result } = renderHook(() => ({
+    program: useLearningProgram('program'), plan: useLearningPlan('program'), prepare: usePrepareLearningLesson(),
+  }), { wrapper });
+  await act(async () => { await result.current.prepare.mutateAsync({ programId: 'program', lessonId: 'lesson', expectedRevision: 9 }); });
+  await waitFor(() => expect(result.current.plan.data?.jobs[0]?.status).toBe('pending'));
+  expect(result.current.prepare.isPending).toBe(false);
+  expect(result.current.program.data?.modules[0]?.lessons[0]?.preparation).toBe('outline');
+  expect(client.getQueryState(LEARNING_PROGRAMS_KEY)?.isInvalidated).toBe(true);
+  client.clear();
+});
+
 it('refreshes the mounted lesson screen before preparing work after curriculum acceptance', async () => {
   const next = structuredClone(program);
   next.summary.revision = 10;
@@ -57,6 +81,24 @@ it('refreshes the mounted lesson screen before preparing work after curriculum a
   expect(client.getQueryState(LEARNING_PROGRAMS_KEY)?.isInvalidated).toBe(true);
   await act(async () => { await result.current.prepare.mutateAsync({ programId: 'program', lessonId: 'lesson', expectedRevision: result.current.program.data!.summary.revision }); });
   expect(VaultAPI.prepareLearningLesson).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 10 }));
+  client.clear();
+});
+
+it('refreshes published lesson content without depending on the visible progress panel', async () => {
+  const ready = structuredClone(program);
+  ready.summary.revision = 10;
+  ready.modules[0]!.lessons[0]!.preparation = 'ready';
+  vi.mocked(VaultAPI.getLearningPlan).mockResolvedValue(ok(plan));
+  vi.mocked(VaultAPI.getLearningProgram).mockResolvedValue(ok(ready));
+  const { client, wrapper } = setup();
+  const { result } = renderHook(() => ({ program: useLearningProgram('program'), plan: useLearningPlan('program') }), { wrapper });
+  await waitFor(() => expect(result.current.plan.isFetching).toBe(false));
+  expect(result.current.program.data?.modules[0]?.lessons[0]?.preparation).toBe('outline');
+  vi.mocked(VaultAPI.getLearningPlan).mockResolvedValue(ok({ ...plan, programRevision: 10 }));
+  await act(async () => { await result.current.plan.refetch(); });
+  await waitFor(() => expect(result.current.program.data?.modules[0]?.lessons[0]?.preparation).toBe('ready'));
+  expect(result.current.program.data?.summary.revision).toBe(10);
+  expect(client.getQueryState(LEARNING_PROGRAMS_KEY)?.isInvalidated).toBe(true);
   client.clear();
 });
 

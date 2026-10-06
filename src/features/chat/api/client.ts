@@ -1,3 +1,5 @@
+import { Channel } from '@tauri-apps/api/core';
+
 import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
@@ -42,6 +44,15 @@ import type {
 } from '@/types';
 
 export const chatApi = {
+  createConversationTangent: (request: Wire.CreateTangentRequestDto): Promise<ApiResult<Wire.ConversationTangentDto>> =>
+    apiCall<Wire.ConversationTangentDto>('create_conversation_tangent', { request }),
+
+  listConversationTangents: (conversationId: string): Promise<ApiResult<Wire.ConversationTangentDto[]>> =>
+    apiCall<Wire.ConversationTangentDto[]>('list_conversation_tangents', { request: { conversationId } }),
+
+  promoteConversationTangent: (conversationId: string): Promise<ApiResult<Wire.ConversationDto>> =>
+    apiCall<Wire.ConversationDto>('promote_conversation_tangent', { request: { conversationId } }),
+
   /**
    * Creates a new conversation for multi-turn Q&A with context.
    * Initializes a conversation thread that maintains context across multiple
@@ -583,11 +594,13 @@ export const chatApi = {
    */
   synthesizeJournalEntries: async (
     request: SynthesizeJournalEntriesRequest,
+    onProgress?: (progress: Wire.SynthesisProgressDto) => void,
   ): Promise<ApiResult<SynthesizeJournalEntriesResponse>> =>
     apiCall<Wire.SynthesizeJournalEntriesResponseDto>(
       'synthesize_journal_entries',
       {
         request,
+        onProgress: new Channel<Wire.SynthesisProgressDto>(onProgress),
       },
     ),
 

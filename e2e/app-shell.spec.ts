@@ -5,6 +5,139 @@ import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
+for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'], [620, 'reply']] as const) {
+  test(`chat tangents via ${entry} preserve the parent, reopen after reload, and promote at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const settings = makeAppSettings();
+    settings.llm.provider = 'llamacpp';
+    settings.llm.llamaCpp.model = 'qwen-test.gguf';
+    await page.addInitScript(({ settings, entry }) => {
+      localStorage.setItem('chat.sidebar.collapsed', '1');
+      const stamp = '2026-10-06T00:00:00Z';
+      const parent = { id: 'tangent-parent', title: 'Main discussion', modelName: '__llamacpp_server__', createdAt: stamp, updatedAt: stamp, messageCount: 2, totalTokens: 50, spaceId: 'space_general', isArchived: false };
+      const sourceMessages = [
+        { id: 'source-question', conversationId: parent.id, role: 'user', content: 'What is a tangent?', tokens: 10, status: 'completed', createdAt: stamp },
+        { id: 'source-answer', conversationId: parent.id, role: 'assistant', content: 'A tangent explores one idea without changing the main conversation.', tokens: 40, status: 'completed', createdAt: stamp },
+      ];
+      type Message = typeof sourceMessages[number];
+      type Tangent = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string; contextMessageCount: number };
+      type State = { tangents: Tangent[]; messages: Message[]; promoted: boolean; failPromotion: boolean };
+      const saved = localStorage.getItem('test:tangents');
+      const state: State = saved ? JSON.parse(saved) : { tangents: [], messages: [], promoted: false, failPromotion: true };
+      let cancelPending: ((_reason: unknown) => void) | null = null;
+      const persist = () => localStorage.setItem('test:tangents', JSON.stringify(state));
+      const expectedPassage = entry === 'reply' ? sourceMessages[1].content : 'explores one idea';
+      const conversation = () => ({ ...parent, id: 'tangent-1', title: expectedPassage, messageCount: state.messages.length, tangentParentId: state.promoted ? null : parent.id });
+      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+        const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
+        if (command === 'plugin:settings|get_settings') return settings;
+        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 };
+        if (command === 'plugin:conversation|get_conversation') return { conversation: request?.conversationId === parent.id ? parent : conversation() };
+        if (command === 'plugin:conversation|get_conversation_messages') return { messages: request?.conversationId === parent.id ? sourceMessages : state.messages, total: request?.conversationId === parent.id ? 2 : state.messages.length };
+        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+        if (command === 'plugin:conversation|list_conversation_tangents') return state.tangents;
+        if (command === 'plugin:conversation|create_conversation_tangent') {
+          if (request?.conversationId !== parent.id || request.messageId !== 'source-answer' || request.selectedText !== expectedPassage) throw new Error('Tangent lost the exact source selection');
+          const tangent: Tangent = { conversationId: 'tangent-1', parentConversationId: parent.id, sourceConversationId: parent.id, sourceMessageId: request.messageId, selectedText: request.selectedText, title: request.selectedText, createdAt: stamp, updatedAt: stamp, contextMessageCount: 2 };
+          state.tangents.push(tangent);
+          state.messages = sourceMessages.map(message => ({ ...message, id: `copy-${message.id}`, conversationId: tangent.conversationId }));
+          persist();
+          return tangent;
+        }
+        if (command === 'plugin:conversation|chat_with_conversation') {
+          const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
+          if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
+          if (turn.cancelOnly) {
+            cancelPending?.({ code: 'INVALID_STATE', message: 'Generation cancelled' });
+            cancelPending = null;
+            return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 2 };
+          }
+          if (turn.message === 'Cancel this tangent request') return new Promise((_resolve, reject) => { cancelPending = reject; });
+          state.messages.push({ ...sourceMessages[0], id: 'tangent-question', conversationId: turn.conversationId, content: turn.message },
+            { ...sourceMessages[1], id: 'tangent-answer', conversationId: turn.conversationId, content: 'You can explore that idea on its own.' });
+          persist();
+          return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 4 };
+        }
+        if (command === 'plugin:conversation|promote_conversation_tangent') {
+          if (state.failPromotion) { state.failPromotion = false; persist(); throw new Error('Promotion temporarily unavailable'); }
+          state.promoted = true; state.tangents = []; persist(); return conversation();
+        }
+        if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+        throw new Error(`Unsupported tangent fixture command: ${command}`);
+      };
+    }, { settings, entry });
+    const errors: Error[] = [];
+    page.on('pageerror', error => errors.push(error));
+    await page.goto('/chat?conversationId=tangent-parent');
+    const composer = page.getByRole('textbox', { name: 'Message composer' });
+    await composer.fill('Keep my main draft');
+    const answer = page.locator('#message-source-answer .tiptap-viewer p');
+    await expect(answer).toBeVisible();
+    const replyAction = page.locator('#message-source-answer').getByRole('button', { name: 'Start a tangent from this reply' });
+    await expect(replyAction).toBeVisible();
+    if (entry === 'reply') {
+      await replyAction.focus();
+      await replyAction.press('Enter');
+    } else {
+      await answer.evaluate(element => {
+        const text = element.firstChild!;
+        const start = text.textContent!.indexOf('explores one idea');
+        const range = document.createRange(); range.setStart(text, start); range.setEnd(text, start + 'explores one idea'.length);
+        window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+      });
+      if (entry === 'menu') {
+        await answer.dispatchEvent('contextmenu', { clientX: 300, clientY: 200 });
+        await page.getByRole('menuitem', { name: 'Ask in a tangent' }).click();
+      } else {
+        const action = page.getByRole('toolbar', { name: 'Selected passage' }).getByRole('button', { name: 'Ask in a tangent' });
+        await expect(action).toBeVisible();
+        await page.screenshot({ path: '/tmp/lattice-tangent-selection.png', animations: 'disabled' });
+        await action.click();
+      }
+    }
+    const panel = page.getByRole('complementary', { name: 'Tangents', exact: true });
+    const expectedPassage = entry === 'reply' ? 'A tangent explores one idea without changing the main conversation.' : 'explores one idea';
+    await expect(panel.getByRole('blockquote')).toHaveText(expectedPassage);
+    await expect(composer).toHaveValue('Keep my main draft');
+    const tangentComposer = panel.getByRole('textbox', { name: 'Ask in this tangent' });
+    await tangentComposer.fill('Cancel this tangent request');
+    await tangentComposer.press('Enter');
+    await panel.getByRole('button', { name: 'Stop tangent response' }).click();
+    await expect(tangentComposer).toHaveValue('Cancel this tangent request');
+    await expect(composer).toHaveValue('Keep my main draft');
+    await tangentComposer.fill('What does that mean?');
+    await tangentComposer.press('Enter');
+    await expect(panel.getByText('You can explore that idea on its own.')).toBeVisible();
+    await tangentComposer.fill('Keep this tangent draft');
+    await panel.getByRole('button', { name: 'Close tangents' }).click();
+    await expect(composer).toHaveValue('Keep my main draft');
+    await page.getByRole('button', { name: 'Tangents · 1', exact: true }).click();
+    await expect(tangentComposer).toHaveValue('Keep this tangent draft');
+    await page.screenshot({ path: `/tmp/lattice-tangents-${width}-${entry}.png`, animations: 'disabled' });
+    if (width === 1440) {
+      await page.goto('/chat?conversationId=tangent-1&messageId=tangent-answer');
+    } else {
+      await page.goto('/chat?conversationId=tangent-parent');
+      await page.getByRole('button', { name: 'Tangents · 1', exact: true }).click();
+      await panel.getByRole('button', { name: `${expectedPassage} ${expectedPassage}` }).click();
+    }
+    await expect(panel.getByText('You can explore that idea on its own.')).toBeVisible();
+    await panel.getByRole('button', { name: 'Make conversation' }).click();
+    await expect(page.getByText("Couldn't make this a conversation")).toBeVisible();
+    await expect(panel).toBeVisible();
+    await panel.getByRole('button', { name: 'Make conversation' }).click();
+    await expect(panel).not.toBeVisible();
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('test:tangents')!));
+    expect(stored.promoted).toBe(true);
+    expect(stored.messages).toHaveLength(4);
+    await page.getByRole('button', { name: 'Show sidebar' }).click();
+    await expect(page.getByText(expectedPassage, { exact: true }).first()).toBeVisible();
+    await expect(page.locator('#message-source-answer')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
@@ -79,6 +212,136 @@ test.beforeEach(async ({ page }) => {
     });
   });
 });
+
+for (const width of [1440, 620]) {
+  test(`conversation synthesis shows real progress and survives navigation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const settings = makeAppSettings();
+    settings.llm.provider = 'auto';
+    settings.llm.llamaCpp.model = 'qwen-test.gguf';
+    await page.addInitScript(settings => {
+      const native = (window as unknown as { __TAURI_INTERNALS__: { transformCallback: (fn: (...args: unknown[]) => unknown) => number } }).__TAURI_INTERNALS__;
+      const callbacks = new Map<number, (...args: unknown[]) => unknown>();
+      const transform = native.transformCallback.bind(native);
+      native.transformCallback = fn => { const id = transform(fn); callbacks.set(id, fn); return id; };
+      const stamp = new Date().toISOString();
+      const conversation = { id: 'synthesis-chat', title: 'Forest research', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 2, totalTokens: 50 };
+      const messages = [
+        { id: 'question', conversationId: conversation.id, role: 'user', content: 'What did we learn about the forest?', tokens: 10, status: 'completed', createdAt: stamp },
+        { id: 'answer', conversationId: conversation.id, role: 'assistant', content: 'The canopy provides shade and helps retain moisture.', tokens: 40, status: 'completed', createdAt: stamp },
+      ];
+      let note = { id: 'synthesis-note', title: 'Forest notes', journalId: 'research-journal', content: '', revision: 0, linkedDocumentIds: [], linkedConversationIds: [] as string[], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: stamp, updatedAt: stamp };
+      let captureAttempts = 0;
+      let synthesisCalls = 0;
+      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+        if (command === 'plugin:settings|get_settings') return settings;
+        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations' || command === 'plugin:conversation|list_journal_conversations') return { conversations: [conversation], total: 1 };
+        if (command === 'plugin:conversation|get_conversation') return { conversation };
+        if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: 2 };
+        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+        if (command === 'plugin:conversation|list_journals') return [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }];
+        if (command === 'plugin:dailynotes|list_workspace_notes') return { notes: [note] };
+        if (command === 'plugin:dailynotes|update_workspace_note') {
+          const next = (args as { note: typeof note }).note;
+          if (!next || next.id !== note.id || next.revision !== note.revision) throw new Error('Conflicting page write');
+          note = { ...next, revision: next.revision + 1 };
+          document.documentElement.dataset.synthesisSavedPage = note.id;
+          return note;
+        }
+        if (command === 'plugin:conversation|synthesize_journal_entries') {
+          synthesisCalls += 1;
+          document.documentElement.dataset.synthesisCalls = String(synthesisCalls);
+          const { onProgress } = args as { onProgress: { id: number } };
+          let index = 0;
+          const report = (stage: string, chunkIndex: number | null) => callbacks.get(onProgress.id)?.({ index: index++, message: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
+          report('gathering', null);
+          window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
+          window.addEventListener('test:synthesis-second', () => report('reading', 2), { once: true });
+          window.addEventListener('test:synthesis-writing', () => report('writing', null), { once: true });
+          await new Promise<void>(resolve => window.addEventListener('test:synthesis-finish', () => resolve(), { once: true }));
+          return { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] };
+        }
+        if (command === 'plugin:dailynotes|quick_capture') {
+          captureAttempts += 1;
+          if (captureAttempts === 1) throw new Error('The journal could not be saved.');
+          await new Promise<void>(resolve => window.addEventListener('test:synthesis-save', () => resolve(), { once: true }));
+          const capture = args as { content: string; conversationIds: string[] };
+          note = { ...note, content: capture.content, linkedConversationIds: capture.conversationIds, revision: note.revision + 1 };
+          return { noteId: note.id, noteTitle: note.title, created: false };
+        }
+        if (['plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:references|list_passage_references', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+        throw new Error(`Unsupported synthesis fixture command: ${command}`);
+      };
+    }, settings);
+    const errors: Error[] = [];
+    page.on('pageerror', error => errors.push(error));
+    await page.goto('/chat?conversationId=synthesis-chat');
+    const composer = page.getByRole('textbox', { name: 'Message composer' });
+    await composer.fill('Keep my next question');
+    const showSidebar = page.getByRole('button', { name: 'Show sidebar' });
+    if (await showSidebar.isVisible()) await showSidebar.click();
+    const row = page.getByRole('button', { name: 'Select conversation: Forest research', exact: true });
+    await row.hover();
+    await row.getByRole('button', { name: 'Actions for Forest research' }).click();
+    await page.getByRole('button', { name: 'Synthesize to journal', exact: true }).click();
+    const progress = page.getByRole('complementary', { name: 'Conversation synthesis' });
+    await expect(progress.getByRole('heading', { name: 'Synthesizing to Journal' })).toBeVisible();
+    await expect(row.getByText('Synthesizing to Journal…')).toBeVisible();
+    await row.hover();
+    await row.getByRole('button', { name: 'Actions for Forest research' }).click();
+    await expect(page.getByRole('button', { name: 'Synthesize to journal', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-reading')));
+    await expect(progress.getByText('Reviewing part 1 of 2', { exact: true })).toBeVisible();
+    await page.screenshot({ path: `/tmp/lattice-synthesis-${width}.png`, animations: 'disabled' });
+    await progress.getByRole('button', { name: 'Keep working' }).click();
+    await expect(composer).toHaveValue('Keep my next question');
+    // Route changes keep the same running operation and status panel.
+    await page.keyboard.press('ControlOrMeta+3');
+    await expect(page).toHaveURL(/\/journals/);
+    await progress.getByRole('button', { name: /Show synthesis progress/ }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-second')));
+    await expect(progress.getByText('Reviewing part 2 of 2', { exact: true })).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-writing')));
+    await expect(progress.getByText('Writing your synthesis', { exact: true })).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-finish')));
+    await expect(progress.getByRole('heading', { name: 'Synthesis needs saving' })).toBeVisible();
+    await progress.getByRole('button', { name: 'Retry saving' }).click();
+    await expect(progress.getByText('Saving to Journal', { exact: true })).toBeVisible();
+    await expect(progress.getByRole('button', { name: 'Open journal page' })).toHaveCount(0);
+    expect(await page.locator('html').getAttribute('data-synthesis-calls')).toBe('1');
+    await page.evaluate(() => window.dispatchEvent(new Event('test:synthesis-save')));
+    await expect(progress.getByRole('heading', { name: 'Synthesis ready' })).toBeVisible();
+    await progress.getByRole('button', { name: 'Open journal page' }).click();
+    await expect(progress).toHaveCount(0);
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    // Journal scopes use the same progress and save to their original page,
+    // even after their editor unmounts.
+    const showContext = page.getByRole('button', { name: 'Show conversation and highlights' });
+    if (await showContext.isVisible()) await showContext.click();
+    await page.getByRole('button', { name: 'Synthesize…', exact: true }).click();
+    await page.getByRole('radio', { name: /Recent entries/ }).check();
+    await page.getByRole('button', { name: 'Synthesize', exact: true }).click();
+    await expect(progress.getByRole('heading', { name: 'Synthesizing to Journal' })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Synthesizing…', exact: true })).toBeVisible();
+    await progress.getByRole('button', { name: 'Keep working' }).click();
+    await page.keyboard.press('ControlOrMeta+4');
+    await expect(page).toHaveURL(/\/chat/);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('test:synthesis-writing'));
+      window.dispatchEvent(new Event('test:synthesis-finish'));
+    });
+    await progress.getByRole('button', { name: 'Show synthesis progress: Synthesis ready' }).click();
+    await expect(page).toHaveURL(/\/chat/);
+    expect(await page.locator('html').getAttribute('data-synthesis-saved-page')).toBe('synthesis-note');
+    await progress.getByRole('button', { name: 'Open journal page' }).click();
+    await expect(page.getByText('The second synthesis adds a comparison of tree species.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
 
 test('renders the application shell and navigates to settings', async ({ page }) => {
   const pageErrors: Error[] = [];
@@ -433,7 +696,7 @@ test('conversation outline navigates long virtualized replies and tracks the rea
       if (command === 'plugin:conversation|get_conversation') return { conversation };
       if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: messages.length };
       if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
       throw new Error(`Unsupported outline fixture command: ${command}`);
     };
   }, makeAppSettings());
@@ -665,6 +928,18 @@ test('catalog offers category previews, bounded pages, and honest search results
       if (command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads') return [];
       if (command === 'plugin:model|is_model_already_downloaded') return false;
       if (command === 'plugin:model|get_all_recommended_models') return models;
+      if (command === 'plugin:model|get_model_variants') {
+        if (localStorage.getItem('test:catalog-versions-error')) throw new Error('Repository temporarily unavailable');
+        const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
+        return ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'BF16'].map((quant, index) => ({
+          ...base, id: `${base.id}-${quant}`, default_filename: `model-${quant}.gguf`,
+          supported_quantizations: [quant], size_gb: 4 + index * 3, minimum_ram_gb: (4 + index * 3) * 1.5,
+        }));
+      }
+      if (command === 'plugin:model|download_model') {
+        localStorage.setItem('test:catalog-downloaded-id', (args as { modelId: string }).modelId);
+        return { status: 'already_downloaded', download_id: '' };
+      }
       if (command === 'plugin:model|detect_system_capabilities') return { total_ram_gb: 32, available_ram_gb: 24, cpu_cores: 10, cpu_architecture: 'ARM64', gpu_type: 'AppleSilicon', gpu_acceleration: 'Metal', vram_gb: null, available_disk_gb: 500, os_type: 'macOS' };
       if (command === 'plugin:model|get_model_catalog_stats') return { total_entries: 36, expired_entries: 0, cache_size_bytes: 12000 };
       if (command === 'plugin:model|search_model_catalog') {
@@ -690,12 +965,37 @@ test('catalog offers category previews, bounded pages, and honest search results
   await expect(page.getByRole('button', { name: 'Download', exact: true })).toHaveCount(8);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
-  await page.getByRole('button', { name: /Phi 4 Mini · Q8_0/ }).click();
+  await page.evaluate(() => localStorage.setItem('test:catalog-versions-error', 'true'));
+  await page.getByRole('button', { name: 'Versions of Phi 4 Mini · Q8_0', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Phi 4 Mini · Q8_0', exact: true })).toBeVisible();
+  await expect(page.getByText(/Couldn’t load versions/)).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem('test:catalog-versions-error'));
+  await page.getByRole('button', { name: 'Retry versions' }).click();
+  const versions = page.getByRole('region', { name: 'Available versions' });
+  await expect(versions.getByRole('status')).toHaveText('4 of 4 standalone versions');
+  await versions.getByLabel('Filter versions').fill('Q8');
+  await expect(versions.getByRole('status')).toHaveText('1 of 4 standalone versions');
+  await versions.getByRole('button', { name: /Q8_0/ }).click();
+  await expect(versions.getByRole('button', { name: /Q8_0/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Selected download', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Download', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('test:catalog-downloaded-id'))).toBe('LLM-2-2-Q8_0');
+  await versions.getByLabel('Filter versions').fill('');
+  await versions.getByRole('button', { name: /Q4_K_M/ }).click();
+  await expect(page.getByRole('button', { name: 'Download', exact: true })).toBeEnabled();
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.getByRole('heading', { name: 'Choose a version' }).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(800);
+  await page.screenshot({ path: 'e2e-results/catalog-versions-narrow.png' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: 'e2e-results/catalog-versions.png' });
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
   await page.getByRole('combobox', { name: 'Sort models' }).selectOption('size_asc');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 24 models');
+  await page.getByLabel('Listed quantization').selectOption('Q8_0');
+  await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 8 models');
+  await page.getByLabel('Listed quantization').selectOption('');
   await page.getByRole('heading', { name: 'Catalog', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/lattice-catalog-pages.png' });
 
@@ -940,7 +1240,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };
       }
-      if (command === 'plugin:conversation|list_journals' || command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
+      if (command === 'plugin:conversation|list_journals' || command === 'plugin:conversation|list_conversation_tangents' || command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
       throw new Error(`Unsupported failure fixture command: ${command}`);
     };
   }, settings);
@@ -1035,7 +1335,7 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
         localStorage.setItem('test:retrieval-messages', JSON.stringify(messages));
         return { conversationId: conversation.id, messages, contextUsed: 0, sources: [] };
       }
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
       throw new Error(`Unsupported retrieval fixture command: ${command}`);
     };
   }, settings);

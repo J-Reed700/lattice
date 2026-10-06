@@ -46,6 +46,7 @@ impl ConversationDtoMapper {
             forked_from_conversation_id: None,
             forked_from_message_id: None,
             explorer_root: None,
+            tangent_parent_id: None,
         }
     }
 

@@ -130,7 +130,7 @@ export function useConversationsController(): ConversationsState {
 
   const conversations = useMemo<Conversation[]>(() => {
     const list = [...(conversationsQuery.data ?? [])];
-    if (activeId && detailQuery.data && !list.some(item => item.id === activeId)) {
+    if (activeId && detailQuery.data && !detailQuery.data.tangentParentId && !list.some(item => item.id === activeId)) {
       list.unshift(detailQuery.data);
     }
     return list.map(conversation => conversation.id === activeId

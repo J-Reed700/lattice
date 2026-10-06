@@ -268,6 +268,8 @@ export interface Conversation {
    * Such threads live in the Explorer and are left out of Chat.
    */
   explorerRoot?: string | null;
+  /** Hidden from top-level lists until promoted. */
+  tangentParentId?: string | null;
   messages?: ConversationMessage[];
 }
 

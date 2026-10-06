@@ -217,6 +217,9 @@ export const modelApi = {
   ): Promise<ApiResult<ModelSearchResult[]>> =>
     apiCall<Wire.ModelSearchResultDto[]>('search_model_catalog', { request }),
 
+  getModelVariants: async (repoId: string): Promise<ApiResult<Wire.ModelMetadataDto[]>> =>
+    apiCall<Wire.ModelMetadataDto[]>('get_model_variants', { repoId }),
+
   /**
    * Refreshes the model catalog from remote source.
    * Updates available models and metadata from HuggingFace.

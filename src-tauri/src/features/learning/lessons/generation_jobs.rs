@@ -49,6 +49,7 @@ pub(in crate::features::learning) fn cancel(job_id: &str) {
     }
 }
 
+#[derive(Clone)]
 pub(in crate::features::learning) struct LessonGenerationWorker {
     pub pool: SqlitePool,
     pub load_llm: ModelLoader,
@@ -58,6 +59,33 @@ pub(in crate::features::learning) struct LessonGenerationWorker {
 }
 
 impl LessonGenerationWorker {
+    /// The persisted pending rows are the outbox. Reconcile independently of
+    /// the renderer so a missed wakeup or transient database error cannot lose
+    /// work. ACTIVE and the atomic pending -> running claim deduplicate delivery.
+    pub fn dispatch(self) {
+        let cancel = background::cancellation_token();
+        background::spawn(async move {
+            let repo = LearningCurriculumRepository::new(self.pool.clone());
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                if until_cancelled(&cancel, interval.tick()).await.is_none() {
+                    break;
+                }
+                match repo.pending_jobs().await {
+                    Ok(jobs) => {
+                        for job in jobs {
+                            self.clone().spawn(job.id);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "Could not dispatch saved lesson work; will retry")
+                    }
+                }
+            }
+        });
+    }
+
     pub fn spawn(self, job_id: String) {
         let cancel = background::cancellation_token().child_token();
         {
@@ -85,6 +113,11 @@ impl LessonGenerationWorker {
             if !repo.begin_job(job_id).await? {
                 return Ok(());
             }
+            // The worker is independent of the webview. Also tell macOS this
+            // user-requested work must continue when the window loses focus.
+            let _activity = crate::shared::runtime::user_activity::UserActivity::begin(
+                "Preparing learning material",
+            );
             // Preparation may perform network/model work. Dropping it closes the
             // request immediately. Finalization stays outside this select so all
             // durable writes finish before the supervisor releases the database.
@@ -103,13 +136,24 @@ impl LessonGenerationWorker {
                         .await
                 }
                 Some(Err(error)) => Err(error),
-                _ => repo.interrupt_job(job_id).await,
+                _ => repo.requeue_job(job_id).await,
             }
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(job_id, %error, "Lesson preparation stopped");
-            if let Err(finalize_error) = repo.fail_job(job_id, &error.to_string()).await {
+            let finalized = if matches!(
+                error,
+                AppError::Network(_)
+                    | AppError::ServiceNotAvailable(_)
+                    | AppError::RateLimitExceeded(_)
+            ) {
+                tracing::warn!(job_id, %error, "Lesson preparation attempt failed; scheduling automatic retry");
+                repo.defer_job(job_id, &error).await
+            } else {
+                tracing::warn!(job_id, %error, "Lesson preparation failed; saved work requires attention");
+                repo.fail_job(job_id, &error.to_string()).await
+            };
+            if let Err(finalize_error) = finalized {
                 tracing::warn!(job_id, %finalize_error, "Could not finalize lesson generation");
             }
         }
@@ -149,9 +193,9 @@ impl LessonGenerationWorker {
             .unwrap_or_default();
         let program_repo = LearningRepository::new(self.pool.clone());
         let mut program = program_repo.get(&job.program_id).await?;
-        if program.summary.revision as u32 != job.base_revision_number {
+        if !repo.job_content_is_current(job_id).await? {
             return Err(crate::shared::error::AppError::InvalidState(
-                "Program changed before generation started.".into(),
+                "Course content changed before generation resumed. Start preparation again for the updated course.".into(),
             ));
         }
         if program.summary.status != LearningProgramStatus::Active {
@@ -218,7 +262,7 @@ impl LessonGenerationWorker {
         crate::features::learning::lesson_progress::stage(
             "Indexing saved references for lesson evidence",
         );
-        let references =
+        let mut references =
             crate::features::learning::reference_collection::ReferenceCollection::load(
                 &self.pool,
                 &job.program_id,
@@ -228,48 +272,107 @@ impl LessonGenerationWorker {
             .await?;
         crate::features::learning::lesson_progress::stage("Getting the lesson model ready");
         let llm = (self.load_llm)().await?;
+        crate::features::learning::lesson_progress::model(llm.model_name());
+        // Own the targets so source snapshots can refresh between lessons.
+        let candidates: Vec<_> = candidates.into_iter().cloned().collect();
         let mut staged = Vec::new();
-        for (index, lesson) in candidates.into_iter().enumerate() {
-            let generated = crate::features::learning::lesson_drafts::run(
-                repo,
-                job_id,
-                &lesson.id,
-                crate::features::learning::content_verification::research::run(
-                    self.pool.clone(),
-                    job.program_id.clone(),
-                    format!("{}: {}", program.summary.goal, lesson.title),
-                    self.research_web.clone(),
+        let mut completed_count = job.progress_completed;
+        loop {
+            staged.clear();
+            for (index, lesson) in candidates.iter().enumerate() {
+                crate::features::learning::lesson_progress::lesson(&lesson.title);
+                let sources = program_repo.verification_sources(&job.program_id).await?;
+                references = references
+                    .reload(&self.pool, &job.program_id, &sources)
+                    .await?;
+                program.sources = sources;
+                let saved = repo
+                    .lesson_checkpoint(job_id, &lesson.id, "prepared-v1")
+                    .await?
+                    .and_then(|value| {
+                        serde_json::from_value::<
+                            crate::features::learning::dto::PreparedLearningLesson,
+                        >(value)
+                        .ok()
+                    })
+                    .filter(|prepared| {
+                        prepared.verification.as_ref().is_some_and(|report| {
+                            report.reusable(&lesson.id, prepared, &program.sources, llm.as_ref())
+                        })
+                    });
+                let generated = if let Some(saved) = saved {
+                    crate::features::learning::lesson_progress::stage(
+                        "Resuming from a verified lesson checkpoint",
+                    );
+                    saved
+                } else {
                     // Keep the large multi-stage future on the heap. In debug
                     // builds, nesting it inline through task-local scopes can
                     // exhaust a runtime worker's stack before the network call.
-                    Box::pin(
+                    let preparation = Box::pin(
                         crate::features::learning::generation::prepare_lesson_with_references(
                             llm.as_ref(),
                             &program,
                             lesson,
                             &references,
                         ),
-                    ),
-                ),
-            )
-            .await?;
-            service::validate_prepared(&generated, &program)?;
-            staged.push((lesson.id.clone(), generated));
-            crate::features::learning::lesson_progress::completed(index as u32 + 1);
-            crate::features::learning::lesson_progress::stage("Saving verified lesson");
-            if !repo
-                .advance_job(
+                    );
+                    crate::features::learning::lesson_drafts::run(
+                        repo,
+                        job_id,
+                        &lesson.id,
+                        crate::features::learning::content_verification::research::run(
+                            self.pool.clone(),
+                            job.program_id.clone(),
+                            format!("{}: {}", program.summary.goal, lesson.title),
+                            self.research_web.clone(),
+                            preparation,
+                        ),
+                    )
+                    .await?
+                };
+                service::validate_prepared(&generated, &program)?;
+                repo.save_lesson_checkpoint(
                     job_id,
-                    index as u32 + 1,
-                    &format!("Prepared {} of {} lessons", index + 1, job.progress_total),
+                    &lesson.id,
+                    "prepared-v1",
+                    serde_json::to_value(&generated)?,
                 )
-                .await?
-            {
-                return Err(AppError::InvalidState(
-                    "Generation job is no longer running".into(),
-                ));
+                .await?;
+                crate::features::learning::lesson_progress::checkpoint_saved();
+                staged.push((lesson.id.clone(), generated));
+                completed_count = completed_count.max(index as u32 + 1);
+                crate::features::learning::lesson_progress::completed(completed_count);
+                crate::features::learning::lesson_progress::stage("Saving verified lesson");
+                if !repo
+                    .advance_job(
+                        job_id,
+                        completed_count,
+                        &format!("Prepared {} of {} lessons", index + 1, job.progress_total),
+                    )
+                    .await?
+                {
+                    return Err(AppError::InvalidState(
+                        "Generation job is no longer running".into(),
+                    ));
+                }
+            }
+            // Research for a later lesson may add evidence relevant to an earlier
+            // one. Revisit only invalidated checkpoints before atomic publication.
+            let sources = program_repo.verification_sources(&job.program_id).await?;
+            if staged.iter().all(|(id, prepared)| {
+                prepared
+                    .verification
+                    .as_ref()
+                    .is_some_and(|report| report.reusable(id, prepared, &sources, llm.as_ref()))
+            }) {
+                break;
             }
         }
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Publishing,
+            "Publishing verified lesson material",
+        );
         Ok((program.summary.revision, staged))
     }
 }
@@ -338,7 +441,7 @@ mod repository_tests {
         plan_dto::{LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto},
     };
 
-    async fn queued_job(
+    pub(super) async fn queued_job(
         pool: &SqlitePool,
     ) -> (
         LearningCurriculumRepository,
@@ -451,12 +554,22 @@ mod repository_tests {
                 if user_cancel {
                     LearningGenerationJobStatus::Cancelled
                 } else {
-                    LearningGenerationJobStatus::Interrupted
+                    LearningGenerationJobStatus::Pending
                 }
             );
             assert!(!ACTIVE.lock().unwrap().contains_key(&job.id));
-            assert!(interrupted.finished_at.is_some());
+            assert_eq!(interrupted.finished_at.is_some(), user_cancel);
             assert!(interrupted.result_id.is_none());
+            repo.recover_running_jobs().await.unwrap();
+            assert_eq!(repo.job(&job.id).await.unwrap().status, interrupted.status);
+            assert_eq!(
+                repo.pending_jobs()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|pending| pending.id == job.id),
+                !user_cancel
+            );
             let (_, pending) = queued_job(&pool).await;
             repo.interrupt_job(&pending.id).await.unwrap();
             assert_eq!(
@@ -479,7 +592,7 @@ mod repository_tests {
         })
         .await
         .unwrap();
-        repo.interrupt_job(&job.id).await.unwrap();
+        repo.requeue_job(&job.id).await.unwrap();
         repo.fail_job(&job.id, "late inference failure")
             .await
             .unwrap();
@@ -493,3 +606,7 @@ mod repository_tests {
 #[cfg(test)]
 #[path = "live_lesson_tests.rs"]
 mod live_lesson_tests;
+
+#[cfg(test)]
+#[path = "generation_recovery_tests.rs"]
+mod recovery_tests;

@@ -134,6 +134,32 @@ where
 }
 
 impl HuggingFaceModel {
+    fn is_standalone_gguf(filename: &str) -> bool {
+        let lower = filename.to_ascii_lowercase();
+        lower.ends_with(".gguf")
+            && !filename.contains(['/', '\\'])
+            && !filename.contains("..")
+            && !lower.contains("mmproj")
+            && !lower.contains("-of-")
+    }
+
+    fn gguf_variants(&self) -> Vec<ExternalModelMetadata> {
+        let base = self.to_external_metadata();
+        let mut variants: Vec<_> = self
+            .siblings
+            .iter()
+            .filter(|file| Self::is_standalone_gguf(&file.filename))
+            .map(|file| ExternalModelMetadata {
+                preferred_filename: Some(file.filename.clone()),
+                preferred_size_bytes: file.size,
+                ..base.clone()
+            })
+            .collect();
+        variants.sort_by(|a, b| a.preferred_filename.cmp(&b.preferred_filename));
+        variants.dedup_by(|a, b| a.preferred_filename == b.preferred_filename);
+        variants
+    }
+
     fn resolve_repo_id(&self) -> String {
         self.model_id
             .clone()
@@ -184,13 +210,7 @@ impl HuggingFaceModel {
         let mut candidates: Vec<&HuggingFaceSibling> = self
             .siblings
             .iter()
-            .filter(|s| {
-                let lower = s.filename.to_lowercase();
-                lower.ends_with(".gguf")
-                    && !s.filename.contains('/')
-                    && !s.filename.contains('\\')
-                    && !s.filename.contains("..")
-            })
+            .filter(|s| Self::is_standalone_gguf(&s.filename))
             .collect();
 
         if candidates.is_empty() {
@@ -613,7 +633,7 @@ impl HuggingFaceAdapter {
             .collect::<Vec<_>>()
             .join("/");
         let url = format!(
-            "https://huggingface.co/api/models/{}?full=true",
+            "https://huggingface.co/api/models/{}?blobs=true",
             encoded_model_id
         );
 
@@ -652,6 +672,15 @@ impl Default for HuggingFaceAdapter {
 
 #[async_trait]
 impl ModelCatalogPort for HuggingFaceAdapter {
+    async fn get_model_variants(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ExternalModelMetadata>, AppError> {
+        // Unlike broad discovery, an explicit file listing must surface errors
+        // so the user can retry instead of being told no versions exist.
+        Ok(self.get_model_api(model_id).await?.gguf_variants())
+    }
+
     async fn search_models(
         &self,
         query: &str,
@@ -692,6 +721,68 @@ impl ModelCatalogPort for HuggingFaceAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_variants_keep_exact_precision_size_and_identity() {
+        let repo: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+            "id": "publisher/model-Q4", "tags": ["text-generation", "gguf"],
+            "siblings": [
+                {"rfilename": "model-Q4_0.gguf", "size": 4_000_000_000_u64},
+                {"rfilename": "model-Q8_0.gguf", "size": 8_000_000_000_u64},
+                {"rfilename": "model-IQ4_XS.gguf", "size": 3_500_000_000_u64},
+                {"rfilename": "model-UD-Q5_K_XL.gguf", "size": 5_500_000_000_u64},
+                {"rfilename": "model-BF16.gguf", "size": 16_000_000_000_u64},
+                {"rfilename": "unlabelled.gguf"},
+                {"rfilename": "mmproj-F16.gguf", "size": 500},
+                {"rfilename": "Q8/model-Q8_0.gguf", "size": 500},
+                {"rfilename": "model-Q8_0-00001-of-00002.gguf", "size": 500},
+                {"rfilename": "../model.gguf", "size": 500},
+                {"rfilename": "README.md", "size": 500}
+            ]
+        }))
+        .unwrap();
+        let variants = repo.gguf_variants();
+        assert_eq!(variants.len(), 6);
+        for (file, quant, size) in [
+            ("model-Q4_0.gguf", "Q4_0", 4.0),
+            ("model-Q8_0.gguf", "Q8_0", 8.0),
+            ("model-IQ4_XS.gguf", "IQ4_XS", 3.5),
+            ("model-UD-Q5_K_XL.gguf", "UD-Q5_K_XL", 5.5),
+            ("model-BF16.gguf", "BF16", 16.0),
+        ] {
+            let variant = variants
+                .iter()
+                .find(|v| v.preferred_filename.as_deref() == Some(file))
+                .unwrap()
+                .to_domain_model()
+                .unwrap();
+            assert_eq!(variant.supported_quantizations, vec![quant]);
+            assert_eq!(variant.size_gb, size);
+            assert_eq!(variant.minimum_ram_gb, size * 1.5);
+            assert_eq!(
+                ExternalModelMetadata::decode_hf_download_id(&variant.id),
+                Some(("publisher/model-Q4".into(), file.into()))
+            );
+        }
+        let unknown = variants.last().unwrap().to_domain_model().unwrap();
+        assert_eq!(unknown.size_gb, 0.0);
+        assert_eq!(unknown.minimum_ram_gb, 0.0);
+        assert!(unknown.supported_quantizations.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires internet; reads public metadata, never downloads weights"]
+    async fn test_model_variants_integration() {
+        let variants = HuggingFaceAdapter::new()
+            .get_model_variants("unsloth/Qwen3.5-9B-GGUF")
+            .await
+            .unwrap();
+        assert!(variants.len() > 1);
+        assert!(variants
+            .iter()
+            .all(|v| v.preferred_size_bytes.is_some_and(|size| size > 0)));
+        assert!(variants.iter().all(|v| v.to_domain_model().is_ok()));
+    }
 
     fn embedding_repo_with(files: &[&str]) -> HuggingFaceModel {
         let siblings: Vec<serde_json::Value> = files

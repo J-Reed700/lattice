@@ -6,6 +6,90 @@ use crate::features::learning::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[test]
+fn verification_windows_restore_conditions_without_changing_source_bytes() -> Result<()> {
+    let before = "This procedure applies only while the local setting is active.\n";
+    let target = "The selected value follows the local setting.";
+    let after = "\nAn explicit override takes precedence over that setting.";
+    let text = format!(
+        "{before}{}{target}{}{after}",
+        "背景🌱 ".repeat(150),
+        " context ".repeat(100)
+    );
+    let source = LearningSourceDto {
+        id: "reference".into(),
+        title: "Procedure".into(),
+        url: None,
+        excerpt: text.clone(),
+        acquired_at: 1,
+    };
+    let collection = ReferenceCollection::lexical(&[source])?;
+    let start = text.find(target).unwrap();
+    let hit = ReferencePassage {
+        source_id: "reference".into(),
+        text: target.into(),
+        start_byte: start,
+        end_byte: start + target.len(),
+        retrieval_kind: "lexical_fallback".into(),
+        score: 1.0,
+    };
+    let expanded = collection.verification_context(vec![hit.clone(), hit.clone()])?;
+    assert_eq!(
+        expanded.len(),
+        1,
+        "Overlapping context must not crowd out independent sources"
+    );
+    assert!(expanded[0].text.contains(before));
+    assert!(expanded[0].text.contains(after));
+    assert_eq!(
+        &text[expanded[0].start_byte..expanded[0].end_byte],
+        expanded[0].text
+    );
+    assert_eq!(expanded[0].score, hit.score);
+    let mut invented = hit;
+    invented.text = "A fabricated quotation".into();
+    assert!(collection.verification_context(vec![invented]).is_err());
+    Ok(())
+}
+
+#[test]
+fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
+    let text = format!(
+        "{}first matching fact\n{}second matching caveat\n{}",
+        "préfixe ".repeat(400),
+        "background ".repeat(250),
+        "suffix ".repeat(400)
+    );
+    let source = LearningSourceDto {
+        id: "reference".into(),
+        title: "Procedure".into(),
+        url: None,
+        excerpt: text.clone(),
+        acquired_at: 1,
+    };
+    let collection = ReferenceCollection::lexical(&[source])?;
+    let passages = ["first matching fact", "second matching caveat"].map(|target| {
+        let start = text.find(target).unwrap();
+        ReferencePassage {
+            source_id: "reference".into(),
+            text: target.into(),
+            start_byte: start,
+            end_byte: start + target.len(),
+            retrieval_kind: "lexical_fallback".into(),
+            score: 1.0,
+        }
+    });
+    let expanded = collection.verification_context(passages.into())?;
+    assert_eq!(expanded.len(), 1);
+    assert!(expanded[0].text.contains("first matching fact"));
+    assert!(expanded[0].text.contains("second matching caveat"));
+    assert_eq!(
+        &text[expanded[0].start_byte..expanded[0].end_byte],
+        expanded[0].text
+    );
+    Ok(())
+}
+
 struct Embedder {
     identity: &'static str,
     calls: AtomicUsize,

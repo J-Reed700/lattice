@@ -315,6 +315,9 @@ export const COMMAND_DOMAIN_MAP: Record<
     command: 'truncate_conversation_after',
   },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
+  create_conversation_tangent: { domain: 'conversation', command: 'create_conversation_tangent' },
+  list_conversation_tangents: { domain: 'conversation', command: 'list_conversation_tangents' },
+  promote_conversation_tangent: { domain: 'conversation', command: 'promote_conversation_tangent' },
   continue_in_new_conversation: {
     domain: 'conversation',
     command: 'continue_in_new_conversation',
@@ -802,6 +805,7 @@ export const COMMAND_DOMAIN_MAP: Record<
   download_model: { domain: 'model', command: 'download_model' },
   get_compatible_models: { domain: 'model', command: 'get_compatible_models' },
   search_model_catalog: { domain: 'model', command: 'search_model_catalog' },
+  get_model_variants: { domain: 'model', command: 'get_model_variants' },
   refresh_model_catalog: { domain: 'model', command: 'refresh_model_catalog' },
   clear_model_catalog_cache: {
     domain: 'model',

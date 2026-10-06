@@ -166,9 +166,28 @@ pub(super) async fn expand<'a>(
     if gaps.is_empty() {
         return Ok(None);
     }
-    crate::features::learning::lesson_progress::stage(
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::Research,
         "Finding authoritative references for unresolved claims",
     );
+    let search_key = format!(
+        "research-v1:{}",
+        digest(
+            &json!({"topic":context.topic,
+        "model":llm.model_name(),"policy":POLICY})
+            .to_string()
+        )
+    );
+    let mut completed_queries: HashSet<String> =
+        crate::features::learning::lesson_drafts::checkpoint(&search_key)
+            .await?
+            .and_then(|saved| serde_json::from_value(saved).ok())
+            .unwrap_or_default();
+    context
+        .searched
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .extend(completed_queries.iter().cloned());
     let already_searched: Vec<_> = context
         .searched
         .lock()
@@ -230,6 +249,7 @@ pub(super) async fn expand<'a>(
             }
         };
         let mut saved = 0;
+        let mut capture_failed = false;
         let candidates = results
             .results
             .into_iter()
@@ -249,6 +269,7 @@ pub(super) async fn expand<'a>(
                 Ok(article) => article,
                 Err(error) => {
                     tracing::warn!(%error,"Lesson research page unavailable");
+                    capture_failed = true;
                     continue;
                 }
             };
@@ -311,6 +332,16 @@ pub(super) async fn expand<'a>(
             if saved == 2 {
                 break;
             }
+        }
+        // Never checkpoint an in-flight search or a transient fetch failure as
+        // completed. Captured references are already durable and deduplicated.
+        if !capture_failed {
+            completed_queries.insert(query);
+            crate::features::learning::lesson_drafts::record_checkpoint(
+                &search_key,
+                serde_json::to_value(&completed_queries)?,
+            )
+            .await?;
         }
     }
     if added == 0 && sources.len() == references.sources.len() {

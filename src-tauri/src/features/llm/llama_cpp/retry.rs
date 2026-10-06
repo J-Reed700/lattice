@@ -71,7 +71,7 @@ impl LlamaCppLlm {
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
-        let body = self.body(request, true)?;
+        let mut body = self.body(request, true)?;
         let deadline = request
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);
@@ -84,6 +84,15 @@ impl LlamaCppLlm {
                     Err(Failure::Retry(error, retry_after)) => {
                         if attempt == MAX_ATTEMPTS || (emitted && on_retry.is_none()) {
                             return Err(error);
+                        }
+                        // A failed inference may leave unusable server-side
+                        // prompt state. Reprocess the same complete input on the
+                        // next attempt; do not repeat a broken cached prefix.
+                        // Network outages and rate limits keep cache reuse.
+                        if matches!(error, AppError::ServiceNotAvailable(_)) {
+                            if let Some(object) = body.as_object_mut() {
+                                object.insert("cache_prompt".into(), json!(false));
+                            }
                         }
                         let ceiling_ms = (500u64 << (attempt - 1)).min(30_000);
                         let jitter = std::time::SystemTime::now()

@@ -56,6 +56,85 @@ async function expectNoUnsupportedIpc(page: Page) {
   expect(unsupported).toEqual([]);
 }
 
+test('Lesson preparation explains verification and research across navigation and narrow layouts', async ({ page, browserName }) => {
+  await installLearningStudioBackend(page);
+  await page.goto('/studio');
+  await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
+  await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { program: { modules: Array<{ lessons: Array<{ title: string; preparation: string; blocks: unknown[]; questions: unknown[] }> }> }; planWorkspace: { programId: string; programRevision: number; jobs: unknown[] } } }).__LATTICE_LEARNING_STATE__;
+    const lesson = state.program.modules[0].lessons[0];
+    lesson.preparation = 'outline';
+    lesson.blocks = [];
+    lesson.questions = [];
+    state.planWorkspace.jobs = [{
+      id: 'resumable-job', programId: state.planWorkspace.programId, operationId: 'operation',
+      kind: 'lesson_preparation', payloadSha256: 'fixture', baseRevisionNumber: state.planWorkspace.programRevision,
+      status: 'running', progressCompleted: 0, progressTotal: 1, progressMessage: 'Checked 77 of 164 claims against saved references · 30 unchanged checks reused',
+      resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
+      activity: { phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 95_000, lastCheckpointAt: Date.now() - 96_000,
+        lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
+        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3,
+        recentSteps: [{ phase: 'review', startedAt: Date.now() - 900_000 }, { phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
+      },
+    }];
+  });
+  await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+  const panel = page.getByRole('region', { name: 'Lesson preparation progress' });
+  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
+  await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
+  await expect(panel.getByText(/Checkpoint saved at/)).toBeVisible();
+  await expect(panel.getByText(/No new output or completed step/)).toBeVisible();
+  await panel.getByText('Recent activity', { exact: true }).click();
+  await panel.getByRole('status').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `e2e-results/lesson-preparation-desktop-${browserName}.png` });
+  const desktopViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: desktopViewport.width, height: 1600 });
+  await panel.getByRole('status').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `e2e-results/lesson-preparation-expanded-${browserName}.png` });
+  await page.setViewportSize(desktopViewport);
+  await panel.getByRole('button', { name: 'Hide details' }).click();
+  await expect(panel.getByRole('progressbar')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Pause lesson preparation' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Show details' }).click();
+  await openStudioSection(page, 'Sources');
+  await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { planWorkspace: { jobs: Array<{ progressMessage: string; activity: { phase: string; modelRunning: boolean } }> } } }).__LATTICE_LEARNING_STATE__;
+    state.planWorkspace.jobs[0].activity.phase = 'research';
+    state.planWorkspace.jobs[0].activity.modelRunning = false;
+    state.planWorkspace.jobs[0].progressMessage = 'Saving additional references for unresolved claims';
+  });
+  await openStudioSection(page, 'Lessons');
+  await expect(panel.getByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
+  await expect(panel.getByText(/77 \/ 164 checked/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.getByRole('button', { name: 'Pause lesson preparation' }).scrollIntoViewIfNeeded();
+  await expect(panel.getByRole('button', { name: 'Pause lesson preparation' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `e2e-results/lesson-preparation-narrow-bottom-${browserName}.png` });
+  await panel.getByRole('status').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `e2e-results/lesson-preparation-narrow-${browserName}.png` });
+  await panel.getByRole('button', { name: 'Hide details' }).click();
+  await panel.getByRole('button', { name: 'Pause lesson preparation' }).click();
+  await expect(panel.getByRole('status')).toHaveText('Lesson preparation paused');
+  await expect(panel.getByRole('button', { name: 'Resume lesson preparation' })).toBeVisible();
+  await expect(panel.getByRole('alert')).toHaveCount(0);
+  await page.screenshot({ path: `e2e-results/lesson-preparation-paused-narrow-${browserName}.png` });
+  await openStudioSection(page, 'Sources');
+  await openStudioSection(page, 'Lessons');
+  await expect(panel.getByRole('status')).toHaveText('Lesson preparation paused');
+  await panel.getByRole('button', { name: 'Show details' }).click();
+  await expect(panel.getByText('77 / 164 checked')).toBeVisible();
+  await expect(panel.getByText(/stays paused until you choose Resume, even after reopening/)).toBeVisible();
+  await page.setViewportSize(desktopViewport);
+  await panel.getByRole('status').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `e2e-results/lesson-preparation-paused-desktop-${browserName}.png` });
+  await panel.getByRole('button', { name: 'Resume lesson preparation' }).click();
+  await expect(panel.getByRole('status')).toHaveText('Preparing your lesson');
+  await expect(panel.getByText('Retry queued')).toBeVisible();
+  await expect(panel.getByText('77 / 164 checked')).toBeVisible();
+  await expectNoUnsupportedIpc(page);
+});
+
 test("Study activity remains interactive across tabs and handles a slow reference failure", async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await openProgram(page);
@@ -178,8 +257,9 @@ test("Learning Studio starting-point tasks save answers before showing actionabl
   await page.getByRole("button", { name: "Check my starting point", exact: true }).click();
   await page.getByRole("textbox", { name: "Your reasoning", exact: true }).fill("I would compare the measurements over the same observation period.");
   await page.getByRole("button", { name: "Get my starting-point feedback", exact: true }).click();
-  await expect(page.getByText("Worth practicing", { exact: true })).toBeVisible();
-  await expect(page.getByText("Name a consistent observation period before comparing the measurements.", { exact: true })).toBeVisible();
+  const assessment = page.getByRole("region", { name: "Starting-point assessment", exact: true });
+  await expect(assessment.getByText("Worth practicing", { exact: true })).toBeVisible();
+  await expect(assessment.getByText("Name a consistent observation period before comparing the measurements.", { exact: true })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   await expectNoUnsupportedIpc(page);

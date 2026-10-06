@@ -30,6 +30,7 @@ use crate::features::conversation::space_dto::{
     UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
+use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
 use tauri::{
@@ -524,10 +525,17 @@ pub async fn list_journal_conversations(
 #[specta::specta]
 pub async fn synthesize_journal_entries(
     request: SynthesizeJournalEntriesRequestDto,
+    on_progress: tauri::ipc::Channel<super::workspace_dto::SynthesisProgressDto>,
     container: State<'_, Container>,
     window: tauri::Window,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    conversation_impl::synthesize_journal_entries_impl(request, container.inner(), window).await
+    conversation_impl::synthesize_journal_entries_impl(
+        request,
+        container.inner(),
+        window,
+        on_progress,
+    )
+    .await
 }
 
 /// Delete every message after `message_id` (and it too when `inclusive`),
@@ -539,6 +547,35 @@ pub async fn truncate_conversation_after(
     container: State<'_, Container>,
 ) -> Result<TruncateConversationAfterResponseDto, ApiError> {
     conversation_impl::truncate_conversation_after_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn create_conversation_tangent(
+    request: CreateTangentRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationTangentDto, ApiError> {
+    conversation_impl::create_conversation_tangent_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversation_tangents(
+    request: GetConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationTangentDto>, ApiError> {
+    conversation_impl::list_conversation_tangents_impl(request.conversation_id, container.inner())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn promote_conversation_tangent(
+    request: GetConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<crate::features::conversation::dto::ConversationDto, ApiError> {
+    conversation_impl::promote_conversation_tangent_impl(request.conversation_id, container.inner())
+        .await
 }
 
 /// Create a sibling conversation carrying the messages up to a chosen turn.
@@ -669,6 +706,9 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             synthesize_journal_entries,
             truncate_conversation_after,
             fork_conversation,
+            create_conversation_tangent,
+            list_conversation_tangents,
+            promote_conversation_tangent,
             continue_in_new_conversation,
             regenerate_response,
             compact_conversation,

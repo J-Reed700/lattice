@@ -4,6 +4,8 @@
  * the result rows, and the empty state all agree.
  */
 
+import { modelQuantization } from './quantization';
+
 import type { SystemCapabilities } from '../../../types/api/models';
 import type { ModelCategory, ModelMetadata, SearchFilters } from '../../../types/modelCatalog';
 
@@ -46,7 +48,7 @@ export function clearedFilters(filters: SearchFilters): SearchFilters {
 
 export function formatSize(sizeGb: number): string | null {
   if (!sizeGb || sizeGb <= 0) return null;
-  return sizeGb < 1 ? `${Math.round(sizeGb * 1024)} MB` : `${sizeGb.toFixed(1)} GB`;
+  return sizeGb < 1 ? `${Math.round(sizeGb * 1000)} MB` : `${sizeGb.toFixed(1)} GB`;
 }
 
 export function formatCompact(value: number | null | undefined): string | null {
@@ -79,7 +81,7 @@ export function modelMetaLine(
     parts.push(`${metadata.embedding_dimensions} dimensions`);
   }
 
-  const quantization = metadata.supported_quantizations[0];
+  const quantization = modelQuantization(metadata);
   if (quantization) parts.push(quantization);
 
   if (metadata.format === 'safetensors') parts.push('Safetensors');

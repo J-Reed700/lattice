@@ -1,14 +1,19 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 
 import { PenLine } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 
 import { CommandPalette } from './CommandPalette';
 import { QuickCaptureDialog, readClipboardText } from './QuickCapture';
+import { useSynthesisStore } from '../features/journal/synthesis/synthesisStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useRegisterPaletteCommands } from '../hooks/useRegisterPaletteCommands';
 
 import type { PaletteCommand } from '../stores/paletteCommandsStore';
+
+const SynthesisProgress = lazy(async () => ({
+  default: (await import('../features/journal/synthesis/SynthesisProgress')).SynthesisProgress,
+}));
 
 /**
  * Fired on ⌘N. Surfaces that can create something (Chat, Journal) listen for
@@ -25,6 +30,7 @@ export const NEW_ITEM_EVENT = 'lattice:new';
 export function RootLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const hasSynthesis = useSynthesisStore(state => state.job !== null);
   const [capture, setCapture] = useState<{ open: boolean; clipboard: string | null }>({
     open: false,
     clipboard: null,
@@ -93,6 +99,11 @@ export function RootLayout() {
   return (
     <>
       <Outlet />
+      {hasSynthesis && (
+        <Suspense fallback={null}>
+          <SynthesisProgress />
+        </Suspense>
+      )}
       <CommandPalette />
       <QuickCaptureDialog
         open={capture.open}

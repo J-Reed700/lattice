@@ -1,0 +1,38 @@
+[
+  {
+    "domain": "biology",
+    "claim": "All mammals give birth to live young.",
+    "passages": ["All mammals give birth to live young."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "biology",
+    "claim": "Monotremes, including platypuses and echidnas, lay eggs.",
+    "passages": ["Most mammals give birth to live young. Monotremes, including platypuses and echidnas, lay eggs."],
+    "expected": "supported"
+  },
+  {
+    "domain": "baking",
+    "claim": "Baking an apple pie for 60 minutes at 180 degrees Celsius guarantees that every pie is fully cooked, regardless of recipe, pan, or oven.",
+    "passages": ["Baking an apple pie for 60 minutes at 180 degrees Celsius guarantees that every pie is fully cooked, regardless of recipe, pan, or oven."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "baking",
+    "claim": "The example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling.",
+    "passages": ["This example recipe specifies 60 minutes at 180 degrees Celsius using its specified pan and filling. Those instructions apply to this recipe; other recipes may specify different temperatures and durations."],
+    "expected": "supported"
+  },
+  {
+    "domain": "programming",
+    "claim": "Pinning a specific compiler version in rust-toolchain.toml guarantees reproducible builds.",
+    "passages": ["Pinning a specific compiler version in rust-toolchain.toml guarantees reproducible builds."],
+    "expected": "not_supported"
+  },
+  {
+    "domain": "programming",
+    "claim": "A rust-toolchain.toml file can specify a toolchain by a particular version number, such as 1.75.0.",
+    "passages": ["In rust-toolchain.toml, the toolchain channel may be a specific version number, for example 1.75.0."],
+    "expected": "supported"
+  }
+]

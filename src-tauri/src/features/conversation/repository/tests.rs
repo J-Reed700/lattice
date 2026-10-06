@@ -10,6 +10,7 @@ mod knowledge;
 mod memory;
 mod messages;
 mod pruning;
+mod tangents;
 mod web_sources;
 
 async fn create_test_pool() -> SqlitePool {

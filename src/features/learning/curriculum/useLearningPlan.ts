@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { LEARNING_PROGRAMS_KEY, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
@@ -6,6 +8,7 @@ import type {
   LearningCurriculumRevisionActionRequestDto,
   DiscardLearningCurriculumRevisionRequestDto,
   LearningPlanDto,
+  LearningProgramDto,
   LearningGenerationJobActionRequestDto,
   LearningGenerationJob,
   LearningDiagnosticAttemptDto,
@@ -22,7 +25,8 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
   return result.data;
 }
 export function useLearningPlan(programId: string, preparing = false) {
-  return useQuery<LearningPlanDto>({
+  const client = useQueryClient();
+  const query = useQuery<LearningPlanDto>({
     queryKey: learningPlanKey(programId),
     queryFn: async () => unwrap(await VaultAPI.getLearningPlan(programId)),
     enabled: Boolean(programId),
@@ -32,6 +36,18 @@ export function useLearningPlan(programId: string, preparing = false) {
     refetchOnMount: 'always',
     retry: false,
   });
+  const revision = query.data?.programRevision;
+  useEffect(() => {
+    if (revision === undefined) return;
+    const program = client.getQueryData<LearningProgramDto>(learningProgramKey(programId));
+    if (program && program.summary.revision !== revision) {
+      // Publication can finish while a different job is shown in the progress
+      // panel. Reconcile from the saved plan, independently of that selection.
+      void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
+      void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
+    }
+  }, [client, programId, revision]);
+  return query;
 }
 function usePlanMutation<TRequest>(mutation: (request: TRequest) => ReturnType<typeof VaultAPI.getLearningPlan>, changesProgram = false) {
   const client = useQueryClient();

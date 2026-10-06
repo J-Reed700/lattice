@@ -516,7 +516,11 @@ pub(crate) async fn check_status(mut response: reqwest::Response) -> Result<reqw
             description.push_str(": the model's chat template rejected the message format");
         }
     }
-    if status.is_client_error() {
+    if status.as_u16() == 429 {
+        Err(AppError::RateLimitExceeded(description))
+    } else if status.as_u16() == 408 {
+        Err(AppError::Network(description))
+    } else if status.is_client_error() {
         Err(AppError::InvalidState(description))
     } else {
         Err(AppError::ServiceNotAvailable(description))

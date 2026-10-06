@@ -130,7 +130,7 @@ export interface ConversationsState {
     _toolPreferences?: ToolPreferences,
     _attachmentNames?: string[],
     _attachmentDocumentIds?: string[]
-  ) => Promise<void>;
+  ) => Promise<GenerationOutcome | undefined>;
   retryFailedMessage: (_tempId: string) => Promise<void>;
   /**
    * Re-run the last user message. Resolves with how the turn ended; only
@@ -167,7 +167,7 @@ export interface ConversationsState {
   setComposerDraft: (_draft: string | null) => void;
   cancelGeneration: (_conversationId?: string | null) => Promise<void>;
   deleteMessage: (_conversationId: string, _messageId: string) => Promise<void>;
-  deleteConversation: (_id: string) => Promise<void>;
+  deleteConversation: (_id: string) => Promise<boolean>;
   dismissFailedMessage: (_tempId: string) => void;
   clearError: () => void;
 }

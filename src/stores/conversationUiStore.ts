@@ -8,6 +8,7 @@ export interface ConversationUiState {
   filterMode: ConversationFilterMode;
   searchQuery: string;
   activeConversationId: string | null;
+  requestedTangent: { parentId: string; tangentId: string } | null;
   inFlightGenerations: Map<string, string>;
   optimisticMessages: Map<string, OptimisticMessage>;
   /**
@@ -40,6 +41,7 @@ export const useConversationUiStore = create<ConversationUiState>(() => ({
   filterMode: 'all',
   searchQuery: '',
   activeConversationId: null,
+  requestedTangent: null,
   inFlightGenerations: new Map(),
   optimisticMessages: new Map(),
   liveRetrieval: new Map(),

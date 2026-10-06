@@ -337,7 +337,7 @@ function RemoveFolderDialog({ folder, home, onCancel, onRemove }: RemoveFolderDi
             <span className="flex flex-col text-sm text-text-primary">
               Also delete its {plural(folder.threadCount, 'chat thread', 'chat threads')}
               <span className="text-xs text-text-muted">
-                {deleteThreads ? 'Their messages go too. This can’t be undone.' : 'Kept threads come back if you add the folder again.'}
+                {deleteThreads ? 'Their messages and tangents go too. This can’t be undone.' : 'Kept threads come back if you add the folder again.'}
               </span>
             </span>
           </label>

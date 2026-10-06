@@ -379,7 +379,7 @@ impl ConversationRepository {
                 LIMIT 1
             ) AS last_message_preview
         FROM conversations c
-        WHERE EXISTS (
+        WHERE c.tangent_parent_id IS NULL AND EXISTS (
                 SELECT 1
                 FROM journal_conversation_entries jce
                 WHERE jce.journal_space_id =
@@ -463,6 +463,7 @@ impl ConversationRepository {
                 forked_from_conversation_id: row.forked_from_conversation_id,
                 forked_from_message_id: row.forked_from_message_id,
                 explorer_root: row.explorer_root,
+                tangent_parent_id: None,
             })
             .collect::<Vec<_>>();
 

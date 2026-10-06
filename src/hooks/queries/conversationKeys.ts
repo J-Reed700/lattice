@@ -9,6 +9,7 @@ export interface ConversationListParams {
 export const conversationKeys = {
   all: ['conversations'] as const,
   lists: ['conversations', 'list'] as const,
+  tangents: (parentId: string) => ['conversations', 'tangents', parentId] as const,
   list: (params: ConversationListParams) => ['conversations', 'list', params] as const,
   spaces: ['conversations', 'spaces'] as const,
   detail: (id: string) => ['conversations', 'detail', id] as const,

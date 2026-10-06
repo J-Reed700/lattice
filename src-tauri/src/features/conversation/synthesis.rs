@@ -640,7 +640,18 @@ pub async fn synthesize_journal_entries_impl(
     request: SynthesizeJournalEntriesRequestDto,
     container: &Container,
     window: tauri::Window,
+    on_progress: tauri::ipc::Channel<SynthesisProgressDto>,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
+    let report = |stage, entry_count, chunk_index, chunk_count| {
+        // A closed renderer must not turn a completed generation into an error.
+        let _ = on_progress.send(SynthesisProgressDto {
+            stage,
+            entry_count,
+            chunk_index,
+            chunk_count,
+        });
+    };
+    report(SynthesisStage::Gathering, None, None, None);
     let normalized_scope = normalize_synthesis_scope(request.scope.as_deref());
 
     let mut seen = HashSet::new();
@@ -744,6 +755,12 @@ pub async fn synthesize_journal_entries_impl(
         let mut map_outputs = Vec::new();
 
         for (chunk_index, chunk) in chunks.iter().enumerate() {
+            report(
+                SynthesisStage::Reading,
+                Some(entries.len()),
+                Some(chunk_index + 1),
+                Some(chunks.len()),
+            );
             let map_prompt = build_journal_map_prompt(chunk, chunk_index + 1, chunks.len());
             let map_response = run_chat_with_conversation_impl(
                 container,
@@ -768,6 +785,12 @@ pub async fn synthesize_journal_entries_impl(
             map_outputs.push(map_output);
         }
 
+        report(
+            SynthesisStage::Writing,
+            Some(entries.len()),
+            None,
+            Some(chunks.len()),
+        );
         let reduce_prompt = build_journal_reduce_prompt(&map_outputs);
         let reduce_response = run_chat_with_conversation_impl(
             container,

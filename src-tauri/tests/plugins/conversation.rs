@@ -103,6 +103,7 @@ fn test_conversation_dto_complete() {
         forked_from_conversation_id: None,
         forked_from_message_id: None,
         explorer_root: None,
+        tangent_parent_id: None,
     };
 
     assert_eq!(dto.id, "conv-111");

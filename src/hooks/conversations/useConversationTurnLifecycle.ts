@@ -79,6 +79,10 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       retryContext, replacesFailedTempId,
     } = options;
     const state = conversationUiStore.getState();
+    const ownsComposer = () => {
+      const activeId = conversationUiStore.getState().activeConversationId;
+      return activeId === requestConversationId || (activeId === null && state.activeConversationId === null);
+    };
     if (state.inFlightGenerations.has(requestConversationId)) {
       setUiError('A response is already being generated for this conversation.');
       return 'busy';
@@ -93,7 +97,9 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       } catch (error) {
         setUiError(error);
         // The submitter clears its input while awaiting us; return this unsent text.
-        conversationUiStore.setState({ composerDraft: content });
+        if (ownsComposer()) {
+          conversationUiStore.setState({ composerDraft: content });
+        }
         return 'failed';
       }
     }
@@ -285,7 +291,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           // copy. Hand it back to the composer rather than lose it.
           const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
           const questionLost = showUserBubble && lastUser?.content !== content;
-          conversationUiStore.setState(questionLost
+          conversationUiStore.setState(questionLost && ownsComposer()
             ? { error: null, composerDraft: content }
             : { error: null });
           return 'cancelled';
@@ -343,6 +349,9 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
             ? { ...item, updatedAt: new Date().toISOString() }
             : item);
         }
+        // A known conversation can be absent because it is a tangent or the
+        // list is filtered. Only a newly created id belongs in this fallback.
+        if (responseId === requestConversationId) return current;
         return [{
           id: responseId,
           title: createDefaultConversationTitle(),
@@ -441,10 +450,11 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       return;
     }
     toolPreferences = withExplorerFocus(
-      conversations.find(conversation => conversation.id === requestConversationId),
+      conversations.find(conversation => conversation.id === requestConversationId)
+        ?? queryClient.getQueryData<Conversation>(conversationKeys.detail(requestConversationId)),
       toolPreferences
     );
-    await runGeneration({
+    return runGeneration({
       conversationId: requestConversationId,
       content,
       showUserBubble: true,
@@ -462,7 +472,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         ...(attachmentDocumentIds ? { attachmentDocumentIds } : {}),
       },
     });
-  }, [conversations, runGeneration]);
+  }, [conversations, queryClient, runGeneration]);
 
   const retryFailedMessage = useCallback(async (tempId: string) => {
     const failed = conversationUiStore.getState().optimisticMessages.get(tempId);
@@ -509,11 +519,12 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       showUserBubble: false,
       invoke: requestId => VaultAPI.regenerateResponse(
         conversationId,
-        withExplorerFocus(conversations.find(conversation => conversation.id === conversationId), toolPreferences),
+        withExplorerFocus(conversations.find(conversation => conversation.id === conversationId)
+          ?? queryClient.getQueryData<Conversation>(conversationKeys.detail(conversationId)), toolPreferences),
         requestId
       ),
       onFailure: () => {
-        if (lastUser?.content) {
+        if (lastUser?.content && conversationUiStore.getState().activeConversationId === conversationId) {
           conversationUiStore.setState({ composerDraft: lastUser.content });
         }
       },

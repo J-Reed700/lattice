@@ -27,6 +27,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         progress_completed: 0,
         progress_total: 3,
         progress_message: "Queued".into(),
+        activity: None,
         result_id: None,
         error: None,
         retry_of_job_id: None,

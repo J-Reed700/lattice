@@ -55,11 +55,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             tauri::async_runtime::block_on(super::practical_runs::recover_running_runs(
                 &practical,
             ))?;
-            let pending = tauri::async_runtime::block_on(repo.pending_jobs())?;
             tauri::async_runtime::block_on(async {
-                for job in pending {
-                    generation_worker(&container).spawn(job.id);
-                }
+                generation_worker(&container).dispatch();
             });
             Ok(())
         })

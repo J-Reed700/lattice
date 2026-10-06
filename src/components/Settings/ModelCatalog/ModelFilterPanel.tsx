@@ -1,177 +1,58 @@
-/**
- * ModelFilterPanel
- *
- * One row of quiet controls above the results: category tabs, then selects
- * for sort, size, popularity, and speed. No card, no pills, no heading.
- */
+import type { ReactNode } from 'react';
 
-import { cn } from '@/lib/utils';
-
-import { CATALOG_TEXT_BUTTON_CLASS, clearedFilters, hasActiveFilters } from './catalogUtils';
+import { CATALOG_TEXT_BUTTON_CLASS, hasActiveFilters } from './catalogUtils';
 import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
 import { SidebarTabs, settingsFieldClass } from '../../ui';
 
 import type { ModelCategory, ModelSortBy } from '../../../types/modelCatalog';
 
 type CategoryTab = ModelCategory | 'all';
-
 const CATEGORY_TABS: ReadonlyArray<{ id: CategoryTab; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'LLM', label: 'Chat' },
-  { id: 'Embedding', label: 'Embedding' },
-  { id: 'OCR', label: 'OCR' },
+  { id: 'all', label: 'All' }, { id: 'LLM', label: 'Chat' },
+  { id: 'Embedding', label: 'Embedding' }, { id: 'OCR', label: 'OCR' },
   { id: 'Transcription', label: 'Transcription' },
 ];
 
-const SIZE_OPTIONS: ReadonlyArray<{ value: number | null; label: string }> = [
-  { value: null, label: 'Any size' },
-  { value: 2, label: '≤ 2 GB' },
-  { value: 4, label: '≤ 4 GB' },
-  { value: 8, label: '≤ 8 GB' },
-  { value: 20, label: '≤ 20 GB' },
-];
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="min-w-0 space-y-1 text-xs text-text-secondary"><span className="block">{label}</span>{children}</label>;
+}
 
-const DOWNLOAD_OPTIONS: ReadonlyArray<{ value: number | null; label: string }> = [
-  { value: null, label: 'Any popularity' },
-  { value: 1_000, label: '1K+' },
-  { value: 10_000, label: '10K+' },
-  { value: 100_000, label: '100K+' },
-  { value: 1_000_000, label: '1M+' },
-];
-
-const DIMENSION_OPTIONS: ReadonlyArray<{ value: number | null; label: string }> = [
-  { value: null, label: 'Any dimensions' },
-  { value: 384, label: '384' },
-  { value: 768, label: '768' },
-  { value: 1024, label: '1024' },
-];
-
-const TIER_OPTIONS: ReadonlyArray<{ value: string | null; label: string }> = [
-  { value: null, label: 'Any speed' },
-  { value: 'fast', label: 'Fast' },
-  { value: 'balanced', label: 'Balanced' },
-  { value: 'accurate', label: 'Accurate' },
-];
-
-const SELECT_CLASS = cn(settingsFieldClass, 'w-auto');
-
-/** Selects carry `null` for "no filter"; the DOM only speaks strings. */
-const NONE = '';
-const toOptionValue = (value: number | string | null) => (value == null ? NONE : String(value));
-
-export function ModelFilterPanel() {
-  const filters = useModelCatalogStore((state) => state.filters);
-  const sortBy = useModelCatalogStore((state) => state.sortBy);
-  const setFilters = useModelCatalogStore((state) => state.setFilters);
-  const setSortBy = useModelCatalogStore((state) => state.setSortBy);
-
-  const showDimensions = filters.category === 'Embedding';
-  const activeTier = filters.required_capabilities[0] ?? null;
-  const isFiltered = hasActiveFilters(filters);
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-      <SidebarTabs<CategoryTab>
-        value={filters.category ?? 'all'}
-        onChange={(id) =>
-          setFilters({
-            category: id === 'all' ? null : id,
-            // Dimensions only mean something for embedding models.
-            embedding_dimensions: id === 'Embedding' ? filters.embedding_dimensions : null,
-          })
-        }
-        options={CATEGORY_TABS}
-        className="mr-1 pt-1"
-      />
-
-      <select
-        aria-label="Sort models"
-        value={sortBy}
-        onChange={(event) => setSortBy(event.target.value as ModelSortBy)}
-        className={SELECT_CLASS}
-      >
-        <option value="popularity">Most downloaded</option>
-        <option value="recommended">Recommended</option>
-        <option value="size_asc">Smallest</option>
-      </select>
-
-      <select
-        aria-label="Maximum size"
-        value={toOptionValue(filters.max_size_gb)}
-        onChange={(event) =>
-          setFilters({ max_size_gb: event.target.value === NONE ? null : Number(event.target.value) })
-        }
-        className={SELECT_CLASS}
-      >
-        {SIZE_OPTIONS.map((option) => (
-          <option key={option.label} value={toOptionValue(option.value)}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Minimum downloads"
-        value={toOptionValue(filters.min_downloads)}
-        onChange={(event) =>
-          setFilters({
-            min_downloads: event.target.value === NONE ? null : Number(event.target.value),
-          })
-        }
-        className={SELECT_CLASS}
-      >
-        {DOWNLOAD_OPTIONS.map((option) => (
-          <option key={option.label} value={toOptionValue(option.value)}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-
-      {showDimensions ? (
-        <select
-          aria-label="Embedding dimensions"
-          value={toOptionValue(filters.embedding_dimensions)}
-          onChange={(event) =>
-            setFilters({
-              embedding_dimensions: event.target.value === NONE ? null : Number(event.target.value),
-            })
-          }
-          className={SELECT_CLASS}
-        >
-          {DIMENSION_OPTIONS.map((option) => (
-            <option key={option.label} value={toOptionValue(option.value)}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      ) : null}
-
-      <select
-        aria-label="Speed"
-        value={toOptionValue(activeTier)}
-        onChange={(event) =>
-          setFilters({
-            required_capabilities: event.target.value === NONE ? [] : [event.target.value],
-          })
-        }
-        className={SELECT_CLASS}
-      >
-        {TIER_OPTIONS.map((option) => (
-          <option key={option.label} value={toOptionValue(option.value)}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-
-      {isFiltered ? (
-        <button
-          type="button"
-          onClick={() => setFilters(clearedFilters(filters))}
-          className={CATALOG_TEXT_BUTTON_CLASS}
-        >
-          Reset filters
-        </button>
-      ) : null}
+export function ModelFilterPanel({ quantizations = [] }: { quantizations?: string[] }) {
+  const { filters, sortBy, setFilters, setSortBy, quantizationFilter, setQuantizationFilter, fitFilter, setFitFilter, resetFilters } = useModelCatalogStore();
+  const isFiltered = hasActiveFilters(filters) || Boolean(quantizationFilter) || fitFilter !== 'all';
+  const quantizationOptions = [...new Set([...quantizations, quantizationFilter].filter(Boolean))].sort();
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <SidebarTabs<CategoryTab> value={filters.category ?? 'all'} onChange={id => {
+        setFilters({ category: id === 'all' ? null : id, embedding_dimensions: id === 'Embedding' ? filters.embedding_dimensions : null });
+        setQuantizationFilter('');
+      }} options={CATEGORY_TABS} className="max-w-full overflow-x-auto pt-1" />
+      {isFiltered ? <button type="button" onClick={resetFilters} className={CATALOG_TEXT_BUTTON_CLASS}>Reset filters</button> : null}
     </div>
-  );
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3">
+      <Field label="Sort models"><select value={sortBy} onChange={event => setSortBy(event.target.value as ModelSortBy)} className={settingsFieldClass}>
+        <option value="popularity">Most downloaded</option><option value="recommended">Recommended</option>
+        <option value="size_asc">Smallest listed file</option><option value="size_desc">Largest listed file</option>
+        <option value="likes">Most liked</option><option value="name">Name A–Z</option>
+      </select></Field>
+      <Field label="Maximum size"><select value={filters.max_size_gb ?? ''} onChange={event => setFilters({ max_size_gb: event.target.value ? Number(event.target.value) : null })} className={settingsFieldClass}>
+        <option value="">Any download size</option>{[2, 4, 8, 16, 32, 64].map(size => <option key={size} value={size}>Up to {size} GB</option>)}
+      </select></Field>
+      {filters.category === null || filters.category === 'LLM' ? <Field label="Listed quantization"><select value={quantizationFilter} onChange={event => setQuantizationFilter(event.target.value)} className={settingsFieldClass}>
+        <option value="">All precisions</option>{quantizationOptions.map(value => <option key={value}>{value}</option>)}
+      </select></Field> : null}
+      <Field label="Estimated fit"><select value={fitFilter} onChange={event => setFitFilter(event.target.value as typeof fitFilter)} className={settingsFieldClass}>
+        <option value="all">Any computer fit</option><option value="fits">Fits comfortably</option><option value="fits-or-tight">Fits or tight</option>
+      </select></Field>
+      <Field label="Minimum downloads"><select value={filters.min_downloads ?? ''} onChange={event => setFilters({ min_downloads: event.target.value ? Number(event.target.value) : null })} className={settingsFieldClass}>
+        <option value="">Any popularity</option>{[1000, 10000, 100000, 1000000].map(count => <option key={count} value={count}>{new Intl.NumberFormat(undefined, { notation: 'compact' }).format(count)}+</option>)}
+      </select></Field>
+      {filters.category === 'Embedding' ? <Field label="Embedding dimensions"><select value={filters.embedding_dimensions ?? ''} onChange={event => setFilters({ embedding_dimensions: event.target.value ? Number(event.target.value) : null })} className={settingsFieldClass}>
+        <option value="">Any dimensions</option>{[384, 768, 1024].map(count => <option key={count}>{count}</option>)}
+      </select></Field> : <Field label="Capability"><select value={filters.required_capabilities[0] ?? ''} onChange={event => setFilters({ required_capabilities: event.target.value ? [event.target.value] : [] })} className={settingsFieldClass}>
+        <option value="">Any capability</option><option value="code">Code</option><option value="reasoning">Reasoning</option><option value="multilingual">Multilingual</option>
+      </select></Field>}
+    </div>
+    <p className="text-xs leading-relaxed text-text-muted">Size, precision, and fit filters apply to the listed version. Open Versions to compare all available files. Unknown sizes remain visible unless you filter by fit.</p>
+  </div>;
 }

@@ -306,6 +306,14 @@ pub struct ModelCatalogStats {
 
 #[async_trait]
 impl ModelCatalogPort for ModelCacheAdapter {
+    async fn get_model_variants(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ExternalModelMetadata>, AppError> {
+        // A repository's default-file cache cannot answer a variant listing.
+        self.upstream.get_model_variants(model_id).await
+    }
+
     async fn search_models(
         &self,
         query: &str,

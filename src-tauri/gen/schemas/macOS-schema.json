@@ -825,6 +825,12 @@
           "markdownDescription": "Enables the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_conversation_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-create-conversation-tangent",
+          "markdownDescription": "Enables the create_conversation_tangent command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-create-journal",
@@ -891,6 +897,12 @@
           "markdownDescription": "Enables the list_conversation_spaces command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_conversation_tangents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-conversation-tangents",
+          "markdownDescription": "Enables the list_conversation_tangents command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_conversation_web_sources command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-list-conversation-web-sources",
@@ -949,6 +961,12 @@
           "type": "string",
           "const": "conversation:allow-move-conversation-to-space",
           "markdownDescription": "Enables the move_conversation_to_space command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the promote_conversation_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-promote-conversation-tangent",
+          "markdownDescription": "Enables the promote_conversation_tangent command without any pre-configured scope."
         },
         {
           "description": "Enables the regenerate_response command without any pre-configured scope.",
@@ -1131,6 +1149,12 @@
           "markdownDescription": "Denies the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Denies the create_conversation_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-create-conversation-tangent",
+          "markdownDescription": "Denies the create_conversation_tangent command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-create-journal",
@@ -1197,6 +1221,12 @@
           "markdownDescription": "Denies the list_conversation_spaces command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_conversation_tangents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-conversation-tangents",
+          "markdownDescription": "Denies the list_conversation_tangents command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_conversation_web_sources command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-list-conversation-web-sources",
@@ -1255,6 +1285,12 @@
           "type": "string",
           "const": "conversation:deny-move-conversation-to-space",
           "markdownDescription": "Denies the move_conversation_to_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the promote_conversation_tangent command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-promote-conversation-tangent",
+          "markdownDescription": "Denies the promote_conversation_tangent command without any pre-configured scope."
         },
         {
           "description": "Denies the regenerate_response command without any pre-configured scope.",
@@ -6051,6 +6087,12 @@
           "markdownDescription": "Enables the get_model_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_model_variants command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-get-model-variants",
+          "markdownDescription": "Enables the get_model_variants command without any pre-configured scope."
+        },
+        {
           "description": "Enables the import_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-import-model",
@@ -6247,6 +6289,12 @@
           "type": "string",
           "const": "model:deny-get-model-info",
           "markdownDescription": "Denies the get_model_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_model_variants command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-get-model-variants",
+          "markdownDescription": "Denies the get_model_variants command without any pre-configured scope."
         },
         {
           "description": "Denies the import_model command without any pre-configured scope.",

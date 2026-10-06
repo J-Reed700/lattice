@@ -39,6 +39,28 @@ fn error_kind(error: &Value) -> String {
     }
 }
 
+/// Keep protocol failures typed across durable retries. Only fixed descriptions
+/// of known server failures may be exposed; arbitrary error text can echo input.
+fn generation_error(error: &Value) -> AppError {
+    let code = error.get("code").and_then(Value::as_u64);
+    let cause = match error.get("message").and_then(Value::as_str) {
+        Some("Invalid input batch.") => ": the server could not process its inference batch",
+        Some("Compute error.") => ": the server's inference computation failed",
+        Some("Context size has been exceeded.") => ": the server exhausted its context capacity",
+        _ => "",
+    };
+    let description = format!(
+        "llama.cpp reported a generation error{}{cause}",
+        error_kind(error)
+    );
+    match code {
+        Some(429) => AppError::RateLimitExceeded(description),
+        Some(408) => AppError::Network(description),
+        Some(500..=599) => AppError::ServiceNotAvailable(description),
+        _ => AppError::InvalidState(description),
+    }
+}
+
 impl Decoder {
     pub fn for_completion() -> Self {
         Self {
@@ -86,10 +108,7 @@ impl Decoder {
                     error.get("code").and_then(Value::as_u64),
                     Some(408 | 429 | 500 | 502 | 503 | 504)
                 );
-                return Err(AppError::Network(format!(
-                    "llama.cpp reported a generation error{}",
-                    error_kind(error)
-                )));
+                return Err(generation_error(error));
             }
             if let Some(usage) = event.get("usage").filter(|value| value.is_object()) {
                 self.usage = usage.clone();

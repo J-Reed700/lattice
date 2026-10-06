@@ -52,10 +52,10 @@ describe('Learning Studio Plan editor', () => {
     expect(await screen.findByText('Required lesson count')).toBeVisible();
     expect(screen.getByText('Current plan to draft preview')).toBeVisible();
     expect(screen.getByText(/Resume: Build a source-backed explanation/)).toBeVisible();
-    expect(screen.getByText('2/5')).toBeVisible();
+    expect(screen.getByText(/2\/5 lessons staged/)).toBeVisible();
     expect(screen.getByText('Preparing a lesson')).toBeVisible();
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
-    await userEvent.setup().click(cancel);
+    const pause = screen.getByRole('button', { name: 'Pause lesson preparation' });
+    await userEvent.setup().click(pause);
     await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', expectedRevision: 9 })));
   });
 

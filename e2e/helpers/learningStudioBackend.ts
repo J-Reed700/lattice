@@ -3,6 +3,8 @@ import type { Page } from "@playwright/test";
 import type {
   LearningMemoryDto,
   LearningOutlineProgressDto,
+  LearningGenerationJob,
+  LearningGenerationJobActionRequestDto,
   LearningLessonDto,
   LearningProgramDto,
   LearningPracticalWorkspaceDto,
@@ -481,7 +483,7 @@ export async function installLearningStudioBackend(page: Page) {
         requiredLessonCountBefore: lesson ? 1 : 0,
         requiredLessonCountAfter: lesson ? 1 : 0,
         resumeLessonId: lesson?.id ?? null,
-        jobs: [],
+        jobs: [] as LearningGenerationJob[],
         latestDiagnostic: null as Record<string, unknown> | null,
       },
       practicalWorkspace: {
@@ -2121,7 +2123,25 @@ export async function installLearningStudioBackend(page: Page) {
       }
       if (command === "plugin:learning|get_learning_plan") {
         state.planWorkspace.programRevision = program.summary.revision;
-        return state.planWorkspace;
+        // IPC returns a snapshot, not shared references into the backend's state.
+        return structuredClone(state.planWorkspace);
+      }
+      if (command === "plugin:learning|cancel_learning_generation_job" || command === "plugin:learning|retry_learning_generation_job") {
+        const request = getRequest<LearningGenerationJobActionRequestDto>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
+          throw new Error("Program changed; reload and retry.");
+        const job = state.planWorkspace.jobs.find((job) => job.id === request.jobId);
+        if (!job) throw new Error("Job not found");
+        if (command === "plugin:learning|cancel_learning_generation_job") {
+          Object.assign(job, { status: "cancelled", finishedAt: Date.now(), progressMessage: "Cancelled", error: null });
+          return job;
+        }
+        const next: LearningGenerationJob = {
+          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
+          status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
+        };
+        state.planWorkspace.jobs.unshift(next);
+        return next;
       }
       if (command === "plugin:learning|preview_learning_curriculum_revision") {
         const request = getRequest<Record<string, unknown>>(args);

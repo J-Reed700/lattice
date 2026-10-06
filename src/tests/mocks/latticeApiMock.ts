@@ -273,6 +273,9 @@ export function createVaultAPIMock() {
     })),
 
     // Branching, starters, and passage references
+    listConversationTangents: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    createConversationTangent: vi.fn().mockResolvedValue({ ok: false, error: 'No tangent fixture configured' }),
+    promoteConversationTangent: vi.fn().mockResolvedValue({ ok: false, error: 'No tangent fixture configured' }),
     truncateConversationAfter: vi.fn().mockResolvedValue({
       ok: true,
       data: { conversationId: 'test-conversation', deletedCount: 0, messages: [] },

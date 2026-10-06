@@ -91,6 +91,13 @@ belong to their respective adapters, not the sync contracts.
   operations retain their transactions, and missing/foreign IDs retain their errors.
 - Branching and synthesis orchestration are separate workflow modules. Public
   workspace/synthesis DTOs live in `workspace_dto.rs`, re-exported at the old path.
+- Synthesis reports actual gather/map/reduce boundaries on a typed IPC channel.
+  Chat and Journal share `features/journal/synthesis/runSynthesis.ts`; its transient
+  activity store survives route changes, blocks overlapping starts, and retains
+  generated output for a save retry. `RootLayout` owns its progress panel. The
+  destination is fixed at start, open editor saves are flushed before appending,
+  and completion is announced only after persistence succeeds. This activity is
+  held in renderer memory, not a durable job that resumes after app restart.
 - The renderer sidebar composes conversation lists, references, and a spaces panel.
   Journal selection, space editing, and synthesis have focused hooks. Shared React
   Query reads and mutations own journal/bookmark/note data; component state holds

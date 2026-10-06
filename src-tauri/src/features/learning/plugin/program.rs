@@ -166,9 +166,6 @@ pub async fn prepare_learning_lesson(
             ),
         ));
     }
-    crate::features::learning::sources::ensure_before_use_sources(&container, &request.program_id)
-        .await
-        .map_err(ApiError::from)?;
     let operation_id = crate::features::learning::curriculum_repository::stable_job_operation_id(
         &request.program_id,
         &request.lesson_id,
@@ -191,36 +188,8 @@ pub async fn prepare_learning_lesson(
         .await
         .map_err(ApiError::from)?;
     generation_worker(&container).spawn(job.id.clone());
-    let result = async {
-        loop {
-            let latest = job_repo.job(&job.id).await?;
-            match latest.status {
-                crate::features::learning::curriculum::LearningGenerationJobStatus::Completed => {
-                    return Ok(())
-                }
-                crate::features::learning::curriculum::LearningGenerationJobStatus::Failed => {
-                    return Err(crate::shared::error::AppError::ServiceNotAvailable(
-                        latest
-                            .error
-                            .unwrap_or_else(|| "Lesson preparation failed.".into()),
-                    ))
-                }
-                crate::features::learning::curriculum::LearningGenerationJobStatus::Cancelled => {
-                    return Err(crate::shared::error::AppError::InvalidState(
-                        "Lesson preparation was cancelled.".into(),
-                    ))
-                }
-                crate::features::learning::curriculum::LearningGenerationJobStatus::Interrupted => {
-                    return Err(crate::shared::error::AppError::ServiceNotAvailable(
-                        "Lesson preparation was interrupted. Retry the generation job.".into(),
-                    ))
-                }
-                _ => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
-            }
-        }
-    }
-    .await;
-    result.map_err(ApiError::from)?;
+    // Acknowledge the durable request immediately. Source refresh, model calls,
+    // and publication belong to the worker; the UI observes the saved job.
     LearningRepository::new(container.db_pool().clone())
         .get(&request.program_id)
         .await

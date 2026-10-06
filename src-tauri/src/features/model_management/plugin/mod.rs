@@ -91,6 +91,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             crate::features::model_management::commands::get_compatible_models,
             crate::features::model_management::commands::get_all_recommended_models,
             crate::features::model_management::commands::search_model_catalog,
+            crate::features::model_management::commands::get_model_variants,
             crate::features::model_management::commands::refresh_model_catalog,
             crate::features::model_management::commands::clear_model_catalog_cache,
             crate::features::model_management::commands::get_model_catalog_stats,

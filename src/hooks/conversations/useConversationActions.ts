@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 
 import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
 import { VaultAPI } from '@/lib/api';
+import type { ConversationTangentDto } from '@/lib/bindings';
 import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
 import { conversationUiStore } from '@/stores/conversationUiStore';
 import type {
@@ -409,7 +410,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     else await loadDocumentSpaceMemberships(documentId);
   }, [loadDocumentSpaceMemberships]);
 
-  const selectConversation = useCallback(async (id: string) => {
+  const selectConversation = useCallback(async function selectConversation(id: string): Promise<void> {
     conversationUiStore.setState({ activeConversationId: id, error: null });
     addRequestedId('requestedLinkedConversationIds', id);
     addRequestedId('requestedWebSourceConversationIds', id);
@@ -426,6 +427,13 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       // space's library, and a sidebar still showing another space would say
       // otherwise. Skipped if the reader has already moved on to another chat.
       const current = conversationUiStore.getState();
+      if (detail?.tangentParentId && current.activeConversationId === id) {
+        // References and deep links open a tangent beside its parent, never
+        // as an extra entry in the main conversation list.
+        conversationUiStore.setState({ requestedTangent: { parentId: detail.tangentParentId, tangentId: id } });
+        await selectConversation(detail.tangentParentId);
+        return;
+      }
       const spaceId = detail?.spaceId;
       if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
         await loadConversations({ spaceId });
@@ -566,16 +574,21 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
         conversationUiStore.setState({ activeConversationId: id });
       }
       setUiError(result.error);
-      return;
+      return false;
     }
-    lifecycle.cleanupConversation(id);
-    forgetRequestedConversation(id);
-    queryClient.removeQueries({ queryKey: conversationKeys.detail(id), exact: true });
-    queryClient.removeQueries({ queryKey: conversationKeys.messages(id), exact: true });
-    queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(id) });
-    queryClient.removeQueries({ queryKey: conversationKeys.linkedDocuments(id), exact: true });
-    queryClient.removeQueries({ queryKey: conversationKeys.webSources(id), exact: true });
+    const children = queryClient.getQueryData<ConversationTangentDto[]>(conversationKeys.tangents(id)) ?? [];
+    for (const removedId of [id, ...children.map(child => child.conversationId)]) {
+      lifecycle.cleanupConversation(removedId);
+      forgetRequestedConversation(removedId);
+      queryClient.removeQueries({ queryKey: conversationKeys.detail(removedId), exact: true });
+      queryClient.removeQueries({ queryKey: conversationKeys.messages(removedId), exact: true });
+      queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(removedId) });
+      queryClient.removeQueries({ queryKey: conversationKeys.linkedDocuments(removedId), exact: true });
+      queryClient.removeQueries({ queryKey: conversationKeys.webSources(removedId), exact: true });
+      queryClient.removeQueries({ queryKey: conversationKeys.tangents(removedId), exact: true });
+    }
     await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
+    return true;
   }, [invalidateLists, lifecycle, queryClient]);
 
   const dismissFailedMessage = useCallback((tempId: string) => {

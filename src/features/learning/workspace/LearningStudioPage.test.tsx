@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
+import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
 import type { DocumentMetadata } from '@/types/fileBrowser';
@@ -238,6 +238,40 @@ describe('Learning Studio program workflow', () => {
     expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel generation' })).toBeVisible();
     await act(async () => finish());
+  });
+
+  it('keeps active preparation visible and lets the learner complete other ready lessons', async () => {
+    const user = userEvent.setup();
+    const active = program('active', true);
+    const completed = structuredClone(active);
+    completed.summary.revision += 1;
+    completed.summary.completedLessons = 1;
+    completed.modules[0].lessons[0].completed = true;
+    const running: LearningGenerationJob = {
+      id: 'running-job', programId: active.summary.id, operationId: 'preparation', kind: 'lesson_preparation',
+      payloadSha256: 'fixture', baseRevisionNumber: 1, status: 'running', progressCompleted: 0,
+      activity: null, progressTotal: 1, progressMessage: 'Checking saved evidence for another lesson',
+      resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000, finishedAt: null,
+    };
+    mocks.plan.mockResolvedValue(ok({ jobs: [{ ...running, id: 'newer-stopped-job', status: 'failed', createdAt: Date.now(), progressMessage: 'Stopped attempt' }, running] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.complete.mockImplementation(async () => {
+      mocks.get.mockResolvedValue(ok(completed));
+      return ok(completed);
+    });
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    const preparation = await screen.findByRole('region', { name: 'Lesson preparation progress' });
+    expect(within(preparation).getByText('Checking saved evidence for another lesson')).toBeVisible();
+    const finish = screen.getByRole('button', { name: 'Mark lesson complete' });
+    expect(finish).toBeEnabled();
+    await user.click(finish);
+    await waitFor(() => expect(mocks.complete).toHaveBeenCalledWith({ programId: active.summary.id, lessonId: 'lesson-1', expectedRevision: 1 }));
+    expect(await screen.findByRole('button', { name: 'Marked complete' })).toBeDisabled();
+    expect(within(preparation).getByText('Checking saved evidence for another lesson')).toBeVisible();
+    expect(mocks.prepare).not.toHaveBeenCalled();
   });
 
   it('validates a quiz, preserves answers through a failed submit, and retries with the same attempt id', async () => {

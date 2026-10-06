@@ -224,14 +224,25 @@ impl ExternalModelMetadata {
 
         // Estimate model size from name or use defaults
         let size_gb = if let Some(size_bytes) = self.preferred_size_bytes {
-            (size_bytes as f64 / 1_000_000_000.0).max(0.1)
+            size_bytes as f64 / 1_000_000_000.0
+        } else if self.preferred_filename.is_some() {
+            // Parameter count cannot tell us the size of a selected quantization.
+            0.0
         } else {
             self.estimate_size_gb()
         };
 
         // Heuristic RAM requirements
-        let minimum_ram_gb = (size_gb * 1.5).max(4.0);
-        let recommended_ram_gb = (size_gb * 2.0).max(8.0);
+        let minimum_ram_gb = if size_gb > 0.0 {
+            (size_gb * 1.5).max(4.0)
+        } else {
+            0.0
+        };
+        let recommended_ram_gb = if size_gb > 0.0 {
+            (size_gb * 2.0).max(8.0)
+        } else {
+            0.0
+        };
 
         let context_length = self.extract_context_length();
 
@@ -420,40 +431,25 @@ impl ExternalModelMetadata {
         }
     }
 
-    /// Extract quantization formats from ID/tags.
+    /// The selected artifact is authoritative; repository tags can describe
+    /// other variants. An unlabelled GGUF is not necessarily Q4 (or quantized).
     fn extract_quantizations(&self) -> Vec<String> {
-        let text = format!(
-            "{} {} {} {}",
-            self.id,
-            self.name,
-            self.tags.join(" "),
-            self.preferred_filename.clone().unwrap_or_default()
-        )
-        .to_lowercase();
-        let mut quantizations = Vec::new();
-
-        if text.contains("q4") || text.contains("q4_k_m") {
-            quantizations.push("Q4_K_M".into());
-        }
-        if text.contains("q5") {
-            quantizations.push("Q5_K_M".into());
-        }
-        if text.contains("q8") {
-            quantizations.push("Q8_0".into());
-        }
-        if text.contains("f16") {
-            quantizations.push("F16".into());
-        }
-        if text.contains("gguf") && quantizations.is_empty() {
-            // GGUF implies quantization
-            quantizations.push("Q4_K_M".into());
-        }
-
-        if quantizations.is_empty() {
-            quantizations.push("F16".into()); // Default
-        }
-
-        quantizations
+        use std::sync::LazyLock;
+        static PRECISION: LazyLock<Option<regex::Regex>> = LazyLock::new(|| {
+            regex::Regex::new(
+                r"(?i)(?:^|[.\-_ ])((?:UD-)?(?:IQ[1-8]|Q[1-8]|TQ[12])(?:_[A-Z0-9]+)*|BF16|F16|F32|FP16|FP32|MXFP4)(?:[.\- ]|$)",
+            )
+            .ok()
+        });
+        let text = self
+            .preferred_filename
+            .clone()
+            .unwrap_or_else(|| format!("{} {} {}", self.id, self.name, self.tags.join(" ")));
+        PRECISION
+            .as_ref()
+            .and_then(|pattern| pattern.captures(&text))
+            .map(|capture| vec![capture[1].to_ascii_uppercase()])
+            .unwrap_or_default()
     }
 
     /// Extract capabilities from tags.
@@ -518,6 +514,15 @@ impl ExternalModelMetadata {
 /// Provides dynamic model discovery from external repositories.
 #[async_trait]
 pub trait ModelCatalogPort: Send + Sync {
+    /// Enumerate actual standalone download artifacts, not advertised formats.
+    /// Adapters without a file listing can only offer their known default.
+    async fn get_model_variants(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ExternalModelMetadata>, AppError> {
+        Ok(self.get_model_by_id(model_id).await?.into_iter().collect())
+    }
+
     /// Search for models by query.
     ///
     /// # Arguments
@@ -992,7 +997,7 @@ mod tests {
         };
 
         let quants = external.extract_quantizations();
-        assert!(quants.contains(&"Q4_K_M".into()));
+        assert_eq!(quants, vec!["Q4"]);
     }
 
     #[test]

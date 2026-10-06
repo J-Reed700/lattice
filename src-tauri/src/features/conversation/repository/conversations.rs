@@ -202,6 +202,7 @@ impl ConversationRepository {
             SELECT id, title, model_name, system_prompt, created_at, updated_at,
                    message_count, total_tokens
             FROM conversations
+            WHERE tangent_parent_id IS NULL
             ORDER BY updated_at DESC
             LIMIT ? OFFSET ?
             "#,
@@ -339,11 +340,13 @@ impl ConversationRepository {
     }
 
     pub async fn count(&self) -> Result<usize> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations")
-            .fetch_one(&self.pool)
-            .await
-            .map(|c| c as usize)
-            .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversations WHERE tangent_parent_id IS NULL",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map(|c| c as usize)
+        .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))
     }
 
     pub async fn exists(&self, id: &str) -> Result<bool> {

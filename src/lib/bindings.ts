@@ -1337,6 +1337,18 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
 }
 },
 /**
+ * List the actual standalone GGUF files published in a Hugging Face repository.
+ * Sizes come from the repository, while memory requirements are estimates.
+ */
+async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_model_variants", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Refresh model catalog cache.
  *
  * Clears the catalog cache to force fresh API calls on next search.
@@ -1929,6 +1941,30 @@ async truncateConversationAfter(request: TruncateConversationAfterRequestDto) : 
 async forkConversation(request: ForkConversationRequestDto) : Promise<Result<ForkConversationResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("fork_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createConversationTangent(request: CreateTangentRequestDto) : Promise<Result<ConversationTangentDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_conversation_tangent", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listConversationTangents(request: GetConversationRequestDto) : Promise<Result<ConversationTangentDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_conversation_tangents", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async promoteConversationTangent(request: GetConversationRequestDto) : Promise<Result<ConversationDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("promote_conversation_tangent", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3328,9 +3364,9 @@ async listJournalConversations(query: ListJournalConversationsQueryDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
+async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto, onProgress: TAURI_CHANNEL<SynthesisProgressDto>) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("synthesize_journal_entries", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("synthesize_journal_entries", { request, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5093,7 +5129,11 @@ forkedFromMessageId: string | null;
  * path. Set only on Explorer threads; Chat leaves them out of its list
  * so a thread is never continued without its folder.
  */
-explorerRoot: string | null }
+explorerRoot: string | null;
+/**
+ * Present while this transcript lives in its parent's Tangents panel.
+ */
+tangentParentId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number;
@@ -5170,6 +5210,11 @@ export type ConversationMessageBookmarkDto = { id: string; conversationId: strin
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
 export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationSpaceMemberDto = { spaceId: string; memberId: string; displayName: string; email: string | null; avatarUrl: string | null; role: string; createdAt: string; updatedAt: string }
+export type ConversationTangentDto = { conversationId: string; parentConversationId: string; sourceConversationId: string; sourceMessageId: string; selectedText: string; title: string; createdAt: string; updatedAt: string;
+/**
+ * The inherited transcript is context, not the tangent's own discussion.
+ */
+contextMessageCount: number }
 export type ConversationWebSourceDto = { id: string; url: string; normalizedUrl: string; title: string | null; excerpt: string | null; relevanceScore: number | null; addedAt: string }
 /**
  * Vault-wide type mix and recent growth.
@@ -5217,6 +5262,7 @@ export type CreateLearningCanvasRequestDto = { operationId: string; canvasId: st
 export type CreateLearningCanvasSnapshotRequestDto = { operationId: string; snapshotId: string; programId: string; canvasId: string; expectedRevision: number; name: string }
 export type CreateLearningSourceSelectorRequestDto = { operationId: string; selectorId: string; programId: string; sourceId: string; sourceVersionId: string; startByte: number; endByte: number }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
+export type CreateTangentRequestDto = { conversationId: string; messageId: string; selectedText: string }
 export type CreateWorkspaceNoteRequestDto = { title: string | null;
 /**
  * The journal this page belongs to. Omitted for an unfiled page.
@@ -6469,10 +6515,13 @@ export type LearningFollowUpActionKind = "lesson" | "practice" | "assessment" | 
 export type LearningFollowUpReasonCode = "missed_outcome" | "assisted_success" | "low_transfer" | "stale_evidence" | "uncertain_grade"
 export type LearningFollowUpRecommendationDto = { id: string; outcomeId: string | null; reasonCode: LearningFollowUpReasonCode; explanation: string; actionKind: LearningFollowUpActionKind; actionRef: string | null; status: LearningFollowUpStatus; evidenceEventIds: string[]; createdAt: number; decidedAt: number | null }
 export type LearningFollowUpStatus = "pending" | "accepted" | "dismissed" | "completed"
-export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number; checksCompleted: number; checksTotal: number; checksReused: number; checksUnresolved: number; recentSteps: LearningGenerationStep[] }
+export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
+export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
+export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
 export type LearningItemFormat = "multiple_choice" | "short_answer" | "explanation" | "ordering" | "artifact"
 export type LearningLabFile = { path: string; content: string }
 export type LearningLabLimits = { timeoutSeconds: number; memoryMegabytes: number; cpuMillis: number; processLimit: number; outputBytes: number }
@@ -7890,6 +7939,11 @@ syncOnStartup: boolean }
  * "note"; `id` is that source's own id.
  */
 export type SynthesisCitationDto = { kind: string; id: string; title: string }
+/**
+ * Actual synthesis work boundaries, rather than an estimated completion percent.
+ */
+export type SynthesisProgressDto = { stage: SynthesisStage; entryCount: number | null; chunkIndex: number | null; chunkCount: number | null }
+export type SynthesisStage = "gathering" | "reading" | "writing"
 export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];
 /**

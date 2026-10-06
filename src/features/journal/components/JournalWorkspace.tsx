@@ -16,13 +16,9 @@ import { useJournalEntries } from '@/features/journal/hooks/useJournalEntries';
 import { useJournalNavigationGuard } from '@/features/journal/hooks/useJournalNavigationGuard';
 import { UNTITLED_PAGE, useJournalNote } from '@/features/journal/hooks/useJournalNote';
 import { useJournalSources } from '@/features/journal/hooks/useJournalSources';
-import {
-  appendToNote,
-  appendSynthesisContent,
-  buildSynthesisBlock,
-  resolveWeekPage,
-  weekPageTitle,
-} from '@/features/journal/model/synthesisTargets';
+import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
+import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
+import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
 import { useWeeklySynthesisCandidatesQuery } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 import VaultAPI from '@/lib/api';
@@ -134,8 +130,9 @@ export function JournalWorkspace() {
   // later journal switch does not drag the user back to the same page.
   const [requestedNoteId, setRequestedNoteId] = useState<string | null>(requestedNoteIdParam);
 
-  const { data: weekCandidates, refetch: refetchWeekCandidates } =
+  const { data: weekCandidates } =
     useWeeklySynthesisCandidatesQuery();
+  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
 
   const queryClient = useQueryClient();
   const journalsQuery = useJournalsQuery();
@@ -213,7 +210,6 @@ export function JournalWorkspace() {
     createPage,
     renamePage,
     deletePage,
-    refreshPages,
   } = noteState;
 
   useJournalNavigationGuard(hasPendingChanges, saveNow);
@@ -667,84 +663,23 @@ export function JournalWorkspace() {
         notify('error', 'No journal entries available for synthesis.');
         return false;
       }
-      try {
-        const result = await VaultAPI.synthesizeJournalEntries({
+      return runSynthesis({
+        title: scope === 'current' ? targets[0].title : SYNTHESIS_HEADINGS[scope],
+        heading: SYNTHESIS_HEADINGS[scope],
+        request: {
           conversationIds: targets.map((t) => t.id),
           scope,
           maxEntries: SYNTHESIS_ENTRY_LIMIT,
-        });
-        if (!result.ok) {
-          notify('error', result.error);
-          return false;
-        }
-        const block = buildSynthesisBlock({
-          heading: SYNTHESIS_HEADINGS[scope],
-          entryCount: result.data.entryCount,
-          synthesis: result.data.synthesis,
-          citations: result.data.citations,
-        });
-
-        // The week synthesis belongs on the week's own page, not on whatever
-        // page happens to be open.
-        if (scope === 'week') {
-          const page = await resolveWeekPage(weekPageTitle());
-          const saved = await appendToNote(
-            page,
-            block,
-            result.data.sources ?? [],
-            result.data.conversationIds,
-          );
-          if (saved.id === activeNote.id) {
-            updateNote((note: WorkspaceNote) => ({
-              ...note,
-              content: saved.content,
-              sources: saved.sources,
-              linkedConversationIds: saved.linkedConversationIds,
-            }));
-          }
-          void refetchWeekCandidates();
-          void refreshPages();
-          notify(
-            'success',
-            `Written to "${saved.title}".`,
-            saved.id === activeNote.id
-              ? undefined
-              : { label: 'Open', run: () => void selectPage(saved.id) },
-          );
-          return true;
-        }
-
-        updateNote((note: WorkspaceNote) =>
-          appendSynthesisContent(
-            note,
-            block,
-            result.data.sources ?? [],
-            result.data.conversationIds,
-          ),
-        );
-        notify(
-          'success',
-          `Synthesis complete for ${result.data.entryCount} entr${
-            result.data.entryCount === 1 ? 'y' : 'ies'
-          }.`,
-        );
-        return true;
-      } catch (error) {
-        notify(
-          'error',
-          error instanceof Error ? error.message : 'Synthesis failed.',
-        );
-        return false;
-      }
+        },
+        // Capture the destination at start, even if the user changes pages.
+        destination: scope === 'week' ? { kind: 'week', title: weekPageTitle() } : { kind: 'note', noteId: activeNote.id },
+      }, queryClient);
     },
     [
       activeNote,
       notify,
-      refetchWeekCandidates,
-      refreshPages,
-      selectPage,
+      queryClient,
       selectSynthesisTargets,
-      updateNote,
     ],
   );
 
@@ -768,7 +703,7 @@ export function JournalWorkspace() {
         label: 'Synthesize the past week',
         group: 'Journal',
         icon: Combine,
-        enabled: (weekCandidates?.total ?? 0) > 0,
+        enabled: (weekCandidates?.total ?? 0) > 0 && !isSynthesizing,
         run: () => {
           void handleSynthesize('week');
         },
@@ -778,7 +713,7 @@ export function JournalWorkspace() {
         label: 'Synthesize pinned entries',
         group: 'Journal',
         icon: Combine,
-        enabled: pinnedIds.size > 0,
+        enabled: pinnedIds.size > 0 && !isSynthesizing,
         run: () => {
           void handleSynthesize('pinned');
         },
@@ -809,6 +744,7 @@ export function JournalWorkspace() {
       handleNewPage,
       handleSynthesize,
       journalSpace,
+      isSynthesizing,
       pinnedIds,
       weekCandidates?.total,
     ],

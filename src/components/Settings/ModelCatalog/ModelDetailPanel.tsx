@@ -20,6 +20,8 @@ import {
   FIT_LABEL,
   formatSize,
 } from './catalogUtils';
+import { ModelVariantPicker } from './ModelVariantPicker';
+import { hasModelVersions, modelQuantization } from './quantization';
 import { startModelDownload } from './startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '../../../hooks/queries/useHuggingFaceTokenQuery';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
@@ -34,7 +36,7 @@ import {
   SECONDARY_BUTTON_CLASS,
 } from '../settingsStyles';
 
-import type { ModelRecommendation } from '../../../types/modelCatalog';
+import type { ModelMetadata, ModelRecommendation } from '../../../types/modelCatalog';
 
 interface ModelDetailPanelProps {
   model: ModelRecommendation;
@@ -91,14 +93,30 @@ function NoteRow({ children, tone = 'default' }: { children: ReactNode; tone?: '
   );
 }
 
-export function ModelDetailPanel({
+export function ModelDetailPanel(props: ModelDetailPanelProps) {
+  const [selected, setSelected] = useState<ModelMetadata>(props.model.model);
+  const { systemCapabilities } = useModelCatalog({ autoLoadModels: false });
+  return <div className="space-y-5">
+    <button type="button" onClick={props.onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
+      <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+    </button>
+    <div>
+      <h2 className="text-lg font-medium text-text-primary">{props.model.model.name}</h2>
+      <p className="mt-1 break-all font-mono text-xs text-text-muted">{props.model.model.model_id ?? props.model.model.id}</p>
+      <p className="mt-2 max-w-[75ch] text-sm leading-relaxed text-text-secondary">{props.model.model.description}</p>
+    </div>
+    {hasModelVersions(props.model.model) ? <ModelVariantPicker model={props.model.model} selected={selected} capabilities={systemCapabilities} onSelect={setSelected} /> : null}
+    <ModelDetailContent key={selected.id} {...props} model={{ ...props.model, model: selected }} />
+  </div>;
+}
+
+function ModelDetailContent({
   model,
-  onBack,
   routerModelId,
   onSetRouterModel,
   onAddToken,
 }: ModelDetailPanelProps) {
-  const { model: metadata, compatibility } = model;
+  const { model: metadata } = model;
   const { systemCapabilities } = useModelCatalog({
     autoLoadCapabilities: true,
     autoLoadModels: false,
@@ -298,7 +316,7 @@ export function ModelDetailPanel({
   const size = formatSize(metadata.size_gb);
   const headerMeta = [
     CATEGORY_LABELS[metadata.category],
-    metadata.performance_tier,
+    modelQuantization(metadata),
     size,
     isRouterActive ? 'Router' : null,
   ].filter(Boolean) as string[];
@@ -315,6 +333,9 @@ export function ModelDetailPanel({
           Not supported on this build
         </button>
       );
+    }
+    if (metadata.requires_auth && !hasHfToken && onAddToken) {
+      return <button type="button" onClick={onAddToken} className={SECONDARY_BUTTON_CLASS}>Token required · Add token</button>;
     }
     if (!hasDownloadSource) return null;
     if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
@@ -341,27 +362,15 @@ export function ModelDetailPanel({
 
   return (
     <div className="space-y-8">
-      <div>
-        <button type="button" onClick={onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </button>
-      </div>
-
       <div className="space-y-3">
         <div>
-          <h2 className="text-lg font-medium text-text-primary">{metadata.name}</h2>
+          <h3 className="text-base font-medium text-text-primary">Selected download</h3>
           <p className="mt-0.5 break-all font-mono text-xs text-text-muted">
-            {metadata.model_id ?? metadata.id}
+            {metadata.default_filename ?? metadata.model_id ?? metadata.id}
           </p>
           <p className="mt-1 text-xs text-text-muted">{headerMeta.join(' · ')}</p>
         </div>
 
-        {metadata.description ? (
-          <p className="max-w-[70ch] text-sm leading-relaxed text-text-secondary">
-            {metadata.description}
-          </p>
-        ) : null}
 
         {incompatibilityReason ? (
           <p className="max-w-[70ch] text-sm text-danger-fg">{incompatibilityReason}</p>
@@ -412,62 +421,21 @@ export function ModelDetailPanel({
         </div>
       </div>
 
-      <DetailSection title="Fit on this machine">
-        <DetailRow
-          label="Overall"
-          value={`${compatibility.compatibility_level} · ${compatibility.overall_score}/100`}
-          tone={
-            compatibility.compatibility_level === 'Incompatible' ||
-            compatibility.compatibility_level === 'Poor'
-              ? 'danger'
-              : 'default'
-          }
-        />
-        <DetailRow label="Memory" value={`${compatibility.ram_score}/100`} />
-        <DetailRow label="GPU" value={`${compatibility.gpu_score}/100`} />
-        <DetailRow label="Disk" value={`${compatibility.disk_score}/100`} />
-        {compatibility.estimated_tokens_per_second ? (
-          <DetailRow
-            label="Estimated speed"
-            value={`${compatibility.estimated_tokens_per_second.toFixed(1)} tokens/sec`}
-          />
-        ) : null}
-        {compatibility.estimated_loading_time_seconds > 0 ? (
-          <DetailRow
-            label="Load time"
-            value={`~${compatibility.estimated_loading_time_seconds.toFixed(1)} s`}
-          />
-        ) : null}
+      <DetailSection title="Estimated fit on this machine">
+        <NoteRow>{fit ? `${FIT_LABEL[fit.verdict]} · ${fit.reason}` : 'Not enough size or hardware information to estimate fit.'}</NoteRow>
+        <NoteRow>Memory estimates are approximate, not measured performance. Longer contexts and other loaded models need additional memory. A size estimate does not guarantee runtime support.</NoteRow>
       </DetailSection>
-
-      {compatibility.blockers.length > 0 ? (
-        <DetailSection title="Blockers">
-          {compatibility.blockers.map((blocker) => (
-            <NoteRow key={blocker} tone="danger">
-              {blocker}
-            </NoteRow>
-          ))}
-        </DetailSection>
-      ) : null}
-
-      {compatibility.recommendations.length > 0 ? (
-        <DetailSection title="Notes">
-          {compatibility.recommendations.map((recommendation) => (
-            <NoteRow key={recommendation}>{recommendation}</NoteRow>
-          ))}
-        </DetailSection>
-      ) : null}
 
       <DetailSection title="Specifications">
         <DetailRow label="Size" value={size ?? 'Unknown'} />
-        <DetailRow label="Minimum memory" value={`${metadata.minimum_ram_gb.toFixed(1)} GB`} />
-        <DetailRow label="Recommended memory" value={`${metadata.recommended_ram_gb.toFixed(1)} GB`} />
-        <DetailRow label="Context" value={`${metadata.context_length.toLocaleString()} tokens`} />
+        <DetailRow label="Estimated minimum memory" value={metadata.minimum_ram_gb > 0 ? `${metadata.minimum_ram_gb.toFixed(1)} GB` : 'Unknown'} />
+        <DetailRow label="Estimated comfortable memory" value={metadata.recommended_ram_gb > 0 ? `${metadata.recommended_ram_gb.toFixed(1)} GB` : 'Unknown'} />
+        <DetailRow label="Catalog context estimate" value={`${metadata.context_length.toLocaleString()} tokens`} />
         {isEmbeddingCategory && metadata.embedding_dimensions ? (
           <DetailRow label="Dimensions" value={metadata.embedding_dimensions} />
         ) : null}
-        {metadata.supported_quantizations.length > 0 ? (
-          <DetailRow label="Quantizations" value={metadata.supported_quantizations.join(', ')} />
+        {modelQuantization(metadata) ? (
+          <DetailRow label="Selected precision" value={modelQuantization(metadata)} />
         ) : null}
         <DetailRow label="Format" value={metadata.format === 'safetensors' ? 'Safetensors' : 'GGUF'} />
         <DetailRow label="License" value={metadata.license} />

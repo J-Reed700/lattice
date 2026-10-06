@@ -4,8 +4,48 @@ use super::chat::{
     chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
 };
 use crate::features::conversation::repository::ConversationRepository;
+use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
 use crate::shared::{error::AppError, ipc::ApiError};
+
+pub async fn create_conversation_tangent_impl(
+    request: CreateTangentRequestDto,
+    container: &Container,
+) -> Result<ConversationTangentDto, ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .create_tangent(request)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn list_conversation_tangents_impl(
+    conversation_id: String,
+    container: &Container,
+) -> Result<Vec<ConversationTangentDto>, ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .list_tangents(&conversation_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn promote_conversation_tangent_impl(
+    conversation_id: String,
+    container: &Container,
+) -> Result<crate::features::conversation::dto::ConversationDto, ApiError> {
+    let repo = ConversationRepository::new(container.db_pool().clone());
+    repo.promote_tangent(&conversation_id)
+        .await
+        .map_err(ApiError::from)?;
+    let conversation = repo
+        .find_by_id(&conversation_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(AppError::NotFound("Tangent no longer exists.".into())))?;
+    repo.project_conversation(&conversation)
+        .await
+        .map_err(ApiError::from)
+}
+
 fn to_message_dto(
     message: &crate::domain::conversation::ConversationMessage,
 ) -> crate::features::conversation::dto::MessageDto {

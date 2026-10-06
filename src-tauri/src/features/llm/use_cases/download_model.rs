@@ -319,7 +319,19 @@ impl DownloadModelUseCase {
 
         // 2) New Hugging Face internal ID path.
         if let Some((repo_id, filename)) = ExternalModelMetadata::decode_hf_download_id(model_id) {
-            let mut resolved = match self.catalog.get_model_by_id(&repo_id).await? {
+            // Resolve this exact artifact, not the repository's default Q4 file.
+            // Otherwise choosing Q8 can inherit Q4's size and memory metadata.
+            let metadata = if filename.to_ascii_lowercase().ends_with(".gguf") {
+                Some(self.catalog.get_model_variants(&repo_id).await?
+                    .into_iter()
+                    .find(|meta| meta.preferred_filename.as_deref() == Some(filename.as_str()))
+                    .ok_or_else(|| AppError::NotFound(format!(
+                        "Standalone model file '{}' is no longer available in {}. Refresh the catalog versions.", filename, repo_id
+                    )))?)
+            } else {
+                self.catalog.get_model_by_id(&repo_id).await?
+            };
+            let mut resolved = match metadata {
                 Some(meta) => meta.to_domain_model().map_err(AppError::InvalidInput)?,
                 None => crate::features::model_management::domain::ModelMetadata {
                     id: model_id.to_string(),

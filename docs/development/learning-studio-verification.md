@@ -108,6 +108,117 @@ are available there, and completion refreshes the lesson content. Model response
 character counts describe received answer text, not hidden reasoning or a
 completion percentage. A waiting message is not proof that the model is moving.
 
+The progress panel uses a persisted, typed activity record rather than guessing
+the phase from status text. It shows the current lesson and phase, elapsed time
+for the run and phase, factual checks completed/supported/unresolved/remaining,
+reused comparisons, model output activity and retries, checkpoint time, and recent
+phase transitions. Its determinate bar describes one claim-verification pass,
+never an overall completion percentage or ETA. Research and repair are explicit
+phases with an explanation of why verification can repeat. The same panel appears
+in Lessons and Plan; details can be collapsed while the job continues. No recent
+output is described as an observation, not proof of a stuck model. The history
+contains phase labels and timestamps, not lesson answers or hidden reasoning.
+
+Lesson preparation uses the persisted generation-job queue as a local outbox.
+The command commits a pending job and acknowledges it immediately, before source
+refresh or model requests. The UI reloads and observes the saved job; it does not
+hold an IPC call open until publication. A renderer-independent dispatcher also
+reconciles pending work. The desktop single-instance guard runs
+before startup recovery, and an atomic database claim plus in-process registration
+deduplicates delivery. Recovery runs once before dispatch, never from an elapsed
+time heuristic that could steal a healthy, slow model request.
+
+On macOS, an active lesson job holds a scoped `NSProcessInfo` user-initiated
+activity so hiding the window or switching apps does not make the work eligible
+for App Nap. The assertion allows normal system sleep and ends on completion,
+cancellation, or failure; queued work and retry backoff hold no assertion.
+Preparation has no focus-loss cancellation handler. Its UI polls in the
+background, but the native worker does not depend on those polls to continue.
+
+Quitting returns unfinished lesson jobs to pending. After a crash, startup
+requeues running lesson jobs with the same ID and checkpoints. Explicitly
+cancelled, failed, and completed jobs are not automatically restarted. A failed
+or cancelled job can be retried explicitly with its saved work. Local preparation
+does not execute while the app is closed; it continues on reopening. Outline
+draft recovery still uses the separate explicit repair action described above.
+
+The lesson UI exposes this durable stop/retry path as **Pause lesson preparation**
+and **Resume lesson preparation**. Pause cancels the active request while retaining
+the draft, activity, and completed checkpoints; the stored attempt is `cancelled`
+and remains excluded from automatic recovery. Resume creates a pending attempt
+with the saved work and reloads the current model settings. These controls remain
+visible when progress details are collapsed. A failure still shows its error and
+**Retry**, separately from an intentional pause. Lesson writing and factual
+verification use the main model, not the utility model. The authoring input hash
+and verification checks are bound to that model, so changing the main model
+currently restarts drafting and verification. A utility-only change does not
+invalidate those checkpoints. The paused UI explains this before resuming.
+
+Temporary network, service-unavailable, and rate-limit errors defer lesson jobs
+in that same outbox, preserving their ID, draft, and completed checkpoints.
+Learning-repository connection-pool acquisition timeouts are classified as
+temporary service failures; other database errors retain their failure status.
+The persisted redelivery delay grows from 30 seconds to at most five minutes;
+this limits retry frequency, not job duration or total attempts. A waiting job
+releases its worker slot and displays the interruption with automatic retry.
+Connection loss, model-service failures, and rate limits have distinct progress
+messages. Repeated service failures are described as preventing progress, rather
+than evidence that the laptop is offline. Sleep can break an in-flight request;
+unfinished work repeats when connectivity returns. Cancellation wins over late
+errors. Invalid input and unusable verification responses remain explicit
+failures or unresolved checks, never automatic approval.
+
+Learner progress does not invalidate background preparation. Completing a ready
+lesson or submitting an assessment can advance the UI revision while the same
+job resumes, retries, and publishes. A separate content revision advances
+transactionally when course objectives, sequence, or saved teaching changes.
+Such edits reject an old job's publication and require preparation for the updated
+course. Publication preserves intervening learner progress. Source changes are
+validated through evidence bindings separately, including research performed by
+the job itself.
+
+Every completed factual comparison is checkpointed. Approvals require both strict
+evidence checking and independent challenge. Each key binds the exact claim, quote,
+ordered source versions, passage bytes and offsets, checker policy, configured
+model name and context size. Retrieval runs again on resume. Changed evidence or
+checker inputs require a new comparison; failed or incomplete model responses
+are never reusable. Concurrent checks save independently as they finish, even if
+an earlier call is slow. A crash may repeat in-flight requests, so model-call
+delivery is at least once; it is not an exactly-once billing guarantee.
+
+Structured providers verify unfinished factual comparisons in groups of up to
+eight. Exact repeated passages are sent once in a shared bank, with an explicit
+allowed passage list for each claim. Both strict evidence checking and the
+separate challenge pass retain individual decisions. Missing or duplicated IDs,
+incomplete replies, or citations outside a claim's assigned evidence cannot
+approve it. Unusable grouped decisions fall back to individual checks; valid
+sibling results save before those fallbacks run. Non-structured providers keep
+the individual path.
+
+Groups split when their full evidence and response reserve do not fit the model
+context, or when a server failure survives the provider's request retries. The
+smaller groups keep each claim's complete assigned evidence and both checking
+stages. The split plan is checkpointed against the exact comparisons, so reopening
+does not repeat a known failing group. Connection loss, rate limits, and invalid
+requests propagate without multiplying requests. An individual service failure
+still defers the job; splitting cannot approve or skip a check. Passages are not
+summarized or discarded to make a group fit. One
+group runs at a time to avoid competing large prompt prefills. Each claim still
+owns its receipt, so resuming
+or changing one comparison does not require repeating its completed siblings.
+The UI reports each completed claim immediately, including completed siblings
+while a smaller group or individual fallback is still running. It reports claims
+checked, not model request count. Verification policy v17
+invalidates older factual approvals while preserving unchanged drafts and the
+separately versioned claim inventory and coverage audit.
+
+Completed research queries and verified lesson material also have durable
+checkpoints. Reference captures and completed indexes retain their existing
+persistence. Before reusing a prepared lesson, the worker validates its report,
+content hash, model, policy, and current source collection. Publication still
+validates evidence inside the transaction that saves lessons and completes the
+job, so a restart cannot expose partially published material or duplicate it.
+
 Durable lesson jobs have no overall or model-call elapsed-time deadline. Their
 claim checks also opt out of the chat verifier's shared deadline. Cancellation
 still drops in-flight requests, and failed or incomplete checks cannot publish
@@ -115,6 +226,13 @@ the lesson. Other interactive material calls and chat keep their own budgets.
 Structured lesson calls use the provider adapter's transient connection retries.
 Explicit transient server statuses inside an SSE response also retry, including
 a `500 server_error` received after HTTP 200. Context and protocol errors do not.
+HTTP and streamed server failures retain the service-unavailable category; client
+request errors remain terminal instead of becoming connection retries. After an
+inference service failure, the next attempt disables server prompt-cache reuse
+and reprocesses the identical full input. This leaves the draft, local evidence
+index, completed verification receipts, and output allowance unchanged. Only
+fixed descriptions of recognized server errors are exposed; arbitrary server
+messages can contain private input and are never echoed.
 An abandoned partial JSON response is discarded, and progress shows the new
 request attempt with its response-character count reset; fragments from separate
 attempts are never joined into a candidate.
@@ -158,6 +276,10 @@ the ordinary publication validator; unrelated or fabricated quotes need repair.
 
 Factual claim extraction also selects application-owned passage IDs. Sections
 have explicit indices, and the extractor receives four sections per request.
+Extraction records what the lesson asserts, including false or inconsistent
+assertions, without silently repairing them. Attributed quotations include their
+exact wording and attribution as claims; a paraphrase of the meaning is not a
+complete record of a quotation. The later evidence check determines support.
 Passages preserve the original text, including whitespace in code and data;
 the server resolves each selected ID back to that section's exact text. A
 section-specific schema branch binds each returned index to its own passage
@@ -165,7 +287,16 @@ IDs, preventing constrained generation from pairing an index with another
 section's otherwise-valid ID. Runtime validation still enforces the same rule
 for providers that do not enforce the response schema. A
 malformed response receives a targeted correction request while valid section
-inventories are retained. Missing sections, duplicate indices and invented or
+inventories are retained. Coverage correction handles one affected section at a
+time, with its original text, suspected passages, finding and current assertions.
+The model returns additions or explicit replacements using application-owned
+claim IDs; the application retains unmentioned claims and rejects foreign IDs,
+duplicate replacements and invalid passage locations. A finding may name the
+wrong passage, so correction locates the actual assertion within that section.
+It does not repeatedly regenerate complete inventories or repeat unrelated
+sections' findings without their text. Each changed inventory still requires
+a fresh coverage audit and factual verification.
+Missing sections, duplicate indices and invented or
 cross-section passage IDs cannot approve a lesson. A separate coverage audit
 still checks the inventory against every complete section. Missing assertions
 receive targeted inventory correction and another coverage audit, rather than
@@ -175,6 +306,11 @@ Correction continues while the audit reduces incomplete sections or unresolved
 passages, or captures more claims. These app-counted measures must improve on
 each pass; otherwise the draft is retained with the unresolved findings. This
 prevents an unchanged correction loop without a wall-clock or attempt cutoff.
+Completed coverage batches also save findings for sections with omissions.
+Restarting can reuse those findings instead of repeating completed reviews; an
+omission remains unresolved. These receipts bind the original section, extracted
+assertions, model and coverage policies. A corrected inventory requires a new
+audit, and an interrupted batch cannot create a completed receipt.
 The audit receives full section text and standalone claims
 without repeating the same location passage for every claim.
 
@@ -188,12 +324,28 @@ faithful representation even when an assertion is false; evidence judgment
 comes afterward. These are model judgments and can still miss errors.
 For passages mapped to claims without reported omissions, the shared claim
 checker separately compares the original wording with the extracted statements
-selected by that passage's mapping. Other assertions in the section cannot
-silently substitute for the selected evidence or supply an omitted consequence.
+selected by that passage's mapping. If the selected subset fails, the checker
+also compares the passage against the complete inventory for that same section.
+This distinguishes an omitted assertion from an assertion the mapper failed to
+select. Only extracted assertions are evidence in this comparison; original
+section text supplies interpretation context, and other sections are excluded.
+An assertion found only in the original section text remains missing from the
+inventory; it cannot serve as its own evidence of extraction.
+Every inventory claim still goes through the separate factual-evidence gate.
 This fidelity check can reject a complete mapping when an asserted
 consequence or qualifier was lost. It treats instructor choices and stipulated
 exercise inputs as instructions while still checking empirical guarantees.
 Passing fidelity establishes representation only, never factual approval.
+If an isolated teaching passage fails this comparison, a second comparison
+receives its original section as interpretation context. This restores local
+scope and references that extraction could read but the isolated comparison
+could not. Context cannot override an explicitly broader claim or substitute
+for a consequence missing from the selected inventory statements. An unusable
+comparison still fails closed. The unchanged base comparison runs first, so
+previous positive base checks remain valid. Negative checks from before this
+fallback are reconsidered; a changed teaching-context policy expires approvals
+that could have used an earlier fallback. These receipts remain bound to the
+complete lesson content and separate from assessment-context receipts.
 For assessment passages, the comparison also receives the question's scenario,
 answer index and target field as interpretation context. A conditional answer
 must be read within its question. This original context is explicitly separate
@@ -203,9 +355,16 @@ Conditional inventory statements also require the scenario to establish their
 prerequisites at the same scope. A related local property cannot silently stand
 in for an unstated condition about a surrounding structure or dependency.
 Assessment-context checks have their own policy receipt: changing those rules
-expires assessment audits while retaining teaching audits with identical inputs
+expires assessment extraction and audits while retaining teaching audits with identical inputs
 and unchanged checking instructions. A change to the common coverage policy
 still expires every coverage audit.
+The application uses the validated answer index to keep unendorsed alternatives
+as separate interpretation context, outside factual claim locations. Their bytes
+are retained, but the checker is not asked to prove deliberately incorrect choices
+true. Question premises, the selected answer, and every explanatory assertion
+remain coverage targets. The independent blinded answer-key review still checks
+all alternatives; this separation cannot validate an incorrect answer key.
+Missing or invalid indices do not exempt any choice from coverage.
 An unusable fidelity response preserves the draft and blocks publication.
 Coverage-policy receipts are separate from extraction checkpoints. A policy
 change may reuse the unchanged extracted claims as data, but must audit their
@@ -216,6 +375,16 @@ retaining an audit approval for the changed inventory.
 The checkpoint retains completed, unchanged section audits as well. Retry with
 the same content and coverage policy resumes pending sections or the remaining
 corrections; duplicate or foreign section and passage locations invalidate reuse.
+
+Factual retrieval restores surrounding source text before judging a matching
+passage. Nearby conditions, exceptions and introductory definitions must not be
+lost just because they scored below the matching paragraph. Overlapping context
+windows are merged without changing source bytes or dropping either original
+hit. Verification allows 24,000 evidence characters, and the configured model's
+context check still applies. Authoring and general search keep their existing
+windows. More context reduces some retrieval omissions; it cannot establish
+that a saved source is correct or guarantee that every relevant exception was
+retrieved.
 
 Strict factual judgments reuse the chat claim checker with application-assigned
 evidence passage IDs. The judge still evaluates entailment and conflicts and
@@ -243,6 +412,28 @@ reasoning-disabled setting does not apply to lesson publication. This advances
 the factual verification policy without invalidating unchanged, source-independent
 claim inventories. Existing factual approvals cannot satisfy the new policy.
 
+The publication prompt omits the chat rule that one supporting source is enough.
+It explicitly compares supporting passages with limitations and conflicting
+passages before deciding. An unresolved conflict remains unsupported even when
+another source repeats the claim. Chat and inventory-fidelity instructions keep
+their separate policies. A canonical three-line judgment may echo the same
+verdict at the end of its reason; conflicting echoes, extra result lines and
+ambiguous field layouts remain invalid.
+
+Publication also challenges each provisionally supported claim in a separate
+model request. Source entailment alone can approve a false assertion repeated by
+an unreliable reference. The challenge uses the same claim and passages to ask
+whether exceptions, omitted conditions or source reliability require independent
+research. It may use model knowledge to formulate public search questions, but
+that knowledge cannot establish a contradiction or approve a claim. Open
+questions mark the claim unsupported and enter the existing research/repair
+workflow; they are explicitly distinguished from established errors. An empty
+question list retains the original evidence judgment. Failed, malformed or
+incomplete challenge responses leave the claim unchecked. The publication policy
+versions this extra requirement, and unchanged comparisons may be reused only
+inside the same operation. This is another fallible check, not a factual guarantee
+or a separate independently trained model.
+
 Extraction, evidence comparison, research and repair use shared subject-neutral
 instructions. A particular lesson's failed claim and source passages are repair
 data, not global rules for that subject. Scope and exception checks apply to
@@ -254,6 +445,38 @@ with both supported and overbroad claims. Domain labels and expected verdicts
 are not sent to the checker. They test the same comparison protocol across
 subjects; passing them does not establish broad factual accuracy. Executable
 examples separately use the available language runtimes and their restrictions.
+The same live harness can check assessment-context preservation with
+`LATTICE_CLAIM_POLICY=fidelity` and
+`content_verification/fidelity_context_cases.json`. These paired cases distinguish
+an explicitly established prerequisite from an unrelated scenario fact across
+subjects. The optional `context` field is interpretation data; expected verdicts
+remain test assertions and are never included in model requests.
+`content_verification/fidelity_teaching_context_cases.json` uses the same
+fidelity harness with `contextKind: "teaching"`. It tests local scope against
+explicit universal assertions and omitted consequences across subjects.
+`content_verification/claim_prerequisite_cases.json` exercises the corresponding
+conditional-source comparisons with `LATTICE_CLAIM_POLICY=strict`. The factual
+judge also requires supplied premises to establish a source's prerequisite;
+it cannot bridge different descriptions using unstated domain knowledge.
+Before approval, it looks for a counter-scenario consistent with the claim's
+premise and supplied evidence in which the conclusion fails. An unresolved
+counter-scenario or missing connection remains unsupported. These are generic
+comparison instructions, not subject-specific facts, and remain fallible model
+judgments. Both the missing-premise and explicitly established-premise cases
+must pass the live regression; rejecting every claim is not success.
+These evidence-policy changes require fresh factual judgments while unchanged
+coverage receipts remain valid under their own policies.
+The live claim harness can also set `LATTICE_CLAIM_PROGRAM` and
+`LATTICE_LESSON_DATABASE` to retrieve from an explicitly selected saved library
+instead of using fixture passages. This exercises production hybrid retrieval,
+context restoration and evidence comparison together, without editing lessons
+or using expected verdicts as model input.
+Set `LATTICE_CLAIM_POLICY=publication` to exercise the complete claim approval
+path, including the independent challenge after strict source comparison.
+`content_verification/evidence_challenge_cases.json` includes deliberately
+misleading source assertions and correct controls across the same three
+subjects. These fixtures test whether literal source agreement is challenged;
+their subject labels and expected outcomes are never model instructions.
 
 Unlabeled worked-example fences are classified before review. The classifier
 selects a language or marks literal output/diagrams; the application inserts
@@ -266,15 +489,20 @@ Complete captures are saved as immutable course sources and indexed using the
 same retrieval model. Search snippets and truncated pages cannot become
 evidence. Every claim retrieves evidence again from the expanded collection,
 including previously supported claims, before content repair or publication.
-Within the same preparation operation, a completed judgment can be reused only
+Within a preparation operation or its resumed job, a completed judgment can be reused only
 when the claim, its original lesson passage, section location, and ordered evidence passages are
 unchanged. Evidence identity includes source version, exact text and byte range;
-ranking scores are refreshed in the report. Changed evidence requires a new
+ranking scores are refreshed in the report. Selected passages have a stable
+source/version/byte-range order in both the actual model request and the receipt,
+so a ranking-only reorder cannot force another identical judgment. Selection
+still runs against the current collection and retains contradictory passages.
+Changed evidence requires a new
 judgment, and failed or incomplete checks are never reused. This reuse does not
 require repeating an identical comparison merely because another section was
-repaired; publication still binds the report to the entire final lesson. It does not
-survive a retry or restart and does not skip extraction, coverage, execution or
-retrieval checks. Progress explicitly counts reused comparisons. Adding a
+repaired; publication still binds the report to the entire final lesson. Receipts
+survive a retry or restart with the same checker policy and model identity.
+They do not skip extraction, coverage, execution or retrieval checks; those stages
+retain their own input validation. Progress explicitly counts reused comparisons. Adding a
 source is not an approval; contradictory or unresolved checks still block the
 lesson. Failed checker calls are kept distinct from missing source evidence.
 Search results must respect explicit `site:` host/path constraints, including
@@ -301,8 +529,16 @@ before reviewing the assembled lesson. The complete result still receives
 teaching, coverage, execution and factual checks before publication.
 
 Completed claim extraction and its coverage audit are checkpointed for the
-exact candidate and verification policy. Retry can reuse this source-independent
-inventory. Changed content or policy invalidates the inventory checkpoint.
+exact candidate, configured model, context size and verification policy. Retry can reuse this source-independent
+inventory. Completed section inventories and coverage/fidelity audits also have
+independent checkpoints bound to their exact section text, position, model,
+context configuration and checking policies. Each finished audit batch is saved
+before the next batch starts. A repair or interrupted audit therefore extracts
+and audits only changed or unfinished sections; reordered sections and policy or
+model changes invalidate their receipts. These representation checks cannot
+approve factual content: current evidence is retrieved for every claim, changed
+comparisons run again, and the complete assembled lesson still passes teaching
+review, execution and publication validation.
 Before a content repair, the failed checks and deduplicated evidence are saved
 as a pending rewrite. If that request fails, Retry resumes the rewrite only when
 the candidate, model, policy, instructions, schema and full reference contents

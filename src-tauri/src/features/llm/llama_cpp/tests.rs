@@ -836,6 +836,32 @@ fn sse_response(message: Value) -> ResponseTemplate {
 }
 
 #[tokio::test]
+async fn response_status_preserves_outages_for_durable_callers() {
+    let statuses = [408, 429, 400, 401, 503];
+    let server = sequence_server(
+        statuses
+            .iter()
+            .map(|status| ResponseTemplate::new(*status))
+            .collect(),
+    )
+    .await;
+    for status in statuses {
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/chat/completions", server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let error = check_status(response).await.unwrap_err();
+        match status {
+            408 => assert!(matches!(error, AppError::Network(_))),
+            429 => assert!(matches!(error, AppError::RateLimitExceeded(_))),
+            503 => assert!(matches!(error, AppError::ServiceNotAvailable(_))),
+            _ => assert!(matches!(error, AppError::InvalidState(_))),
+        }
+    }
+}
+
+#[tokio::test]
 async fn reasoning_only_empty_and_transient_failures_retry_identical_request() {
     let server = sequence_server(vec![
         sse_response(json!({"reasoning_content":"private thought"})),
@@ -875,7 +901,14 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
     assert_eq!(response.text, "Recovered");
     assert_eq!(*attempts.lock().unwrap(), vec![2]);
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests[0].body, requests[1].body);
+    let mut original: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let recovered: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(original.get("cache_prompt").is_none());
+    original["cache_prompt"] = json!(false);
+    assert_eq!(
+        original, recovered,
+        "Only server prompt-cache reuse changes"
+    );
 
     let server = sequence_server(vec![ResponseTemplate::new(200).set_body_string(
         "data: {\"error\":{\"code\":400,\"type\":\"exceed_context_size_error\",\"message\":\"private\"}}\n\n",
@@ -888,6 +921,59 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
         .unwrap_err();
     assert!(error.to_string().contains("exceed_context_size_error"));
     assert!(!error.to_string().contains("private"));
+    assert!(matches!(error, AppError::InvalidState(_)));
+}
+
+#[test]
+fn streamed_server_errors_preserve_their_failure_category_without_private_text() {
+    for (code, expected) in [
+        (500, "service"),
+        (503, "service"),
+        (429, "rate"),
+        (408, "network"),
+        (400, "invalid"),
+    ] {
+        let mut decoder = streaming::Decoder::for_completion();
+        let event = format!(
+            "data: {}\n\n",
+            json!({"error":{"code":code,"type":"server_error","message":"private prompt and credentials"}})
+        );
+        let error = decoder.push(event.as_bytes()).unwrap_err();
+        assert!(!error.to_string().contains("private"));
+        let actual = match error {
+            AppError::ServiceNotAvailable(_) => "service",
+            AppError::RateLimitExceeded(_) => "rate",
+            AppError::Network(_) => "network",
+            AppError::InvalidState(_) => "invalid",
+            _ => panic!("Unexpected category"),
+        };
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test]
+async fn http_server_failure_retries_with_a_fresh_prompt_cache_and_same_input() {
+    let server = sequence_server(vec![
+        ResponseTemplate::new(500).insert_header("Retry-After", "0"),
+        sse_response(json!({"content":"Recovered"})),
+    ])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let response = client
+        .complete(&CompletionRequest {
+            no_time_limit: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Recovered");
+    let requests = server.received_requests().await.unwrap();
+    let mut original: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    original["cache_prompt"] = json!(false);
+    assert_eq!(
+        original,
+        serde_json::from_slice::<Value>(&requests[1].body).unwrap()
+    );
 }
 
 #[tokio::test]

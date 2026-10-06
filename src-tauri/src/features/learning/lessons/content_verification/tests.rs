@@ -10,6 +10,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::Instant;
 
+#[path = "batch_scheduler_tests.rs"]
+mod batch_scheduler_tests;
+
 const BAD: &str = "DictReader strips field-name whitespace by default.";
 const GOOD: &str = "DictReader preserves field-name whitespace by default.";
 const SOURCE: &str = "DictReader preserves field-name whitespace by default. Missing values in nonblank rows default to None. The optional skipinitialspace setting ignores spaces immediately after delimiters; it defaults to false.";
@@ -17,18 +20,30 @@ const SOURCE: &str = "DictReader preserves field-name whitespace by default. Mis
 /// A deterministic protocol fixture, not evidence of a live model's accuracy.
 /// Execution behavior is covered separately with real bundled guests.
 struct Model {
+    name: &'static str,
     repaired: Mutex<bool>,
     judge_calls: Mutex<usize>,
     failing_judge: bool,
     incomplete_coverage: bool,
+    hold_bad_claim: bool,
+    extracted_sections: Mutex<Vec<Vec<usize>>>,
+    audited_sections: Mutex<Vec<Vec<usize>>>,
+    fail_coverage_at: Option<usize>,
+    coverage_gap_in: Option<usize>,
 }
 impl Model {
     fn new() -> Self {
         Self {
+            name: "scripted-evidence-checker",
             repaired: Mutex::new(false),
             judge_calls: Mutex::new(0),
             failing_judge: false,
             incomplete_coverage: false,
+            hold_bad_claim: false,
+            extracted_sections: Mutex::new(Vec::new()),
+            audited_sections: Mutex::new(Vec::new()),
+            fail_coverage_at: None,
+            coverage_gap_in: None,
         }
     }
 }
@@ -37,6 +52,9 @@ fn context(prompt: &str) -> Value {
 }
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
+    if prompt.starts_with("Plan independent evidence searches") {
+        return Some(json!({"queries":[]}).to_string());
+    }
     if prompt.starts_with("Audit claim fidelity.") {
         return Some("supported\nReason: The fixture inventory faithfully represents the original assertions.\nSource passage: passage-0".into());
     }
@@ -73,8 +91,42 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
 #[async_trait::async_trait]
 impl LLMPort for Model {
     async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
+        if prompt.starts_with("Extract lesson claims.") {
+            self.extracted_sections
+                .lock()
+                .unwrap()
+                .push(serde_json::from_value(
+                    context(prompt)["requestedIndices"].clone(),
+                )?);
+        }
+        if prompt.starts_with("Audit claim coverage independently.") {
+            let mut audits = self.audited_sections.lock().unwrap();
+            if self.fail_coverage_at == Some(audits.len()) {
+                return Err(invalid("fixture interrupted during coverage"));
+            }
+            audits.push(
+                context(prompt)["units"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|unit| unit["index"].as_u64().unwrap() as usize)
+                    .collect(),
+            );
+        }
         if prompt.starts_with("Audit claim coverage independently.") && self.incomplete_coverage {
             return Ok(json!({"units":[]}).to_string());
+        }
+        if let Some(index) = self.coverage_gap_in {
+            if prompt.starts_with("Audit claim coverage independently.") {
+                let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
+                for unit in context(prompt)["units"].as_array().unwrap() {
+                    if unit["index"].as_u64() == Some(index as u64) {
+                        let id = unit["passages"][0]["id"].as_str().unwrap();
+                        response[id]["missingClaims"] = json!(["An assertion is missing."]);
+                    }
+                }
+                return Ok(response.to_string());
+            }
         }
         if let Some(response) = fixture_response(prompt) {
             return Ok(response);
@@ -94,6 +146,9 @@ impl LLMPort for Model {
                 return Err(invalid("fixture offline"));
             }
             let bad = prompt.split("\n\nClaim: ").nth(1).unwrap().starts_with(BAD);
+            if bad && self.hold_bad_claim {
+                std::future::pending::<()>().await;
+            }
             return Ok(format!("{}\nReason: The captured reference and runtime preserve the header spaces.\nSource quote: {GOOD}\nSource passage: passage-0", if bad { "contradicted" } else { "supported" }));
         }
         Err(invalid(format!(
@@ -110,7 +165,7 @@ impl LLMPort for Model {
         Err(invalid("unused"))
     }
     fn model_name(&self) -> &str {
-        "scripted-evidence-checker"
+        self.name
     }
     fn count_tokens(&self, text: &str) -> usize {
         text.len() / 4
@@ -134,6 +189,9 @@ fn source() -> LearningSourceDto {
         acquired_at: 0,
     }
 }
+
+#[path = "checkpoint_tests.rs"]
+mod checkpoint_tests;
 
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
@@ -284,6 +342,42 @@ async fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_ide
         "Judgments are not inherited across preparation operations"
     );
     Ok(())
+}
+
+#[test]
+fn evidence_order_is_stable_without_discarding_conflicting_or_changed_passages() {
+    let passage = |source: &str, text: &str| EvidencePassage {
+        source_id: source.into(),
+        text: text.into(),
+        start_byte: 0,
+        end_byte: text.len(),
+        retrieval_kind: "lexical".into(),
+        score: 1.0,
+    };
+    let claim = Claim {
+        quote: GOOD.into(),
+        statement: GOOD.into(),
+    };
+    let mut evidence = vec![passage("b", GOOD), passage("a", BAD)];
+    canonicalize_evidence(&mut evidence);
+    let original_key = ClaimChecks::key(0, &claim, &evidence);
+    let original_input: Vec<_> = evidence.iter().map(|p| p.text.clone()).collect();
+    evidence.reverse();
+    evidence[0].score = 42.0;
+    canonicalize_evidence(&mut evidence);
+    assert_eq!(ClaimChecks::key(0, &claim, &evidence), original_key);
+    assert_eq!(
+        evidence.iter().map(|p| p.text.clone()).collect::<Vec<_>>(),
+        original_input
+    );
+    assert!(evidence.iter().any(|p| p.text == BAD));
+    evidence.push(passage("c", "Additional conditions apply."));
+    canonicalize_evidence(&mut evidence);
+    assert_ne!(ClaimChecks::key(0, &claim, &evidence), original_key);
+    evidence.pop();
+    evidence[0].source_id.push_str("-new-version");
+    canonicalize_evidence(&mut evidence);
+    assert_ne!(ClaimChecks::key(0, &claim, &evidence), original_key);
 }
 
 #[test]
@@ -710,6 +804,14 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
                         .collect(),
                 );
             }
+            if prompt.starts_with("Complete missing lesson claims.") {
+                let data = context(prompt);
+                self.extracted
+                    .lock()
+                    .unwrap()
+                    .push(vec![data["section"]["index"].as_u64().unwrap() as usize]);
+                return Ok(json!({"claims":[],"nonFactualReason":"The fixture asks the independent audit to reconsider the remaining finding."}).to_string());
+            }
             if prompt.starts_with("Audit claim coverage independently.") {
                 self.audited.lock().unwrap().push(
                     context(prompt)["units"]
@@ -910,6 +1012,45 @@ fn assessment_policy_changes_expire_assessments_without_repeating_identical_teac
     assert_eq!(current.units.len(), 2);
 }
 
+#[test]
+fn teaching_context_receipts_preserve_only_unchanged_approvals() {
+    let content = vec![
+        json!({"kind":"teaching"}),
+        json!({"kind":"teaching"}),
+        json!({"kind":"assessment"}),
+    ];
+    let original = Coverage {
+        units: (0..3)
+            .map(|index| CoverageUnit {
+                index,
+                complete: index != 1,
+                reason: "Earlier comparison".into(),
+                unresolved_passages: if index == 1 {
+                    vec!["unit-1-passage-0".into()]
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect(),
+    };
+    for (policy, expected) in [
+        (None, vec![0, 2]),
+        (Some("previous-context-policy"), vec![2]),
+        (Some(coverage::TEACHING_CONTEXT_POLICY), vec![0, 1, 2]),
+    ] {
+        let mut saved = original.clone();
+        retain_current_teaching_checks(&mut saved, &content, policy);
+        assert_eq!(
+            saved
+                .units
+                .iter()
+                .map(|unit| unit.index)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
@@ -983,6 +1124,37 @@ fn omitted_duplicate_and_fabricated_inventory_units_are_rejected() {
 /// Persistence-only tests use an explicit synthetic attestation. This is
 /// compiled only for tests and does not bypass production verification.
 pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> LessonVerificationReport {
+    // Persistence fixtures model a complete report shape; live factual checks
+    // are exercised separately and this helper is never compiled in production.
+    let coverage: Vec<_> = lesson
+        .blocks
+        .iter()
+        .map(|block| &block.body)
+        .chain(lesson.questions.iter().map(|question| &question.prompt))
+        .enumerate()
+        .map(|(index, text)| UnitClaims {
+            index,
+            claims: vec![Claim {
+                quote: text.clone(),
+                statement: text.clone(),
+            }],
+            non_factual_reason: String::new(),
+        })
+        .collect();
+    let findings = coverage
+        .iter()
+        .flat_map(|unit| {
+            unit.claims.iter().map(|claim| Finding {
+                unit: unit.index,
+                quote: claim.quote.clone(),
+                statement: claim.statement.clone(),
+                verdict: ClaimVerdict::Supported,
+                reason: "Persistence fixture".into(),
+                evidence: vec![],
+                supporting_quote: None,
+            })
+        })
+        .collect();
     LessonVerificationReport {
         policy: POLICY.into(),
         lesson_id: lesson_id.into(),
@@ -990,13 +1162,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
         checker_model: "persistence-fixture".into(),
         checked_at: 0,
         sources: vec![],
-        coverage: (0..lesson.blocks.len() + lesson.questions.len())
-            .map(|index| UnitClaims {
-                index,
-                claims: vec![],
-                non_factual_reason: "Persistence fixture".into(),
-            })
-            .collect(),
+        coverage,
         coverage_audit: (0..lesson.blocks.len() + lesson.questions.len())
             .map(|index| CoverageUnit {
                 index,
@@ -1005,15 +1171,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 unresolved_passages: Vec::new(),
             })
             .collect(),
-        findings: vec![Finding {
-            unit: 0,
-            quote: "fixture".into(),
-            statement: "fixture".into(),
-            verdict: ClaimVerdict::Supported,
-            reason: "fixture".into(),
-            evidence: vec![],
-            supporting_quote: None,
-        }],
+        findings,
         executions: vec![],
         issues: vec![],
         retrieval_mode: "lexical_fallback".into(),
@@ -1364,6 +1522,8 @@ async fn durable_judgment_requires_one_final_verdict_after_its_comparison() {
         "supported\nReason: The source instead says it is a script, not a binary.\nSource passage: passage-0",
         "Verdict: supported\nReason: The comparison is not finished.\nSource passage: passage-0",
         "Reason: The source agrees.\nSource passage: passage-0\nVerdict: supported\nVerdict: unsupported",
+        "Reason: The source agrees. Verdict: unsupported\nSource passage: passage-0\nVerdict: supported",
+        "Reason: The source agrees. Verdict: supported Additional text.\nSource passage: passage-0\nVerdict: supported",
         "Reason: The source agrees. Source passage: passage-0 Verdict: supported Verdict: unsupported",
         "Reason: First reason. Reason: Replacement reason. Source passage: passage-0 Verdict: supported",
         "Reason: First reason. Reason: Replacement reason.\nSource passage: passage-0\nVerdict: supported",
@@ -1377,6 +1537,38 @@ async fn durable_judgment_requires_one_final_verdict_after_its_comparison() {
         let result = ClaimChecker::new(&model, SamplingOverride::deterministic(), 512, CheckPolicy::Strict)
             .check_passages_without_deadline("The command downloads a binary.", &["The command downloads a script.".into()]).await;
         assert!(matches!(result, ClaimJudgment::Unusable));
+    }
+}
+
+#[tokio::test]
+async fn durable_judgment_accepts_an_identical_decision_echo_in_the_reason() {
+    let source = "The setup process attempts to configure the environment.".to_owned();
+    for verdict in ["supported", "unsupported", "contradicted"] {
+        let model = TypedModel {
+            response: CompletionResponse {
+                text: format!("Reason: The source was compared with every assertion. Verdict: {verdict}\nSource passage: passage-0\nVerdict: {verdict}"),
+                finish_reason: "stop".into(),
+                ..Default::default()
+            },
+        };
+        let result = ClaimChecker::new(
+            &model,
+            SamplingOverride::deterministic(),
+            512,
+            CheckPolicy::Strict,
+        )
+        .check_passages_without_deadline(
+            "The setup configures the environment.",
+            std::slice::from_ref(&source),
+        )
+        .await;
+        let ClaimJudgment::Judged(outcome) = result else {
+            panic!("An identical echo made a canonical result unusable");
+        };
+        assert_eq!(serde_json::to_value(outcome.verdict).unwrap(), verdict);
+        if verdict != "unsupported" {
+            assert_eq!(outcome.quote.as_deref(), Some(source.as_str()));
+        }
     }
 }
 

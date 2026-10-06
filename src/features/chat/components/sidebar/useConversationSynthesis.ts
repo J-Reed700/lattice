@@ -1,12 +1,13 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Combine,
   MessageSquareShare,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
 
-import { useSynthesizeConversationMutation } from '@/features/chat/components/sidebar/workspaceQueries';
+import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
+import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { PaletteCommand } from '@/stores/paletteCommandsStore';
@@ -14,29 +15,18 @@ import { toast } from '@/stores/toastStore';
 
 
 export function useConversationSynthesis() {
-  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { conversations, activeConversationId, continueInNewConversation } = useConversationsStore();
   const [continuingConversationId, setContinuingConversationId] = useState<string | null>(null);
-  const mutation = useSynthesizeConversationMutation();
-  const { mutateAsync } = mutation;
+  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
+  const synthesizingConversationId = useSynthesisStore(state => state.job?.status === 'running' && state.job.conversationIds.length === 1 ? state.job.conversationIds[0] : null);
   const synthesizeConversationToJournal = useCallback(async (id: string, title: string) => {
-    // A synthesis is two full generations — minutes on a local model. Started
-    // from the palette there is no row spinner to look at, so without this the
-    // command appears to do nothing until the "saved" toast arrives.
-    const working = toast.info(`Synthesizing "${title}"…`, {
-      message: 'This takes a few minutes. The page opens when it is ready.',
-      duration: 0,
-    });
-    try {
-      const capture = await mutateAsync({ id, title });
-      toast.success(`Synthesis saved to "${capture.noteTitle}"`);
-      navigate(`/journals?${new URLSearchParams({ noteId: capture.noteId }).toString()}`);
-    } catch (error) {
-      toast.error('Synthesis failed', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      toast.dismiss(working);
-    }
-  }, [mutateAsync, navigate]);
+    await runSynthesis({
+      title, heading: title,
+      request: { conversationIds: [id], scope: 'conversation', maxEntries: 1 },
+      destination: { kind: 'capture' },
+    }, queryClient);
+  }, [queryClient]);
   // A long thread slows every turn and its opening falls out of the model's
   // window. This carries what it established into a fresh chat in the same
   // space; the old one stays as it was.
@@ -64,7 +54,7 @@ export function useConversationSynthesis() {
         label: 'Synthesize this conversation to Journal',
         group: 'Journal',
         icon: Combine,
-        enabled: Boolean(activeConversationId),
+        enabled: Boolean(activeConversationId) && !isSynthesizing,
         run: () => {
           if (!activeConversationId) return;
           const conversation = conversations.find((c) => c.id === activeConversationId);
@@ -87,13 +77,14 @@ export function useConversationSynthesis() {
         },
       },
     ],
-    [activeConversationId, continueConversationInNewChat, continuingConversationId, conversations, synthesizeConversationToJournal],
+    [activeConversationId, continueConversationInNewChat, continuingConversationId, conversations, isSynthesizing, synthesizeConversationToJournal],
   );
   useRegisterPaletteCommands(synthesizePaletteCommands);
 
   return {
     synthesizeConversationToJournal,
-    synthesizingConversationId: mutation.isPending ? mutation.variables.id : null,
+    synthesizingConversationId,
+    isSynthesizing,
     continueConversationInNewChat,
     continuingConversationId,
   };

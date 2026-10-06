@@ -14,15 +14,21 @@ const ConversationsContext = createContext<ConversationsSnapshot | null>(null);
 
 export function ConversationsProvider({ children }: { children: ReactNode }) {
   const controller = useConversationsController();
+  return createElement(ConversationSnapshotProvider, { value: controller }, children);
+}
+
+/** A transcript can project the shared controller onto a different conversation
+ * without selecting it globally or starting a second generation lifecycle. */
+export function ConversationSnapshotProvider({ value, children }: { value: ConversationsState; children?: ReactNode }) {
   const storeRef = useRef<ConversationsSnapshot | null>(null);
-  if (!storeRef.current) storeRef.current = createStore<ConversationsState>(() => controller);
+  if (!storeRef.current) storeRef.current = createStore<ConversationsState>(() => value);
 
   // Keep the context value stable. Consumers subscribe to the external store
   // with a selector, so a streaming text change only wakes consumers whose
   // selected value actually changed.
   useLayoutEffect(() => {
-    storeRef.current?.setState(controller, true);
-  }, [controller]);
+    storeRef.current?.setState(value, true);
+  }, [value]);
 
   return createElement(ConversationsContext.Provider, { value: storeRef.current }, children);
 }

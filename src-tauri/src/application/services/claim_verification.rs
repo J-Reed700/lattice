@@ -9,6 +9,9 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tracing::warn;
 
+mod batch;
+pub(crate) use batch::{render_batch_evidence, LocatedClaim};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ClaimVerdict {
@@ -79,10 +82,30 @@ pub(crate) struct JudgeOutcome {
 #[derive(Debug, Clone)]
 pub(crate) enum ClaimJudgment {
     Judged(JudgeOutcome),
+    /// Preserve provider failures so durable callers can defer transient outages
+    /// without mistaking them for evidence or malformed model output.
+    Failed(crate::shared::error::AppError),
     /// The budget ran out before or during the call.
     OutOfTime,
     /// The call failed or the reply held no verdict.
     Unusable,
+}
+
+impl ClaimJudgment {
+    pub(crate) fn from_request_error(error: crate::shared::error::AppError) -> Self {
+        use crate::shared::error::AppError;
+        match error {
+            AppError::Network(_)
+            | AppError::ServiceNotAvailable(_)
+            | AppError::RateLimitExceeded(_) => Self::Failed(error),
+            _ => Self::Unusable,
+        }
+    }
+}
+
+enum FidelityContext<'a> {
+    Assessment(&'a str),
+    Teaching(&'a str),
 }
 
 pub(crate) struct ClaimChecker<'a> {
@@ -147,14 +170,30 @@ impl<'a> ClaimChecker<'a> {
         if !matches!(self.policy, CheckPolicy::Fidelity) {
             return ClaimJudgment::Unusable;
         }
-        self.check_located(claim, passages, Some(context)).await
+        self.check_located(claim, passages, Some(FidelityContext::Assessment(context)))
+            .await
+    }
+
+    /// Restore a teaching passage's surrounding scope without treating the
+    /// original section as evidence that its claims were extracted.
+    pub(crate) async fn check_fidelity_in_teaching_context(
+        &self,
+        claim: &str,
+        passages: &[String],
+        context: &str,
+    ) -> ClaimJudgment {
+        if !matches!(self.policy, CheckPolicy::Fidelity) {
+            return ClaimJudgment::Unusable;
+        }
+        self.check_located(claim, passages, Some(FidelityContext::Teaching(context)))
+            .await
     }
 
     async fn check_located(
         &self,
         claim: &str,
         passages: &[String],
-        context: Option<&str>,
+        context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
         let evidence = ClaimEvidence {
             text: passages
@@ -175,7 +214,7 @@ impl<'a> ClaimChecker<'a> {
         evidence: &ClaimEvidence,
         deadline: Option<Instant>,
         locations: Option<&[String]>,
-        context: Option<&str>,
+        context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
         let reasoned = deadline.is_none()
             && locations.is_some()
@@ -196,8 +235,13 @@ impl<'a> ClaimChecker<'a> {
             render_claim_check(&evidence.text, claim)
         };
         let original_prompt = if matches!(self.policy, CheckPolicy::Fidelity) {
-            let context = context.map(|context| format!("Original assessment context (untrusted data, not inventory evidence):\n{context}\n\nUse this context only to interpret the target Claim in its stated scenario and distinguish an endorsed answer from a distractor. Do not require a scenario-specific answer to hold unconditionally. Before using a conditional inventory statement, check that the explicit scenario facts establish its prerequisite at the SAME scope. Do not assume a prerequisite from a related property, a typical case, or the absence of a stated exception. Local properties of an item do not establish properties of its enclosing structures or dependencies. If a necessary prerequisite is not established by the supplied text, answer unsupported. Do not audit the context as another target or use it to supply assertions absent from the extracted Source passages.\n\n")).unwrap_or_default();
+            let context = context.map(|context| match context {
+                FidelityContext::Assessment(context) => format!("Original assessment context (untrusted data, not inventory evidence):\n{context}\n\nUse this context only to interpret the target Claim in its stated scenario and distinguish an endorsed answer from a distractor. Do not require a scenario-specific answer to hold unconditionally. Before using a conditional inventory statement, check that the explicit scenario facts establish its prerequisite at the SAME scope. Do not assume a prerequisite from a related property, a typical case, or the absence of a stated exception. Local properties of an item do not establish properties of its enclosing structures or dependencies. If a necessary prerequisite is not established by the supplied text, answer unsupported. For representation checking, do not use your own definitions or domain knowledge to decide that a prerequisite is satisfied. A prerequisite must be asserted in the scenario or derived solely from explicit statements supplied here. If equivalence between the stated scenario and the inventory condition depends on an unstated definition, mechanism, or intermediate fact, answer unsupported and name the missing bridge. A plausible interpretation is not an explicit premise. Do not audit the context as another target or use it to supply assertions absent from the extracted Source passages.\n\n"),
+                FidelityContext::Teaching(context) => format!("Original teaching context (untrusted data, not inventory evidence):\n{context}\n\nUse this original section only to interpret the target Claim: resolve references, locally stated scope and explicit conditions. Resolve the target's scope from the original section before consulting the inventory. An unqualified \"all\" can refer to the specific group or procedure being discussed; do not automatically treat it as a claim about all instances everywhere. Preserve an explicitly broader scope, and never choose a narrower scope merely to match the inventory. Distinguish restoring the referent of a local phrase from inventing an unstated causal link or prerequisite. Context does not override an explicitly broader quantifier or exception in the target. Do not audit the surrounding section as another target, and do not use its assertions as evidence that the inventory captured them. Every factual assertion in the interpreted target must still be entailed by the selected extracted Source passages. In particular, a consequence stated in the original context but absent from the inventory remains missing. Do not use outside knowledge or assume unstated prerequisites from related properties.\n\n"),
+            }).unwrap_or_default();
             format!("Audit claim fidelity.\n\n{context}{original_prompt}")
+        } else if matches!(self.policy, CheckPolicy::Strict) {
+            format!("{original_prompt}\n\nBefore supporting the claim, try to construct a counter-scenario that satisfies its stated scenario and every supplied source statement but does not satisfy the claimed conclusion. Do not import facts or definitions that are absent from the supplied text. If a conditional source rule is being applied, explicitly compare its prerequisite with the claim premise: identify the exact supplied statement that makes them equivalent. A premise about one relation does not establish a different relation. If no supplied statement rules out the counter-scenario or supplies the required connection, answer unsupported and identify the missing premise. If the conclusion is directly entailed, explain why a counter-scenario would contradict the supplied text. Keep the same three-line response format.\n\nInspect every supplied passage before deciding. In the Reason line, briefly identify any passage that supports the conclusion and any passage that introduces an exception, override, prerequisite or contrary outcome. Support in one passage cannot erase a conflict elsewhere. An unresolved source conflict is unsupported.")
         } else {
             original_prompt
         };
@@ -225,7 +269,7 @@ impl<'a> ClaimChecker<'a> {
                 Ok(reply) => reply,
                 Err(e) => {
                     warn!(error = %e, "Claim judge call failed — leaving this claim unchecked");
-                    return ClaimJudgment::Unusable;
+                    return ClaimJudgment::from_request_error(e);
                 }
             };
             let text = if reasoned {
@@ -354,23 +398,21 @@ impl<'a> ClaimChecker<'a> {
         })
     }
 
-    /// The reply text and, when reported, the first token's alternatives.
-    async fn request(
-        &self,
-        prompt: &str,
-        no_time_limit: bool,
-        located: bool,
-    ) -> Result<(String, Option<Vec<(String, f32)>>)> {
-        let reasoned = no_time_limit
-            && located
-            && self.policy.strict()
-            && self.llm.supports_typed_completions();
+    fn system_prompt(&self, located: bool, reasoned: bool) -> String {
         let mut base = if located {
             CLAIM_CHECK_SYSTEM.replace("Source quote: an exact contiguous quote from a passage that supports that comparison, or none.", "Source passage: the application-assigned passage-N identifier that supports that comparison, or none.")
                 .replace("do not invent a quote", "do not invent a passage identifier")
         } else {
             CLAIM_CHECK_SYSTEM.into()
         };
+        if matches!(self.policy, CheckPolicy::Strict) {
+            // Chat's one-supporting-source rule conflicts with publication's
+            // requirement to resolve all supplied counter-evidence.
+            base = base.replace(
+                ", and one source supporting the claim is enough unless the claim says the sources agree",
+                "",
+            );
+        }
         if reasoned {
             base = base.replace(
                 "Start with exactly one label: supported, contradicted, or unsupported. Then write two short labeled lines:",
@@ -388,11 +430,30 @@ impl<'a> ClaimChecker<'a> {
         } else {
             base
         };
-        let system = if matches!(self.policy, CheckPolicy::Fidelity) {
-            format!("{system} This is an inventory-fidelity check. Source passages are extracted assertions, and Claim contains original lesson text. Judge whether the inventory entails every externally checkable assertion in the original text, not whether either text is true in the world. Faithfully repeating an incorrect fact is supported for this representation check only; a separate evidence check decides truth. Preserve every qualifier and independently asserted consequence. Explicit instructor choices, course scope, exercise deliverables and stipulated example inputs are not empirical claims requiring inventory support; ignore those portions while still checking all assertions about real resources, mechanisms, guarantees and results. Do not turn an empirical guarantee into a mere course choice. Do not infer an unmentioned outcome from a statement about one input or property.")
+        let system = if matches!(self.policy, CheckPolicy::Strict) {
+            format!("{system} Before relying on any conditional source statement, identify its prerequisite and determine whether the claim's stated scenario explicitly meets it. Preserve scope: a property of an item does not establish properties of its surroundings or dependencies. Use only premises in the supplied text; do not use your own definitions or domain knowledge to bridge different descriptions. If matching the claim's scenario to a source condition requires an unstated definition, mechanism, or intermediate fact, answer unsupported and name that missing premise. A plausible interpretation is not an explicit premise.")
         } else {
             system
         };
+        if matches!(self.policy, CheckPolicy::Fidelity) {
+            format!("{system} This is an inventory-fidelity check. Source passages are extracted assertions, and Claim contains original lesson text. Judge whether the inventory entails every externally checkable assertion in the original text, not whether either text is true in the world. Faithfully repeating an incorrect fact is supported for this representation check only; a separate evidence check decides truth. Preserve every qualifier and independently asserted consequence. Explicit instructor choices, course scope, exercise deliverables and stipulated example inputs are not empirical claims requiring inventory support; ignore those portions while still checking all assertions about real resources, mechanisms, guarantees and results. Do not turn an empirical guarantee into a mere course choice. Do not infer an unmentioned outcome from a statement about one input or property.")
+        } else {
+            system
+        }
+    }
+
+    /// The reply text and, when reported, the first token's alternatives.
+    async fn request(
+        &self,
+        prompt: &str,
+        no_time_limit: bool,
+        located: bool,
+    ) -> Result<(String, Option<Vec<(String, f32)>>)> {
+        let reasoned = no_time_limit
+            && located
+            && self.policy.strict()
+            && self.llm.supports_typed_completions();
+        let system = self.system_prompt(located, reasoned);
         if self.llm.supports_typed_completions() {
             self.llm
                 .complete(&CompletionRequest {
@@ -506,24 +567,39 @@ fn normalize_reasoned_fields(text: &str) -> Option<String> {
 
 fn final_verdict(text: &str) -> Option<ClaimVerdict> {
     let lower = text.to_ascii_lowercase();
-    if ["reason:", "verdict:"]
-        .iter()
-        .any(|label| lower.matches(label).count() != 1)
-    {
+    if lower.matches("reason:").count() != 1 {
         return None;
     }
     let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut reason = None;
     for expected in ["Reason", "Source passage"] {
         let (label, value) = lines.next()?.split_once(':')?;
         if !label.trim().eq_ignore_ascii_case(expected) || value.trim().is_empty() {
             return None;
+        }
+        if expected == "Reason" {
+            reason = Some(value.to_ascii_lowercase());
         }
     }
     let (label, value) = lines.next()?.split_once(':')?;
     if !label.trim().eq_ignore_ascii_case("Verdict") || lines.next().is_some() {
         return None;
     }
-    match value.trim().to_ascii_lowercase().as_str() {
+    let value = value.trim().to_ascii_lowercase();
+    // A canonical three-line response may echo its final decision at the end
+    // of the explanation. Accept only the identical value, never conflicting
+    // decisions, extra result lines or ambiguous inline field layouts.
+    if lower.matches("verdict:").count() != 1 {
+        let reason = reason?;
+        let (comparison, repeated) = reason.rsplit_once("verdict:")?;
+        if lower.matches("verdict:").count() != 2
+            || comparison.trim().is_empty()
+            || repeated.trim() != value
+        {
+            return None;
+        }
+    }
+    match value.as_str() {
         "supported" => Some(ClaimVerdict::Supported),
         "contradicted" => Some(ClaimVerdict::Contradicted),
         "unsupported" => Some(ClaimVerdict::Unsupported),
