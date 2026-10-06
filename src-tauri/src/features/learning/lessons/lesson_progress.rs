@@ -1,6 +1,10 @@
 //! Progress for the current durable lesson job, scoped to its future. Keeping
 //! this context task-local lets nested review calls report without affecting
 //! concurrent chat, outline generation, or other jobs.
+pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
+use crate::features::learning::curriculum::{
+    LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
+};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::shared::error::{AppError, Result};
 use std::sync::{Arc, Mutex};
@@ -9,9 +13,8 @@ use std::sync::{Arc, Mutex};
 struct State {
     message: String,
     completed: u32,
-    model_running: bool,
-    response_characters: usize,
-    model_attempt: usize,
+    activity: LearningGenerationActivity,
+    active_model_calls: usize,
 }
 
 #[derive(Clone, Default)]
@@ -29,9 +32,12 @@ pub(in crate::features::learning) fn stage(message: impl Into<String>) {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         tracing::info!(stage = %message, "Lesson preparation stage changed");
         state.message = message;
-        state.model_running = false;
-        state.response_characters = 0;
-        state.model_attempt = 0;
+        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
+        if state.active_model_calls == 0 {
+            state.activity.model_running = false;
+            state.activity.response_characters = 0;
+            state.activity.model_attempt = 0;
+        }
     });
 }
 
@@ -45,50 +51,160 @@ pub(in crate::features::learning) fn completed(count: u32) {
     });
 }
 
+#[cfg(test)]
 pub(in crate::features::learning) fn model_started() {
     model_retry(1);
+}
+
+pub(in crate::features::learning) struct ModelCall(Option<Progress>);
+
+impl Drop for ModelCall {
+    fn drop(&mut self) {
+        if let Some(progress) = &self.0 {
+            let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.active_model_calls = state.active_model_calls.saturating_sub(1);
+            state.activity.model_running = state.active_model_calls > 0;
+        }
+    }
+}
+
+pub(in crate::features::learning) fn model_call() -> ModelCall {
+    let progress = CURRENT.try_with(Clone::clone).ok();
+    if let Some(progress) = &progress {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.active_model_calls == 0 {
+            state.activity.response_characters = 0;
+            state.activity.model_attempt = 1;
+        }
+        state.active_model_calls += 1;
+        state.activity.model_running = true;
+        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
+    }
+    ModelCall(progress)
 }
 
 pub(in crate::features::learning) fn model_retry(attempt: usize) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.model_running = true;
-        state.response_characters = 0;
-        state.model_attempt = attempt;
+        state.activity.model_running = true;
+        state.activity.response_characters = 0;
+        state.activity.model_attempt = attempt as u32;
+        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
     });
 }
 
 pub(in crate::features::learning) fn received(text: &str) {
     let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.activity.response_characters = state
+            .activity
+            .response_characters
+            .saturating_add(text.chars().count() as u32);
+        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
+    });
+}
+
+pub(in crate::features::learning) fn phase(
+    phase: LearningGenerationPhase,
+    message: impl Into<String>,
+) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        let activity = &mut state.activity;
+        if activity.phase != phase || activity.phase_started_at == 0 {
+            activity.phase = phase;
+            activity.phase_started_at = chrono::Utc::now().timestamp_millis();
+            activity.recent_steps.push(LearningGenerationStep {
+                phase,
+                started_at: activity.phase_started_at,
+            });
+            if activity.recent_steps.len() > 12 {
+                activity.recent_steps.remove(0);
+            }
+        }
+    });
+    stage(message);
+}
+
+pub(in crate::features::learning) fn model(name: &str) {
+    let _ = CURRENT.try_with(|progress| {
         progress
             .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .response_characters += text.chars().count();
+            .activity
+            .model_name = Some(name.into())
+    });
+}
+
+pub(in crate::features::learning) fn lesson(title: &str) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.activity.lesson_title.as_deref() != Some(title) {
+            state.activity.checks_total = 0;
+            state.activity.checks_completed = 0;
+            state.activity.checks_reused = 0;
+            state.activity.checks_unresolved = 0;
+            state.activity.verification_pass = 0;
+        }
+        state.activity.lesson_title = Some(title.into());
+    });
+}
+
+pub(in crate::features::learning) fn checkpoint_saved() {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .last_checkpoint_at = Some(chrono::Utc::now().timestamp_millis())
+    });
+}
+
+pub(in crate::features::learning) fn begin_checks(total: usize) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        let activity = &mut state.activity;
+        activity.verification_pass += 1;
+        activity.checks_total = total as u32;
+        activity.checks_completed = 0;
+        activity.checks_reused = 0;
+        activity.checks_unresolved = 0;
+    });
+}
+
+pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.activity.checks_completed += 1;
+        state.activity.checks_reused += u32::from(reused);
+        state.activity.checks_unresolved += u32::from(unresolved);
     });
 }
 
 impl Progress {
-    fn snapshot(&self) -> (u32, String) {
+    fn snapshot(&self) -> (u32, String, LearningGenerationActivity) {
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let detail = if !state.model_running {
+        let detail = if !state.activity.model_running {
             String::new()
-        } else if state.response_characters == 0 {
+        } else if state.activity.response_characters == 0 {
             " · Waiting for the model’s response".into()
         } else {
             format!(
                 " · {} response characters received",
-                state.response_characters
+                state.activity.response_characters
             )
         };
-        let attempt = if state.model_attempt > 1 {
-            format!(" · Model request attempt {}", state.model_attempt)
+        let attempt = if state.activity.model_attempt > 1 {
+            format!(" · Model request attempt {}", state.activity.model_attempt)
         } else {
             String::new()
         };
         (
             state.completed,
             format!("{}{attempt}{detail}", state.message),
+            state.activity.clone(),
         )
     }
 }
@@ -99,9 +215,21 @@ pub(in crate::features::learning) async fn run<T>(
     future: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     let progress = Progress::default();
+    // Restarted jobs retain their completed lesson count. Heartbeats must not
+    // attempt to reset it to zero while references/models are being loaded.
+    let job = repo.job(job_id).await?;
+    let completed = job.progress_completed;
+    {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.completed = completed;
+        state.activity = job.activity.unwrap_or_default();
+        // A new run starts by reopening references, even when the prior run
+        // stopped in that same phase. Do not count time with the app closed.
+        state.activity.phase_started_at = 0;
+    }
     CURRENT
         .scope(progress.clone(), async {
-            stage("Checking saved references");
+            phase(Phase::References, "Checking saved references");
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let persist = async {
@@ -110,7 +238,10 @@ pub(in crate::features::learning) async fn run<T>(
                     interval.tick().await;
                     let snapshot = progress.snapshot();
                     if previous.as_ref() != Some(&snapshot) {
-                        if !repo.advance_job(job_id, snapshot.0, &snapshot.1).await? {
+                        if !repo
+                            .advance_job_activity(job_id, snapshot.0, &snapshot.1, &snapshot.2)
+                            .await?
+                        {
                             return Err(AppError::InvalidState(
                                 "Lesson preparation is no longer running.".into(),
                             ));
@@ -122,10 +253,22 @@ pub(in crate::features::learning) async fn run<T>(
             // Keep polling preparation while progress waits for the database.
             // Preparation may hold the only connection across an await; waiting
             // inside a select branch would otherwise deadlock both operations.
-            tokio::select! {
+            let result = tokio::select! {
                 result = future => result,
                 result = persist => result,
+            };
+            if result.is_ok() {
+                let snapshot = progress.snapshot();
+                if !repo
+                    .advance_job_activity(job_id, snapshot.0, &snapshot.1, &snapshot.2)
+                    .await?
+                {
+                    return Err(AppError::InvalidState(
+                        "Lesson preparation is no longer running.".into(),
+                    ));
+                }
             }
+            result
         })
         .await
 }
@@ -134,6 +277,49 @@ pub(in crate::features::learning) async fn run<T>(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+
+    #[tokio::test]
+    async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                lesson("A lesson");
+                phase(Phase::Evidence, "Checking claims");
+                begin_checks(3);
+                let first = model_call();
+                let second = model_call();
+                received("Answer");
+                drop(first);
+                checked(false, true);
+                stage("Checked 1 of 3 claims");
+                assert!(
+                    progress.snapshot().2.model_running,
+                    "One request is still active"
+                );
+                assert_eq!(progress.snapshot().2.checks_unresolved, 1);
+                drop(second);
+                assert!(!progress.snapshot().2.model_running);
+                checkpoint_saved();
+                phase(Phase::Research, "Finding missing evidence");
+                phase(Phase::Evidence, "Rechecking evidence");
+                begin_checks(3);
+                checked(true, false);
+                let activity = progress.snapshot().2;
+                assert_eq!(activity.verification_pass, 2);
+                assert_eq!(activity.checks_reused, 1);
+                assert_eq!(activity.checks_unresolved, 0);
+                assert!(activity.last_checkpoint_at.is_some());
+                assert_eq!(
+                    activity
+                        .recent_steps
+                        .iter()
+                        .map(|step| step.phase)
+                        .collect::<Vec<_>>(),
+                    [Phase::Evidence, Phase::Research, Phase::Evidence]
+                );
+            })
+            .await;
+    }
 
     #[tokio::test]
     async fn retry_discards_partial_response_progress_and_keeps_the_stage() {
@@ -210,7 +396,8 @@ mod tests {
         CURRENT.scope(progress.clone(), async {
             stage("Writing lesson");
             crate::features::learning::generation::complete_json(&SlowModel, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
-            assert!(progress.snapshot().1.contains("response characters received"));
+            assert!(progress.snapshot().2.response_characters > 0);
+            assert!(!progress.snapshot().2.model_running);
             use crate::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};
             let checker = ClaimChecker::new(&SlowModel, crate::application::ports::llm_port::SamplingOverride::deterministic(), 512, CheckPolicy::Strict);
             let judgment = checker.check_without_deadline("Rust is a language.", &ClaimEvidence { text: "Rust is a language.".into(), quote: None }).await;
@@ -229,7 +416,7 @@ mod tests {
                 model_started();
                 received("Hello 🦀");
                 assert_eq!(
-                    progress.snapshot(),
+                    (progress.snapshot().0, progress.snapshot().1),
                     (0, "Writing lesson · 7 response characters received".into())
                 );
                 assert!(!tokio::spawn(async { active() }).await.unwrap());
@@ -241,7 +428,10 @@ mod tests {
                 );
                 completed(1);
                 stage("Saving verified lesson");
-                assert_eq!(progress.snapshot(), (1, "Saving verified lesson".into()));
+                assert_eq!(
+                    (progress.snapshot().0, progress.snapshot().1),
+                    (1, "Saving verified lesson".into())
+                );
             })
             .await;
         assert!(!active());

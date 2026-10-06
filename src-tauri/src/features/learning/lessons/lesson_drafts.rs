@@ -59,6 +59,7 @@ struct Context {
     repo: LearningCurriculumRepository,
     job_id: String,
     lesson_id: String,
+    base_revision: i64,
     input_hash: Arc<Mutex<Option<String>>>,
     authoring: Arc<Mutex<Option<AuthoringContext>>>,
 }
@@ -68,18 +69,57 @@ pub(in crate::features::learning) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
 }
 
+/// Learner progress can change the program's revision without changing these
+/// authoring inputs. Keep the job's original identity through resume and retry.
+pub(in crate::features::learning) fn authoring_revision(current: i64) -> i64 {
+    CURRENT
+        .try_with(|context| context.base_revision)
+        .unwrap_or(current)
+}
+
+/// Receipts are keyed by their caller's exact inputs and policy. Repository
+/// writes merge one key atomically, including when claim checks finish together.
+pub(in crate::features::learning) async fn checkpoint(
+    key: &str,
+) -> Result<Option<serde_json::Value>> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(None);
+    };
+    context
+        .repo
+        .lesson_checkpoint(&context.job_id, &context.lesson_id, key)
+        .await
+}
+
+pub(in crate::features::learning) async fn record_checkpoint(
+    key: &str,
+    value: serde_json::Value,
+) -> Result<()> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(());
+    };
+    context
+        .repo
+        .save_lesson_checkpoint(&context.job_id, &context.lesson_id, key, value)
+        .await?;
+    crate::features::learning::lesson_progress::checkpoint_saved();
+    Ok(())
+}
+
 pub(in crate::features::learning) async fn run<T>(
     repo: &LearningCurriculumRepository,
     job_id: &str,
     lesson_id: &str,
     future: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
+    let base_revision = i64::from(repo.job(job_id).await?.base_revision_number);
     CURRENT
         .scope(
             Context {
                 repo: repo.clone(),
                 job_id: job_id.into(),
                 lesson_id: lesson_id.into(),
+                base_revision,
                 input_hash: Default::default(),
                 authoring: Default::default(),
             },
@@ -180,6 +220,7 @@ async fn save_checkpoint(candidate: &str, repair_override: Option<Option<String>
                 },
             )
             .await?;
+        crate::features::learning::lesson_progress::checkpoint_saved();
     }
     Ok(())
 }
@@ -228,6 +269,7 @@ pub(in crate::features::learning) async fn record_claim_inventory(
             .repo
             .save_lesson_draft(&context.job_id, &context.lesson_id, draft)
             .await?;
+        crate::features::learning::lesson_progress::checkpoint_saved();
     }
     Ok(())
 }
@@ -254,6 +296,7 @@ async fn set_pending_repair(candidate: &str, repair: Option<String>) -> Result<(
             .repo
             .save_lesson_draft(&context.job_id, &context.lesson_id, draft)
             .await?;
+        crate::features::learning::lesson_progress::checkpoint_saved();
     }
     Ok(())
 }
@@ -277,6 +320,7 @@ pub(in crate::features::learning) async fn record_teaching(
             .repo
             .save_lesson_draft(&context.job_id, &context.lesson_id, draft)
             .await?;
+        crate::features::learning::lesson_progress::checkpoint_saved();
     }
     Ok(())
 }

@@ -346,9 +346,8 @@ pub(crate) async fn complete_json_with_progress(
                 no_time_limit: unbounded,
                 ..Default::default()
             };
-            if lesson_progress {
-                crate::features::learning::lesson_progress::model_started();
-            }
+            let _model_call =
+                lesson_progress.then(crate::features::learning::lesson_progress::model_call);
             let receive = |text: String| {
                 if let Some(progress) = progress {
                     progress.received(&text);
@@ -716,10 +715,10 @@ pub async fn prepare_lesson_with_references(
     }
     let owned_ids = validate_source_snapshot_ids(&program.sources)?;
     let output_tokens = output_budget(llm, LESSON_OUTPUT_RESERVE);
-    crate::features::learning::lesson_progress::stage(format!(
-        "Finding evidence for {}",
-        lesson.title
-    ));
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::References,
+        format!("Finding evidence for {}", lesson.title),
+    );
     let selected_sources = references
         .author_sources(&format!("{} {}", lesson.title, lesson.objective))
         .await?;
@@ -777,11 +776,12 @@ pub async fn prepare_lesson_with_references(
         scope.remove("sources");
         scope.remove("referenceCatalog");
     }
-    let scope_hash =
-        crate::features::learning::content_verification::digest(&serde_json::to_string(&json!({
+    let scope_hash = crate::features::learning::content_verification::digest(
+        &serde_json::to_string(&json!({
             "policy":"lesson-authoring-v1","request":scope,
-            "revision":program.summary.revision,"model":llm.model_name(),
-        }))?);
+            "revision":crate::features::learning::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
+        }))?,
+    );
     let reused = crate::features::learning::lesson_drafts::reusable_authoring(
         &scope_hash,
         &references.sources,
@@ -817,7 +817,7 @@ pub async fn prepare_lesson_with_references(
     // Approval is deliberately never cached here.
     let draft_input = serde_json::to_string(&json!({
         "policy":"lesson_draft_v1", "prompt":prompt, "schema":lesson_schema(sources.len()),
-        "revision":program.summary.revision, "model":llm.model_name(),
+        "revision":crate::features::learning::lesson_drafts::authoring_revision(program.summary.revision), "model":llm.model_name(),
         "sources":references.sources,
     }))?;
     let input_hash = reuse_hash.unwrap_or_else(|| {
@@ -827,12 +827,16 @@ pub async fn prepare_lesson_with_references(
     let raw = if let Some(draft) =
         crate::features::learning::lesson_drafts::resume(input_hash).await?
     {
-        crate::features::learning::lesson_progress::stage(
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Writing,
             "Reusing the saved lesson draft; continuing verification",
         );
         draft
     } else {
-        crate::features::learning::lesson_progress::stage(format!("Writing {}", lesson.title));
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Writing,
+            format!("Writing {}", lesson.title),
+        );
         let raw = complete_json(
         llm,
         &format!("Teach one rigorous, accessible lesson aligned to its place in the curriculum. {} Return only JSON matching the schema.", grounding_instructions(!sources.is_empty())),

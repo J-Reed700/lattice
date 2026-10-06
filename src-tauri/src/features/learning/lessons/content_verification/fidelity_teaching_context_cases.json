@@ -1,0 +1,79 @@
+[
+  {
+    "claim": "All plants received 10 mL of water.",
+    "passages": [
+      "Every plant in this experiment received 10 mL of water."
+    ],
+    "context": {
+      "body": "This section reports a controlled experiment on twelve plants.\nAll plants received 10 mL of water."
+    },
+    "contextKind": "teaching",
+    "expected": "supported"
+  },
+  {
+    "claim": "Every plant on Earth received 10 mL of water.",
+    "passages": [
+      "Every plant in this experiment received 10 mL of water."
+    ],
+    "context": {
+      "body": "This section reports a controlled experiment on twelve plants.\nEvery plant on Earth received 10 mL of water."
+    },
+    "contextKind": "teaching",
+    "expected": "unsupported"
+  },
+  {
+    "claim": "All loaves are baked at 180 degrees Celsius.",
+    "passages": [
+      "The loaves made using this recipe are baked at 180 degrees Celsius."
+    ],
+    "context": {
+      "body": "This section describes one recipe for two loaves.\nAll loaves are baked at 180 degrees Celsius."
+    },
+    "contextKind": "teaching",
+    "expected": "supported"
+  },
+  {
+    "claim": "All loaves made anywhere must be baked at 180 degrees Celsius.",
+    "passages": [
+      "The loaves made using this recipe are baked at 180 degrees Celsius."
+    ],
+    "context": {
+      "body": "This section describes one recipe for two loaves.\nAll loaves made anywhere must be baked at 180 degrees Celsius."
+    },
+    "contextKind": "teaching",
+    "expected": "unsupported"
+  },
+  {
+    "claim": "This guarantees identical plant heights.",
+    "passages": [
+      "Every plant in this experiment received the same amount of water."
+    ],
+    "context": {
+      "body": "All plants in this experiment receive the same amount of water. This guarantees identical plant heights."
+    },
+    "contextKind": "teaching",
+    "expected": "unsupported"
+  },
+  {
+    "claim": "All tools are installed in the tools directory.",
+    "passages": [
+      "Tools installed by the installer are placed in the tools directory."
+    ],
+    "context": {
+      "body": "This section describes installing the programming toolchain with its installer. All tools are installed in the tools directory."
+    },
+    "contextKind": "teaching",
+    "expected": "supported"
+  },
+  {
+    "claim": "This guarantees reproducible builds.",
+    "passages": [
+      "A pinned toolchain version makes all project participants use the same compiler version."
+    ],
+    "context": {
+      "body": "Project participants use the pinned compiler version. This guarantees reproducible builds."
+    },
+    "contextKind": "teaching",
+    "expected": "unsupported"
+  }
+]

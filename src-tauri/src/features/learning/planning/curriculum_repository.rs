@@ -12,6 +12,13 @@ use crate::shared::error::{AppError, Result};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 
+#[path = "generation_recovery.rs"]
+mod generation_recovery;
+
+#[cfg(test)]
+#[path = "generation_context_tests.rs"]
+mod generation_context_tests;
+
 pub(crate) fn stable_job_operation_id(program_id: &str, lesson_id: &str, revision: i64) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(
@@ -31,7 +38,12 @@ pub(crate) fn stable_job_operation_id(program_id: &str, lesson_id: &str, revisio
 }
 
 fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+    match error {
+        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
+            "The learning database is temporarily busy. Saved work is retained.".into(),
+        ),
+        error => AppError::Database(error.to_string()),
+    }
 }
 fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|e| AppError::Serialization(e.to_string()))
@@ -843,8 +855,9 @@ impl LearningCurriculumRepository {
     /// between those steps, startup can safely resume these still-pending jobs.
     pub async fn pending_jobs(&self) -> Result<Vec<LearningGenerationJob>> {
         let rows = sqlx::query(
-            "SELECT * FROM learning_generation_jobs WHERE status='pending' ORDER BY created_at,id",
+            "SELECT * FROM learning_generation_jobs WHERE status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,id",
         )
+        .bind(now())
         .fetch_all(&self.pool)
         .await
         .map_err(db)?;
@@ -948,17 +961,19 @@ impl LearningCurriculumRepository {
         }
         let digest = hash(&encode(&parsed)?);
         let payload = hash(&encode(request)?);
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         if let Some(row)=sqlx::query("SELECT payload_hash,result_id FROM learning_curriculum_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
             if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with different job data.".into())); }
             let id:String=row.get("result_id"); tx.commit().await.map_err(db)?; return self.job(&id).await;
         }
-        let program = sqlx::query("SELECT revision,status FROM learning_programs WHERE id=?")
-            .bind(&request.program_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+        let program = sqlx::query(
+            "SELECT revision,status,content_revision FROM learning_programs WHERE id=?",
+        )
+        .bind(&request.program_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program.get::<i64, _>("revision") != request.expected_revision
             || program.get::<String, _>("status") != "active"
         {
@@ -980,11 +995,45 @@ impl LearningCurriculumRepository {
                     .into(),
             ));
         }
+        // A new UI revision or operation ID must not create duplicate work for
+        // a lesson already queued against the same teaching inputs.
+        let active = sqlx::query("SELECT id,requested_json FROM learning_generation_jobs WHERE program_id=? AND kind='lesson_preparation' AND status IN ('pending','running') AND content_revision=? ORDER BY created_at,id")
+            .bind(&request.program_id).bind(program.get::<i64,_>("content_revision"))
+            .fetch_all(&mut *tx).await.map_err(db)?;
+        for existing in active {
+            let body: serde_json::Value = decode(&existing.get::<String, _>("requested_json"))?;
+            let ids = body.get("lessonIds").and_then(serde_json::Value::as_array);
+            let overlaps = ids.is_some_and(|ids| {
+                ids.iter().any(|id| {
+                    id.as_str()
+                        .is_some_and(|id| lesson_ids.iter().any(|wanted| wanted == id))
+                })
+            });
+            if !overlaps {
+                continue;
+            }
+            if !ids.is_some_and(|ids| {
+                ids.len() == lesson_ids.len()
+                    && ids.iter().all(|id| {
+                        id.as_str()
+                            .is_some_and(|id| lesson_ids.iter().any(|wanted| wanted == id))
+                    })
+            }) {
+                return Err(AppError::InvalidState(
+                    "A selected lesson already has preparation in progress. Let that job finish or cancel it before starting an overlapping batch.".into(),
+                ));
+            }
+            let id: String = existing.get("id");
+            sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'start_job',?,?,?)")
+                .bind(&request.operation_id).bind(&request.program_id).bind(&payload).bind(&id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+            tx.commit().await.map_err(db)?;
+            return self.job(&id).await;
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let created = now();
         let kind = job_kind_name(request.kind);
-        sqlx::query("INSERT INTO learning_generation_jobs(id,program_id,operation_id,payload_hash,kind,status,requested_json,base_revision_number,progress_current,progress_total,progress_message,staged_result_json,published_result_id,error_code,error_message,retry_of_job_id,created_at,started_at,finished_at,heartbeat_at) VALUES(?,?,?,?,?,'pending',?,?,0,?,'Queued',NULL,NULL,NULL,NULL,NULL,?,NULL,NULL,?)")
-            .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(digest).bind(kind).bind(encode(&parsed)?).bind(request.expected_revision).bind(request.progress_total as i64).bind(created).bind(created).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_generation_jobs(id,program_id,operation_id,payload_hash,kind,status,requested_json,base_revision_number,progress_current,progress_total,progress_message,staged_result_json,published_result_id,error_code,error_message,retry_of_job_id,created_at,started_at,finished_at,heartbeat_at,content_revision) VALUES(?,?,?,?,?,'pending',?,?,0,?,'Queued',NULL,NULL,NULL,NULL,NULL,?,NULL,NULL,?,?)")
+            .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(digest).bind(kind).bind(encode(&parsed)?).bind(request.expected_revision).bind(request.progress_total as i64).bind(created).bind(created).bind(program.get::<i64,_>("content_revision")).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) VALUES(?,0,'pending',0,'Queued',?)").bind(&id).bind(created).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'start_job',?,?,?)").bind(&request.operation_id).bind(&request.program_id).bind(payload).bind(&id).bind(created).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -1010,19 +1059,19 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningGenerationJob> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(&encode(request)?);
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         if let Some(row)=sqlx::query("SELECT payload_hash,result_id FROM learning_curriculum_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
             if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with different job action data.".into())); }
             let id:String=row.get("result_id"); tx.commit().await.map_err(db)?; return self.job(&id).await;
         }
-        let program_revision: i64 =
-            sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
+        let program =
+            sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
-        if program_revision != request.expected_revision {
+        if program.get::<i64, _>("revision") != request.expected_revision {
             return Err(AppError::InvalidState(
                 "Program changed; reload and retry.".into(),
             ));
@@ -1048,14 +1097,31 @@ impl LearningCurriculumRepository {
             let body: String = old.get("requested_json");
             let total: i64 = old.get("progress_total");
             let base: i64 = old.get("base_revision_number");
-            if base != request.expected_revision {
+            let content_revision: Option<i64> = old.get("content_revision");
+            if content_revision != Some(program.get::<i64, _>("content_revision")) {
                 return Err(AppError::InvalidState(
-                    "The program changed after this job was created; reload the plan before retrying.".into(),
+                    "Course content changed after this job was created. Start preparation again for the updated course.".into(),
                 ));
+            }
+            if let Some(child) = sqlx::query("SELECT id,status FROM learning_generation_jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,id LIMIT 1")
+                .bind(&request.job_id).fetch_optional(&mut *tx).await.map_err(db)?
+            {
+                if !matches!(child.get::<String, _>("status").as_str(), "pending" | "running" | "completed") {
+                    return Err(AppError::InvalidState("This job has a newer attempt. Retry the latest attempt to retain its saved work.".into()));
+                }
+                let id: String = child.get("id");
+                sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'retry_job',?,?,?)")
+                    .bind(&request.operation_id).bind(&request.program_id).bind(&payload).bind(&id).bind(created).execute(&mut *tx).await.map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                return self.job(&id).await;
             }
             let checkpoint: Option<String> = old.get("staged_result_json");
             sqlx::query("INSERT INTO learning_generation_jobs(id,program_id,operation_id,payload_hash,kind,status,requested_json,base_revision_number,progress_current,progress_total,progress_message,retry_of_job_id,created_at,heartbeat_at,staged_result_json) VALUES(?,?,? ,?,?,'pending',?,?,0,?,'Retry queued',?,?,?,?)")
                 .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(&digest).bind(kind).bind(body).bind(base).bind(total).bind(&request.job_id).bind(created).bind(created).bind(checkpoint).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("UPDATE learning_generation_jobs SET (activity_json,content_revision)=(SELECT activity_json,content_revision FROM learning_generation_jobs WHERE id=?) WHERE id=?")
+                .bind(&request.job_id).bind(&id).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_generation_checkpoints(job_id,lesson_id,checkpoint_key,payload_json,updated_at) SELECT ?,lesson_id,checkpoint_key,payload_json,updated_at FROM learning_generation_checkpoints WHERE job_id=?")
+                .bind(&id).bind(&request.job_id).execute(&mut *tx).await.map_err(db)?;
             sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) VALUES(?,0,'pending',0,'Retry queued',?)").bind(&id).bind(created).execute(&mut *tx).await.map_err(db)?;
             id
         } else {
@@ -1095,21 +1161,33 @@ impl LearningCurriculumRepository {
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))
     }
 
+    pub(in crate::features::learning) async fn job_content_is_current(
+        &self,
+        id: &str,
+    ) -> Result<bool> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_generation_jobs j JOIN learning_programs p ON p.id=j.program_id WHERE j.id=? AND j.content_revision=p.content_revision)")
+            .bind(id).fetch_one(&self.pool).await.map_err(db)
+    }
+
     pub async fn begin_job(&self, id: &str) -> Result<bool> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let row =
-            sqlx::query("SELECT status,progress_current FROM learning_generation_jobs WHERE id=?")
+            sqlx::query("SELECT status,progress_current,retry_not_before FROM learning_generation_jobs WHERE id=?")
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        if row.get::<String, _>("status") != "pending" {
+        if row.get::<String, _>("status") != "pending"
+            || row
+                .get::<Option<i64>, _>("retry_not_before")
+                .is_some_and(|stamp| stamp > now())
+        {
             tx.commit().await.map_err(db)?;
             return Ok(false);
         }
         let stamp = now();
-        sqlx::query("UPDATE learning_generation_jobs SET status='running',started_at=?,finished_at=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending'").bind(stamp).bind(stamp).bind(id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_generation_jobs SET status='running',started_at=?,finished_at=NULL,error_code=NULL,error_message=NULL,retry_not_before=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending'").bind(stamp).bind(stamp).bind(id).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) SELECT ?,coalesce(max(ordinal),-1)+1,'running',?,'Starting',? FROM learning_generation_job_events WHERE job_id=?").bind(id).bind(row.get::<i64,_>("progress_current")).bind(stamp).bind(id).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         Ok(true)
@@ -1156,7 +1234,72 @@ impl LearningCurriculumRepository {
         tx.commit().await.map_err(db)
     }
 
+    pub(in crate::features::learning) async fn lesson_checkpoint(
+        &self,
+        job_id: &str,
+        lesson_id: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let saved: Option<String> = sqlx::query_scalar("SELECT payload_json FROM learning_generation_checkpoints WHERE job_id=? AND lesson_id=? AND checkpoint_key=?")
+            .bind(job_id).bind(lesson_id).bind(key).fetch_optional(&self.pool).await.map_err(db)?;
+        saved.as_deref().map(decode).transpose()
+    }
+
+    pub(in crate::features::learning) async fn save_lesson_checkpoint(
+        &self,
+        job_id: &str,
+        lesson_id: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_generation_jobs j JOIN learning_lessons l ON l.program_id=j.program_id WHERE j.id=? AND j.status='running' AND j.kind='lesson_preparation' AND l.id=?)")
+            .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).await.map_err(db)?;
+        if !allowed {
+            return Err(AppError::InvalidState(
+                "Lesson preparation is no longer running or the lesson changed.".into(),
+            ));
+        }
+        sqlx::query("INSERT INTO learning_generation_checkpoints(job_id,lesson_id,checkpoint_key,payload_json,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(job_id,lesson_id,checkpoint_key) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at")
+            .bind(job_id).bind(lesson_id).bind(key).bind(encode(&value)?).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)
+    }
+
+    /// Shutdown suspends local work. User cancellation has already changed the
+    /// status and cannot be undone by this conditional transition.
+    pub(in crate::features::learning) async fn requeue_job(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let changed = sqlx::query("UPDATE learning_generation_jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message='Saved; resumes when the app opens',heartbeat_at=? WHERE id=? AND status='running' AND kind='lesson_preparation'")
+            .bind(now()).bind(id).execute(&mut *tx).await.map_err(db)?;
+        if changed.rows_affected() == 1 {
+            sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) SELECT j.id,(SELECT coalesce(max(ordinal),-1)+1 FROM learning_generation_job_events WHERE job_id=j.id),'pending',j.progress_current,'Saved; resumes when the app opens',? FROM learning_generation_jobs j WHERE j.id=?")
+                .bind(now()).bind(id).execute(&mut *tx).await.map_err(db)?;
+        }
+        tx.commit().await.map_err(db)
+    }
+
     pub async fn advance_job(&self, id: &str, completed: u32, message: &str) -> Result<bool> {
+        self.save_job_progress(id, completed, message, None).await
+    }
+
+    pub(in crate::features::learning) async fn advance_job_activity(
+        &self,
+        id: &str,
+        completed: u32,
+        message: &str,
+        activity: &curriculum::LearningGenerationActivity,
+    ) -> Result<bool> {
+        self.save_job_progress(id, completed, message, Some(activity))
+            .await
+    }
+
+    async fn save_job_progress(
+        &self,
+        id: &str,
+        completed: u32,
+        message: &str,
+        activity: Option<&curriculum::LearningGenerationActivity>,
+    ) -> Result<bool> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let row=sqlx::query("SELECT status,progress_current,progress_total FROM learning_generation_jobs WHERE id=?").bind(id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Generation job not found".into()))?;
         if row.get::<String, _>("status") != "running" {
@@ -1165,13 +1308,20 @@ impl LearningCurriculumRepository {
         }
         let current = row.get::<i64, _>("progress_current") as u32;
         let total = row.get::<i64, _>("progress_total") as u32;
+        if activity.is_some() && completed < current {
+            // A heartbeat can wait for the write lock while preparation stages
+            // another lesson. Discard that older snapshot without stopping the
+            // worker or moving its durable progress backwards.
+            tx.commit().await.map_err(db)?;
+            return Ok(true);
+        }
         if completed < current || completed > total {
             return Err(AppError::InvalidInput(
                 "Generation progress must advance monotonically within its bound.".into(),
             ));
         }
         let stamp = now();
-        sqlx::query("UPDATE learning_generation_jobs SET progress_current=?,progress_message=?,heartbeat_at=? WHERE id=? AND status='running'").bind(completed as i64).bind(message).bind(stamp).bind(id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_generation_jobs SET progress_current=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json) WHERE id=? AND status='running'").bind(completed as i64).bind(message).bind(stamp).bind(activity.map(encode).transpose()?).bind(id).execute(&mut *tx).await.map_err(db)?;
         let ordinal: i64 = sqlx::query_scalar(
             "SELECT coalesce(max(ordinal),-1)+1 FROM learning_generation_job_events WHERE job_id=?",
         )
@@ -1185,7 +1335,7 @@ impl LearningCurriculumRepository {
     }
 
     pub async fn fail_job(&self, id: &str, message: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let row =
             sqlx::query("SELECT status,progress_current FROM learning_generation_jobs WHERE id=?")
                 .bind(id)
@@ -1211,7 +1361,7 @@ impl LearningCurriculumRepository {
     }
 
     pub async fn interrupt_job(&self, id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let row =
             sqlx::query("SELECT status,progress_current FROM learning_generation_jobs WHERE id=?")
                 .bind(id)
@@ -1250,9 +1400,9 @@ impl LearningCurriculumRepository {
                 "A generation job may publish one to three prepared lessons.".into(),
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let job = sqlx::query(
-            "SELECT program_id,status,progress_total FROM learning_generation_jobs WHERE id=?",
+            "SELECT program_id,status,progress_total,base_revision_number,content_revision FROM learning_generation_jobs WHERE id=?",
         )
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -1270,7 +1420,26 @@ impl LearningCurriculumRepository {
                 "Prepared lesson count must match the bounded job size.".into(),
             ));
         }
-        let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&program_id).bind(expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let program =
+            sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
+                .bind(&program_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        let current_revision: i64 = program.get("revision");
+        // Completion and grading may advance the UI's concurrency token while
+        // this job runs. Only unchanged teaching inputs can publish across that
+        // progress; source bindings are still validated below in this transaction.
+        if job.get::<Option<i64>, _>("content_revision")
+            != Some(program.get::<i64, _>("content_revision"))
+            || expected_revision < job.get::<i64, _>("base_revision_number")
+            || expected_revision > current_revision
+        {
+            return Err(AppError::InvalidState(
+                "Course content changed while this lesson was being prepared. Start preparation again for the updated course.".into(),
+            ));
+        }
+        let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&program_id).bind(current_revision).execute(&mut *tx).await.map_err(db)?;
         if changed.rows_affected() != 1 {
             return Err(AppError::InvalidState(
                 "Program changed before generation could publish.".into(),
@@ -1383,12 +1552,14 @@ impl LearningCurriculumRepository {
     }
 
     pub async fn recover_running_jobs(&self) -> Result<()> {
+        // Called once, before dispatch, under the desktop's single-instance
+        // guard. Never reap a live worker by age: a model call may take hours.
         // Startup also starts other database writers. Reserve the write lock
         // before reading jobs: upgrading a deferred WAL read transaction can
         // fail immediately with SQLITE_BUSY and prevent the app from opening.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let rows = sqlx::query(
-            "SELECT id,progress_current FROM learning_generation_jobs WHERE status='running'",
+            "SELECT id,kind,progress_current FROM learning_generation_jobs WHERE status='running'",
         )
         .fetch_all(&mut *tx)
         .await
@@ -1397,6 +1568,13 @@ impl LearningCurriculumRepository {
         for row in rows {
             let id: String = row.get("id");
             let current: i64 = row.get("progress_current");
+            if row.get::<String, _>("kind") == "lesson_preparation" {
+                sqlx::query("UPDATE learning_generation_jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message='Resuming saved lesson preparation',heartbeat_at=? WHERE id=? AND status='running'")
+                    .bind(stamp).bind(&id).execute(&mut *tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) SELECT ?,coalesce(max(ordinal),-1)+1,'pending',?,'Resuming saved lesson preparation',? FROM learning_generation_job_events WHERE job_id=?")
+                    .bind(&id).bind(current).bind(stamp).bind(&id).execute(&mut *tx).await.map_err(db)?;
+                continue;
+            }
             sqlx::query("UPDATE learning_generation_jobs SET status='interrupted',published_result_id=NULL,error_code='interrupted',error_message='Generation stopped before publishing a result.',progress_message='Interrupted during restart',finished_at=?,heartbeat_at=? WHERE id=? AND status='running'").bind(now()).bind(now()).bind(&id).execute(&mut *tx).await.map_err(db)?;
             let ordinal:i64=sqlx::query_scalar("SELECT coalesce(max(ordinal),-1)+1 FROM learning_generation_job_events WHERE job_id=?").bind(&id).fetch_one(&mut *tx).await.map_err(db)?;
             sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) VALUES(?,?,'interrupted',?,'Interrupted during restart',?)").bind(id).bind(ordinal).bind(current).bind(stamp).execute(&mut *tx).await.map_err(db)?;
@@ -1518,6 +1696,11 @@ fn parse_job(r: sqlx::sqlite::SqliteRow) -> Result<LearningGenerationJob> {
         progress_completed: r.get::<i64, _>("progress_current") as u32,
         progress_total: r.get::<i64, _>("progress_total") as u32,
         progress_message: r.get("progress_message"),
+        activity: r
+            .get::<Option<String>, _>("activity_json")
+            .as_deref()
+            .map(decode)
+            .transpose()?,
         result_id: r.get("published_result_id"),
         error: r.get("error_message"),
         retry_of_job_id: r.get("retry_of_job_id"),
@@ -1943,7 +2126,7 @@ mod tests {
         writer.commit().await.map_err(db)?;
         recovery.await?;
         let recovered = repo.job(&job.id).await?;
-        assert_eq!(recovered.status, LearningGenerationJobStatus::Interrupted);
+        assert_eq!(recovered.status, LearningGenerationJobStatus::Pending);
         assert!(recovered.result_id.is_none());
         Ok(())
     }
@@ -1956,6 +2139,11 @@ mod tests {
         let stored = curriculum.plan(&program.summary.id).await?;
         let accepted = stored.accepted_revision.expect("accepted");
         let target = accepted.modules[0].lessons[0].id.clone();
+        // Establish the conflicting persisted item before the job's content
+        // baseline. This test exercises publication rollback, not a stale job.
+        let duplicate_question_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,'practice','Existing item','[]','[]',0)")
+            .bind(&duplicate_question_id).bind(&target).bind(&accepted.modules[0].id).execute(&pool).await.map_err(db)?;
         let request = StartLearningGenerationJobRequestDto {
             operation_id: op_id(),
             program_id: program.summary.id.clone(),
@@ -2037,16 +2225,51 @@ mod tests {
             .lessons[0]
             .blocks
             .is_empty());
+        let activity = curriculum::LearningGenerationActivity {
+            phase: curriculum::LearningGenerationPhase::Evidence,
+            checks_completed: 7,
+            checks_total: 10,
+            checks_reused: 2,
+            ..Default::default()
+        };
         curriculum
-            .advance_job(&job.id, 1, "Prepared one lesson")
+            .advance_job_activity(&job.id, 1, "Prepared one lesson", &activity)
+            .await?;
+        assert!(
+            curriculum
+                .advance_job_activity(&job.id, 0, "An older heartbeat", &activity)
+                .await?
+        );
+        let after_delayed_heartbeat = curriculum.job(&job.id).await?;
+        assert_eq!(after_delayed_heartbeat.progress_completed, 1);
+        assert_eq!(
+            after_delayed_heartbeat.progress_message,
+            "Prepared one lesson"
+        );
+        assert!(curriculum
+            .advance_job(&job.id, 0, "Backwards")
+            .await
+            .is_err());
+        curriculum
+            .save_lesson_checkpoint(
+                &job.id,
+                &target,
+                "completed-query",
+                serde_json::json!({"query":"public subject terms"}),
+            )
             .await?;
 
-        // Process death must retain the unpublished draft. Retry copies it to a
-        // child job, but a teaching receipt never grants publication approval.
+        // Process death retains the same queued job and its unpublished draft.
+        // Explicit retry after a failure copies these checkpoints to a child.
         curriculum.recover_running_jobs().await?;
         let interrupted = curriculum.job(&job.id).await?;
-        assert_eq!(interrupted.status, LearningGenerationJobStatus::Interrupted);
-        assert!(interrupted.finished_at.is_some());
+        assert_eq!(interrupted.status, LearningGenerationJobStatus::Pending);
+        assert!(interrupted.finished_at.is_none());
+        assert_eq!(interrupted.activity, Some(activity.clone()));
+        assert!(curriculum.begin_job(&job.id).await?);
+        curriculum
+            .fail_job(&job.id, "Synthetic failure after restart")
+            .await?;
         let retry_request = LearningGenerationJobActionRequestDto {
             operation_id: op_id(),
             program_id: program.summary.id.clone(),
@@ -2054,6 +2277,13 @@ mod tests {
             expected_revision: program.summary.revision,
         };
         let retry = curriculum.retry_job(&retry_request).await?;
+        assert_eq!(retry.activity, Some(activity));
+        assert_eq!(
+            curriculum
+                .lesson_checkpoint(&retry.id, &target, "completed-query")
+                .await?,
+            Some(serde_json::json!({"query":"public subject terms"}))
+        );
         assert_eq!(retry.retry_of_job_id.as_deref(), Some(job.id.as_str()));
         assert_eq!(curriculum.retry_job(&retry_request).await?.id, retry.id);
         let mut replay_mismatch = retry_request.clone();
@@ -2213,15 +2443,6 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .map_err(db)?;
-        let module_id: String =
-            sqlx::query_scalar("SELECT module_id FROM learning_lessons WHERE id=?")
-                .bind(&target)
-                .fetch_one(&pool)
-                .await
-                .map_err(db)?;
-        let duplicate_question_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,'practice','Existing item','[]','[]',0)")
-            .bind(&duplicate_question_id).bind(&target).bind(&module_id).execute(&pool).await.map_err(db)?;
         let mut broken = crate::features::learning::dto::PreparedLearningLesson {
             verification: None,
             blocks: vec![crate::features::learning::dto::LearningBlockDto {
@@ -2286,11 +2507,38 @@ mod tests {
         good.verification =
             Some(crate::features::learning::content_verification::tests::attest(&target, &good));
         curriculum
+            .save_lesson_checkpoint(
+                &retry.id,
+                &target,
+                "prepared-v1",
+                serde_json::to_value(&good)?,
+            )
+            .await?;
+        // Interrupt after all expensive work, immediately before publication.
+        curriculum.requeue_job(&retry.id).await?;
+        assert!(curriculum
+            .save_lesson_checkpoint(&retry.id, &target, "late-write", serde_json::json!(true))
+            .await
+            .is_err());
+        curriculum.recover_running_jobs().await?;
+        assert!(curriculum.begin_job(&retry.id).await?);
+        let good = serde_json::from_value(
+            curriculum
+                .lesson_checkpoint(&retry.id, &target, "prepared-v1")
+                .await?
+                .unwrap(),
+        )?;
+        curriculum
             .publish_prepared_lessons(&retry.id, before_revision, &[(target.clone(), good)])
             .await?;
         let completed = curriculum.job(&retry.id).await?;
         assert_eq!(completed.status, LearningGenerationJobStatus::Completed);
         assert!(completed.finished_at.is_some());
+        curriculum.recover_running_jobs().await?;
+        assert!(
+            !curriculum.begin_job(&retry.id).await?,
+            "Redelivering a completed job cannot publish twice"
+        );
         let prepared: String =
             sqlx::query_scalar("SELECT preparation FROM learning_lessons WHERE id=?")
                 .bind(&target)

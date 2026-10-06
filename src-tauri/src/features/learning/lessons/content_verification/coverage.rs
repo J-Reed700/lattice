@@ -3,9 +3,13 @@ use super::*;
 use crate::features::learning::outline_progress::OutlineProgress;
 use std::collections::BTreeMap;
 
-pub(in crate::features::learning) const POLICY: &str = "passage-coverage-v4";
+mod checkpoints;
+
+pub(in crate::features::learning) const POLICY: &str = "passage-coverage-v5";
 // Assessment interpretation changes independently of identical teaching checks.
-pub(super) const ASSESSMENT_POLICY: &str = "assessment-fidelity-v1";
+pub(super) const ASSESSMENT_POLICY: &str = "assessment-fidelity-v2";
+// Only previously negative teaching comparisons take this additional path.
+pub(super) const TEACHING_CONTEXT_POLICY: &str = "teaching-context-v1";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -140,6 +144,12 @@ async fn check_fidelity(
     );
     let mut checks = Vec::new();
     for unit in units {
+        let inventory_statements: Vec<String> = unit["claims"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|claim| claim["statement"].as_str().map(str::to_owned))
+            .collect();
         let index = unit["index"]
             .as_u64()
             .and_then(|i| usize::try_from(i).ok())
@@ -151,8 +161,9 @@ async fn check_fidelity(
                 continue;
             }
             let text = passage["text"].as_str().ok_or_else(failure)?;
-            // Validate the selected assertions, without letting unrelated
-            // context silently supply a consequence omitted from the mapping.
+            // Start with the mapping's selected assertions. If that selection
+            // missed an already-extracted fact, check the complete same-section
+            // inventory before asking extraction to add it again.
             let statements: Vec<String> = unit["claims"]
                 .as_array()
                 .into_iter()
@@ -165,6 +176,7 @@ async fn check_fidelity(
                 .filter_map(|claim| claim["statement"].as_str().map(str::to_owned))
                 .collect();
             let checker = &checker;
+            let inventory_statements = inventory_statements.clone();
             let assessment_context = (unit["kind"] == "assessment").then(|| {
                 json!({
                     "targetField": passage["field"],
@@ -175,29 +187,78 @@ async fn check_fidelity(
                 })
                 .to_string()
             });
+            let teaching_context = (unit["kind"] == "teaching").then(|| {
+                json!({"targetField":passage["field"],"section":unit["passages"]}).to_string()
+            });
             checks.push(async move {
-                let judgment = if let Some(context) = assessment_context {
+                let _model_call = crate::features::learning::lesson_progress::model_call();
+                let judgment = if let Some(context) = &assessment_context {
                     checker
-                        .check_fidelity_in_context(text, &statements, &context)
+                        .check_fidelity_in_context(text, &statements, context)
                         .await
                 } else {
-                    checker
+                    let judgment = checker
                         .check_passages_without_deadline(text, &statements)
-                        .await
+                        .await;
+                    // Extraction reads the entire section. Before declaring
+                    // its scoped wording missing, restore that same context.
+                    // It cannot stand in for omitted inventory assertions.
+                    if let (Some(context), ClaimJudgment::Judged(finding)) =
+                        (&teaching_context, &judgment)
+                    {
+                        if finding.verdict != ClaimVerdict::Supported {
+                            checker
+                                .check_fidelity_in_teaching_context(text, &statements, context)
+                                .await
+                        } else {
+                            judgment
+                        }
+                    } else {
+                        judgment
+                    }
+                };
+                let judgment = if matches!(&judgment, ClaimJudgment::Judged(finding)
+                    if finding.verdict != ClaimVerdict::Supported)
+                    && statements != inventory_statements
+                {
+                    // Original text is interpretation context only. Evidence
+                    // remains extracted assertions from this same section,
+                    // every one of which still needs factual verification.
+                    if let Some(context) = &assessment_context {
+                        checker
+                            .check_fidelity_in_context(text, &inventory_statements, context)
+                            .await
+                    } else if let Some(context) = &teaching_context {
+                        checker
+                            .check_fidelity_in_teaching_context(
+                                text,
+                                &inventory_statements,
+                                context,
+                            )
+                            .await
+                    } else {
+                        checker
+                            .check_passages_without_deadline(text, &inventory_statements)
+                            .await
+                    }
+                } else {
+                    judgment
                 };
                 (index, id, judgment)
             });
         }
     }
     let total = checks.len();
-    let mut stream = futures::stream::iter(checks).buffered(3);
+    let mut stream = futures::stream::iter(checks).buffer_unordered(3);
     let mut completed = 0;
     crate::features::learning::lesson_progress::stage(format!(
         "Comparing extracted claims with original wording · 0 of {total} passages"
     ));
     while let Some((index, id, result)) = stream.next().await {
-        let ClaimJudgment::Judged(finding) = result else {
-            return Err(AppError::Other("The claim-fidelity checker could not finish. The extracted claims and lesson draft are saved; no lesson was published.".into()));
+        let finding = match result {
+            ClaimJudgment::Judged(finding) => finding,
+            ClaimJudgment::Failed(error) => return Err(error),
+            _ => return Err(AppError::Other("The claim-fidelity checker could not finish. The extracted claims and lesson draft are saved; no lesson was published.".into())),
         };
         if finding.verdict != ClaimVerdict::Supported {
             let unit = coverage
@@ -242,7 +303,15 @@ pub(in crate::features::learning) async fn audit(
         })
         .collect::<Result<Vec<_>>>()?;
     let mut audited = Vec::new();
-    for batch in units.chunks(4) {
+    let mut pending = Vec::new();
+    for unit in &units {
+        if let Some(saved) = checkpoints::load(llm, unit, content).await? {
+            audited.push(saved);
+        } else {
+            pending.push(unit.clone());
+        }
+    }
+    for batch in pending.chunks(4) {
         crate::features::learning::lesson_progress::stage(format!(
             "Checking claim coverage · {} of {} sections reviewed",
             audited.len(),
@@ -253,9 +322,26 @@ pub(in crate::features::learning) async fn audit(
             json!({"units":batch}).to_string(), schema(batch), 5000, progress).await?;
         let mut checked = resolve(&raw, batch)?;
         check_fidelity(llm, &raw, batch, &mut checked).await?;
+        checkpoints::save(llm, batch, &checked).await?;
+        // Persist a finished batch before the next model request. A later
+        // interruption must not discard these independently audited sections.
+        section_checkpoints::save(llm, content, &inventory.units, &checked).await?;
         audited.extend(checked);
     }
+    audited.sort_by_key(|unit| unit.index);
     Ok(Coverage { units: audited })
+}
+
+#[cfg(test)]
+pub(in crate::features::learning) async fn live_mapping_fixture(
+    llm: &dyn LLMPort,
+    fixture: &Value,
+) -> Result<Value> {
+    let units = fixture["units"].as_array().ok_or_else(failure)?;
+    let raw = fixture["mapping"].to_string();
+    let mut coverage = resolve(&raw, units)?;
+    check_fidelity(llm, &raw, units, &mut coverage).await?;
+    Ok(serde_json::to_value(coverage)?)
 }
 
 #[cfg(test)]
@@ -274,7 +360,6 @@ mod tests {
         ) -> Result<String> {
             assert!(prompt.starts_with("Audit claim fidelity."));
             assert!(prompt.contains("Claim: Equal inputs guarantee identical results."));
-            assert!(!prompt.contains("Unselected assertion"));
             Ok(self.0.into())
         }
         async fn generate_streaming(
@@ -296,6 +381,70 @@ mod tests {
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+    }
+
+    struct ConcurrentFidelityModel(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl LLMPort for ConcurrentFidelityModel {
+        async fn generate(
+            &self,
+            prompt: &str,
+            context: &[String],
+            stops: Option<Vec<String>>,
+        ) -> Result<String> {
+            if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                futures::future::pending::<()>().await;
+            }
+            FidelityModel("supported\nReason: The fixture assertions are represented.\nSource passage: passage-0")
+                .generate(prompt, context, stops).await
+        }
+        async fn generate_streaming(
+            &self,
+            _: &str,
+            _: &[String],
+            _: Option<Vec<String>>,
+        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
+            unreachable!()
+        }
+        fn model_name(&self) -> &str {
+            "concurrent-fidelity-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            32000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_slow_fidelity_request_does_not_stop_other_checks_from_starting() {
+        let model = ConcurrentFidelityModel(std::sync::atomic::AtomicUsize::new(0));
+        let units = vec![json!({"index":0,
+            "passages":(0..4).map(|i|json!({"id":format!("p-{i}"),"text":"Equal inputs guarantee identical results."})).collect::<Vec<_>>(),
+            "claims":[{"id":"claim-a","statement":"Equal inputs guarantee identical results."}]})];
+        let raw = json!((0..4)
+            .map(|i| (
+                format!("p-{i}"),
+                json!({"claimIds":["claim-a"],"nonFactualReason":"","missingClaims":[]})
+            ))
+            .collect::<BTreeMap<_, _>>())
+        .to_string();
+        let mut checked = resolve(&raw, &units).unwrap();
+        tokio::select! {
+            result = check_fidelity(&model, &raw, &units, &mut checked) => {
+                panic!("The deliberately blocked first request finished: {result:?}")
+            }
+            result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while model.0.load(std::sync::atomic::Ordering::SeqCst) < 4 {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The fourth check was blocked by completion ordering"),
         }
     }
 
@@ -349,6 +498,96 @@ mod tests {
         assert!(prompts[0].contains("Claim: It remains undissolved."));
         assert!(!prompts[0].contains("Unselected assertion"));
         assert!(coverage[0].complete);
+    }
+
+    #[tokio::test]
+    async fn teaching_context_reconsiders_scope_without_adding_unselected_inventory_evidence() {
+        use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+        let units = vec![json!({"index":0,"kind":"teaching",
+            "passages":[{"id":"scope","field":"/title","text":"A specified experimental group"},
+                {"id":"target","field":"/body","text":"All samples received the same treatment."}],
+            "claims":[{"id":"selected","statement":"Samples in this group received the same treatment."},
+                {"id":"other","statement":"Unselected inventory assertion"}]})];
+        let raw = json!({"scope":{"claimIds":[],"nonFactualReason":"Sets the section scope.","missingClaims":[]},
+            "target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}).to_string();
+        for (first, second, expected) in [
+            ("supported", None, true),
+            ("unsupported", Some("supported"), true),
+            ("unsupported", Some("unsupported"), false),
+        ] {
+            let verdict = |label| {
+                format!("{label}\nReason: The comparison applies to the specified scope.\nSource passage: passage-0")
+            };
+            let fallback = (second == Some("unsupported")).then_some("unsupported");
+            let model = ScriptedModel {
+                outputs: std::sync::Mutex::new(
+                    std::iter::once(first)
+                        .chain(second)
+                        .chain(fallback)
+                        .map(verdict)
+                        .collect(),
+                ),
+                prompts: std::sync::Mutex::new(Vec::new()),
+            };
+            let mut checked = resolve(&raw, &units).unwrap();
+            check_fidelity(&model, &raw, &units, &mut checked)
+                .await
+                .unwrap();
+            assert_eq!(checked[0].complete, expected);
+            let prompts = model.prompts.lock().unwrap();
+            assert_eq!(
+                prompts.len(),
+                1 + usize::from(second.is_some()) + usize::from(fallback.is_some())
+            );
+            assert!(!prompts[0].contains("Original teaching context"));
+            if second.is_some() {
+                assert!(prompts[1].contains("Original teaching context"));
+                assert!(prompts[1].contains("A specified experimental group"));
+                assert!(prompts[1].contains("Claim: All samples received the same treatment."));
+                assert!(!prompts[1].contains("Unselected inventory assertion"));
+            }
+            if fallback.is_some() {
+                assert!(prompts[2].contains("Unselected inventory assertion"));
+                assert!(prompts[2].contains("Original teaching context"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_mapping_rechecks_the_same_section_inventory_without_borrowing_other_sections(
+    ) {
+        use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+        for (fallback_verdict, complete) in [("supported", true), ("unsupported", false)] {
+            let model = ScriptedModel {
+                outputs: std::sync::Mutex::new(vec![
+                    "unsupported\nReason: The selected assertion omits the required fact.\nSource passage: none".into(),
+                    format!("{fallback_verdict}\nReason: Checked the complete same-section inventory.\nSource passage: passage-1"),
+                ].into()),
+                prompts: std::sync::Mutex::new(Vec::new()),
+            };
+            let units = vec![
+                json!({"index":0,"passages":[{"id":"target","text":"The sample contains dissolved material."}],
+                    "claims":[{"id":"selected","statement":"The sample is liquid."},
+                        {"id":"omitted-from-mapping","statement":"The sample contains dissolved material."}]}),
+                json!({"index":1,"passages":[{"id":"instruction","text":"Record your observations."}],
+                    "claims":[{"id":"foreign","statement":"UNRELATED SECOND SECTION ASSERTION"}]}),
+            ];
+            let raw = json!({"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]},
+                "instruction":{"claimIds":[],"nonFactualReason":"An exercise instruction.","missingClaims":[]}}).to_string();
+            let mut checked = resolve(&raw, &units).unwrap();
+            check_fidelity(&model, &raw, &units, &mut checked)
+                .await
+                .unwrap();
+            assert_eq!(checked[0].complete, complete);
+            let prompts = model.prompts.lock().unwrap();
+            assert_eq!(prompts.len(), 2);
+            assert!(!prompts[0].contains("[passage-1]"));
+            assert!(prompts[1].contains("The sample contains dissolved material."));
+            assert!(prompts[1].contains("[passage-1]"));
+            assert!(prompts
+                .iter()
+                .all(|prompt| !prompt.contains("UNRELATED SECOND SECTION ASSERTION")));
+        }
     }
 
     #[test]

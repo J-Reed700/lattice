@@ -221,7 +221,7 @@ pub struct LearningAnswerKey {
     pub correct_index: usize,
     pub explanation: String,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedLearningLesson {
     pub verification: Option<super::content_verification::LessonVerificationReport>,
     pub blocks: Vec<LearningBlockDto>,

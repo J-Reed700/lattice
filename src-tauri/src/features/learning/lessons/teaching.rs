@@ -262,7 +262,8 @@ pub async fn review_and_repair(
     let context = json!({"policy":"lesson-teaching-v4","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema});
     let receipt = crate::features::learning::content_verification::digest(&context.to_string());
     if crate::features::learning::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
-        crate::features::learning::lesson_progress::stage(
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Review,
             "Reusing completed teaching and answer-key checks for the unchanged draft",
         );
         return Ok(candidate);
@@ -314,7 +315,8 @@ pub(in crate::features::learning) async fn review_lesson(
     sources.sort();
     let receipt = crate::features::learning::content_verification::digest(&json!({"policy":"lesson-teaching-v5","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
     if crate::features::learning::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
-        crate::features::learning::lesson_progress::stage(
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Review,
             "Reusing completed teaching and answer-key checks for the unchanged draft",
         );
         return Ok(candidate);
@@ -460,14 +462,20 @@ async fn review_material(
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value});
         let issues = structural_issues(schema, &candidate)?;
         let mut issues = if issues.is_empty() {
-            crate::features::learning::lesson_progress::stage("Checking assessment answer keys");
+            crate::features::learning::lesson_progress::phase(
+                crate::features::learning::lesson_progress::Phase::Review,
+                "Checking assessment answer keys",
+            );
             let answer_issues =
                 crate::features::learning::answer_review::check(llm, &candidate_value).await?;
-            crate::features::learning::lesson_progress::stage(if attempt == 0 {
-                "Reviewing every teaching section"
-            } else {
-                "Rechecking the revised lesson"
-            });
+            crate::features::learning::lesson_progress::phase(
+                crate::features::learning::lesson_progress::Phase::Review,
+                if attempt == 0 {
+                    "Reviewing every teaching section"
+                } else {
+                    "Rechecking the revised lesson"
+                },
+            );
             let mut issues = crate::features::learning::teaching_review::review(
                 llm,
                 &format!(
@@ -535,7 +543,8 @@ async fn review_material(
         if let Some(progress) = progress {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::Repairing);
         }
-        crate::features::learning::lesson_progress::stage(
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Repair,
             "Correcting the lesson from review findings",
         );
         candidate = crate::features::learning::generation::complete_json_with_progress(

@@ -151,6 +151,49 @@ pub enum LearningGenerationJobStatus {
     Interrupted,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningGenerationPhase {
+    #[default]
+    References,
+    Writing,
+    Review,
+    Inventory,
+    Coverage,
+    Examples,
+    Evidence,
+    Research,
+    Repair,
+    Publishing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningGenerationStep {
+    pub phase: LearningGenerationPhase,
+    pub started_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningGenerationActivity {
+    pub phase: LearningGenerationPhase,
+    pub phase_started_at: i64,
+    pub last_activity_at: i64,
+    pub last_checkpoint_at: Option<i64>,
+    pub lesson_title: Option<String>,
+    pub model_name: Option<String>,
+    pub model_running: bool,
+    pub response_characters: u32,
+    pub model_attempt: u32,
+    pub verification_pass: u32,
+    pub checks_completed: u32,
+    pub checks_total: u32,
+    pub checks_reused: u32,
+    pub checks_unresolved: u32,
+    pub recent_steps: Vec<LearningGenerationStep>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningGenerationJob {
@@ -164,6 +207,7 @@ pub struct LearningGenerationJob {
     pub progress_completed: u32,
     pub progress_total: u32,
     pub progress_message: String,
+    pub activity: Option<LearningGenerationActivity>,
     pub result_id: Option<String>,
     pub error: Option<String>,
     pub retry_of_job_id: Option<String>,
@@ -693,9 +737,13 @@ pub fn validate_generation_job(job: &LearningGenerationJob) -> Result<()> {
         job.status,
         LearningGenerationJobStatus::Failed | LearningGenerationJobStatus::Interrupted
     );
-    if requires_error != job.error.is_some() {
+    let waiting_after_outage = job.status == LearningGenerationJobStatus::Pending
+        && job.kind == LearningGenerationJobKind::LessonPreparation;
+    if (requires_error && job.error.is_none())
+        || (!requires_error && !waiting_after_outage && job.error.is_some())
+    {
         return Err(AppError::InvalidInput(
-            "Only failed or interrupted generation jobs may preserve an error.".into(),
+            "Errors require a failed or interrupted job, or a lesson waiting to reconnect.".into(),
         ));
     }
     if let Some(error) = &job.error {
@@ -895,6 +943,7 @@ mod tests {
             progress_completed: 0,
             progress_total: 4,
             progress_message: "Queued".into(),
+            activity: None,
             result_id: None,
             error: None,
             retry_of_job_id: None,

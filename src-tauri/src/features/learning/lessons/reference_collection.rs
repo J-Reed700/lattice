@@ -3,7 +3,7 @@
 use crate::application::ports::EmbeddingPort;
 use crate::features::learning::dto::LearningSourceDto;
 use crate::shared::error::{AppError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
 
@@ -12,7 +12,7 @@ const STEP_CHARS: usize = 900;
 const INDEX_VERSION: &str = "course-passages-v2";
 pub(in crate::features::learning) const MAX_COLLECTION_CHARS: usize = 20_000_000;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
     /// Immutable source version ID, also used by lesson citations.
     pub source_id: String,
@@ -330,6 +330,80 @@ impl<'a> ReferenceCollection<'a> {
             if selected.len() >= limit.clamp(1, 50) {
                 break;
             }
+        }
+        Ok(selected)
+    }
+
+    /// Verification needs nearby conditions as well as the matching paragraph.
+    /// Keep retrieval ranking unchanged, then restore surrounding source bytes
+    /// and remove overlapping windows so repeated hits do not crowd out sources.
+    pub(in crate::features::learning) async fn retrieve_for_verification(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ReferencePassage>> {
+        self.verification_context(self.retrieve(query, limit).await?)
+    }
+
+    fn verification_context(
+        &self,
+        passages: Vec<ReferencePassage>,
+    ) -> Result<Vec<ReferencePassage>> {
+        const SURROUNDING_CHARS: usize = 1700;
+        let mut selected: Vec<ReferencePassage> = Vec::new();
+        for mut passage in passages {
+            let source = self
+                .sources
+                .iter()
+                .find(|source| source.id == passage.source_id)
+                .ok_or_else(|| invalid("Unknown verification source."))?;
+            let text = &source.excerpt;
+            if text.get(passage.start_byte..passage.end_byte) != Some(passage.text.as_str()) {
+                return Err(invalid("Verification passage does not match its source."));
+            }
+            let mut start = text[..passage.start_byte]
+                .char_indices()
+                .rev()
+                .nth(SURROUNDING_CHARS - 1)
+                .map_or(0, |(index, _)| index);
+            let mut end = text[passage.end_byte..]
+                .char_indices()
+                .nth(SURROUNDING_CHARS)
+                .map_or(text.len(), |(index, _)| passage.end_byte + index);
+            if let Some(index) = text[start..passage.start_byte]
+                .find('\n')
+                .filter(|index| *index <= 300)
+            {
+                // Preserve the start of a short source instead of trimming its
+                // first line merely because the entire prefix fits.
+                if start != 0 {
+                    start += index + 1;
+                }
+            }
+            if let Some(index) = text[passage.end_byte..end]
+                .rfind('\n')
+                .filter(|index| end - (passage.end_byte + *index) <= 300)
+            {
+                if end != text.len() {
+                    end = passage.end_byte + index;
+                }
+            }
+            if let Some(previous) = selected.iter_mut().find(|previous| {
+                previous.source_id == passage.source_id
+                    && previous.start_byte < end
+                    && start < previous.end_byte
+            }) {
+                // Retain both original hits when their expanded windows only
+                // partly overlap; dropping the later hit could lose a caveat.
+                previous.start_byte = previous.start_byte.min(start);
+                previous.end_byte = previous.end_byte.max(end);
+                previous.text = text[previous.start_byte..previous.end_byte].to_owned();
+                continue;
+            }
+            passage.start_byte = start;
+            passage.end_byte = end;
+            passage.text = text[start..end].to_owned();
+            selected.push(passage);
         }
         Ok(selected)
     }

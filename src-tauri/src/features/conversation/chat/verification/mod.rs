@@ -441,7 +441,7 @@ impl GroundingVerifier {
                     continue;
                 }
                 ClaimJudgment::OutOfTime => UnverifiedReason::Budget,
-                ClaimJudgment::Unusable => UnverifiedReason::JudgeFailed,
+                ClaimJudgment::Unusable | ClaimJudgment::Failed(_) => UnverifiedReason::JudgeFailed,
             };
             // Unreached: the lexical verdict stands where overlap can speak
             // for the claim. Where it cannot — a number, a date, a negation —

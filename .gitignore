@@ -61,6 +61,7 @@ Thumbs.db
 
 # Test and coverage output
 coverage/
+!src-tauri/src/features/learning/lessons/content_verification/coverage/
 htmlcov/
 .coverage
 *.coverage
