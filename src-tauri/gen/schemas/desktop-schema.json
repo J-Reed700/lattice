@@ -6087,6 +6087,12 @@
           "markdownDescription": "Enables the get_model_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_model_variants command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-get-model-variants",
+          "markdownDescription": "Enables the get_model_variants command without any pre-configured scope."
+        },
+        {
           "description": "Enables the import_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-import-model",
@@ -6283,6 +6289,12 @@
           "type": "string",
           "const": "model:deny-get-model-info",
           "markdownDescription": "Denies the get_model_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_model_variants command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-get-model-variants",
+          "markdownDescription": "Denies the get_model_variants command without any pre-configured scope."
         },
         {
           "description": "Denies the import_model command without any pre-configured scope.",

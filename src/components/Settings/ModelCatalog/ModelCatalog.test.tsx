@@ -64,6 +64,8 @@ const resetStore = () =>
     searchQuery: '',
     sortBy: 'popularity',
     selectedModel: null,
+    quantizationFilter: '',
+    fitFilter: 'all',
   });
 
 describe('modelMetaLine', () => {
@@ -72,7 +74,7 @@ describe('modelMetaLine', () => {
   });
 
   it('omits missing fields rather than printing "Unknown"', () => {
-    const line = modelMetaLine(metadata({ size_gb: 0, supported_quantizations: [] }), null);
+    const line = modelMetaLine(metadata({ size_gb: 0, supported_quantizations: [], default_filename: null }), null);
     expect(line).toBe('Chat');
   });
 
@@ -97,7 +99,8 @@ describe('ModelFilterPanel', () => {
     expect(screen.queryByText('Filters')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Maximum size')).toHaveValue('');
     expect(screen.getByLabelText('Minimum downloads')).toBeInTheDocument();
-    expect(screen.getByLabelText('Speed')).toBeInTheDocument();
+    expect(screen.getByLabelText('Capability')).toBeInTheDocument();
+    expect(screen.getByLabelText('Estimated fit')).toBeInTheDocument();
   });
 
   it('shows the dimensions select only for embedding models', async () => {
@@ -120,6 +123,18 @@ describe('ModelFilterPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
     expect(useModelCatalogStore.getState().filters.max_size_gb).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reset filters' })).not.toBeInTheDocument();
+  });
+
+  it('clears precision and hardware filters together', async () => {
+    const user = userEvent.setup();
+    render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
+    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
+    await user.selectOptions(screen.getByLabelText('Estimated fit'), 'fits');
+    expect(useModelCatalogStore.getState().quantizationFilter).toBe('Q8_0');
+    expect(useModelCatalogStore.getState().fitFilter).toBe('fits');
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(useModelCatalogStore.getState().quantizationFilter).toBe('');
+    expect(useModelCatalogStore.getState().fitFilter).toBe('all');
   });
 });
 

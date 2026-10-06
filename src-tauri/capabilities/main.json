@@ -51,6 +51,7 @@
     "model:allow-get-all-recommended-models",
     "model:allow-get-compatible-models",
     "model:allow-search-model-catalog",
+    "model:allow-get-model-variants",
     "model:allow-get-model-download-path",
     "model:allow-refresh-model-catalog",
     "model:allow-clear-model-catalog-cache",

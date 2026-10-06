@@ -9,13 +9,15 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { CatalogManagementSection } from './CatalogManagementSection';
-import { CATALOG_TEXT_BUTTON_CLASS, clearedFilters, hasActiveFilters } from './catalogUtils';
+import { CATALOG_TEXT_BUTTON_CLASS, computeModelFit, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelListView } from './ModelListView';
 import { ModelSearchBar } from './ModelSearchBar';
+import { modelQuantization } from './quantization';
 import { SystemCapabilitiesCard } from './SystemCapabilitiesCard';
 import { useModelCatalog } from '../../../hooks/useModelCatalog';
+import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
 
 interface ModelCatalogBrowserProps {
   routerModelId?: string;
@@ -25,6 +27,7 @@ interface ModelCatalogBrowserProps {
 export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCatalogBrowserProps) {
   const {
     selectedModel,
+    systemCapabilities,
     compatibleModels,
     searchResults,
     compatibleModelsLoading,
@@ -40,12 +43,13 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     clearSelection,
     loadCompatibleModels,
   } = useModelCatalog({ loadCacheStats: true });
+  const { quantizationFilter, fitFilter, resetFilters } = useModelCatalogStore();
   const [browseAll, setBrowseAll] = useState(false);
   const [pagination, setPagination] = useState({ key: '', page: 1 });
-  const resultsKey = JSON.stringify([searchQuery, filters, sortBy, browseAll]);
+  const resultsKey = JSON.stringify([searchQuery, filters, sortBy, browseAll, quantizationFilter, fitFilter]);
   const page = pagination.key === resultsKey ? pagination.page : 1;
   const isSearching = searchQuery.trim().length > 0;
-  const filtersActive = hasActiveFilters(filters);
+  const filtersActive = hasActiveFilters(filters) || Boolean(quantizationFilter) || fitFilter !== 'all';
   const overview = !browseAll && !isSearching && !filtersActive;
 
   // The catalog and the token field share this page, so "Add token" is a scroll,
@@ -71,11 +75,11 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         }
 
         if (sortBy === 'size_asc') {
-          return a.model.size_gb - b.model.size_gb;
+          return (a.model.size_gb || Infinity) - (b.model.size_gb || Infinity);
         }
 
         if (sortBy === 'size_desc') {
-          return b.model.size_gb - a.model.size_gb;
+          return (b.model.size_gb || -Infinity) - (a.model.size_gb || -Infinity);
         }
 
         if (sortBy === 'likes') {
@@ -179,12 +183,22 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     return sortModels(applyFilters(compatibleModels));
   }, [compatibleModels, searchResults, searchQuery, filters, sortBy]);
 
+  const quantizations = useMemo(() => [...new Set((isSearching ? searchResults : compatibleModels)
+    .map(({ model }) => modelQuantization(model)).filter((value): value is string => Boolean(value)))], [isSearching, searchResults, compatibleModels]);
+  const filteredModels = displayedModels.filter(({ model }) => {
+    if (quantizationFilter && modelQuantization(model) !== quantizationFilter) return false;
+    if (fitFilter === 'all') return true;
+    const verdict = computeModelFit(model, systemCapabilities)?.verdict;
+    return verdict === 'fits' || (fitFilter === 'fits-or-tight' && verdict === 'tight');
+  });
+
   const isLoading = isSearching ? searchLoading : compatibleModelsLoading;
   const error = isSearching ? searchError : compatibleModelsError;
 
   if (selectedModel) {
     return (
       <ModelDetailPanel
+        key={selectedModel.model.id}
         model={selectedModel}
         onBack={clearSelection}
         routerModelId={routerModelId}
@@ -196,8 +210,9 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   return (
     <div className="space-y-5">
+      <p className="max-w-[75ch] text-sm text-text-secondary">Find a model, compare its quantized versions, and choose the download that suits your computer. Downloads are local; configure remote providers in Chat settings.</p>
       <ModelSearchBar />
-      <ModelFilterPanel />
+      <ModelFilterPanel quantizations={quantizations} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-base font-medium text-text-primary">
@@ -212,7 +227,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         ) : null}
       </div>
       <ModelListView
-        models={displayedModels}
+        models={filteredModels}
         loading={isLoading}
         error={error}
         onModelSelect={selectModel}
@@ -221,7 +236,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         onPageChange={(nextPage) => setPagination({ key: resultsKey, page: nextPage })}
         onBrowseCategory={(category) => setFilters({ category })}
         filtersActive={filtersActive}
-        onResetFilters={() => setFilters(clearedFilters(filters))}
+        onResetFilters={resetFilters}
         // The hook surfaces the failure in `compatibleModelsError`; catching
         // keeps a second consecutive failure from becoming an unhandled
         // rejection.

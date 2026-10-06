@@ -1337,6 +1337,18 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
 }
 },
 /**
+ * List the actual standalone GGUF files published in a Hugging Face repository.
+ * Sizes come from the repository, while memory requirements are estimates.
+ */
+async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_model_variants", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Refresh model catalog cache.
  *
  * Clears the catalog cache to force fresh API calls on next search.

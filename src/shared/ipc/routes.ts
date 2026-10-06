@@ -805,6 +805,7 @@ export const COMMAND_DOMAIN_MAP: Record<
   download_model: { domain: 'model', command: 'download_model' },
   get_compatible_models: { domain: 'model', command: 'get_compatible_models' },
   search_model_catalog: { domain: 'model', command: 'search_model_catalog' },
+  get_model_variants: { domain: 'model', command: 'get_model_variants' },
   refresh_model_catalog: { domain: 'model', command: 'refresh_model_catalog' },
   clear_model_catalog_cache: {
     domain: 'model',

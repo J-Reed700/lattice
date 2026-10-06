@@ -235,6 +235,7 @@ fn main() {
             lattice::features::model_management::commands::get_compatible_models,
             lattice::features::model_management::commands::get_all_recommended_models,
             lattice::features::model_management::commands::search_model_catalog,
+            lattice::features::model_management::commands::get_model_variants,
             lattice::features::model_management::commands::refresh_model_catalog,
             lattice::features::model_management::commands::clear_model_catalog_cache,
             lattice::features::model_management::commands::get_model_catalog_stats,

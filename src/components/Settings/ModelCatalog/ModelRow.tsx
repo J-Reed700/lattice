@@ -9,6 +9,7 @@
 import { cn } from '@/lib/utils';
 
 import { computeModelFit, embeddingBlockReason, FIT_LABEL, modelMetaLine } from './catalogUtils';
+import { hasModelVersions, modelQuantization } from './quantization';
 import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
 
 import type { SystemCapabilities } from '../../../types/api/models';
@@ -117,8 +118,9 @@ export function ModelRow({
         )}
       >
         <div title={metadata.name} className={cn('text-sm font-medium text-text-primary', compact ? 'line-clamp-2' : 'truncate')}>{metadata.name}</div>
-        {!compact ? <div className="truncate font-mono text-xs text-text-muted">{repoId}</div> : null}
-        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+        {!compact ? <div className="break-all font-mono text-xs text-text-muted">{repoId}</div> : null}
+        {!compact && metadata.description ? <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{metadata.description}</p> : null}
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-muted">
           {fit ? (
             <>
               <span
@@ -130,10 +132,18 @@ export function ModelRow({
               <span aria-hidden="true">·</span>
             </>
           ) : null}
-          <span className="truncate">{modelMetaLine(metadata, model.popularity_downloads)}</span>
+          <span>{modelMetaLine(metadata, model.popularity_downloads)}</span>
         </div>
+        {!compact ? <p className="mt-1 text-xs text-text-muted">
+          {metadata.minimum_ram_gb > 0 ? `Est. memory ${metadata.minimum_ram_gb.toFixed(1)} GB` : 'Memory estimate unavailable'}
+          {metadata.license && metadata.license !== 'unknown' ? ` · ${metadata.license}` : ''}
+          {hasModelVersions(metadata) ? ` · Listed version: ${modelQuantization(metadata) ?? 'see files'}` : ''}
+        </p> : null}
       </button>
-      {action ? <div className="flex shrink-0 items-center pt-0.5">{action}</div> : null}
+      <div className="flex shrink-0 flex-col items-end gap-2 pt-0.5">
+        {hasModelVersions(metadata) ? <button type="button" onClick={onSelect} className="text-sm text-accent hover:underline" aria-label={`Versions of ${metadata.name}`}>Versions</button> : null}
+        {action}
+      </div>
     </div>
   );
 }

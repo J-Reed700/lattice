@@ -111,6 +111,7 @@ fn main() {
                     "get_compatible_models",
                     "get_all_recommended_models",
                     "search_model_catalog",
+                    "get_model_variants",
                     "refresh_model_catalog",
                     "clear_model_catalog_cache",
                     "get_model_catalog_stats",

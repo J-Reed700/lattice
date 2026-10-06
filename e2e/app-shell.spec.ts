@@ -928,6 +928,18 @@ test('catalog offers category previews, bounded pages, and honest search results
       if (command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads') return [];
       if (command === 'plugin:model|is_model_already_downloaded') return false;
       if (command === 'plugin:model|get_all_recommended_models') return models;
+      if (command === 'plugin:model|get_model_variants') {
+        if (localStorage.getItem('test:catalog-versions-error')) throw new Error('Repository temporarily unavailable');
+        const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
+        return ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'BF16'].map((quant, index) => ({
+          ...base, id: `${base.id}-${quant}`, default_filename: `model-${quant}.gguf`,
+          supported_quantizations: [quant], size_gb: 4 + index * 3, minimum_ram_gb: (4 + index * 3) * 1.5,
+        }));
+      }
+      if (command === 'plugin:model|download_model') {
+        localStorage.setItem('test:catalog-downloaded-id', (args as { modelId: string }).modelId);
+        return { status: 'already_downloaded', download_id: '' };
+      }
       if (command === 'plugin:model|detect_system_capabilities') return { total_ram_gb: 32, available_ram_gb: 24, cpu_cores: 10, cpu_architecture: 'ARM64', gpu_type: 'AppleSilicon', gpu_acceleration: 'Metal', vram_gb: null, available_disk_gb: 500, os_type: 'macOS' };
       if (command === 'plugin:model|get_model_catalog_stats') return { total_entries: 36, expired_entries: 0, cache_size_bytes: 12000 };
       if (command === 'plugin:model|search_model_catalog') {
@@ -953,12 +965,37 @@ test('catalog offers category previews, bounded pages, and honest search results
   await expect(page.getByRole('button', { name: 'Download', exact: true })).toHaveCount(8);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
-  await page.getByRole('button', { name: /Phi 4 Mini · Q8_0/ }).click();
+  await page.evaluate(() => localStorage.setItem('test:catalog-versions-error', 'true'));
+  await page.getByRole('button', { name: 'Versions of Phi 4 Mini · Q8_0', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Phi 4 Mini · Q8_0', exact: true })).toBeVisible();
+  await expect(page.getByText(/Couldn’t load versions/)).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem('test:catalog-versions-error'));
+  await page.getByRole('button', { name: 'Retry versions' }).click();
+  const versions = page.getByRole('region', { name: 'Available versions' });
+  await expect(versions.getByRole('status')).toHaveText('4 of 4 standalone versions');
+  await versions.getByLabel('Filter versions').fill('Q8');
+  await expect(versions.getByRole('status')).toHaveText('1 of 4 standalone versions');
+  await versions.getByRole('button', { name: /Q8_0/ }).click();
+  await expect(versions.getByRole('button', { name: /Q8_0/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Selected download', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Download', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('test:catalog-downloaded-id'))).toBe('LLM-2-2-Q8_0');
+  await versions.getByLabel('Filter versions').fill('');
+  await versions.getByRole('button', { name: /Q4_K_M/ }).click();
+  await expect(page.getByRole('button', { name: 'Download', exact: true })).toBeEnabled();
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.getByRole('heading', { name: 'Choose a version' }).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(800);
+  await page.screenshot({ path: 'e2e-results/catalog-versions-narrow.png' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: 'e2e-results/catalog-versions.png' });
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
   await page.getByRole('combobox', { name: 'Sort models' }).selectOption('size_asc');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 24 models');
+  await page.getByLabel('Listed quantization').selectOption('Q8_0');
+  await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 8 models');
+  await page.getByLabel('Listed quantization').selectOption('');
   await page.getByRole('heading', { name: 'Catalog', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/lattice-catalog-pages.png' });
 

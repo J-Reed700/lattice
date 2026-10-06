@@ -624,6 +624,42 @@ pub async fn search_model_catalog(
     Ok(dto_results)
 }
 
+/// List the actual standalone GGUF files published in a Hugging Face repository.
+/// Sizes come from the repository, while memory requirements are estimates.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_model_variants(
+    container: State<'_, Container>,
+    repo_id: String,
+) -> Result<Vec<crate::interfaces::dto::ModelMetadataDto>> {
+    let parts: Vec<_> = repo_id.split('/').collect();
+    if parts.len() != 2
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || part.contains("..")
+                || !part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+    {
+        return Err(AppError::InvalidInput(
+            "Expected a Hugging Face repository such as publisher/model".into(),
+        ));
+    }
+    container
+        .model_catalog()
+        .get_model_variants(&repo_id)
+        .await?
+        .into_iter()
+        .map(|metadata| {
+            metadata
+                .to_domain_model()
+                .map(Into::into)
+                .map_err(AppError::InvalidInput)
+        })
+        .collect()
+}
+
 /// Refresh model catalog cache.
 ///
 /// Clears the catalog cache to force fresh API calls on next search.

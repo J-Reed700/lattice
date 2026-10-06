@@ -94,6 +94,15 @@ Lattice uses up to three models, each with a role you assign in **Settings > AI 
 **Getting models:**
 
 - **Settings > AI > Models** has the model catalog.
+- Open **Versions** on a chat model to compare its published GGUF files, exact
+  download sizes, and estimated memory use. Select a version before downloading.
+  Q4, Q5, Q8, IQ, and floating-point labels describe weight precision; they are
+  not speed or accuracy scores. The picker currently supports standalone GGUF
+  files at the repository root, excluding split files and vision projectors.
+- Filter the catalog by category, listed precision, size, capability, popularity,
+  or estimated fit. These filters describe the listed version; the version picker
+  shows alternatives. Memory estimates do not include every context or runtime
+  configuration, and unknown sizes are shown as unknown.
 - **External model folders** on the same page let you add folders of `.gguf` (and `.onnx`) files you already have.
 - Some models on Hugging Face are gated. Save a token in the **Hugging Face** section of the same page to download them.
 - Downloads are stored in `~/.cache/lattice/models/`.

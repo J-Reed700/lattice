@@ -14,6 +14,11 @@ interface ModelCatalogUiState {
   filters: SearchFilters;
   searchQuery: string;
   sortBy: ModelSortBy;
+  quantizationFilter: string;
+  fitFilter: 'all' | 'fits' | 'fits-or-tight';
+  setQuantizationFilter: (value: string) => void;
+  setFitFilter: (value: 'all' | 'fits' | 'fits-or-tight') => void;
+  resetFilters: () => void;
   selectedModel: ModelRecommendation | null;
   setFilters: (filters: Partial<SearchFilters>) => void;
   setSearchQuery: (query: string) => void;
@@ -33,6 +38,16 @@ export const useModelCatalogStore = create<ModelCatalogUiState>((set) => ({
   },
   searchQuery: '',
   sortBy: 'popularity',
+  quantizationFilter: '',
+  fitFilter: 'all',
+  setQuantizationFilter: (quantizationFilter) => set({ quantizationFilter }),
+  setFitFilter: (fitFilter) => set({ fitFilter }),
+  resetFilters: () => set((state) => ({
+    filters: { ...state.filters, category: null, max_size_gb: null, min_downloads: null,
+      required_capabilities: [], embedding_dimensions: null },
+    quantizationFilter: '',
+    fitFilter: 'all',
+  })),
   selectedModel: null,
   setFilters: (filters) => set((state) => ({ filters: { ...state.filters, ...filters } })),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
