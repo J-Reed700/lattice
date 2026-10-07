@@ -146,7 +146,6 @@ export function JournalWorkspace() {
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
     new Set(),
   );
-  const appliedInitialJournalRef = useRef(false);
   const journalCreationRef = useRef<ReturnType<typeof VaultAPI.createJournal> | null>(null);
 
   const createJournalOnce = useCallback(() => {
@@ -312,9 +311,9 @@ export function JournalWorkspace() {
         return;
       }
 
-      if (appliedInitialJournalRef.current) return;
-      appliedInitialJournalRef.current = true;
-
+      // Opening Journal again removes the selection from the URL without
+      // unmounting this workspace. Resolve it on every such navigation;
+      // createJournalOnce already shares any pending first-journal creation.
       if (active.length === 0 && fetched.length === 0) {
         const created = await createJournalOnce();
         if (cancelled) return;
@@ -834,7 +833,7 @@ export function JournalWorkspace() {
           <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
           <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
           <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
-          <button type="button" onClick={() => { appliedInitialJournalRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
+          <button type="button" onClick={() => setJournalLoadAttempt((attempt) => attempt + 1)} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
           <details className="mt-5 text-xs text-text-tertiary">
             <summary className="cursor-pointer">Error details</summary>
             <p className="mt-2 wrap-break-word text-left">{topLevelError}</p>

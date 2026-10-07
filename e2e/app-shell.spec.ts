@@ -316,6 +316,12 @@ for (const width of [1440, 620]) {
     await progress.getByRole('button', { name: 'Open journal page' }).click();
     await expect(progress).toHaveCount(0);
     await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    // Reopening the current workspace clears the selection from the URL.
+    // It must restore the saved journal instead of showing an empty notebook.
+    await page.getByRole('button', { name: 'Journal', exact: true }).click();
+    await expect(page).toHaveURL(/journalSpaceId=research-journal/);
+    await expect(page.getByRole('textbox', { name: 'Page title' })).toHaveValue('Forest notes');
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
     // Journal scopes use the same progress and save to their original page,
     // even after their editor unmounts.
     const showContext = page.getByRole('button', { name: 'Show conversation and highlights' });

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, useSearchParams } from 'react-router';
+import { MemoryRouter, useNavigate, useSearchParams } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JournalWorkspace } from '@/features/journal/components/JournalWorkspace';
@@ -47,8 +47,12 @@ vi.mock('@/features/journal/components/EntryList', () => ({ EntryList: () => nul
 vi.mock('@/features/journal/components/PageList', () => ({ pageTitle: (page: { title: string }) => page.title }));
 
 function LocationProbe() {
+  const navigate = useNavigate();
   const [params] = useSearchParams();
-  return <output data-testid="journal-id">{params.get('journalSpaceId') ?? ''}</output>;
+  return <>
+    <button onClick={() => navigate('/journals')}>Open Journal</button>
+    <output data-testid="journal-id">{params.get('journalSpaceId') ?? ''}</output>
+  </>;
 }
 
 function renderWorkspace(children?: ReactNode) {
@@ -118,5 +122,19 @@ describe('JournalWorkspace first-run creation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New journal' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('storage unavailable');
+  });
+
+  it('restores the existing journal when navigation opens the workspace again', async () => {
+    listJournals.mockResolvedValue({ ok: true, data: [{
+      id: 'saved-journal', name: 'Saved journal', isArchived: false,
+    }] });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByTestId('journal-id')).toHaveTextContent('saved-journal'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Journal' }));
+
+    await waitFor(() => expect(screen.getByTestId('journal-id')).toHaveTextContent('saved-journal'));
+    expect(createJournal).not.toHaveBeenCalled();
+    expect(screen.queryByText('Start a journal.')).not.toBeInTheDocument();
   });
 });
