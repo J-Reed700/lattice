@@ -15,8 +15,8 @@
     "sha256": "88cc08b395fbfb960b99f355a81224af975679b8a5f4b74a51d59e5e34b20dcd"
   },
   "runtimeCrates": {
-    "wasmtime": "48.0.3",
-    "wasmtime-wasi": "48.0.3"
+    "wasmtime": "48.0.4",
+    "wasmtime-wasi": "48.0.4"
   },
   "limitations": [
     "The build script is pinned for macOS arm64; output is wasm32-wasip1 and runs on supported Wasmtime hosts.",

@@ -109,8 +109,8 @@ hex = "0.4"
 # Learner execution: restricted JavaScript and CPython/WASI guests. Native
 # compiler projects use the optional container provider.
 rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"] }
-wasmtime = { version = "=48.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "=48.0.3", default-features = false, features = ["p1"] }
+wasmtime = { version = "=48.0.4", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "=48.0.4", default-features = false, features = ["p1"] }
 lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 encoding_rs = "0.8"
