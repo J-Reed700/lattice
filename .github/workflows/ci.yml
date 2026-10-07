@@ -51,8 +51,9 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - name: Restore cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -168,6 +169,19 @@ jobs:
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
+
+      # A test failure should not discard a completed native compilation and
+      # force the next repair attempt to rebuild every dependency.
+      - name: Save cargo cache
+        if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # The pinned llama-server release must exist, match the lock's checksums, be
   # self-contained, and start on every platform we ship.
