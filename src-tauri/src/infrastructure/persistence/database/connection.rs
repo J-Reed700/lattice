@@ -23,18 +23,40 @@ pub const DB_RECOVERY_TARGET: &str = "lattice::db_recovery";
 /// name SQLite looks for, and its frames would be replayed into the new file,
 /// bringing the corrupt pages back or corrupting it. Kept beside the moved
 /// file under matching names, they still open together for a salvage attempt.
-fn move_database_aside(db_path: &Path, backup_path: &Path) -> std::io::Result<()> {
-    std::fs::rename(db_path, backup_path)?;
+async fn move_database_aside(db_path: &Path, backup_path: &Path) -> std::io::Result<()> {
+    rename_after_sqlite_close(db_path, backup_path).await?;
     for suffix in ["-wal", "-shm"] {
         let from = sidecar_path(db_path, suffix);
         let to = sidecar_path(backup_path, suffix);
-        match std::fs::rename(&from, &to) {
+        match rename_after_sqlite_close(&from, &to).await {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
         }
     }
     Ok(())
+}
+
+async fn rename_after_sqlite_close(from: &Path, to: &Path) -> std::io::Result<()> {
+    // SQLx drops a connection whose initialization PRAGMAs fail, but SQLite's
+    // worker closes its file handle asynchronously. Windows cannot rename the
+    // file until that handle is closed. Retry only sharing/lock violations;
+    // permission and other filesystem errors must still be reported.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut delay = Duration::from_millis(20);
+    loop {
+        match std::fs::rename(from, to) {
+            Err(error)
+                if cfg!(windows)
+                    && matches!(error.raw_os_error(), Some(32 | 33))
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep_until((tokio::time::Instant::now() + delay).min(deadline)).await;
+                delay = (delay * 2).min(Duration::from_millis(250));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// `lattice.db` + `-wal` → `lattice.db-wal`, SQLite's own naming.
@@ -96,18 +118,20 @@ impl DatabaseConnection {
             .pragma("cache_size", "-20000") // 20MB cache
             .pragma("temp_store", "MEMORY"); // Use memory for temp tables
 
-        let pool_result = SqlitePoolOptions::new()
+        let pool = SqlitePoolOptions::new()
             .max_connections(5)
             .min_connections(1)
             .acquire_timeout(Duration::from_secs(5)) // Don't wait forever for connection
             .idle_timeout(Duration::from_secs(600)) // Keep connections alive for 10 minutes
             .max_lifetime(Duration::from_secs(1800)) // Recycle connections after 30 minutes
-            .connect_with(connect_options.clone())
-            .await;
+            .connect_lazy_with(connect_options.clone());
+        let pool_result = pool.acquire().await.map(drop);
 
         match pool_result {
-            Ok(pool) => Ok((pool, None)),
+            Ok(()) => Ok((pool, None)),
             Err(e) => {
+                // Stop pool maintenance before replacing any database files.
+                pool.close().await;
                 let error_msg = e.to_string();
 
                 // Detect corruption errors
@@ -125,7 +149,7 @@ impl DatabaseConnection {
                         db_path.with_extension(format!("corrupted-{}.bak", timestamp));
 
                     // Move corrupted database to backup
-                    match move_database_aside(db_path, &backup_path) {
+                    match move_database_aside(db_path, &backup_path).await {
                         Ok(()) => {
                             tracing::warn!(
                                 target: DB_RECOVERY_TARGET,
@@ -152,10 +176,12 @@ impl DatabaseConnection {
                         Err(rename_err) => {
                             tracing::error!("Failed to move corrupted database: {}", rename_err);
                             Err(AppError::Database(format!(
-                                "Database is corrupted and automatic recovery failed. \
-                                 Please manually delete {} and restart the application. \
+                                "Database is corrupted and its files could not be moved aside. \
+                                 Close other applications using {} and retry. \
+                                 Recovery error: {}. \
                                  Original error: {}",
                                 db_path.display(),
+                                rename_err,
                                 error_msg
                             )))
                         }
@@ -332,8 +358,8 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_stale_wal_and_shm_move_with_the_corrupt_database() {
+    #[tokio::test]
+    async fn a_stale_wal_and_shm_move_with_the_corrupt_database() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("lattice.db");
         let backup = dir.path().join("lattice.corrupted-20260925_000000.bak");
@@ -341,7 +367,7 @@ mod tests {
         std::fs::write(sidecar_path(&db, "-wal"), b"stale frames").unwrap();
         std::fs::write(sidecar_path(&db, "-shm"), b"stale index").unwrap();
 
-        move_database_aside(&db, &backup).unwrap();
+        move_database_aside(&db, &backup).await.unwrap();
 
         assert!(!db.exists());
         assert!(
@@ -360,15 +386,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_database_without_a_wal_moves_alone() {
+    #[tokio::test]
+    async fn a_database_without_a_wal_moves_alone() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("lattice.db");
         let backup = dir.path().join("lattice.bak");
         std::fs::write(&db, b"x").unwrap();
 
-        move_database_aside(&db, &backup).unwrap();
+        move_database_aside(&db, &backup).await.unwrap();
         assert!(backup.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_locked_wal_waits_for_close_without_moving_the_database_twice() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("lattice.db");
+        let backup = dir.path().join("lattice.bak");
+        let wal = sidecar_path(&db, "-wal");
+        std::fs::write(&db, b"corrupt database").unwrap();
+        std::fs::write(&wal, b"stale frames").unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&wal)
+            .unwrap();
+
+        let mut moving = Box::pin(move_database_aside(&db, &backup));
+        assert!(futures::poll!(moving.as_mut()).is_pending());
+        assert!(backup.exists());
+        assert!(!db.exists());
+        drop(lock);
+        moving.await.unwrap();
+
+        assert_eq!(std::fs::read(&backup).unwrap(), b"corrupt database");
+        assert_eq!(
+            std::fs::read(sidecar_path(&backup, "-wal")).unwrap(),
+            b"stale frames"
+        );
+        assert!(!wal.exists());
     }
 
     #[tokio::test]
