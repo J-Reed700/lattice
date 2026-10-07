@@ -1,18 +1,19 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useNavigate, useSearchParams } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JournalWorkspace } from '@/features/journal/components/JournalWorkspace';
 
-const { listJournals, createJournal } = vi.hoisted(() => ({
+const { listJournals, createJournal, deleteJournal } = vi.hoisted(() => ({
   listJournals: vi.fn(),
   createJournal: vi.fn(),
+  deleteJournal: vi.fn(),
 }));
 
-vi.mock('@/lib/api', () => ({ default: { listJournals, createJournal }, VaultAPI: { listJournals, createJournal } }));
+vi.mock('@/lib/api', () => ({ default: { listJournals, createJournal, deleteJournal }, VaultAPI: { listJournals, createJournal, deleteJournal } }));
 vi.mock('@/features/chat/components/SpacePickerPopover', () => ({ GENERAL_SPACE_ID: 'space_general' }));
 vi.mock('@/components/RootLayout', () => ({ NEW_ITEM_EVENT: 'new-item' }));
 vi.mock('@/hooks/queries/useWeeklySynthesisCandidatesQuery', () => ({
@@ -43,7 +44,10 @@ vi.mock('@/features/journal/hooks/useJournalSources', () => ({
 }));
 vi.mock('@/features/journal/hooks/useJournalNavigationGuard', () => ({ useJournalNavigationGuard: vi.fn() }));
 vi.mock('@/features/journal/components/EntryEditor', () => ({ EntryEditor: () => null }));
-vi.mock('@/features/journal/components/EntryList', () => ({ EntryList: () => null }));
+vi.mock('@/features/journal/components/EntryList', () => ({
+  EntryList: ({ onDeleteJournal }: { onDeleteJournal: () => Promise<void> }) =>
+    <button onClick={() => void onDeleteJournal()}>Delete journal</button>,
+}));
 vi.mock('@/features/journal/components/PageList', () => ({ pageTitle: (page: { title: string }) => page.title }));
 
 function LocationProbe() {
@@ -55,10 +59,10 @@ function LocationProbe() {
   </>;
 }
 
-function renderWorkspace(children?: ReactNode) {
+function renderWorkspace(children?: ReactNode, initialEntry = '/journals') {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <MemoryRouter initialEntries={['/journals']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <LocationProbe />
       {children}
       <JournalWorkspace />
@@ -136,5 +140,41 @@ describe('JournalWorkspace first-run creation', () => {
     await waitFor(() => expect(screen.getByTestId('journal-id')).toHaveTextContent('saved-journal'));
     expect(createJournal).not.toHaveBeenCalled();
     expect(screen.queryByText('Start a journal.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the workspace empty after the last journal is deleted', async () => {
+    let journals = [{ id: 'last-journal', name: 'Last journal', isArchived: false }];
+    listJournals.mockImplementation(async () => ({ ok: true, data: journals }));
+    deleteJournal.mockImplementation(async () => {
+      journals = [];
+      return { ok: true, data: null };
+    });
+    createJournal.mockResolvedValue({ ok: false, error: 'Unexpected automatic replacement' });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByTestId('journal-id')).toHaveTextContent('last-journal'));
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete journal' })));
+
+    expect(deleteJournal).toHaveBeenCalledWith({ journalId: 'last-journal' });
+    expect(createJournal).not.toHaveBeenCalled();
+    expect(await screen.findByText('Start a journal.')).toBeVisible();
+    expect(screen.getByTestId('journal-id')).toBeEmptyDOMElement();
+  });
+
+  it('finishes initial creation when navigation changes while it is pending', async () => {
+    const journals: Array<{ id: string; name: string; isArchived: boolean }> = [];
+    listJournals.mockImplementation(async () => ({ ok: true, data: journals }));
+    let resolveCreate: ((value: unknown) => void) | undefined;
+    createJournal.mockImplementation(() => new Promise(resolve => { resolveCreate = resolve; }));
+    renderWorkspace(undefined, '/journals?entryId=old-entry');
+    await waitFor(() => expect(createJournal).toHaveBeenCalledTimes(1));
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Open Journal' })));
+    const created = { id: 'first-journal', name: 'Journal 1', isArchived: false };
+    journals.push(created);
+    resolveCreate?.({ ok: true, data: created });
+
+    await waitFor(() => expect(screen.getByTestId('journal-id')).toHaveTextContent('first-journal'));
+    expect(createJournal).toHaveBeenCalledTimes(1);
   });
 });

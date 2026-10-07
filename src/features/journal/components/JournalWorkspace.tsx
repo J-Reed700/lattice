@@ -146,6 +146,7 @@ export function JournalWorkspace() {
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
     new Set(),
   );
+  const initialJournalHandledRef = useRef(false);
   const journalCreationRef = useRef<ReturnType<typeof VaultAPI.createJournal> | null>(null);
 
   const createJournalOnce = useCallback(() => {
@@ -286,6 +287,7 @@ export function JournalWorkspace() {
       const fetched = await queryClient.fetchQuery(journalsQueryOptions());
       if (cancelled) return;
       const active = fetched.filter(journal => !journal.isArchived);
+      if (fetched.length > 0) initialJournalHandledRef.current = true;
 
       if (requestedJournalSpaceId) {
         const requestedIsActive = active.some((j) => j.id === requestedJournalSpaceId);
@@ -315,6 +317,10 @@ export function JournalWorkspace() {
       // unmounting this workspace. Resolve it on every such navigation;
       // createJournalOnce already shares any pending first-journal creation.
       if (active.length === 0 && fetched.length === 0) {
+        // Deleting the last journal should leave the workspace empty. A
+        // navigation during first-run creation may still await that operation.
+        if (initialJournalHandledRef.current && !journalCreationRef.current) return;
+        initialJournalHandledRef.current = true;
         const created = await createJournalOnce();
         if (cancelled) return;
         if (!created.ok) {
@@ -833,7 +839,7 @@ export function JournalWorkspace() {
           <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
           <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
           <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
-          <button type="button" onClick={() => setJournalLoadAttempt((attempt) => attempt + 1)} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
+          <button type="button" onClick={() => { initialJournalHandledRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
           <details className="mt-5 text-xs text-text-tertiary">
             <summary className="cursor-pointer">Error details</summary>
             <p className="mt-2 wrap-break-word text-left">{topLevelError}</p>
