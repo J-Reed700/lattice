@@ -147,22 +147,36 @@ mod tests {
     async fn timed_out_worker_keeps_its_shared_slot_until_the_blocking_work_exits() {
         let workers = Arc::new(Semaphore::new(1));
         let task_workers = Arc::clone(&workers);
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
         let work = tokio::spawn(async move {
             run_archive_work_with_gate(
                 task_workers,
                 PathBuf::from("slow.docx"),
                 Duration::from_millis(5),
-                || {
-                    std::thread::sleep(Duration::from_millis(60));
+                move || {
+                    let _ = started_tx.send(());
+                    // Dropping the sender also releases the worker if an assertion fails.
+                    let _ = release_rx.recv();
                     Ok(())
                 },
             )
             .await
         });
 
-        assert!(work.await.unwrap().is_err());
+        started_rx.await.unwrap();
+        let error = work.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("exceeded its 30 second budget"));
         assert_eq!(workers.available_permits(), 0);
-        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        release_tx.send(()).unwrap();
+        // Wait for permit release, rather than assuming a busy CI runner schedules
+        // the blocking worker within a fixed sleep interval.
+        let permit = tokio::time::timeout(Duration::from_secs(5), workers.acquire())
+            .await
+            .expect("the finished worker should release its permit")
+            .unwrap();
+        drop(permit);
         assert_eq!(workers.available_permits(), 1);
     }
 

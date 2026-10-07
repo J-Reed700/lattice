@@ -262,18 +262,20 @@ fn discover_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    fn names(files: &[PathBuf], root: &Path) -> Vec<String> {
+    fn names(files: &[PathBuf], root: &Path) -> Vec<PathBuf> {
         let mut names: Vec<_> = files
             .iter()
-            .map(|f| f.strip_prefix(root).unwrap().to_string_lossy().into_owned())
+            .map(|f| f.strip_prefix(root).unwrap().to_path_buf())
             .collect();
         names.sort();
         names
     }
 
     #[test]
+    #[cfg(unix)]
     fn an_unreadable_subfolder_is_skipped_not_fatal() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -286,7 +288,10 @@ mod tests {
         let result = discover_files(root, true, None);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        assert_eq!(names(&result.unwrap(), root), vec!["keep.txt"]);
+        assert_eq!(
+            names(&result.unwrap(), root),
+            vec![PathBuf::from("keep.txt")]
+        );
     }
 
     #[test]
@@ -296,11 +301,17 @@ mod tests {
         let sub = root.join("sub");
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("note.md"), "a").unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(root, sub.join("loop")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(root, sub.join("loop")).unwrap();
 
         let files = discover_files(root, true, None).unwrap();
 
-        assert_eq!(names(&files, root), vec!["sub/note.md"]);
+        assert_eq!(
+            names(&files, root),
+            vec![PathBuf::from("sub").join("note.md")]
+        );
     }
 
     #[test]
@@ -315,6 +326,9 @@ mod tests {
 
         let files = discover_files(root, true, None).unwrap();
 
-        assert_eq!(names(&files, root), vec!["docs/file.md"]);
+        assert_eq!(
+            names(&files, root),
+            vec![PathBuf::from("docs").join("file.md")]
+        );
     }
 }
