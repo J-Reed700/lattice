@@ -54,7 +54,7 @@ concurrency:
 env:
   LOCK: src-tauri/scripts/llama-server.lock
   VERIFY: src-tauri/scripts/verify_llama_binaries.py
-  VULKAN_SDK_VERSION: 1.3.290.0
+  VULKAN_SDK_VERSION: 1.4.363.0
 
 jobs:
   pin:
