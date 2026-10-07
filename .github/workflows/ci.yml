@@ -272,6 +272,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: desktop-compatibility-${{ matrix.name }}
+          cache-on-failure: true
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash
