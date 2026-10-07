@@ -43,6 +43,7 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
   const surfaceRef = useRef<CanvasSurfaceHandle | null>(null);
   const drainRef = useRef<() => Promise<boolean>>(async () => true);
   const inFlight = useRef<Promise<boolean> | null>(null);
+  const autosaveTimer = useRef<number | null>(null);
   const retrySave = useRef<StableSave | null>(null);
   const sceneErrorRef = useRef<string | null>(null);
   const conflictRef = useRef(false);
@@ -57,7 +58,7 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
   const [conflict, setConflict] = useState(false);
   const [sceneError, setSceneError] = useState<string | null>(null);
   const [imageBlocked, setImageBlocked] = useState(false);
-  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
   const [checkpointName, setCheckpointName] = useState('');
   const [confirmRestore, setConfirmRestore] = useState<LearningCanvasSnapshotDto | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -84,6 +85,9 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
     draftRef.current = value;
     setDraftState(value);
     checkpointRetry.current = null;
+    if (!conflictRef.current && !sceneErrorRef.current) {
+      setSaveState(!inFlight.current && !retrySave.current && samePayload(savedRef.current, value) ? 'saved' : 'dirty');
+    }
     setError(null);
   }, []);
   const reportSceneError = useCallback((message: string) => { sceneErrorRef.current = message; setSceneError(message); setSaveState('error'); }, []);
@@ -91,7 +95,15 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
   const handleSceneChange = useCallback((scene: SceneUpdate) => { clearSceneError(); saveDraft(scene); }, [clearSceneError, saveDraft]);
   const handleImageBlocked = useCallback(() => setImageBlocked(true), []);
 
+  const clearAutosave = useCallback(() => {
+    if (autosaveTimer.current !== null) window.clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = null;
+  }, []);
+
   const drain = useCallback((): Promise<boolean> => {
+    // A navigation flush owns the pending edit. Its old debounce must not retry
+    // a failed write behind the error message after the flush has returned.
+    clearAutosave();
     if (inFlight.current) return inFlight.current;
     const work = (async () => {
       while (true) {
@@ -142,7 +154,7 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
     })();
     inFlight.current = work;
     return work.finally(() => { if (inFlight.current === work) inFlight.current = null; });
-  }, [programId, save]);
+  }, [programId, save, clearAutosave]);
   drainRef.current = drain;
 
   useEffect(() => {
@@ -174,10 +186,10 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
   useEffect(() => {
-    if (!selected || !draft || samePayload(savedRef.current, draft) || sceneError) return;
-    const timer = window.setTimeout(() => { void drainRef.current(); }, 650);
-    return () => window.clearTimeout(timer);
-  }, [selectedId, draft, selected, sceneError]);
+    if (!selected || !draft || samePayload(savedRef.current, draft) || sceneError || saveState !== 'dirty' || inFlight.current) return;
+    autosaveTimer.current = window.setTimeout(() => { void drainRef.current(); }, 650);
+    return clearAutosave;
+  }, [selectedId, draft, selected, sceneError, saveState, clearAutosave]);
 
   const flush = useCallback(async () => {
     if (inFlight.current) {
@@ -272,7 +284,7 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
     {canvases.length === 0 ? <div className="grid min-h-64 place-items-center px-6 py-12 text-center"><div className="max-w-md"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-accent/10 text-accent"><PenToolIcon /></div><h3 className="mt-4 font-serif text-xl text-text-primary">A visual page for your thinking</h3><p className="mt-2 text-sm leading-6 text-text-secondary">Start a canvas to connect ideas, sketch a process, or make a written visual note for this lesson.</p><button type="button" onClick={() => setCreationOpen(true)} className="mt-4 rounded-full border border-accent/40 px-4 py-2 text-xs font-semibold text-accent">Create your first canvas</button></div></div> : <>
       <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-3" aria-label="Canvases">{canvases.map((canvas) => <button type="button" key={canvas.id} aria-pressed={canvas.id === selectedId} onClick={() => void switchCanvas(canvas.id)} className={`max-w-[230px] shrink-0 truncate rounded-full border px-3.5 py-2 text-xs ${canvas.id === selectedId ? 'border-accent/50 bg-accent/10 font-semibold text-accent' : 'border-border text-text-secondary hover:border-accent/35'}`}>Canvas: {canvas.title}</button>)}</div>
       {selected && draft && <div className="p-4 sm:p-6">
-        <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(180px,.75fr)_minmax(240px,1.5fr)_auto] sm:items-start"><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Title<input aria-label="Canvas title" value={draft.title} maxLength={120} onChange={(e) => saveDraft({ title: e.target.value })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium normal-case tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Written description<textarea aria-label="Describe your drawing or its meaning" rows={2} maxLength={2000} value={draft.description} onChange={(e) => saveDraft({ description: e.target.value })} placeholder="Explain this drawing in words for someone who cannot see it" className="resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-normal normal-case leading-5 tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><div className="flex items-center gap-2 pt-1 text-xs text-text-muted" aria-live="polite">{saveState === 'saving' ? <><LoaderCircle size={14} className="animate-spin" /> Saving</> : saveState === 'error' ? <><AlertCircle size={14} className="text-rose-600" /> Not saved</> : <><Check size={14} className="text-emerald-700" /> Saved</>}</div></div>
+        <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(180px,.75fr)_minmax(240px,1.5fr)_auto] sm:items-start"><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Title<input aria-label="Canvas title" value={draft.title} maxLength={120} onChange={(e) => saveDraft({ title: e.target.value })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium normal-case tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[.12em] text-text-muted">Written description<textarea aria-label="Describe your drawing or its meaning" rows={2} maxLength={2000} value={draft.description} onChange={(e) => saveDraft({ description: e.target.value })} placeholder="Explain this drawing in words for someone who cannot see it" className="resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-normal normal-case leading-5 tracking-normal text-text-primary outline-hidden focus:border-accent" /></label><div className="flex items-center gap-2 pt-1 text-xs text-text-muted" aria-live="polite">{saveState === 'dirty' ? <><Clock3 size={14} /> Unsaved changes</> : saveState === 'saving' ? <><LoaderCircle size={14} className="animate-spin" /> Saving</> : saveState === 'error' ? <><AlertCircle size={14} className="text-rose-600" /> Not saved</> : <><Check size={14} className="text-emerald-700" /> Saved</>}</div></div>
         {sceneError && <div role="alert" className="mb-3 rounded-lg border border-amber-600/25 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-200">{sceneError} Saving is paused until the scene is simplified or corrected.</div>}
         {imageBlocked && <p role="status" className="mb-3 rounded-lg bg-accent/5 px-3 py-2 text-xs text-text-secondary">Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.</p>}
         {conflict && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-600/25 bg-amber-500/5 p-3 text-xs text-text-secondary"><span>This canvas changed elsewhere. Reload the latest version to continue; unsaved local edits will be replaced.</span><button type="button" onClick={() => void reloadLatest()} className="rounded-full border border-amber-600/30 px-3 py-1.5 font-semibold text-amber-800 dark:text-amber-200">Reload latest</button></div>}

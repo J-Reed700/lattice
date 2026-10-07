@@ -14,6 +14,31 @@ const answerSentinel =
 const excerptSentinel =
   "SOURCE_EXCERPT_SENTINEL: A careful comparison records the chosen measure, the observation period, and the limits of the sample.";
 
+async function holdNextLostSaveResponse(page: Page, kind: "canvas" | "lab") {
+  // Keep the failed write in flight until navigation tries to flush it. Browser
+  // click/scroll timing must not decide whether autosave or navigation goes first.
+  await page.evaluate((kind) => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: {
+      canvasSaveLostResponsesRemaining: number;
+      labDraftLostResponses: number;
+      lostSaveResponseGate: Promise<void> | null;
+      releaseLostSaveResponse: (() => void) | null;
+    } }).__LATTICE_LEARNING_STATE__;
+    if (kind === "canvas") state.canvasSaveLostResponsesRemaining = 1;
+    else state.labDraftLostResponses = 1;
+    state.lostSaveResponseGate = new Promise((resolve) => { state.releaseLostSaveResponse = resolve; });
+  }, kind);
+  return async () => page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: {
+      lostSaveResponseGate: Promise<void> | null;
+      releaseLostSaveResponse: (() => void) | null;
+    } }).__LATTICE_LEARNING_STATE__;
+    state.releaseLostSaveResponse?.();
+    state.lostSaveResponseGate = null;
+    state.releaseLostSaveResponse = null;
+  });
+}
+
 function buttonContrast(buttons: Element[]) {
   const luminance = (color: string) => (color.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).reduce((sum, channel, index) => {
     const value = channel / 255;
@@ -641,20 +666,20 @@ async function runCanvasJourney(
     panel.getByRole("button", { name: "Canvas element outline" }),
   ).toBeVisible();
 
+  await expect(panel.locator('[aria-live="polite"]')).toHaveText("Saved");
   // Arm a one-time lost response after commit. The flush triggered by leaving
   // the program must keep the same request ID when Retry replays that write.
+  const releaseLostSave = await holdNextLostSaveResponse(page, "canvas");
   const saveBaseline = await page.evaluate(() => {
     const state = (
       window as unknown as {
         __LATTICE_LEARNING_STATE__: {
-          canvasSaveLostResponsesRemaining: number;
           canvasWorkspace: { canvases: Array<{ revision: number }> };
           canvasMutationCalls: Array<{ command: string }>;
           canvasSavedRevisions: number[];
         };
       }
     ).__LATTICE_LEARNING_STATE__;
-    state.canvasSaveLostResponsesRemaining = 1;
     return {
       revision: state.canvasWorkspace.canvases[0].revision,
       callCount: state.canvasMutationCalls.filter(
@@ -671,6 +696,8 @@ async function runCanvasJourney(
     .getByLabel("Describe your drawing or its meaning", { exact: true })
     .fill("A visual summary of the measure and sample limits.");
   await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saving your work…", exact: true })).toBeDisabled();
+  await releaseLostSave();
   await expect(panel.getByRole("alert")).toContainText(
     "Canvas save response was lost after persistence.",
   );
@@ -2382,11 +2409,11 @@ test("failed lab saves block leaving and retry lost acknowledgements without dup
   });
   await page.getByRole("button", { name: "Retry saving draft", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Saved on this device" })).toBeVisible();
-  await page.evaluate(() => {
-    (window as unknown as { __LATTICE_LEARNING_STATE__: { labDraftLostResponses: number } }).__LATTICE_LEARNING_STATE__.labDraftLostResponses = 1;
-  });
+  const releaseLostSave = await holdNextLostSaveResponse(page, "lab");
   await editor.fill("important_work = 'second version'");
   await page.getByRole("button", { name: "All programs", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saving your work…", exact: true })).toBeDisabled();
+  await releaseLostSave();
   await expect(page.getByRole("alert")).toContainText("Draft save response was lost");
   await page.getByRole("button", { name: "Retry saving draft", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Saved on this device" })).toBeVisible();

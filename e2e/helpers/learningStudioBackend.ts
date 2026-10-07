@@ -447,6 +447,8 @@ export async function installLearningStudioBackend(page: Page) {
         request: Record<string, unknown>;
       }>,
       canvasSaveLostResponsesRemaining: 0,
+      lostSaveResponseGate: null as Promise<void> | null,
+      releaseLostSaveResponse: null as (() => void) | null,
       canvasSavedRevisions: [] as number[],
       sourceWorkspace,
       sourceMutationCalls: [] as Array<{
@@ -1458,6 +1460,7 @@ export async function installLearningStudioBackend(page: Page) {
           persistCanvasState();
           if (state.canvasSaveLostResponsesRemaining > 0) {
             state.canvasSaveLostResponsesRemaining -= 1;
+            await state.lostSaveResponseGate;
             throw new Error("Canvas save response was lost after persistence.");
           }
         }
@@ -2216,6 +2219,7 @@ export async function installLearningStudioBackend(page: Page) {
         persistLabDrafts();
         if (state.labDraftLostResponses > 0) {
           state.labDraftLostResponses -= 1;
+          await state.lostSaveResponseGate;
           throw new Error("Draft save response was lost after persistence.");
         }
         return structuredClone(next);

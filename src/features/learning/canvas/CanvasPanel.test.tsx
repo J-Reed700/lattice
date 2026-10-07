@@ -122,6 +122,30 @@ describe('Learning Studio Canvas workspace', () => {
     expect(api.saveLearningCanvas.mock.calls[0][0].title).toBe('First sketch renamed');
   });
 
+  it('keeps a failed navigation flush visible until an explicit retry, even after the autosave deadline', async () => {
+    api.saveLearningCanvas.mockResolvedValueOnce(fail('Save response was lost'));
+    const view = mount(workspace([canvas()]));
+    await screen.findByTestId('mock-canvas');
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByLabelText('Canvas title'), { target: { value: 'Unsaved title' } });
+      await act(async () => { expect(await flushPendingSaves()).toBe(false); });
+      expect(screen.getByRole('alert')).toHaveTextContent('Save response was lost');
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(api.saveLearningCanvas).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('alert')).toHaveTextContent('Save response was lost');
+
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+      expect(api.saveLearningCanvas).toHaveBeenCalledTimes(2);
+      expect(api.saveLearningCanvas.mock.calls[1][0]).toEqual(api.saveLearningCanvas.mock.calls[0][0]);
+      expect(screen.getByText('Saved')).toBeVisible();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('treats an advanced response revision as a conflict and pauses writes until reload', async () => {
     api.saveLearningCanvas.mockResolvedValueOnce(ok(workspace([canvas('canvas-1', { revision: 5, title: 'Server version' })])));
     mount(workspace([canvas()]));
