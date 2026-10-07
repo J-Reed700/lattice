@@ -754,12 +754,32 @@ test('conversation outline navigates long virtualized replies and tracks the rea
 
   // A jump to a very long answer must show its beginning, not its middle.
   const answer = page.locator('#message-outline-11');
-  await expect.poll(() => answer.evaluate((element) => {
+  await expect.poll(() => answer.evaluate(async (element) => {
     const scroller = element.closest('.overflow-y-auto')!;
-    return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top);
-  })).toBeLessThan(50);
+    const geometry = () => [
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+      scroller.scrollTop,
+      scroller.scrollHeight,
+    ];
+    const initial = geometry();
+    // Selection can update before the virtualizer finishes measuring rows and
+    // checking the jump over two animation frames. Require stable geometry
+    // across that cycle before starting a separate reading-position scroll.
+    for (let frame = 0; frame < 3; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (geometry().some((value, index) => Math.abs(value - initial[index]) > 1)) return false;
+    }
+    return Math.abs(initial[0]) < 50;
+  })).toBe(true);
   const scroller = page.locator('.chat-panel .overflow-y-auto').first();
-  await scroller.evaluate((element) => { element.scrollTop += 1000; });
+  const readingOffset = await scroller.evaluate((element) => {
+    element.scrollTop += 1000;
+    return element.scrollTop;
+  });
+  await expect.poll(() => answer.evaluate((element) => {
+    return element.getBoundingClientRect().top - element.closest('.overflow-y-auto')!.getBoundingClientRect().top;
+  })).toBeLessThan(-900);
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeCloseTo(readingOffset, 0);
   await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toHaveAttribute('aria-current', 'location');
   await answer.evaluate((element) => {
     const scroll = element.closest('.overflow-y-auto')!;
