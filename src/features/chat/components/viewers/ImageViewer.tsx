@@ -76,8 +76,8 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--text-primary)]" />
-        <span className="ml-2 text-[var(--text-secondary)]">Loading image...</span>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-(--text-primary)" />
+        <span className="ml-2 text-(--text-secondary)">Loading image...</span>
       </div>
     );
   }

@@ -34,7 +34,7 @@ export const EmptyState = ({ icon, title, description, action, className }: Empt
       <button
         type="button"
         onClick={action.onClick}
-        className="pressable mt-5 inline-flex h-8 items-center gap-2 rounded-md border border-border-default bg-surface px-3 text-ui font-medium text-text-primary shadow-control transition-[background-color,border-color,scale] duration-fast hover:border-border-strong hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="pressable mt-5 inline-flex h-8 items-center gap-2 rounded-md border border-border-default bg-surface px-3 text-ui font-medium text-text-primary shadow-control transition-[background-color,border-color,scale] duration-fast hover:border-border-strong hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
         {action.label}
         {action.shortcut ? <kbd className="kbd">{action.shortcut}</kbd> : null}

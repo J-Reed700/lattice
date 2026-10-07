@@ -44,7 +44,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
         <button
           type="button"
           aria-label={`Citation ${number}: ${sanitizedFileName}`}
-          className="inline-flex h-[18px] min-w-[18px] cursor-pointer items-center justify-center rounded-sm border border-border-subtle bg-surface px-1 font-mono text-xxs tabular-nums text-text-secondary transition-colors duration-fast hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-[18px] min-w-[18px] cursor-pointer items-center justify-center rounded-sm border border-border-subtle bg-surface px-1 font-mono text-xxs tabular-nums text-text-secondary transition-colors duration-fast hover:border-accent hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           {number}
         </button>
@@ -55,10 +55,10 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
           sideOffset={6}
           side="top"
           align="start"
-          className="z-50 max-w-xs rounded-md border border-subtle bg-surface-raised p-3 text-[hsl(var(--text-primary))] shadow-md outline-none data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="z-50 max-w-xs rounded-md border border-subtle bg-surface-raised p-3 text-[hsl(var(--text-primary))] shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-[hsl(var(--text-primary))] break-words">
+            <p className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
               {sanitizedFileName}
             </p>
             {source.category && (
@@ -72,7 +72,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
             {provenanceLabel && (
               <p className="text-xs text-[hsl(var(--text-muted))]">{provenanceLabel}</p>
             )}
-            <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-3 break-words">
+            <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-3 wrap-break-word">
               {source.excerpt ?? source.content}
             </p>
             <button

@@ -156,7 +156,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                       ? 'Journal name (e.g. Food Research, Weekly Notes)'
                       : 'Space name (e.g. Product, Research, Personal)'
                   }
-                  className="w-full rounded-sm border border-border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                  className="w-full rounded-sm border border-border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                 />
                 <div className="flex items-center gap-1.5">
                   <button
@@ -309,13 +309,13 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                         value={spaceIconDraft}
                         onChange={(e) => setSpaceIconDraft(e.target.value)}
                         placeholder="Icon"
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                       />
                       <input
                         value={spaceNameDraft}
                         onChange={(e) => setSpaceNameDraft(e.target.value)}
                         placeholder="Space name"
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                       />
                     </div>
                     <div className="grid grid-cols-[92px_1fr_56px] gap-2">
@@ -330,7 +330,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                         value={spaceAccentDraft}
                         onChange={(e) => setSpaceAccentDraft(e.target.value)}
                         placeholder="#aa503d"
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                       />
                       <button
                         type="button"
@@ -346,7 +346,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                       value={spaceDescriptionDraft}
                       onChange={(e) => setSpaceDescriptionDraft(e.target.value)}
                       placeholder="Description"
-                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                     />
                   </div>
                 </details>
@@ -359,7 +359,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                       onChange={(e) => setSpaceModelDraft(e.target.value)}
                       placeholder="Default model id (optional)"
                       list="space-model-options"
-                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                     />
                     <datalist id="space-model-options">
                       {availableSpaceModels.map((modelId) => (
@@ -371,7 +371,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                       onChange={(e) => setSpacePromptDraft(e.target.value)}
                       placeholder="System prompt for this space"
                       rows={4}
-                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
+                      className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
                     />
                     <div className="flex items-center gap-2">
                       <button

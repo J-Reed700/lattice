@@ -26,7 +26,7 @@ export function PageHeader({ title, meta, actions, className }: PageHeaderProps)
   return (
     <header className={cn('mb-6 flex flex-wrap items-end justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h1 className="font-serif text-[28px] font-normal leading-[1.15] tracking-[-0.025em] text-text-primary">
+        <h1 className="font-serif text-[28px] font-normal leading-[1.15] tracking-tight text-text-primary">
           {title}
         </h1>
         {meta ? (

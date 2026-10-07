@@ -53,7 +53,7 @@ interface ConversationListProps {
   /** The two ways out of a conversation. Mounted once, by the sidebar. */
   exportActions: ConversationExportActions;
 }
-const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
 export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -325,7 +325,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                           checked={selectedConversationIds.has(conversation.id)}
                           onChange={() => toggleConversationSelection(conversation.id)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-3.5 w-3.5 shrink-0 cursor-pointer appearance-none rounded-sm border border-border-strong bg-transparent transition-colors duration-fast checked:border-accent checked:bg-accent checked:shadow-[inset_0_0_0_2px_hsl(var(--surface))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="h-3.5 w-3.5 shrink-0 cursor-pointer appearance-none rounded-sm border border-border-strong bg-transparent transition-colors duration-fast checked:border-accent checked:bg-accent checked:shadow-[inset_0_0_0_2px_hsl(var(--surface))] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                           aria-label={`Select conversation: ${conversation.title}`}
                         />
                       )}
@@ -367,7 +367,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                                 cancelRenameConversation();
                               }
                             }}
-                            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
                             aria-label={`Rename conversation: ${conversation.title}`}
                           />
                           <IconButton
@@ -428,7 +428,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                           await openForkParent(forkParent.id, forkParent.messageId);
                         })}
                         title={`Open "${forkParent.title}"`}
-                        className="mt-0.5 flex max-w-full items-center gap-1 rounded-sm text-xs text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="mt-0.5 flex max-w-full items-center gap-1 rounded-sm text-xs text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <GitBranch className="h-3 w-3 shrink-0" strokeWidth={1.6} aria-hidden="true" />
                         <span className="truncate">Branched from {forkParent.title}</span>

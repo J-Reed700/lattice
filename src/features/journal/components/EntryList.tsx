@@ -218,7 +218,7 @@ export function EntryList({
           <button
             type="button"
             onClick={onNewPage}
-            className="journal-new-page pressable flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-ui font-medium shadow-action transition-[background-color,scale] duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            className="journal-new-page pressable flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-ui font-medium shadow-action transition-[background-color,scale] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
             <PenLine className="h-3.5 w-3.5" strokeWidth={1.75} />
             New page

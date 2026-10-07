@@ -408,7 +408,7 @@ export function ContextMenu({
             }`}
             role="menuitem"
           >
-            {action.icon && <span className="flex-shrink-0">{action.icon}</span>}
+            {action.icon && <span className="shrink-0">{action.icon}</span>}
             <span>{action.label}</span>
           </button>
         );

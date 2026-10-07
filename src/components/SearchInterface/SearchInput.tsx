@@ -29,7 +29,7 @@ export const SearchInput = memo(({ value, onChange, isSearching }: SearchInputPr
         aria-label="Search your documents"
         value={value}
         onChange={onChange}
-        className="h-12 w-full rounded-xl border border-transparent bg-surface pl-11 pr-10 text-[16px] tracking-[-0.01em] text-text-primary shadow-sheet placeholder:text-text-muted outline-none transition-shadow duration-base focus:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.18)]"
+        className="h-12 w-full rounded-xl border border-transparent bg-surface pl-11 pr-10 text-[16px] tracking-[-0.01em] text-text-primary shadow-sheet placeholder:text-text-muted outline-hidden transition-shadow duration-base focus:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.18)]"
       />
       {isSearching && (
         <Loader2

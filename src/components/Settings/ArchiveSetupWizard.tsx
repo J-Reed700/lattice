@@ -345,7 +345,7 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
                       onChange={(event) =>
                         setTypedWords((prev) => ({ ...prev, [index]: event.target.value }))
                       }
-                      className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 font-mono text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                      className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 font-mono text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
                     />
                   </div>
                 );
@@ -372,7 +372,7 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
                   autoComplete="new-password"
                   value={passphrase}
                   onChange={(event) => setPassphrase(event.target.value)}
-                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
                 />
               </div>
               <div>
@@ -388,7 +388,7 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
                   autoComplete="new-password"
                   value={passphraseAgain}
                   onChange={(event) => setPassphraseAgain(event.target.value)}
-                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
                 />
               </div>
               <p className="text-xs text-text-muted">At least {MIN_PASSPHRASE_LENGTH} characters.</p>

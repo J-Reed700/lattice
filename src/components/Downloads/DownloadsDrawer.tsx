@@ -106,7 +106,7 @@ function AggregatedGroup({ group, actions, storeKeyFor }: AggregatedGroupProps) 
       )}
 
       {group.error_message && (
-        <p className="mt-1.5 break-words text-xs text-[hsl(var(--danger,0_70%_50%))]">
+        <p className="mt-1.5 wrap-break-word text-xs text-[hsl(var(--danger,0_70%_50%))]">
           {group.error_message}
         </p>
       )}
@@ -217,7 +217,7 @@ export function DownloadsDrawer() {
             role="dialog"
             aria-modal="true"
             aria-label="Downloads"
-            className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col border-l border-[hsl(var(--border-subtle))] bg-[hsl(var(--bg))] shadow-md outline-none"
+            className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col border-l border-[hsl(var(--border-subtle))] bg-[hsl(var(--bg))] shadow-md outline-hidden"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}

@@ -55,7 +55,7 @@ interface MessageActionsProps {
 // CHAT-POLISH-COMPONENTS §5: low contrast and full opacity always. Hiding the
 // verbs until hover teaches nobody they exist and strands anyone on a keyboard.
 const FOCUS_CLASS =
-  'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]';
+  'rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]';
 
 const ACTION_CLASS =
   `inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed ${FOCUS_CLASS}`;

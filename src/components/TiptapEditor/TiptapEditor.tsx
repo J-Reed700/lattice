@@ -97,7 +97,7 @@ export function TiptapEditor({
     onUpdate: handleUpdate,
     editorProps: {
       attributes: {
-        class: `tiptap-editor focus:outline-none ${className}`,
+        class: `tiptap-editor focus:outline-hidden ${className}`,
         role: 'textbox',
         'aria-multiline': 'true',
         ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),

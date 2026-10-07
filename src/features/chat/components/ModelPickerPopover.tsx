@@ -57,7 +57,7 @@ export function ModelPickerPopover({
         <Popover.Content
           sideOffset={6}
           align={align}
-          className="z-50 w-[280px] rounded-md border border-subtle bg-surface-raised p-2 shadow-md outline-none"
+          className="z-50 w-[280px] rounded-md border border-subtle bg-surface-raised p-2 shadow-md outline-hidden"
         >
           {chatModels.length === 0 ? (
             <p className="px-2 py-1.5 text-sm text-[hsl(var(--text-muted))]">

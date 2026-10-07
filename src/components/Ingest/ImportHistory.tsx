@@ -204,7 +204,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
             return <section key={job.id} aria-label={`Import ${job.id}`} className="border-b border-border-subtle">
               <div className="flex flex-wrap items-center gap-3 py-3">
                 <button type="button" onClick={() => toggle(job.id)} aria-expanded={detail?.open ?? false} className="min-w-0 flex-1 text-left">
-                  <div className="break-words text-sm text-text-primary">{title}</div>
+                  <div className="wrap-break-word text-sm text-text-primary">{title}</div>
                   <div className="text-xs text-text-muted">Added {new Date(job.createdAt).toLocaleString()}</div>
                 </button>
                 <span role="status" className="text-xs text-text-secondary">{detail?.error ? 'Status unavailable' : jobStatusLabel(job)}</span>
@@ -218,9 +218,9 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
               {detail?.open && <div className="pb-3 pl-4">
                 {detail.loading && <p className="text-xs text-text-muted">Loading files…</p>}
                 {items.map(item => <div key={item.itemId} className="border-t border-border-subtle py-3">
-                  <p className="break-words text-sm text-text-primary">{job.jobType === 'file_import' ? fileName(item.target) : item.target}</p>
+                  <p className="wrap-break-word text-sm text-text-primary">{job.jobType === 'file_import' ? fileName(item.target) : item.target}</p>
                   {job.jobType === 'file_import' && <p className="break-all text-xs text-text-muted">{item.target}</p>}
-                  <p className="mt-1 whitespace-pre-wrap break-words text-xs text-text-secondary">{item.status === 'completed' ? 'Imported' : item.status === 'failed' ? `Failed — ${item.errorMessage || 'Import failed'}` : ['running', 'processing'].includes(item.status) ? 'Processing — not ready to search yet' : item.status === 'cancelled' ? 'Cancelled' : 'Queued'}</p>
+                  <p className="mt-1 whitespace-pre-wrap wrap-break-word text-xs text-text-secondary">{item.status === 'completed' ? 'Imported' : item.status === 'failed' ? `Failed — ${item.errorMessage || 'Import failed'}` : ['running', 'processing'].includes(item.status) ? 'Processing — not ready to search yet' : item.status === 'cancelled' ? 'Cancelled' : 'Queued'}</p>
                   {item.status === 'failed' && job.jobType === 'file_import' && <>
                     <p className="mt-1 text-xs text-text-muted">{recoveryHint(item.errorMessage ?? null)}</p>
                     <div className="mt-2 flex gap-4">

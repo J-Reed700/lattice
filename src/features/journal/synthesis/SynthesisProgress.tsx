@@ -63,7 +63,7 @@ export function SynthesisProgress() {
       <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">{label} · {job.title}</p>
       {minimized ? (
         <button ref={toggleButton} type="button" onClick={() => showDetails(true)} aria-label={`Show synthesis progress: ${label}`}
-          className="flex max-w-full items-center gap-2 rounded-xl border border-border-default bg-surface-raised px-3 py-2.5 text-sm shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          className="flex max-w-full items-center gap-2 rounded-xl border border-border-default bg-surface-raised px-3 py-2.5 text-sm shadow-lg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
           <StatusIcon className={iconClass} aria-hidden="true" />
           <span className="truncate">{running ? 'Synthesizing…' : label}</span>
           <span className="text-xs tabular-nums text-text-muted" aria-hidden="true">{elapsedTime(elapsed)}</span>
@@ -78,13 +78,13 @@ export function SynthesisProgress() {
             </div>
             <button ref={toggleButton} type="button" onClick={() => running ? showDetails(false) : dismiss()}
               aria-label={running ? 'Minimize synthesis progress' : 'Dismiss synthesis progress'}
-              className="-mr-1 -mt-1 rounded-md p-1.5 text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="-mr-1 -mt-1 rounded-md p-1.5 text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
               {running ? <ChevronDown className="h-4 w-4" /> : <X className="h-4 w-4" />}
             </button>
           </div>
           <div className="border-t border-border-subtle px-4 py-3">
             {job.status === 'completed' ? (
-              <p className="flex items-start gap-2 break-words text-sm"><StatusIcon className={iconClass} aria-hidden="true" /><span className="min-w-0">Saved to <strong className="font-medium">{job.noteTitle || 'your journal'}</strong>.</span></p>
+              <p className="flex items-start gap-2 wrap-break-word text-sm"><StatusIcon className={iconClass} aria-hidden="true" /><span className="min-w-0">Saved to <strong className="font-medium">{job.noteTitle || 'your journal'}</strong>.</span></p>
             ) : (
               <ol aria-label="Synthesis stages" className="space-y-2">
                 {stages.map((stage, index) => {
@@ -93,7 +93,7 @@ export function SynthesisProgress() {
                   return (
                     <li key={stage.id} aria-current={current ? 'step' : undefined} className={`flex items-center gap-2 text-xs ${current ? 'font-medium text-text-primary' : 'text-text-muted'}`}>
                       {completed ? <Check className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-                        : current ? <StatusIcon className={`${iconClass} !h-3.5 !w-3.5`} aria-hidden="true" />
+                        : current ? <StatusIcon className={`${iconClass} h-3.5! w-3.5!`} aria-hidden="true" />
                           : <span className="flex h-3.5 w-3.5 items-center justify-center" aria-hidden="true"><span className="h-1.5 w-1.5 rounded-full bg-border-strong" /></span>}
                       <span>{current && running ? label : stage.label}</span>
                       {completed && <span className="sr-only">complete</span>}
@@ -103,7 +103,7 @@ export function SynthesisProgress() {
               </ol>
             )}
             {job.status === 'failed' && (
-              <div role="alert" className="mt-3 max-h-32 overflow-y-auto break-words text-xs text-danger-fg">
+              <div role="alert" className="mt-3 max-h-32 overflow-y-auto wrap-break-word text-xs text-danger-fg">
                 <p>{job.error}</p>
                 {job.stage === 'saving' && <p className="mt-1 text-text-secondary">Your synthesis is kept here while you retry saving.</p>}
               </div>
@@ -116,12 +116,12 @@ export function SynthesisProgress() {
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-border-subtle px-4 py-3">
             <span className="text-xs tabular-nums text-text-muted" aria-hidden="true">{elapsedTime(elapsed)} {running ? 'elapsed' : 'total'}{job.entryCount ? ` · ${job.entryCount} ${job.entryCount === 1 ? 'entry' : 'entries'}` : ''}</span>
-            {running ? <button type="button" onClick={() => showDetails(false)} className="rounded-sm text-xs font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Keep working</button>
+            {running ? <button type="button" onClick={() => showDetails(false)} className="rounded-sm text-xs font-medium text-accent hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">Keep working</button>
               : job.status === 'completed' ? <button type="button" onClick={() => {
                 navigate(`/journals?${new URLSearchParams({ noteId: job.noteId! }).toString()}`);
                 dismiss();
-              }} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Open journal page<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
-                : <button type="button" onClick={() => void job.retry?.()} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{job.stage === 'saving' ? 'Retry saving' : 'Try again'}</button>}
+              }} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">Open journal page<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
+                : <button type="button" onClick={() => void job.retry?.()} className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{job.stage === 'saving' ? 'Retry saving' : 'Try again'}</button>}
           </div>
         </div>
       )}

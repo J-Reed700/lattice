@@ -64,7 +64,7 @@ const normalizeCategory = (category: string): string =>
 
 const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value.trim());
 const TITLE_CLASS =
-  'break-words text-xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]';
+  'wrap-break-word text-xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]';
 const CLOSE_CLASS =
   'rounded-sm p-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]';
 
@@ -212,7 +212,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       <select
         value={targetImportSpaceId}
         onChange={(event) => setTargetImportSpaceId(event.target.value)}
-        className="min-w-[12rem] rounded-sm border border-border-default bg-surface-raised px-2 py-1 text-sm text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+        className="min-w-48 rounded-sm border border-border-default bg-surface-raised px-2 py-1 text-sm text-[hsl(var(--text-primary))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
       >
         {allowUnscopedImport && <option value="">Unscoped</option>}
         {spaces.map((space) => (

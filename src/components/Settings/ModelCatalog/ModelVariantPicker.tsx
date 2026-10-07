@@ -89,7 +89,7 @@ export function ModelVariantPicker({ model, selected, capabilities, onSelect }: 
           const quantization = modelQuantization(file);
           const fit = computeModelFit(file, capabilities);
           const chosen = selected.default_filename === file.default_filename;
-          return <button key={file.id} type="button" aria-pressed={chosen} onClick={() => selectFile(file)} className={cn('w-full rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', chosen ? 'border-accent bg-accent/5' : 'border-border-subtle hover:bg-surface-hover')}>
+          return <button key={file.id} type="button" aria-pressed={chosen} onClick={() => selectFile(file)} className={cn('w-full rounded-md border p-3 text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring', chosen ? 'border-accent bg-accent/5' : 'border-border-subtle hover:bg-surface-hover')}>
             <span className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium text-text-primary">
               <span className="inline-flex items-center gap-2">{chosen ? <Check className="h-4 w-4 text-accent" aria-hidden="true" /> : null}{quantization ?? 'GGUF'}{chosen ? <span className="text-xs text-accent">Selected</span> : null}</span>
               <span className="tabular-nums">{formatSize(file.size_gb) ?? 'Size unavailable'}</span>

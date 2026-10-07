@@ -139,7 +139,7 @@ export const IngestHub: FC<IngestHubProps> = ({
             ))}
           </Tabs.List>
 
-          <Tabs.Content value="single-url" className="mt-6 outline-none">
+          <Tabs.Content value="single-url" className="mt-6 outline-hidden">
             <UrlImport
               onImport={() => {}}
               onImportComplete={(success: boolean, url: string) =>
@@ -148,7 +148,7 @@ export const IngestHub: FC<IngestHubProps> = ({
             />
           </Tabs.Content>
 
-          <Tabs.Content value="bulk-url" className="mt-6 outline-none">
+          <Tabs.Content value="bulk-url" className="mt-6 outline-hidden">
             <BatchUrlImport
               onImport={() => {}}
               onImportComplete={(results: { successful: number; failed: number }) =>
@@ -162,7 +162,7 @@ export const IngestHub: FC<IngestHubProps> = ({
             />
           </Tabs.Content>
 
-          <Tabs.Content value="files" className="mt-6 outline-none">
+          <Tabs.Content value="files" className="mt-6 outline-hidden">
             <BatchFileImport
               onReviewFailures={() => setActiveTab('history')}
               onImportComplete={(results: { successful: number; failed: number }) =>
@@ -176,7 +176,7 @@ export const IngestHub: FC<IngestHubProps> = ({
             />
           </Tabs.Content>
 
-          <Tabs.Content value="history" className="mt-6 outline-none">
+          <Tabs.Content value="history" className="mt-6 outline-hidden">
             <ImportHistory />
           </Tabs.Content>
         </Tabs.Root>

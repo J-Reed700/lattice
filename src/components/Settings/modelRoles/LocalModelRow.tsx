@@ -157,7 +157,7 @@ export function LocalModelRow({ model }: Props) {
             <div
               role="alert"
               title={loadError}
-              className="mt-0.5 line-clamp-3 break-words text-xs text-danger-fg"
+              className="mt-0.5 line-clamp-3 wrap-break-word text-xs text-danger-fg"
             >
               Didn&apos;t load: {loadError.split('\n')[0]}
             </div>

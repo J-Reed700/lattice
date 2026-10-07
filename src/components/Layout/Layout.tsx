@@ -119,7 +119,7 @@ function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
           className={cn(
             'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 transition-colors duration-fast',
             !compact && 'xl:justify-start',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
             isActive ? 'text-text-primary' : 'text-text-tertiary hover:text-text-primary',
           )}
         >
@@ -177,7 +177,7 @@ export function Layout() {
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
           aria-label="Search and commands"
           className={cn(
-            'pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-text-tertiary transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.09)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-text-tertiary transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.09)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
             wide('xl:justify-start'),
           )}
         >
@@ -213,7 +213,7 @@ export function Layout() {
                   aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'}
                   className={cn(
                     'group relative hidden h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 text-text-tertiary transition-colors duration-fast hover:text-text-primary xl:flex',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                     wide('xl:justify-start'),
                   )}
                 >

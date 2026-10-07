@@ -45,7 +45,7 @@ export function CitationHoverCard({ hover, source, location, provenanceLabel }: 
     <div
       role="tooltip"
       style={style}
-      className="pointer-events-none fixed z-[60] rounded-lg bg-surface-overlay p-3.5 shadow-lg animate-in fade-in-0 duration-fast"
+      className="pointer-events-none fixed z-60 rounded-lg bg-surface-overlay p-3.5 shadow-lg animate-in fade-in-0 duration-fast"
     >
       <div className="flex items-start gap-2.5">
         <span className="mt-px flex h-5 min-w-5 items-center justify-center rounded-[5px] bg-accent-muted px-1 text-[11px] font-semibold tabular-nums text-accent">

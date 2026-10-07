@@ -64,7 +64,7 @@ export function MessageEditor({
         onKeyDown={handleKeyDown}
         rows={1}
         aria-label="Edit this message"
-        className="w-full resize-none rounded-md border border-border-default bg-surface px-4 py-3 font-sans text-base text-[hsl(var(--text-primary))] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-full resize-none rounded-md border border-border-default bg-surface px-4 py-3 font-sans text-base text-[hsl(var(--text-primary))] outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       />
       <div className="mt-2 flex items-center justify-between gap-3">
         <span className="text-xs text-[hsl(var(--text-muted))]">

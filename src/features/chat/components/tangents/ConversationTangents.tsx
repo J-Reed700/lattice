@@ -76,7 +76,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
             <button ref={toggleRef} type="button" aria-expanded={open} aria-controls={`tangents-${conversationId}`}
               title="Explore an idea alongside this conversation"
               onClick={() => { if (open) close(); else setOpen(true); }}
-              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
               {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <GitBranch className="h-3.5 w-3.5" aria-hidden="true" />}
               Tangents{tangents.data?.length ? ` · ${tangents.data.length}` : ''}
             </button>
@@ -102,7 +102,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
                 <p>Choose <strong className="font-medium text-text-secondary">Tangent</strong> below any reply, or highlight a passage and choose <strong className="font-medium text-text-secondary">Ask in a tangent</strong>.</p>
               </div>}
               <div className="space-y-2">{tangents.data?.map(tangent => <button key={tangent.conversationId} type="button"
-                className="w-full rounded-lg border border-border-subtle p-3 text-left hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="w-full rounded-lg border border-border-subtle p-3 text-left hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setSelectedId(tangent.conversationId)}>
                 <span className="block truncate text-sm font-medium">{tangent.title}</span>
                 <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-muted">{tangent.selectedText}</span>

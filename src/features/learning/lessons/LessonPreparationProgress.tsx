@@ -54,7 +54,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
             {active && !reconnecting ? <LoaderCircle size={18} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" /> : <CirclePause size={18} className="shrink-0 text-accent" aria-hidden="true" />}
             {reconnecting ? 'Preparation will resume automatically' : active ? 'Preparing your lesson' : paused ? 'Lesson preparation paused' : `Lesson preparation ${job?.status}`}
           </h3>
-          {activity?.lessonTitle && <p className="mt-2 break-words font-serif text-lg text-text-primary">{activity.lessonTitle}</p>}
+          {activity?.lessonTitle && <p className="mt-2 wrap-break-word font-serif text-lg text-text-primary">{activity.lessonTitle}</p>}
         </div>
         {job && <div className="flex flex-wrap items-center gap-3">
           {active && <span className="rounded-full bg-background px-3 py-1.5 text-xs tabular-nums text-text-secondary" aria-live="off">{reconnecting ? 'Waiting to retry' : queued ? 'Queued' : `This run · ${preparationDuration(elapsed)}`}</span>}
@@ -70,7 +70,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
       {!expanded && <p className="mt-3 text-sm leading-6 text-text-secondary" aria-live="polite">{paused ? `Paused${phase ? ` at: ${phase.title}` : ''}. Saved work is available.` : `${phase?.title ?? 'Preparing your lesson'} · ${job?.progressMessage || 'Request saved'}`}</p>}
       {expanded && job && job.progressTotal > 1 && <p className="mt-3 text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}
       {expanded && <ol aria-label="Preparation workflow" className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border/60 text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
+        {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>}
     </div>
     <div id={detailsId} hidden={!expanded} className="space-y-4 p-5">
@@ -81,7 +81,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
         </div>
         <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? job.error : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
-        {!paused && <p className="mt-2 break-words text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
+        {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>
       {hasChecks && <div className="rounded-xl border border-border bg-background/70 p-4">

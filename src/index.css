@@ -1,6 +1,128 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' source('./');
+@source '../index.html';
+
+@plugin 'tailwindcss-animate';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  --color-bg: hsl(var(--bg));
+  --color-chrome: hsl(var(--chrome));
+
+  --color-border: hsl(var(--border-subtle));
+  --color-border-subtle: hsl(var(--border-subtle));
+  --color-border-default: hsl(var(--border-default));
+  --color-border-strong: hsl(var(--border-strong));
+
+  --color-surface: hsl(var(--surface));
+  --color-surface-raised: hsl(var(--surface-raised));
+  --color-surface-overlay: hsl(var(--surface-overlay));
+  --color-surface-sunken: hsl(var(--surface-sunken));
+
+  --color-text-primary: hsl(var(--text-primary));
+  --color-text-secondary: hsl(var(--text-secondary));
+  --color-text-tertiary: hsl(var(--text-tertiary));
+  --color-text-muted: hsl(var(--text-muted));
+  --color-text-disabled: hsl(var(--text-disabled));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-hover: hsl(var(--accent-hover));
+  --color-accent-muted: hsl(var(--accent-muted));
+  --color-accent-fg: hsl(var(--accent-fg));
+
+  --color-success: hsl(var(--success));
+  --color-success-muted: hsl(var(--success-muted));
+  --color-success-fg: hsl(var(--success-fg));
+
+  --color-warning: hsl(var(--warning));
+  --color-warning-muted: hsl(var(--warning-muted));
+  --color-warning-fg: hsl(var(--warning-fg));
+
+  --color-danger: hsl(var(--danger));
+  --color-danger-muted: hsl(var(--danger-muted));
+  --color-danger-fg: hsl(var(--danger-fg));
+
+  --color-action: hsl(var(--action));
+  --color-action-hover: hsl(var(--action-hover));
+  --color-action-fg: hsl(var(--action-fg));
+
+  --color-highlight: hsl(var(--highlight));
+  --color-ring: hsl(var(--ring));
+  --color-overlay: hsl(var(--overlay));
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --text-xxs: 0.6875rem;
+  --text-xxs--line-height: 1.45;
+  --text-xxs--letter-spacing: 0.02em;
+  --text-xxs--font-weight: 500;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.4;
+  --text-ui--letter-spacing: -0.003em;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.5;
+  --text-xs--letter-spacing: 0.01em;
+  --text-xs--font-weight: 400;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.55;
+  --text-sm--letter-spacing: 0;
+  --text-sm--font-weight: 400;
+  --text-base: 1rem;
+  --text-base--line-height: 1.6;
+  --text-base--letter-spacing: 0;
+  --text-base--font-weight: 400;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.55;
+  --text-lg--letter-spacing: -0.005em;
+  --text-lg--font-weight: 500;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.4;
+  --text-xl--letter-spacing: -0.01em;
+  --text-xl--font-weight: 600;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.3;
+  --text-2xl--letter-spacing: -0.015em;
+  --text-2xl--font-weight: 600;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 1.2;
+  --text-3xl--letter-spacing: -0.02em;
+  --text-3xl--font-weight: 600;
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  --shadow-none: var(--shadow-none);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-sheet: var(--shadow-sheet);
+  --shadow-control: var(--shadow-control);
+  --shadow-action: var(--shadow-action);
+
+  --transition-duration-instant: var(--duration-instant);
+  --transition-duration-fast: var(--duration-fast);
+  --transition-duration-base: var(--duration-base);
+  --transition-duration-slow: var(--duration-slow);
+
+  --ease-out: var(--ease-out);
+  --ease-in: var(--ease-in);
+  --ease-in-out: var(--ease-in-out);
+  --ease-drawer: var(--ease-drawer);
+  --ease-linear: var(--ease-linear);
+}
+
 
 @layer base {
   :root {

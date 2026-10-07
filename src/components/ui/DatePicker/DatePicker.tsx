@@ -116,7 +116,7 @@ export function DatePicker({
           border-[hsl(var(--border-default))]
           rounded-md
           hover:bg-[hsl(var(--surface-raised))]
-          focus:outline-none
+          focus:outline-hidden
           focus-visible:ring-2
           focus-visible:ring-[hsl(var(--ring))]
           focus-visible:ring-offset-2
@@ -146,7 +146,7 @@ export function DatePicker({
               hover:text-[hsl(var(--text-secondary))]
               transition-colors
               duration-fast
-              focus:outline-none
+              focus:outline-hidden
               focus-visible:ring-2
               focus-visible:ring-[hsl(var(--ring))]
               rounded
@@ -200,7 +200,7 @@ export function DatePicker({
               head_row: 'flex',
               head_cell: 'text-[hsl(var(--text-secondary))] rounded-md w-9 font-normal text-[0.8rem]',
               row: 'flex w-full mt-2',
-              cell: 'text-center text-sm p-0 relative [&:has([aria-selected])]:bg-[hsl(var(--accent-muted))] first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20',
+              cell: 'text-center text-sm p-0 relative has-aria-[selected]:bg-[hsl(var(--accent-muted))] first:has-aria-[selected]:rounded-l-md last:has-aria-[selected]:rounded-r-md focus-within:relative focus-within:z-20',
               day: 'h-9 w-9 p-0 font-normal hover:bg-[hsl(var(--surface))] rounded-md transition-colors duration-fast aria-selected:bg-[hsl(var(--accent))] aria-selected:text-[hsl(var(--accent-fg))] aria-selected:hover:bg-[hsl(var(--accent-hover))] aria-selected:focus:bg-[hsl(var(--accent))]',
               day_selected: 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] focus:bg-[hsl(var(--accent))]',
               day_today: 'bg-[hsl(var(--surface))] font-semibold',
@@ -226,7 +226,7 @@ export function DatePicker({
                 rounded
                 transition-colors
                 duration-fast
-                focus:outline-none
+                focus:outline-hidden
                 focus-visible:ring-2
                 focus-visible:ring-[hsl(var(--ring))]
               "
@@ -247,7 +247,7 @@ export function DatePicker({
                 rounded
                 transition-colors
                 duration-fast
-                focus:outline-none
+                focus:outline-hidden
                 focus-visible:ring-2
                 focus-visible:ring-[hsl(var(--ring))]
               "

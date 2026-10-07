@@ -81,7 +81,7 @@ export function FullPageError({ error, errorInfo, resetError }: FullPageErrorPro
           </button>
           {showDetails ? (
             <div className="mt-3 space-y-3">
-              <p className="font-mono text-xs text-text-secondary break-words">
+              <p className="font-mono text-xs text-text-secondary wrap-break-word">
                 <span className="text-danger-fg">{error.name}</span> {displayMessage}
               </p>
               {isDevelopment && error.stack ? (

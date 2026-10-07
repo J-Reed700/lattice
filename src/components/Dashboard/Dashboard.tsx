@@ -67,7 +67,7 @@ function writeDismissedWeek(value: string): void {
 }
 
 const rowClass =
-  'row-hover group flex w-full items-start gap-3 rounded-lg px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  'row-hover group flex w-full items-start gap-3 rounded-lg px-2.5 py-2.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 
 /** Warm, low-chroma steps for the file-type bar: proportion, not category colour. */
 const TYPE_BAR_OPACITY = [0.9, 0.62, 0.42, 0.28, 0.18];
@@ -199,7 +199,7 @@ export const Dashboard = () => {
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
-          className="group mb-3 flex h-12 w-full items-center gap-3 rounded-xl bg-surface px-4 text-left shadow-sheet transition-shadow duration-base hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group mb-3 flex h-12 w-full items-center gap-3 rounded-xl bg-surface px-4 text-left shadow-sheet transition-shadow duration-base hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Search className="h-[17px] w-[17px] text-text-tertiary transition-colors duration-fast group-hover:text-accent" strokeWidth={1.6} />
           <span className="flex-1 text-[15px] text-text-muted">Find a document, an idea, a connection…</span>
@@ -212,7 +212,7 @@ export const Dashboard = () => {
               key={label}
               type="button"
               onClick={run}
-              className="pressable group flex items-center gap-3 rounded-xl border border-border-subtle px-3.5 py-3 text-left transition-[background-color,border-color,scale] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="pressable group flex items-center gap-3 rounded-xl border border-border-subtle px-3.5 py-3 text-left transition-[background-color,border-color,scale] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
                 <Icon className="h-4 w-4" strokeWidth={1.6} />
@@ -235,7 +235,7 @@ export const Dashboard = () => {
                 <button
                   type="button"
                   onClick={goToJournal}
-                  className="pressable group w-full rounded-xl bg-surface p-5 text-left shadow-sheet transition-[box-shadow,scale] duration-base hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="pressable group w-full rounded-xl bg-surface p-5 text-left shadow-sheet transition-[box-shadow,scale] duration-base hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <div className="flex items-baseline justify-between gap-3">
                     <div className="truncate font-serif text-[19px] font-medium tracking-[-0.015em] text-text-primary">

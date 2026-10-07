@@ -113,7 +113,7 @@ export function ModelRow({
         type="button"
         onClick={onSelect}
         className={cn(
-          'min-w-0 flex-1 rounded-sm text-left outline-none',
+          'min-w-0 flex-1 rounded-sm text-left outline-hidden',
           'focus-visible:ring-2 focus-visible:ring-ring',
         )}
       >

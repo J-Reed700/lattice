@@ -153,11 +153,11 @@ export const getTimeBucket = (updatedAt: Date, now: Date): TimeBucketKey => {
 };
 
 export const SPACES_MODAL_LAYER_CLASSES = {
-  root: 'z-[200]',
-  backdrop: 'z-[210]',
-  panel: 'z-[220]',
-  content: 'relative z-[221]',
-  section: 'relative z-[222]',
+  root: 'z-200',
+  backdrop: 'z-210',
+  panel: 'z-220',
+  content: 'relative z-221',
+  section: 'relative z-222',
 } as const;
 
 export const isReferenceInboxEnabled = (): boolean => {

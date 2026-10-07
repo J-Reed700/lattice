@@ -145,7 +145,7 @@ export function ExplorerTree({ root }: ExplorerTreeProps) {
       onKeyDown={onKeyDown}
       onFocus={() => setHasFocus(true)}
       onBlur={() => setHasFocus(false)}
-      className="h-full overflow-y-auto py-1 outline-none"
+      className="h-full overflow-y-auto py-1 outline-hidden"
     >
       {rows.map((row, index) => {
         const { entry } = row;

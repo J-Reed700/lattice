@@ -95,11 +95,11 @@ function Toast({ id, message, variant = 'info', duration = 5000, onDismiss }: To
         ${isExiting ? 'opacity-0 translate-x-full' : 'opacity-100 translate-x-0'}
       `}
     >
-      <IconComponent className={`w-4 h-4 flex-shrink-0 ${style.icon}`} strokeWidth={1.75} />
+      <IconComponent className={`w-4 h-4 shrink-0 ${style.icon}`} strokeWidth={1.75} />
       <p className={`flex-1 text-sm font-medium ${style.text}`}>{message}</p>
       <button
         onClick={handleDismiss}
-        className={`flex-shrink-0 p-0.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast ${style.icon}`}
+        className={`shrink-0 p-0.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast ${style.icon}`}
         aria-label="Dismiss notification"
       >
         <X className="w-4 h-4" strokeWidth={1.75} />

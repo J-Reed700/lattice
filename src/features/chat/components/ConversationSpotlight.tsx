@@ -171,7 +171,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
           className="fixed inset-0 z-50 bg-[hsl(var(--overlay))] data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
         />
         <Dialog.Content
-          className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-subtle bg-surface-raised shadow-md outline-none data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-subtle bg-surface-raised shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
           aria-label="Conversation Spotlight"
         >
           <Dialog.Title className="sr-only">Search conversations and references</Dialog.Title>
@@ -183,7 +183,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search conversations and references"
-              className="flex-1 bg-transparent text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none"
+              className="flex-1 bg-transparent text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden"
             />
             <kbd className="rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-xxs text-[hsl(var(--text-muted))]">
               Esc

@@ -107,7 +107,7 @@ export function PageList({
                     }}
                     maxLength={160}
                     aria-label={`Rename ${shown}`}
-                    className="h-8 w-full rounded-md border border-accent/60 bg-surface px-2.5 text-ui text-text-primary outline-none shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]"
+                    className="h-8 w-full rounded-md border border-accent/60 bg-surface px-2.5 text-ui text-text-primary outline-hidden shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]"
                   />
                 ) : (
                   <button

@@ -47,7 +47,7 @@ export function LlamaCppMetaRow() {
             Set a server URL
           </button>
         )}
-        <p className="mt-1 break-words text-xs text-text-muted">{meta}</p>
+        <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
       </div>
 
       {/* The model is typed on the Chat settings page, not here. */}

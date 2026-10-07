@@ -738,7 +738,7 @@ const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled, positio
         <div className="truncate text-sm text-text-primary">{file.name}</div>
         {meta && <div className="truncate text-xs text-text-muted">{meta}</div>}
         {file.status === 'error' && (
-          <p className="mt-1 break-words text-xs text-danger-fg">{status}</p>
+          <p className="mt-1 wrap-break-word text-xs text-danger-fg">{status}</p>
         )}
       </div>
       {status && file.status !== 'error' && (

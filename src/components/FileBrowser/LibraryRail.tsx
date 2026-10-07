@@ -292,7 +292,7 @@ function RailSection({
           }}
           placeholder={placeholder}
           aria-label={createLabel ?? heading}
-          className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
+          className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
         />
       ) : null}
 

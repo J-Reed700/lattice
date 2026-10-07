@@ -117,7 +117,7 @@ export function TangentSelection({ conversationId, messageId, enabled, children 
     }}>
       {children}
       {selection && createPortal(
-        <div ref={menuRef} role={selection.mode === 'menu' ? 'menu' : 'toolbar'} aria-label="Selected passage" className="fixed z-[100] w-56 rounded-lg border border-border-subtle bg-surface p-1 shadow-xl"
+        <div ref={menuRef} role={selection.mode === 'menu' ? 'menu' : 'toolbar'} aria-label="Selected passage" className="fixed z-100 w-56 rounded-lg border border-border-subtle bg-surface p-1 shadow-xl"
           style={{ left: Math.max(8, Math.min(selection.x, window.innerWidth - 232)), top: Math.max(8, Math.min(selection.y, window.innerHeight - (selection.mode === 'menu' ? 96 : 52))) }}
           onPointerDown={event => event.preventDefault()}
           onKeyDown={(event) => {

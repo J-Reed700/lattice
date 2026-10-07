@@ -837,7 +837,7 @@ export function JournalWorkspace() {
           <button type="button" onClick={() => { appliedInitialJournalRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
           <details className="mt-5 text-xs text-text-tertiary">
             <summary className="cursor-pointer">Error details</summary>
-            <p className="mt-2 break-words text-left">{topLevelError}</p>
+            <p className="mt-2 wrap-break-word text-left">{topLevelError}</p>
           </details>
         </div>
       </div>
@@ -864,7 +864,7 @@ export function JournalWorkspace() {
             type="button"
             onClick={() => void handleCreateJournal()}
             disabled={isCreatingJournal}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
             {isCreatingJournal ? 'Creating journal…' : 'New journal'}

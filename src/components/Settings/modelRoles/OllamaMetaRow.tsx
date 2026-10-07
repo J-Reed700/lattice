@@ -76,7 +76,7 @@ export function OllamaMetaRow() {
             Set a server URL
           </button>
         )}
-        <p className="mt-1 break-words text-xs text-text-muted">{meta}</p>
+        <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
         {providerOverride && (
           <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
             {provider === 'auto'

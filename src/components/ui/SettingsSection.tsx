@@ -76,7 +76,7 @@ export function SettingsRow({ label, hint, htmlFor, stacked = false, children, c
  * Spread onto <input>, <select>, or <textarea>.
  */
 export const settingsFieldClass =
-  'h-8 w-full rounded-md border border-border-default bg-surface px-2.5 text-ui text-text-primary shadow-control placeholder:text-text-muted outline-none transition-[border-color,box-shadow] duration-fast hover:border-border-strong focus:border-accent/70 focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)] disabled:cursor-not-allowed disabled:opacity-50';
+  'h-8 w-full rounded-md border border-border-default bg-surface px-2.5 text-ui text-text-primary shadow-control placeholder:text-text-muted outline-hidden transition-[border-color,box-shadow] duration-fast hover:border-border-strong focus:border-accent/70 focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)] disabled:cursor-not-allowed disabled:opacity-50';
 
 export const settingsTextareaClass =
-  'w-full rounded-md border border-border-default bg-surface px-3 py-2.5 font-mono text-xs leading-relaxed text-text-primary shadow-control placeholder:text-text-muted outline-none transition-[border-color,box-shadow] duration-fast hover:border-border-strong focus:border-accent/70 focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)] disabled:cursor-not-allowed disabled:opacity-50';
+  'w-full rounded-md border border-border-default bg-surface px-3 py-2.5 font-mono text-xs leading-relaxed text-text-primary shadow-control placeholder:text-text-muted outline-hidden transition-[border-color,box-shadow] duration-fast hover:border-border-strong focus:border-accent/70 focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)] disabled:cursor-not-allowed disabled:opacity-50';

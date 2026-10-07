@@ -68,13 +68,13 @@ export function LogsTab() {
           <details key={entry.id} className="border-b border-border-subtle last:border-b-0">
             <summary className="cursor-pointer px-4 py-3 text-sm hover:bg-surface-raised">
               <span className={`ml-1 mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${tones[entry.level]}`}>{entry.level}</span>
-              <span className="break-words text-text-primary">{entry.message}</span>
+              <span className="wrap-break-word text-text-primary">{entry.message}</span>
               {entry.count > 1 && <span className="ml-2 text-xs text-text-muted">×{entry.count}</span>}
               <span className="mt-1 block pl-5 text-xs text-text-muted">{entry.source} · {new Date(entry.lastSeen).toLocaleString()}</span>
             </summary>
             <div className="border-t border-border-subtle bg-bg px-4 py-3">
               <p className="mb-2 text-xs text-text-muted">First seen {new Date(entry.timestamp).toLocaleString()} · Event {entry.id}</p>
-              <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-secondary">{entry.details || 'No additional details.'}</pre>
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-xs leading-relaxed text-text-secondary">{entry.details || 'No additional details.'}</pre>
             </div>
           </details>
         ))}

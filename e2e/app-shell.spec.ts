@@ -530,6 +530,40 @@ for (const [cached, system, expected] of [
   });
 }
 
+test('production utilities preserve theme tokens in light and dark mode', async ({ page }) => {
+  await page.goto('/settings');
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const styles = await page.evaluate(() => {
+      const actual = document.createElement('div');
+      actual.className = 'bg-surface text-text-primary border border-border rounded-sm shadow-sm font-mono text-ui duration-fast';
+      const reference = document.createElement('div');
+      reference.style.cssText = 'background-color:hsl(var(--surface));color:hsl(var(--text-primary));border:1px solid hsl(var(--border-subtle));border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);font-family:var(--font-mono);font-size:0.8125rem;transition-duration:var(--duration-fast)';
+      document.body.append(actual, reference);
+      const read = (element: HTMLElement) => {
+        const css = getComputedStyle(element);
+        return {
+          background: css.backgroundColor, color: css.color, border: css.borderColor,
+          borderWidth: css.borderWidth, radius: css.borderRadius, shadow: css.boxShadow,
+          font: css.fontFamily, size: css.fontSize, duration: css.transitionDuration,
+        };
+      };
+      const result = { actual: read(actual), reference: read(reference) };
+      actual.remove(); reference.remove();
+      return result;
+    });
+    const { shadow: actualShadow, ...actual } = styles.actual;
+    const { shadow: expectedShadow, ...reference } = styles.reference;
+    expect(actual, theme).toEqual(reference);
+    expect(styles.actual.radius).toBe('5px');
+    // Tailwind composes transparent ring placeholders ahead of the theme shadow.
+    expect(actualShadow).toContain(expectedShadow);
+    expect(expectedShadow).not.toBe('none');
+    expect(styles.actual.font).toContain('JetBrains Mono');
+  }
+});
+
 test('theme text and destructive actions keep readable contrast', async ({ page }) => {
   await page.goto('/settings');
   for (const theme of ['light', 'dark'] as const) {

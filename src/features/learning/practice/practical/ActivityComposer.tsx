@@ -275,7 +275,7 @@ export function ActivityComposer({
             maxLength={2000}
             rows={3}
             placeholder="What would you like to practice or demonstrate?"
-            className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none focus:border-accent"
+            className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
           />
         </label>
         <section className="mt-4 rounded-xl border border-border bg-background/50 p-4">

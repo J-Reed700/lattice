@@ -86,7 +86,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
   return (
     <>
       <div
-        className="fixed inset-0 z-[9998] bg-overlay animate-in fade-in duration-fast"
+        className="fixed inset-0 z-9998 bg-overlay animate-in fade-in duration-fast"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -94,7 +94,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcuts-title"
-        className="fixed left-1/2 top-1/2 z-[9999] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 animate-in fade-in zoom-in-95 duration-fast"
+        className="fixed left-1/2 top-1/2 z-9999 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 animate-in fade-in zoom-in-95 duration-fast"
       >
         <div className="max-h-[80vh] overflow-y-auto rounded-lg border border-border-subtle bg-surface-raised shadow-md">
           <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">

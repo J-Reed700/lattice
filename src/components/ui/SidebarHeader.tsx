@@ -48,7 +48,7 @@ export function SidebarSearch({ value, onChange, placeholder, className }: Sideb
       placeholder={placeholder}
       aria-label={placeholder}
       className={cn(
-        'h-8 w-full rounded-md border border-transparent bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-ui text-text-primary placeholder:text-text-muted outline-none transition-[background-color,border-color,box-shadow] duration-fast hover:bg-[hsl(var(--text-primary)/0.08)] focus:border-accent/60 focus:bg-surface focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]',
+        'h-8 w-full rounded-md border border-transparent bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-ui text-text-primary placeholder:text-text-muted outline-hidden transition-[background-color,border-color,box-shadow] duration-fast hover:bg-[hsl(var(--text-primary)/0.08)] focus:border-accent/60 focus:bg-surface focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]',
         className,
       )}
     />
