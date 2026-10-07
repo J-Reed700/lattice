@@ -789,6 +789,18 @@ impl FolderIndexManager {
             .as_ref()
             .map(|current| current.status.get())
     }
+
+    /// Lets tests release a blocked embedding only after foreground work has
+    /// cancelled the background run, without assuming how fast either runs.
+    #[cfg(test)]
+    pub async fn background_cancellation_token(&self) -> Option<CancellationToken> {
+        self.slots
+            .lock()
+            .await
+            .background
+            .as_ref()
+            .map(|current| current.cancel.clone())
+    }
 }
 
 /// Everything the background task of one open folder owns.

@@ -31,6 +31,21 @@ struct FakeEmbedder {
     embedded: Mutex<Vec<String>>,
     batches: AtomicUsize,
     delay_ms: AtomicU64,
+    batch_gate: Mutex<Option<Arc<BatchGate>>>,
+}
+
+struct BatchGate {
+    permits: tokio::sync::Semaphore,
+    blocked: tokio::sync::Notify,
+}
+
+impl BatchGate {
+    fn new(allowed: usize) -> Arc<Self> {
+        Arc::new(Self {
+            permits: tokio::sync::Semaphore::new(allowed),
+            blocked: tokio::sync::Notify::new(),
+        })
+    }
 }
 
 impl FakeEmbedder {
@@ -40,6 +55,7 @@ impl FakeEmbedder {
             embedded: Mutex::new(Vec::new()),
             batches: AtomicUsize::new(0),
             delay_ms: AtomicU64::new(0),
+            batch_gate: Mutex::new(None),
         })
     }
 
@@ -74,6 +90,18 @@ impl EmbeddingPort for FakeEmbedder {
         Ok(Self::vector(text))
     }
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let gate = self.batch_gate.lock().clone();
+        if let Some(gate) = gate {
+            match gate.permits.try_acquire() {
+                Ok(permit) => permit.forget(),
+                Err(_) => {
+                    gate.blocked.notify_one();
+                    if let Ok(permit) = gate.permits.acquire().await {
+                        permit.forget();
+                    }
+                }
+            }
+        }
         let delay = self.delay_ms.load(Ordering::SeqCst);
         if delay > 0 {
             tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -349,7 +377,8 @@ mod rules {
         // The data directory's parent holds the index itself.
         let data = rig.base.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(&data).unwrap();
-        for root in [PathBuf::from("/"), rig.home.clone(), parent, data] {
+        let disk_root = rig.home.ancestors().last().unwrap().to_path_buf();
+        for root in [disk_root, rig.home.clone(), parent, data] {
             let status = manager.open(&text(&root)).await.unwrap();
             assert_eq!(
                 status.state,
@@ -1306,13 +1335,25 @@ mod background {
         let other = rig.project("other", &[("src/parser.rs", PARSER_RS)]);
         pause_part_way(&manager, &embedder, &slow).await;
 
-        // Slow enough that the background is still at it when a folder opens.
-        embedder.delay_ms.store(100, Ordering::SeqCst);
+        // Let the quick folder finish, then hold the actual background batch.
+        // An old Indexing event from pause_part_way is not proof it resumed.
+        let background_gate = BatchGate::new(1);
+        *embedder.batch_gate.lock() = Some(Arc::clone(&background_gate));
+        embedder.delay_ms.store(0, Ordering::SeqCst);
+        rig.events.lock().clear();
         open_settled(&manager, &quick).await;
-        told(&rig, &slow, FolderIndexState::Indexing).await;
-        assert!(manager.background().await.is_some());
+        background_gate.blocked.notified().await;
+        let cancelled = manager.background_cancellation_token().await.unwrap();
 
-        manager.open(&text(&other)).await.unwrap();
+        // The new foreground folder stays active while its priority is checked.
+        let foreground_gate = BatchGate::new(0);
+        *embedder.batch_gate.lock() = Some(Arc::clone(&foreground_gate));
+        let other_root = text(&other);
+        let (opened, ()) = tokio::join!(manager.open(&other_root), async {
+            cancelled.cancelled().await;
+            background_gate.permits.close();
+        });
+        opened.unwrap();
         assert!(
             manager.background().await.is_none(),
             "the folder being opened goes first"
@@ -1322,7 +1363,7 @@ mod background {
             FolderIndexSummaryState::Partial
         );
 
-        embedder.delay_ms.store(0, Ordering::SeqCst);
+        foreground_gate.permits.close();
         assert_eq!(manager.settled().await.state, FolderIndexState::Ready);
         let finished = told(&rig, &slow, FolderIndexState::Ready).await;
         assert_eq!(finished.files_indexed, 40);
