@@ -33,6 +33,17 @@ async function invoke(command, args = {}) {
   return response.value;
 }
 
+async function displayedElement(selector, timeout = 30_000) {
+  // React can replace a node while the workspace loads. The native driver's
+  // script argument cache retains detached nodes, whose checkVisibility()
+  // returns false without a stale-element error. Locate the live node on
+  // each poll instead of waiting on an element captured during navigation.
+  await browser.waitUntil(async () => (await browser.$(selector)).isDisplayed(), {
+    timeout, timeoutMsg: `Element ${selector} was not displayed after ${timeout}ms`,
+  });
+  return browser.$(selector);
+}
+
 async function launch() {
   assert.ok(!app, 'The previous app process must be closed before relaunch');
   if (process.platform === 'darwin') {
@@ -196,10 +207,10 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       const journal = await browser.$('button[aria-label="Journal"]');
       await journal.click();
       const create = await browser.$('button=New journal');
-      const title = await browser.$('textarea[aria-label="Page title"]');
-      await browser.waitUntil(async () => (await title.isExisting()) || (await create.isExisting()), { timeout: 30_000 });
-      if (!(await title.isExisting())) await create.click();
-      await title.waitForDisplayed({ timeout: 30_000 });
+      const titleSelector = 'textarea[aria-label="Page title"]';
+      await browser.waitUntil(async () => (await (await browser.$(titleSelector)).isExisting()) || (await create.isExisting()), { timeout: 30_000 });
+      if (!(await (await browser.$(titleSelector)).isExisting())) await create.click();
+      const title = await displayedElement(titleSelector);
       await (await browser.$('.ProseMirror[contenteditable="true"]')).waitForDisplayed({ timeout: 15_000 });
       const writingWidth = await title.getSize('width');
       assert.ok(writingWidth >= 240, `Journal writing column is only ${writingWidth}px wide`);
@@ -244,8 +255,7 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       assert.ok(note, 'Focused page title was not saved during shutdown');
       assert.ok(note.content.includes(expectedBody), 'The complete journal body must survive shutdown');
       await (await browser.$('button[aria-label="Journal"]')).click();
-      const title = await browser.$('textarea[aria-label="Page title"]');
-      await title.waitForDisplayed({ timeout: 30_000 });
+      const title = await displayedElement('textarea[aria-label="Page title"]');
       assert.equal(await title.getValue(), expectedTitle);
       await browser.saveScreenshot(path.join(reports, 'journal-after-restart.png'));
       if (process.env.LATTICE_NATIVE_LEAK_SCAN === '1') {
