@@ -21,15 +21,18 @@ enum PreparedClaim {
 async fn prepare(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
+    sources: &[SourceBinding],
     executions: &[execution::Observation],
     retained: &ClaimChecks,
     ordinal: usize,
-    unit: usize,
-    claim: Claim,
+    located_claim: (usize, Claim),
 ) -> Result<PreparedClaim> {
-    let evidence = evidence_for(&claim.statement, unit, references, executions).await?;
+    let (unit, claim) = located_claim;
+    let evidence =
+        evidence_selection::select(llm, &claim, unit, references, sources, executions, retained)
+            .await?;
     let key = ClaimChecks::key(unit, &claim, &evidence);
-    if let Some(finding) = retained.get(&key, &evidence) {
+    if let Some(finding) = retained.get(&key, unit, &claim, &evidence) {
         return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
     }
     let receipt_key = claim_receipt_key(llm, &key);
@@ -39,6 +42,16 @@ async fn prepare(
         .and_then(|receipt| receipt.finding(unit, &claim, &evidence))
     {
         return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+    }
+    if let Some(receipt) =
+        claim_reuse::legacy_receipt(llm, retained, unit, &claim, &evidence).await?
+    {
+        let saved = serde_json::to_value(&receipt)?;
+        if let Some(finding) = receipt.finding(unit, &claim, &evidence) {
+            crate::features::learning::lesson_drafts::record_checkpoint(&receipt_key, saved)
+                .await?;
+            return Ok(PreparedClaim::Complete((ordinal, key, finding, true)));
+        }
     }
     let text = evidence
         .iter()
@@ -117,6 +130,10 @@ async fn finish(pending: PendingClaim, judgment: ClaimJudgment) -> Result<Checke
                 verdict: finding.verdict,
                 reason: finding.reason.clone(),
                 supporting_quote: finding.supporting_quote.clone(),
+                interpretation_policy: Some(
+                    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                        .into(),
+                ),
             })?,
         )
         .await?;
@@ -147,15 +164,8 @@ fn completed(results: &mut Vec<CheckedClaim>, result: CheckedClaim) {
     results.push(result);
 }
 
-async fn group(llm: &dyn LLMPort, prepared: Vec<PreparedClaim>) -> Result<Vec<CheckedClaim>> {
+async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<CheckedClaim>> {
     let mut results = Vec::new();
-    let mut pending = Vec::new();
-    for item in prepared {
-        match item {
-            PreparedClaim::Complete(result) => completed(&mut results, result),
-            PreparedClaim::Pending(item) => pending.push(item),
-        }
-    }
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
@@ -257,11 +267,66 @@ pub(super) async fn check(
         })
         .collect();
     let total = entries.len();
+    claim_reuse::load_prior_claims(retained).await?;
+    let sources = evidence_selection::sources(references);
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Evidence,
-        format!("Checking evidence and unresolved questions for {total} claims"),
+        format!("Looking for reusable checks across {total} lesson claims"),
     );
     crate::features::learning::lesson_progress::begin_checks(total);
+    // Restore ALL reusable results before the first model request. Otherwise a
+    // slow early comparison hides saved work later in the inventory, making a
+    // resumed or expanded-evidence pass look like a complete restart. Collect
+    // only pending claims into model batches, including across inventory gaps.
+    let mut results = Vec::new();
+    let mut pending = Vec::new();
+    let mut reused = 0;
+    let mut entries = futures::stream::iter(entries.into_iter().enumerate()).chunks(BATCH_SIZE);
+    while let Some(entries) = entries.next().await {
+        // Drain the reads before any subsequent model work/checkpoint writes.
+        // Unpolled prefetches can otherwise hold scarce database pool slots.
+        let prepared: Vec<_> = futures::stream::iter(entries)
+            .map(|(ordinal, (unit, claim))| {
+                prepare(
+                    llm,
+                    references,
+                    &sources,
+                    executions,
+                    retained,
+                    ordinal,
+                    (unit, claim),
+                )
+            })
+            .buffered(BATCH_SIZE)
+            .try_collect()
+            .await?;
+        for item in prepared {
+            match item {
+                PreparedClaim::Complete(result) => {
+                    reused += usize::from(result.3);
+                    completed(&mut results, result);
+                }
+                PreparedClaim::Pending(item) => pending.push(item),
+            }
+        }
+        crate::features::learning::lesson_progress::stage(format!(
+            "Compared current evidence for {} of {total} claims · {reused} saved checks reused so far",
+            results.len() + pending.len()
+        ));
+    }
+    let model_checks = pending.len();
+    let resolved = results.len();
+    crate::features::learning::lesson_progress::plan_model_checks(model_checks);
+    tracing::info!(
+        total,
+        reused,
+        model_checks,
+        locally_resolved = resolved - reused,
+        "Lesson claim check plan ready"
+    );
+    crate::features::learning::lesson_progress::stage(format!(
+        "{reused} saved checks reused · {model_checks} of {total} claims need model review"
+    ));
     let size = if llm.supports_typed_completions() {
         BATCH_SIZE
     } else {
@@ -271,42 +336,15 @@ pub(super) async fn check(
     // large prompt prefills on the same model; individual requests stay parallel.
     let concurrency = if size > 1 { 1 } else { 3 };
     // Non-structured providers retain the existing individual-call path.
-    let mut groups = futures::stream::iter(entries.into_iter().enumerate())
+    let mut groups = futures::stream::iter(pending)
         .chunks(size)
-        .map(|entries| async move {
-            // Finish this group's reads before checking and saving it. Prefetch
-            // outside the group can leave unpolled reads holding pool slots
-            // while the current group waits for a connection to save receipts.
-            let prepared = futures::stream::iter(entries)
-                .map(|(ordinal, (unit, claim))| {
-                    prepare(llm, references, executions, retained, ordinal, unit, claim)
-                })
-                .buffered(size)
-                .try_collect()
-                .await?;
-            group(llm, prepared).await
-        })
+        .map(|pending| group(llm, pending))
         .buffer_unordered(concurrency);
-    let mut results = Vec::new();
-    let mut reused = 0;
     while let Some(batch) = groups.next().await {
-        for result in batch? {
-            reused += usize::from(result.3);
-            results.push(result);
-        }
-        let reuse = if reused == 0 {
-            String::new()
-        } else {
-            format!(" · {reused} unchanged checks reused")
-        };
-        let batching = if size > 1 {
-            " · Checking remaining claims in groups"
-        } else {
-            ""
-        };
+        results.extend(batch?);
         crate::features::learning::lesson_progress::stage(format!(
-            "Checked {} of {total} claims against saved references{reuse}{batching}",
-            results.len()
+            "Completed {} of {model_checks} model checks · {reused} saved checks reused · {total} lesson claims",
+            results.len() - resolved
         ));
     }
     results.sort_by_key(|(ordinal, _, _, _)| *ordinal);

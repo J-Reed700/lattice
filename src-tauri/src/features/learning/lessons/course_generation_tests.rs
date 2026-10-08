@@ -31,7 +31,7 @@ impl LLMPort for Model {
                 return Ok(json!({"issues":[]}).to_string());
             }
             let checks: Vec<_> = context["candidate"]["blocks"].as_array().into_iter().flatten().enumerate().map(|(index, block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The comparison and measurement task is consistent with the randomized experiment objective.","hasDefect":false})).collect();
-            return Ok(json!({"issues":[],"blockChecks":checks}).to_string());
+            return Ok(json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(checks)}).to_string());
         }
         Ok(self.0.clone())
     }
@@ -316,7 +316,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             if prompt.starts_with("Review instructional quality.")
                 && self.fail_review.load(Ordering::Relaxed)
             {
-                return Ok(json!({"issues":[],"blockChecks":[]}).to_string());
+                return Ok(json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}).to_string());
             }
             self.inner.generate(prompt, context, history).await
         }
@@ -498,12 +498,13 @@ impl LLMPort for ScriptedModel {
 #[tokio::test]
 async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
-    let repaired = json!({"corrected":true}).to_string();
+    let repaired = json!({"wrong":false}).to_string();
+    let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
                 issue.clone(),
-                repaired.clone(),
+                patch.clone(),
                 json!({"issues":[]}).to_string(),
             ]
             .into(),
@@ -532,7 +533,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![issue.clone(), repaired, issue].into()),
+        outputs: std::sync::Mutex::new(vec![issue.clone(), patch, issue].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::features::learning::teaching::review_and_repair(
@@ -556,11 +557,11 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
             .repeat(10);
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
     let check = |has_defect| {
-        json!({"issues":[],"blockChecks":[{"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}]}).to_string()
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect})])}).to_string()
     };
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
-            vec![check(true), candidate.to_string(), check(false)].into(),
+            vec![check(true), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false)].into(),
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
@@ -578,11 +579,11 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
             .prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-        assert!(prompts[1].contains("Section 1: The example contradicts"));
+        assert!(prompts[1].contains("Section 1 (candidate blocks-0): The example contradicts"));
     }
     for review in [
-        json!({"issues":[],"blockChecks":[]}),
-        json!({"issues":[],"blockChecks":[{"index":0,"passageId":"section-0-invented-passage","finding":"This unsupported review cannot establish that the passage was inspected.","hasDefect":false}]}),
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}),
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-invented-passage","finding":"This unsupported review cannot establish that the passage was inspected.","hasDefect":false})])}),
     ] {
         let model = ScriptedModel {
             outputs: std::sync::Mutex::new(vec![review.to_string()].into()),
@@ -614,7 +615,7 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
             vec![
                 check.clone(),
                 json!({"issues":[]}).to_string(),
-                repaired.to_string(),
+                json!({"edits":[{"path":"/questions/0/correctIndex","before":0,"after":1},{"path":"/questions/0/explanation","before":"AUTHOR_KEY_SECRET","after":"Two plus two is four."}]}).to_string(),
                 check,
                 json!({"issues":[]}).to_string(),
             ]

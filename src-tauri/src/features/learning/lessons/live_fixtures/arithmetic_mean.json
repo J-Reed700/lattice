@@ -1,0 +1,13 @@
+{
+  "title": "Arithmetic mean: a small lesson",
+  "goal": "Compute the arithmetic mean of a short list of positive integers. Keep this lesson narrowly focused on adding all values and dividing by the number of observations.",
+  "priorKnowledge": "Can add and divide positive integers. No statistics background.",
+  "objective": "Compute the arithmetic mean for a short list, show the sum and count, and distinguish the count from the largest value.",
+  "sources": [
+    {
+      "title": "NIST Engineering Statistics Handbook: definition of the mean",
+      "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda351.htm",
+      "text": "The mean is the sum of the data points divided by the number of data points."
+    }
+  ]
+}

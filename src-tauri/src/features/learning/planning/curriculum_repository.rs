@@ -73,8 +73,13 @@ impl LearningCurriculumRepository {
         Self { pool }
     }
 
-    async fn seed_accepted(&self, program_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+    pub(in crate::features::learning) async fn seed_accepted(
+        &self,
+        program_id: &str,
+    ) -> Result<()> {
+        // The UI and a background worker may initialize the same legacy plan.
+        // Claim the writer before reading so they cannot both seed a snapshot.
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
             .bind(program_id).fetch_one(&mut *tx).await.map_err(db)?;
         if existing > 0 {
@@ -1243,6 +1248,18 @@ impl LearningCurriculumRepository {
         let saved: Option<String> = sqlx::query_scalar("SELECT payload_json FROM learning_generation_checkpoints WHERE job_id=? AND lesson_id=? AND checkpoint_key=?")
             .bind(job_id).bind(lesson_id).bind(key).fetch_optional(&self.pool).await.map_err(db)?;
         saved.as_deref().map(decode).transpose()
+    }
+
+    pub(in crate::features::learning) async fn lesson_checkpoints_with_prefix(
+        &self,
+        job_id: &str,
+        lesson_id: &str,
+        prefix: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let saved: Vec<String> = sqlx::query_scalar("SELECT payload_json FROM learning_generation_checkpoints WHERE job_id=? AND lesson_id=? AND substr(checkpoint_key,1,length(?))=? ORDER BY updated_at DESC,checkpoint_key")
+            .bind(job_id).bind(lesson_id).bind(prefix).bind(prefix)
+            .fetch_all(&self.pool).await.map_err(db)?;
+        saved.iter().map(|value| decode(value)).collect()
     }
 
     pub(in crate::features::learning) async fn save_lesson_checkpoint(

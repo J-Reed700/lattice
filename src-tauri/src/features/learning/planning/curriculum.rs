@@ -191,6 +191,9 @@ pub struct LearningGenerationActivity {
     pub checks_total: u32,
     pub checks_reused: u32,
     pub checks_unresolved: u32,
+    /// None while looking up saved checks; otherwise the number requiring the
+    /// model in this pass, after every reusable comparison has been restored.
+    pub model_checks_total: Option<u32>,
     pub recent_steps: Vec<LearningGenerationStep>,
 }
 

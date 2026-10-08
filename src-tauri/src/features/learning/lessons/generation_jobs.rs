@@ -203,6 +203,10 @@ impl LessonGenerationWorker {
                 "Only active programs can prepare lessons.".into(),
             ));
         }
+        // Publication needs an accepted snapshot even when the renderer never
+        // opened the plan view (including recovered background-only work).
+        // This snapshots the already accepted outline; it approves no content.
+        repo.seed_accepted(&job.program_id).await?;
         (self.refresh_sources)(job.program_id.clone()).await?;
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
@@ -504,6 +508,14 @@ mod repository_tests {
         for user_cancel in [false, true] {
             let pool = crate::features::learning::tests::pool().await.unwrap();
             let (repo, job) = queued_job(&pool).await;
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=?",
+            )
+            .bind(&job.program_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 0, "No renderer plan request should be needed");
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
@@ -531,6 +543,10 @@ mod repository_tests {
             tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
                 .await
                 .unwrap();
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
+                .bind(&job.program_id).fetch_one(&pool).await.unwrap();
+            assert_eq!(count, 1, "Initialize the accepted outline before inference");
+            assert!(repo.job_content_is_current(&job.id).await.unwrap());
             if user_cancel {
                 repo.cancel_job(&LearningGenerationJobActionRequestDto {
                     operation_id: uuid::Uuid::new_v4().to_string(),

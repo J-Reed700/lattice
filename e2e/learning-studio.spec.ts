@@ -98,7 +98,7 @@ test('Lesson preparation explains verification and research across navigation an
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 95_000, lastCheckpointAt: Date.now() - 96_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
-        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3,
+        verificationPass: 2, checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, modelChecksTotal: 134,
         recentSteps: [{ phase: 'review', startedAt: Date.now() - 900_000 }, { phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
       },
     }];
@@ -107,6 +107,7 @@ test('Lesson preparation explains verification and research across navigation an
   const panel = page.getByRole('region', { name: 'Lesson preparation progress' });
   await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
   await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
+  await expect(panel.getByText('30 saved checks reused. 87 of 134 model checks remaining in this pass.')).toBeVisible();
   await expect(panel.getByText(/Checkpoint saved at/)).toBeVisible();
   await expect(panel.getByText(/No new output or completed step/)).toBeVisible();
   await panel.getByText('Recent activity', { exact: true }).click();

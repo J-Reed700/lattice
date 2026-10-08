@@ -14,6 +14,7 @@ struct BatchModel {
     peak_calls: std::sync::atomic::AtomicUsize,
     malformed_first: bool,
     block_individual: bool,
+    block_batch: bool,
     max_batch_size: Option<usize>,
     batch_error: Option<AppError>,
     batch_sizes: Mutex<Vec<usize>>,
@@ -80,6 +81,9 @@ impl LLMPort for BatchModel {
             let size = batch["claims"].as_array().unwrap().len();
             if !challenge {
                 self.batch_sizes.lock().unwrap().push(size);
+                if self.block_batch {
+                    std::future::pending::<()>().await;
+                }
                 if self.max_batch_size.is_some_and(|max| size > max) {
                     return Err(AppError::ServiceNotAvailable(
                         "Fixture server cannot finish this group".into(),
@@ -294,7 +298,9 @@ fn coverage(count: usize) -> Coverage {
     }
 }
 
-async fn setup(pool: &sqlx::SqlitePool) -> Result<(LearningCurriculumRepository, String, String)> {
+pub(in crate::features::learning::lessons::content_verification) async fn setup(
+    pool: &sqlx::SqlitePool,
+) -> Result<(LearningCurriculumRepository, String, String)> {
     let programs = LearningRepository::new(pool.clone());
     let program = crate::features::learning::tests::fixture();
     programs.create(&program).await?;
@@ -370,6 +376,115 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
         Ok(())
     })
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_missing_work(
+) -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("restore-before-model.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut saved = inventory(170);
+    saved
+        .units
+        .retain(|unit| ![0, 85, 169].contains(&unit.index));
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        evidence_checks::check(
+            &BatchModel::default(),
+            &references,
+            &saved,
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        Ok(())
+    })
+    .await?;
+    let blocked = BatchModel {
+        block_batch: true,
+        block_individual: true,
+        ..Default::default()
+    };
+    crate::features::learning::lesson_progress::run(&repo, &job, lesson_drafts::run(&repo, &job, &lesson, async {
+        let inventory = inventory(170);
+        let retained = ClaimChecks::default();
+        let work = evidence_checks::check(&blocked, &references, &inventory, &[], &retained);
+        tokio::select! {
+            result = work => panic!("The unfinished checks should still be running: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while blocked.calls.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The model request never started"),
+        }
+        Ok(())
+    })).await?;
+    let activity = repo.job(&job).await?.activity.unwrap();
+    assert_eq!(activity.checks_total, 170);
+    assert_eq!(
+        activity.checks_reused, 167,
+        "Late saved checks must be visible before the slow first request finishes"
+    );
+    assert_eq!(activity.checks_completed, 167);
+    assert_eq!(activity.model_checks_total, Some(3));
+    assert_eq!(
+        *blocked.batch_sizes.lock().unwrap(),
+        vec![3],
+        "Pending claims from separate inventory groups should share one request"
+    );
+    drop(repo);
+    pool.close().await;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    repo.recover_running_jobs().await?;
+    assert!(repo.begin_job(&job).await?);
+    let resumed = BatchModel::default();
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let results = evidence_checks::check(
+            &resumed,
+            &references,
+            &inventory(170),
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(results.len(), 170);
+        assert_eq!(results.iter().filter(|result| result.3).count(), 167);
+        assert!(results
+            .iter()
+            .all(|result| result.2.verdict == ClaimVerdict::Supported));
+        assert_eq!(
+            results.iter().map(|result| result.0).collect::<Vec<_>>(),
+            (0..170).collect::<Vec<_>>()
+        );
+        Ok(())
+    })
+    .await?;
+    assert_eq!(*resumed.batch_sizes.lock().unwrap(), vec![3]);
+    assert_eq!(
+        *resumed.calls.lock().unwrap(),
+        vec!["batch-evidence", "batch-challenge"]
+    );
+    pool.close().await;
     Ok(())
 }
 

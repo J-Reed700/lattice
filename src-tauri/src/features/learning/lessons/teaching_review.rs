@@ -6,7 +6,25 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+
+pub(super) const POLICY: &str = "section-review-v2";
+
+#[cfg(test)]
+pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
+    Value::Object(
+        checks
+            .into_iter()
+            .map(|mut check| {
+                let index = check
+                    .as_object_mut()
+                    .and_then(|fields| fields.remove("index"))
+                    .unwrap_or(Value::Null);
+                (format!("section-{index}"), check)
+            })
+            .collect(),
+    )
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,8 +39,33 @@ struct BlockCheck {
 #[serde(deny_unknown_fields)]
 struct Review {
     issues: Vec<String>,
-    #[serde(default, rename = "blockChecks")]
-    block_checks: Vec<Value>,
+    #[serde(default, rename = "blockChecks", deserialize_with = "unique_checks")]
+    block_checks: BTreeMap<String, Value>,
+}
+
+fn unique_checks<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<String, Value>, D::Error> {
+    struct Checks;
+    impl<'de> serde::de::Visitor<'de> for Checks {
+        type Value = BTreeMap<String, Value>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("one check per application-assigned section key")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut checks = BTreeMap::new();
+            while let Some((key, value)) = map.next_entry::<String, Value>()? {
+                if checks.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("duplicate section check"));
+                }
+            }
+            Ok(checks)
+        }
+    }
+    deserializer.deserialize_map(Checks)
 }
 
 // Preserve every byte, including code indentation, newlines and Unicode. IDs
@@ -75,17 +118,13 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
     )]);
     if !passages.is_empty() {
         required.push("blockChecks");
-        let allowed = if indices.is_empty() {
-            (0..passages.len()).collect()
-        } else {
-            indices.to_vec()
-        };
-        let ids: Vec<_> = allowed
-            .iter()
-            .filter_map(|i| passages.get(*i))
-            .flatten()
-            .collect();
-        properties.insert("blockChecks".into(), json!({"type":"array","minItems":indices.len(),"maxItems":indices.len(),"items":{"type":"object","additionalProperties":false,"required":["index","passageId","finding","hasDefect"],"properties":{"index":{"type":"integer","enum":allowed},"passageId":{"type":"string","enum":ids},"finding":{"type":"string","minLength":20,"maxLength":700},"hasDefect":{"type":"boolean"}}}}));
+        // Each section owns a fixed response slot and its own passage enum.
+        // The model cannot renumber its findings or cite a different section.
+        let slots: serde_json::Map<_, _> = indices.iter().map(|index| (
+            format!("section-{index}"),
+            json!({"type":"object","additionalProperties":false,"required":["passageId","finding","hasDefect"],"properties":{"passageId":{"type":"string","enum":passages.get(*index).cloned().unwrap_or_default()},"finding":{"type":"string","minLength":20,"maxLength":700},"hasDefect":{"type":"boolean"}}})
+        )).collect();
+        properties.insert("blockChecks".into(), json!({"type":"object","additionalProperties":false,"required":slots.keys().collect::<Vec<_>>(),"properties":slots}));
     }
     json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
 }
@@ -94,6 +133,32 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
 /// This does not spend the author's content-repair pass or rerun answer keys.
 /// An unavailable provider propagates immediately; this is not a network retry.
 pub(in crate::features::learning) async fn review(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: Value,
+    candidate: &Value,
+    progress: Option<&OutlineProgress>,
+) -> Result<Vec<String>> {
+    // Save findings, including defects, before the later grounding/repair step.
+    // Reusing a completed review never approves the lesson or skips grounding.
+    let key = format!("teaching-review-findings-v1:{}", crate::features::learning::content_verification::digest(
+        &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
+    ));
+    if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key)
+        .await?
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+    {
+        crate::features::learning::lesson_progress::stage(
+            "Reusing completed teaching review; continuing evidence checks",
+        );
+        return Ok(saved);
+    }
+    let issues = review_sections(llm, system, prompt, candidate, progress).await?;
+    crate::features::learning::lesson_drafts::record_checkpoint(&key, json!(issues)).await?;
+    Ok(issues)
+}
+
+async fn review_sections(
     llm: &dyn LLMPort,
     system: &str,
     prompt: Value,
@@ -155,19 +220,28 @@ pub(in crate::features::learning) async fn review(
                         issues.push(issue);
                     }
                 }
-                let mut seen = HashSet::new();
-                let mut duplicate = HashSet::new();
-                for value in review.block_checks {
+                for (section, mut value) in review.block_checks {
+                    let Some(index) = indices.iter().copied().find(|index| section == format!("section-{index}")) else {
+                        problems.push(format!("Section key {section} was not requested."));
+                        continue;
+                    };
                     // Preserve actionable defects even when another field is
                     // missing and the complete check cannot deserialize.
-                    if let (Some(index), Some(finding), Some(true)) = (
-                        value.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()),
+                    if let (Some(finding), Some(true)) = (
                         value.get("finding").and_then(Value::as_str), value.get("hasDefect").and_then(Value::as_bool),
                     ) {
                         if indices.contains(&index) && (20..=700).contains(&finding.trim().chars().count()) {
-                            let issue: String = format!("Section {}: {}", index + 1, finding).chars().take(700).collect();
+                            let issue: String = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding).chars().take(700).collect();
                             if !issues.contains(&issue) { issues.push(issue); }
                         }
+                    }
+                    let Some(fields) = value.as_object_mut() else {
+                        problems.push(format!("Section {index} needs an object check."));
+                        continue;
+                    };
+                    if fields.insert("index".into(), json!(index)).is_some() {
+                        problems.push(format!("Section {index}: the section key owns its index; do not supply an index field."));
+                        continue;
                     }
                     let check: BlockCheck = match serde_json::from_value(value) {
                         Ok(check) => check,
@@ -177,7 +251,6 @@ pub(in crate::features::learning) async fn review(
                         problems.push(format!("Section index {} was not requested. Use the explicit zero-based index from the candidate.", check.index));
                         continue;
                     }
-                    if !seen.insert(check.index) { duplicate.insert(check.index); }
                     if passages.get(check.index).is_none_or(|ids| !ids.contains(&check.passage_id)) {
                         problems.push(format!("Section {}: passageId must be one of that section's bodyPassages IDs.", check.index));
                     } else if !(20..=700).contains(&check.finding.trim().chars().count()) {
@@ -185,10 +258,6 @@ pub(in crate::features::learning) async fn review(
                     } else {
                         accepted.insert(check.index, check);
                     }
-                }
-                for index in duplicate {
-                    accepted.remove(&index);
-                    problems.push(format!("Section {index} has duplicate checks. Return exactly one check."));
                 }
                 for index in indices {
                     if !accepted.contains_key(&index) {
@@ -230,6 +299,22 @@ mod tests {
     }
 
     #[test]
+    fn response_slots_cannot_renumber_sections_or_cite_foreign_passages() {
+        let (_, passages) = review_candidate(&candidate());
+        let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages)).unwrap();
+        let mut response =
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
+        assert!(compiled.is_valid(&response));
+        response["blockChecks"]["section-0"]["passageId"] = json!("section-1-passage-0");
+        assert!(!compiled.is_valid(&response));
+        response["blockChecks"]["section-0"]["passageId"] = json!("section-0-passage-0");
+        response["blockChecks"]["section-0"]["index"] = json!(1);
+        assert!(!compiled.is_valid(&response));
+        let duplicate = r#"{"issues":[],"blockChecks":{"section-0":{},"section-0":{}}}"#;
+        assert!(generation::parse_json::<Review>(duplicate).is_err());
+    }
+
+    #[test]
     fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
         let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n".repeat(40);
         let original = json!({"blocks":[{"body":body,"title":"Unicode and code"}]});
@@ -258,8 +343,8 @@ mod tests {
         wrong_source["finding"] =
             json!("The claimed membrane behavior contradicts the stated boundary condition.");
         let model = model(vec![
-            json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":[check(0),wrong_source,check(2)]}),
-            json!({"issues":[],"blockChecks":[check(1)]}),
+            json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),wrong_source,check(2)])}),
+            json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(1)])}),
         ]);
         let issues = review(
             &model,
@@ -295,7 +380,7 @@ mod tests {
                 check(2),
             ],
         ] {
-            let bad = json!({"issues":[],"blockChecks":checks});
+            let bad = json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(checks)});
             let model = model(vec![bad.clone(), bad]);
             let error = review(
                 &model,
@@ -316,8 +401,8 @@ mod tests {
     async fn invalid_global_findings_can_be_corrected_without_losing_section_checks() -> Result<()>
     {
         let model = model(vec![
-            json!({"issues":["short"],"blockChecks":[check(0),check(1),check(2)]}),
-            json!({"issues":[],"blockChecks":[]}),
+            json!({"issues":["short"],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
+            json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}),
         ]);
         assert!(review(
             &model,
@@ -338,7 +423,7 @@ mod tests {
             outputs: std::sync::Mutex::new(
                 vec![
                     "not json".into(),
-                    json!({"issues":[],"blockChecks":[check(0),check(1),check(2)]}).to_string(),
+                    json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}).to_string(),
                 ]
                 .into(),
             ),
@@ -363,8 +448,8 @@ mod tests {
         incomplete.as_object_mut().unwrap().remove("passageId");
         incomplete["hasDefect"] = json!(true);
         let model = model(vec![
-            json!({"issues":[],"blockChecks":[check(0),incomplete,check(2)]}),
-            json!({"issues":[],"blockChecks":[check(1)]}),
+            json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),incomplete,check(2)])}),
+            json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(1)])}),
         ]);
         let issues = review(
             &model,
@@ -375,7 +460,7 @@ mod tests {
         )
         .await?;
         assert_eq!(issues.len(), 1);
-        assert!(issues[0].starts_with("Section 2:"));
+        assert!(issues[0].starts_with("Section 2 (candidate blocks-1):"));
         Ok(())
     }
 

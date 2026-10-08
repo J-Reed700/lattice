@@ -5,6 +5,7 @@ import { ChevronDown, CirclePause, LoaderCircle, Save } from 'lucide-react';
 
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
 import { PREPARATION_PHASES, preparationDuration } from '@/features/learning/lessons/lessonPreparationActivity';
+import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
 import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/workspace/useLearningStudio';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
@@ -39,13 +40,14 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
   }, [client, job?.id, job?.status, programId]);
   if (!active && (!job || job.status === 'completed')) return null;
   const elapsed = Math.max(0, (now - (job?.startedAt ?? job?.createdAt ?? now)) / 1000);
-  const phaseElapsed = activity?.phaseStartedAt ? Math.max(0, (now - activity.phaseStartedAt) / 1000) : 0;
-  const idle = activity?.lastActivityAt ? Math.max(0, (now - activity.lastActivityAt) / 1000) : 0;
   const request = () => ({ operationId: crypto.randomUUID(), programId, jobId: job!.id, expectedRevision: revision });
   const actionError = cancel.error ?? retry.error;
   const hasChecks = activity && activity.checksTotal > 0;
   const remaining = hasChecks ? Math.max(0, activity.checksTotal - activity.checksCompleted) : 0;
   const supported = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved) : 0;
+  const restoringChecks = active && activity?.phase === 'evidence' && activity.modelChecksTotal == null;
+  const currentChecks = active && !queued && activity?.phase === 'evidence';
+  const showCurrentStep = active && !queued && Boolean(activity);
   return <section aria-label="Lesson preparation progress" className="my-4 overflow-hidden rounded-2xl border border-accent/30 bg-accent/5">
     <div className="border-b border-accent/15 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -67,43 +69,38 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
       <p className="mt-3 text-xs leading-5 text-text-secondary">{active ? 'You can pause to change models. Your draft and completed checks stay saved.' : paused ? 'Change your model in Settings, then choose Resume when you are ready.' : 'Retry continues from valid saved checkpoints.'}</p>
       {actionError && <p role="alert" className="mt-3 text-xs text-rose-700">{actionError.message}</p>}
       <button type="button" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(!expanded)} className="mt-3 inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-secondary"><ChevronDown size={14} className={expanded ? 'rotate-180' : ''} aria-hidden="true" />{expanded ? 'Hide details' : 'Show details'}</button>
-      {!expanded && <p className="mt-3 text-sm leading-6 text-text-secondary" aria-live="polite">{paused ? `Paused${phase ? ` at: ${phase.title}` : ''}. Saved work is available.` : `${phase?.title ?? 'Preparing your lesson'} · ${job?.progressMessage || 'Request saved'}`}</p>}
+      {!expanded && !showCurrentStep && <p className="mt-3 text-sm leading-6 text-text-secondary" aria-live="polite">{paused ? `Paused${phase ? ` at: ${phase.title}` : ''}. Saved work is available.` : `${phase?.title ?? 'Preparing your lesson'} · ${job?.progressMessage || 'Request saved'}`}</p>}
       {expanded && job && job.progressTotal > 1 && <p className="mt-3 text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}
       {expanded && <ol aria-label="Preparation workflow" className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>}
     </div>
+    {showCurrentStep && job && <LessonPreparationCurrentStep job={job} now={now} />}
     <div id={detailsId} hidden={!expanded} className="space-y-4 p-5">
-      <div>
+      {!showCurrentStep && <div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-base font-semibold text-text-primary">{paused ? phase ? `Paused at: ${phase.title}` : 'Saved work is available' : reconnecting ? 'Preparation interrupted' : queued ? 'Waiting for a preparation slot' : phase?.title ?? (active ? 'Starting lesson preparation' : 'Saved work is available')}</h4>
-          {active && !queued && activity?.phaseStartedAt ? <span className="text-xs tabular-nums text-text-muted" aria-live="off">This phase · {preparationDuration(phaseElapsed)}</span> : null}
         </div>
         <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? job.error : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
         {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
-      </div>
+      </div>}
       {hasChecks && <div className="rounded-xl border border-border bg-background/70 p-4">
-        <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass'} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{activity.checksCompleted} / {activity.checksTotal} checked</span></div>
-        <div role="progressbar" aria-label="Claim checks this pass" aria-valuenow={activity.checksCompleted} aria-valuemin={0} aria-valuemax={activity.checksTotal} aria-valuetext={`${activity.checksCompleted} of ${activity.checksTotal} checked; ${activity.checksUnresolved} need attention`} className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, activity.checksCompleted / activity.checksTotal * 100)}%` }} /></div>
-        <dl className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+        <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass'} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{restoringChecks ? `${activity.checksTotal} lesson claims` : `${activity.checksCompleted} / ${activity.checksTotal} checked`}</span></div>
+        {restoringChecks ? <p className="mt-3 text-sm leading-6 text-text-secondary" role="status">Looking for saved checks to reuse. The number needing model review will appear once all saved results have been compared with the current evidence.</p> : <>
+          {activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
+          {currentChecks && <div role="progressbar" aria-label="Claim checks this pass" aria-valuenow={activity.checksCompleted} aria-valuemin={0} aria-valuemax={activity.checksTotal} aria-valuetext={`${activity.checksCompleted} of ${activity.checksTotal} checked; ${activity.checksUnresolved} need attention; ${activity.checksReused} saved checks reused`} className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, activity.checksCompleted / activity.checksTotal * 100)}%` }} /></div>}
+        </>}
+        <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div><dt className="text-text-muted">Supported</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{supported}</dd></div>
-          <div><dt className="text-text-muted">Need attention</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
-          <div><dt className="text-text-muted">Still to check</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{remaining}</dd></div>
+          <div><dt className="text-text-muted">{currentChecks ? 'Need attention' : 'Needed attention in this pass'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
+          {currentChecks && <div><dt className="text-text-muted">Still to check</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
         </dl>
-        <p className="mt-3 text-xs leading-5 text-text-muted">These counts describe this verification pass, not overall completion. New evidence or repaired sections can trigger another pass. Unchanged comparisons are reused.</p>
+        <p className="mt-3 text-xs leading-5 text-text-muted">Checked means reviewed, not necessarily passed. Claims needing attention lead to research or repair. Completed checks keep their saved evidence. New references reopen checks only when new evidence is retrieved for that claim; changed content or sources also need review. Unchanged comparisons are reused.</p>
       </div>}
-      {active && !queued && activity?.modelRunning && <div className="rounded-xl bg-background/60 p-4 text-xs leading-5 text-text-secondary">
-        <p className="font-medium text-text-primary">{activity.responseCharacters > 0 ? 'Receiving model output' : 'Waiting for model output'}</p>
-        {activity.responseCharacters > 0 && <p className="mt-1 tabular-nums">{activity.responseCharacters.toLocaleString()} response characters received since the current requests started or retried.</p>}
-        {activity.modelAttempt > 1 && <p className="mt-1">Retrying the model request · attempt {activity.modelAttempt}. Partial responses are discarded before retrying.</p>}
-        {activity.modelName && <p className="mt-1 break-all text-text-muted">Model: {activity.modelName}</p>}
-      </div>}
-      {active && !queued && idle >= 90 && <p className="rounded-lg border border-border p-3 text-xs leading-5 text-text-secondary">No new output or completed step for {preparationDuration(idle)}. The model may still be processing. This is not a completion estimate; you can leave this screen while saved work continues.</p>}
       {!active && !paused && <p role="alert" className="rounded-xl bg-rose-500/10 p-4 text-sm leading-6 text-rose-700">{job?.error || error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>}
-      {active && !queued && phase && <p className="text-xs leading-5 text-text-secondary"><span className="font-semibold text-text-primary">What happens next: </span>{phase.next}</p>}
       <div className="rounded-xl border border-accent/20 p-4 text-xs leading-5 text-text-secondary">
         <p className="flex items-center gap-2 font-medium text-text-primary"><Save size={15} aria-hidden="true" />{activity?.lastCheckpointAt ? `Checkpoint saved at ${new Date(activity.lastCheckpointAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Progress saves automatically'}</p>
         <p className="mt-2">{active ? 'Thorough preparation can take hours, depending on your model and material. You can use other parts of Lattice while it runs. Quitting pauses preparation; it resumes from saved checkpoints when you reopen the app. Choose Pause above to keep it paused. Unfinished checks may run again.' : paused ? 'Resume uses your current model settings and reuses valid saved checkpoints. Unfinished requests repeat, and checks affected by a model, content, source or verification-rule change may run again.' : 'Your completed checkpoints remain saved. Choose Retry to continue; reopening the app does not restart a failed job. Work affected by changed models, content, sources or verification rules is checked again.'}</p>
