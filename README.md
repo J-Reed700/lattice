@@ -4,8 +4,12 @@ Lattice is a local-first desktop knowledge base. It indexes the files on your
 machine, searches them by keyword and by meaning, and answers questions with
 local language models — every answer cites the documents it came from.
 
-Nothing you index leaves your computer. There is no account, no cloud, and no
-telemetry.
+Lattice needs no account or cloud service, and this version sends no product
+telemetry. Your index stays on your computer. If you explicitly choose a cloud
+chat provider, remote model server, or custom tool, that turn's prompt and the
+retrieved passages it needs are sent to that service; the
+[privacy FAQ](docs/user/faq.md#what-leaves-my-computer) lists every networked
+feature.
 
 ## Screenshots
 

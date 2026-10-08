@@ -400,9 +400,10 @@ This is not a claim of “10/10” architecture or production readiness.
   and one unresolved-conflict case pass. Extraction quality, recall usefulness,
   multi-cycle drift, and corpus-wide reliability remain unestablished until the
   full repeated baseline completes.
-- The API is still explicitly a scaffold: trusted-header authentication, merged
-  conflict application, and outbox delivery need product/security decisions.
-  This refactor does not silently implement or change those protocols.
+- The sync API is still explicitly a scaffold: one server-configured bearer
+  token maps to one tenant. Multi-tenant identity-provider authentication,
+  merged conflict application, and outbox delivery still need product and
+  security decisions. The desktop application does not call this service yet.
 
 Keep structural refactors distinct from changes to authentication, sync conflict
 semantics, delivery guarantees, and user-visible retention policy. Document and

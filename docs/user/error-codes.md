@@ -39,12 +39,12 @@ The Logs page keeps the newest 300 entries. **Export logs** saves them as a JSON
 | Code | What it means | What to try |
 |------|---------------|-------------|
 | `FILE_NOT_FOUND` | The file isn't where Lattice expected it. It was moved, renamed or deleted, or a drive was disconnected. | Reconnect the drive, or import the file again from its new location. |
-| `FILE_TOO_LARGE` | The file is over the size limit. Imports accept files up to 50 MB. The in-app viewer opens files up to 10 MB. | Split the document, or export a smaller version (for example a PDF without embedded images). |
+| `FILE_TOO_LARGE` | The file is over the limit for that operation. Document imports accept up to 50 MB, and the in-app viewer opens files up to 10 MB. | Split the document, or export a smaller version (for example a PDF without embedded images). |
 | `UNSUPPORTED_FILE_TYPE` | Lattice can't read this kind of file. | Convert it to a supported format. See [What file types can I import?](faq.md#what-file-types-can-i-import) |
 | `FILE_READ_ERROR` | The file exists but couldn't be read. | Check that it opens in another app and isn't locked or still syncing. |
 | `FILE_SYSTEM_ERROR` | A disk operation failed: the disk is full, a folder isn't writable, or something else went wrong at the OS level. | Free some disk space and check that your user account owns Lattice's data folder. |
 | `PERMISSION_DENIED` | The operating system refused access to a file or folder. During a backup restore, it means the passphrase or recovery code was wrong. | Grant access to the folder, or choose one you own. For a restore, re-enter the passphrase or use the 24-word recovery code. |
-| `EXTRACTION_ERROR` | Lattice couldn't pull text out of the file. The file may be damaged, encrypted or password-protected. | Open and re-save the file in its original app, or remove the password. |
+| `EXTRACTION_ERROR` | Lattice couldn't pull text out of the file. The file may be damaged, encrypted or password-protected. For audio, it may use an unsupported codec or exceed 200 MB or two hours. | Open and re-save the file, remove its password, or convert or split the recording. |
 
 **Scanned PDFs.** Lattice has no OCR. A page that is only an image is skipped and the rest of the PDF is still imported. If a PDF is all scans, its text won't be searchable.
 

@@ -131,8 +131,11 @@ under **Settings > AI > Downloaded**.
 - **Code**: most common languages, including Python, JavaScript, TypeScript,
   Rust, Go, C and C++, Java, Kotlin, Scala, Swift, Ruby, PHP, R, Elixir, Erlang,
   Clojure, CSS and shell scripts
+- **Audio**: MP3, WAV, Ogg, FLAC, AAC and M4A. Lattice transcribes the recording
+  on your computer, then indexes the transcript. Install a transcription model
+  from **Settings > AI > Models** first.
 
-Images, audio, video, archives and executables can't be imported. Lattice
+Images, video, archives, executables and WMA audio can't be imported. Lattice
 doesn't run OCR, so a scanned PDF needs a text layer before its text can be
 searched.
 

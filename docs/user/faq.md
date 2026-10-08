@@ -39,9 +39,9 @@ Around that core are:
   - Java, Kotlin, Scala, Clojure
   - Ruby, PHP, Swift, R, Objective-C, Elixir, Erlang
   - shell scripts (`.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.bat`, `.cmd`)
-- **Audio:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`, `.wma`. Audio is transcribed on your computer, and the transcript becomes a searchable document. This needs a transcription model from the model catalog.
+- **Audio:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`. Audio is transcribed on your computer, and the transcript becomes a searchable document. This needs a transcription model from the model catalog.
 
-Not supported: images, older Office formats (`.doc`, `.xls`, `.ppt`) and e-books. Lattice has no OCR, so pages of a scanned PDF that are only images are skipped.
+Not supported: images, WMA audio, older Office formats (`.doc`, `.xls`, `.ppt`) and e-books. Lattice has no OCR, so pages of a scanned PDF that are only images are skipped.
 
 ### Is it free?
 
@@ -228,7 +228,8 @@ There are no direct importers. Export from the other app to Markdown, HTML, PDF 
 
 ### What's the largest file I can import?
 
-50 MB per file. Larger files are rejected. Split them or save a smaller copy.
+Documents can be up to 50 MB. Audio recordings can be up to 200 MB and two
+hours long. Larger files are rejected; split them or save a smaller copy.
 
 ### How many documents can it handle?
 
@@ -262,7 +263,13 @@ No. Everything Lattice needs ships with it. Ollama and external llama.cpp server
 
 ### Is there an API, CLI or browser extension?
 
-No. Lattice has no command-line tool, no REST API, no plugin system and no browser extension. Chat can call HTTP endpoints you add as custom tools in **Settings > AI > Tools**. See [Advanced Features](advanced-features.md#custom-tools).
+The desktop application exposes no supported public API or command-line tool,
+and it has no plugin system or browser extension. The repository contains a
+disconnected `/v1/sync` HTTP service scaffold for development, but the desktop
+application does not call it and it is not a supported third-party interface;
+see [API and IPC versioning](../API_VERSIONING.md). Chat can call HTTP endpoints
+you add as custom tools in **Settings > AI > Tools**. See
+[Advanced Features](advanced-features.md#custom-tools).
 
 ---
 
