@@ -168,7 +168,6 @@ def request_answer(provider, question, context, timeout, max_tokens):
         "top_p": provider["top_p"],
         "top_k": provider["top_k"],
         "max_tokens": max_tokens,
-        "chat_template_kwargs": {"enable_thinking": False},
     }
     headers = {"Content-Type": "application/json", **provider["headers"]}
     request = urllib.request.Request(

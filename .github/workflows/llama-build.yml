@@ -54,7 +54,7 @@ concurrency:
 env:
   LOCK: src-tauri/scripts/llama-server.lock
   VERIFY: src-tauri/scripts/verify_llama_binaries.py
-  VULKAN_SDK_VERSION: 1.3.290.0
+  VULKAN_SDK_VERSION: 1.4.363.0
 
 jobs:
   pin:
@@ -87,7 +87,7 @@ jobs:
           }
           llama_cpp_tag="$(value llama_cpp_tag)"
           release="$(value release)"
-          [[ "$llama_cpp_tag" =~ ^b[0-9]+$ ]] || { echo "::error::bad llama_cpp_tag '$llama_cpp_tag'"; exit 1; }
+          [[ "$llama_cpp_tag" =~ ^(b[0-9]+|v[0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::bad llama_cpp_tag '$llama_cpp_tag'"; exit 1; }
           [[ "$release" =~ ^llama/${llama_cpp_tag}-r[0-9]+$ ]] \
             || { echo "::error::release '$release' must be llama/${llama_cpp_tag}-r<N>"; exit 1; }
           echo "llama_cpp_tag=$llama_cpp_tag" >> "$GITHUB_OUTPUT"
@@ -235,7 +235,7 @@ jobs:
         shell: bash
         run: |
           grep -v '^sha256 ' "$LOCK" > "$RUNNER_TEMP/unhashed.lock"
-          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --run --strict "staging/${{ matrix.file }}"
+          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --run --strict --require-run "staging/${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v7
         with:

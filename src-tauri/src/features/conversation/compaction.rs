@@ -36,7 +36,14 @@ pub async fn build_job(
     container: &Container,
     keep_recent_messages: Option<i64>,
 ) -> Result<Option<CompactionJob>> {
-    let utility = container.get_or_load_utility_llm().await?;
+    let utility = match container.get_or_load_utility_llm().await {
+        Ok(utility) => utility,
+        Err(AppError::ModelLoadFailed(error)) => {
+            tracing::warn!(%error, "Utility model failed to load; using the chat model for compaction");
+            None
+        }
+        Err(error) => return Err(error),
+    };
 
     // The candidate summary has to fit its pool in the **continuation** model's
     // prompt, so both the counter and the budget come from that model rather than

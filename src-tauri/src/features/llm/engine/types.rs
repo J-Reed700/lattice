@@ -376,8 +376,7 @@ pub struct OllamaChatRequest {
     /// JSON or JSON Schema constrained output (`format` in Ollama's API).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<serde_json::Value>,
-    /// Per-request thinking control. `false` disables reasoning on supported
-    /// models; omitted leaves the model default unchanged.
+    /// Per-request thinking level; omitted keeps the model's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<serde_json::Value>,
 }

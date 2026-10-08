@@ -1253,3 +1253,37 @@ async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
             .contains("no_time_limit")
     );
 }
+
+#[test]
+fn internal_requests_do_not_disable_model_reasoning() {
+    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    for effort in [None, Some("none")] {
+        let request = CompletionRequest {
+            reasoning_effort: effort.map(str::to_owned),
+            ..Default::default()
+        };
+        let body = client.body(&request, true).unwrap();
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
+    }
+}
+
+#[test]
+fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
+    let probability = |word: &str| json!({"content":[{"token":word,"logprob":-0.1,"top_logprobs":[{"token":word,"logprob":-0.1}]}]});
+    let mut decoder = streaming::Decoder::for_completion();
+    for frame in [
+        json!({"choices":[{"delta":{"reasoning_content":"contradicted"},"logprobs":probability("contradicted")}]}),
+        json!({"choices":[{"delta":{"content":"supported"},"logprobs":probability("supported"),"finish_reason":"stop"}]}),
+    ] {
+        decoder
+            .push(format!("data: {frame}\n\n").as_bytes())
+            .unwrap();
+    }
+    decoder.push(b"data: [DONE]\n\n").unwrap();
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "supported");
+    assert_eq!(response.first_token_logprobs.unwrap()[0].0, "supported");
+    let combined = parse_completion(json!({"choices":[{"message":{"role":"assistant","content":"supported","reasoning_content":"contradicted"},"logprobs":probability("contradicted"),"finish_reason":"stop"}]})).unwrap();
+    assert!(combined.first_token_logprobs.is_none());
+}

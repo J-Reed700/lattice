@@ -192,6 +192,29 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
     })
 }
 
+/// Inspect a bounded download prefix without touching tensor data.
+/// Missing/truncated metadata is unknown, never evidence of compatibility.
+pub(super) fn architecture_from_prefix(bytes: &[u8]) -> Option<String> {
+    let mut reader = std::io::Cursor::new(bytes);
+    if read_u32(&mut reader)? != GGUF_MAGIC || !(2..=3).contains(&read_u32(&mut reader)?) {
+        return None;
+    }
+    read_u64(&mut reader)?;
+    let count = read_u64(&mut reader)?;
+    for _ in 0..count.min(100_000) {
+        let key = read_string(&mut reader)?;
+        let kind = read_u32(&mut reader)?;
+        if key == "general.architecture" && kind == value_type::STRING {
+            return read_string(&mut reader).filter(|value| !value.is_empty());
+        }
+        skip_value(&mut reader, kind)?;
+        if reader.position() >= bytes.len() as u64 {
+            return None;
+        }
+    }
+    None
+}
+
 fn read_exact<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {
     let mut buffer = [0u8; N];
     reader.read_exact(&mut buffer).ok()?;
@@ -254,6 +277,11 @@ fn skip_value(reader: &mut (impl Read + Seek), kind: u32) -> Option<()> {
         value_type::ARRAY => {
             let element_type = read_u32(reader)?;
             let count = read_u64(reader)?;
+            // GGUF arrays are flat. Reject corrupt recursion/lengths before
+            // inspecting an untrusted remote header or local model file.
+            if element_type == value_type::ARRAY || count > 1_000_000 {
+                return None;
+            }
             for _ in 0..count {
                 skip_value(reader, element_type)?;
             }

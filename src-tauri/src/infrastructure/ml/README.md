@@ -30,6 +30,10 @@ New embedding consumers should import from `crate::features::embedding` directly
   `generate_embedding` / `generate_embeddings_batch` commands of the
   `embeddings` Tauri plugin (`features/embedding/plugin.rs`).
 
-The built-in default model is `sentence-transformers/all-MiniLM-L6-v2` (384
-dims), defined in `src-tauri/src/domain/models/embedding_defaults.rs`. Model files
-are stored under `~/.cache/lattice/models/<model_id>/`.
+Fresh installs select their embedding model through `default_embedding_model`
+in `src-tauri/src/domain/models/embedding_defaults.rs`: machines with an
+available GPU backend get `Qwen/Qwen3-Embedding-0.6B` (1024 dimensions), while
+CPU-only machines use `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions).
+The MiniLM constants remain the fallback when no loaded model can report its
+identity or dimensions. Catalog downloads are stored under
+`~/.cache/lattice/models/<model_id>/`.

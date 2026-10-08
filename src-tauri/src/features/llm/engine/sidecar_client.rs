@@ -55,6 +55,9 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tokio_stream::Stream;
 
+#[cfg(test)]
+mod live_smoke;
+
 /// Floor on how long to wait for the next frame of a streamed response
 /// before the model has generated anything. The server may be loading the
 /// model into VRAM or running the prompt prefill; on a 7B Q4_K_M GGUF that
@@ -171,10 +174,8 @@ struct ChatCompletionRequest<'a> {
     /// actual guarantee.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'a str>,
-    /// Qwen3-style chat templates gate their `<think>` block on
-    /// `enable_thinking`. The template is the only layer that can stop the
-    /// tokens from being generated at all — sampling knobs cannot — so a caller
-    /// asking for no reasoning gets the flag flipped here.
+    /// Forward a requested reasoning level to the model's own template.
+    /// With no level, keep the template's normal reasoning behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     chat_template_kwargs: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,6 +519,7 @@ impl SidecarLLMClient {
         tuning: RequestTuning<'a>,
     ) -> ChatCompletionRequest<'a> {
         let sampling = tuning.sampling.unwrap_or_default();
+        let reasoning_effort = tuning.reasoning_effort.filter(|effort| *effort != "none");
         ChatCompletionRequest {
             model: "local",
             messages,
@@ -530,14 +532,8 @@ impl SidecarLLMClient {
                 Some(requested) if requested > 0 => (requested as usize).min(config.max_tokens),
                 _ => config.max_tokens,
             },
-            reasoning_effort: tuning.reasoning_effort,
-            chat_template_kwargs: tuning.reasoning_effort.map(|effort| {
-                if effort == "none" {
-                    json!({"enable_thinking": false})
-                } else {
-                    json!({"reasoning_effort": effort})
-                }
-            }),
+            reasoning_effort,
+            chat_template_kwargs: reasoning_effort.map(|effort| json!({"reasoning_effort": effort})),
             response_format: tuning.json_schema.map(|schema| {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}})
             }),
@@ -1084,12 +1080,9 @@ mod tests {
         }
     }
 
-    /// The llama.cpp chat template is the only layer that can stop a Qwen3-style
-    /// GGUF emitting its `<think>` block, so "no reasoning" has to reach it as
-    /// `enable_thinking: false` — matching what the remote llama.cpp adapter
-    /// sends to the same server.
+    /// A legacy internal "none" hint must not disable model reasoning.
     #[test]
-    fn no_reasoning_disables_thinking_in_the_chat_template() {
+    fn legacy_none_keeps_the_models_default_reasoning() {
         let messages = SidecarLLMClient::build_messages(None, "Rewrite this.");
         let body = SidecarLLMClient::build_request(
             &GenerationConfig::default(),
@@ -1108,8 +1101,8 @@ mod tests {
         );
 
         let json = serde_json::to_value(&body).expect("serialize");
-        assert_eq!(json["reasoning_effort"], "none");
-        assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
+        assert!(json.get("reasoning_effort").is_none());
+        assert!(json.get("chat_template_kwargs").is_none());
     }
 
     #[test]

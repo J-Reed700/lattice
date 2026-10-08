@@ -15,8 +15,8 @@ pub(crate) struct Decoder {
     reasoning: BTreeMap<String, String>,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
-    /// The first chunk's `logprobs`, when the request asked for them: the
-    /// first generated token is the only one a classifier reads.
+    /// Probabilities for the first public answer token. Hidden reasoning
+    /// probabilities cannot be used as confidence in a factual verdict.
     first_logprobs: Option<Value>,
 }
 
@@ -131,7 +131,20 @@ impl Decoder {
                     }
                     self.finish_reason = Some(reason.into());
                 }
-                if self.first_logprobs.is_none() {
+                if self.content.is_empty()
+                    && self.first_logprobs.is_none()
+                    && choice
+                        .pointer("/delta/content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| !content.is_empty())
+                    && !["reasoning_content", "reasoning"].iter().any(|key| {
+                        choice
+                            .get("delta")
+                            .and_then(|delta| delta.get(key))
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty())
+                    })
+                {
                     self.first_logprobs = choice
                         .pointer("/logprobs/content/0")
                         .is_some()
@@ -256,13 +269,19 @@ impl Decoder {
                 json!(self.tool_calls.into_values().collect::<Vec<_>>()),
             );
         }
-        super::parse_completion(json!({
+        let public_logprobs = self
+            .first_logprobs
+            .as_ref()
+            .and_then(crate::application::ports::llm_port::first_token_logprobs);
+        let mut response = super::parse_completion(json!({
             "choices": [{
                 "message": message,
                 "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
                 "logprobs": self.first_logprobs,
             }],
             "usage": self.usage,
-        }))
+        }))?;
+        response.first_token_logprobs = public_logprobs;
+        Ok(response)
     }
 }

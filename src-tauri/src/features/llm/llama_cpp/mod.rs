@@ -75,11 +75,16 @@ impl LlamaCppLlm {
             AppError::InvalidConfig("The llama.cpp server did not list the selected model".into())
         })?;
         // A model list alone does not prove that the generation route works.
-        let response = client.post(format!("{base_url}/chat/completions"))
+        let response = client
+            .post(format!("{base_url}/chat/completions"))
             .timeout(probe_timeout)
-            .json(&json!({"model": model, "messages":[{"role":"user","content":"Reply with OK."}],
-                "max_tokens": 32, "stream": false, "chat_template_kwargs":{"enable_thinking":false}}))
-            .send().await.map_err(network_error)?;
+            .json(
+                &json!({"model": model, "messages":[{"role":"user","content":"Reply with OK."}],
+                "max_tokens": 2048, "stream": false}),
+            )
+            .send()
+            .await
+            .map_err(network_error)?;
         let response = check_status(response).await?;
         parse_completion(response.json().await.map_err(network_error)?)?;
         Ok(models)
@@ -157,15 +162,15 @@ impl LlamaCppLlm {
             // mistaken for a stalled server. Servers without support ignore the field.
             body.insert("return_progress".into(), json!(true));
         }
-        if let Some(effort) = &request.reasoning_effort {
+        if let Some(effort) = request
+            .reasoning_effort
+            .as_deref()
+            .filter(|effort| *effort != "none")
+        {
             body.insert("reasoning_effort".into(), json!(effort));
             body.insert(
                 "chat_template_kwargs".into(),
-                if effort == "none" {
-                    json!({"enable_thinking": false})
-                } else {
-                    json!({"reasoning_effort": effort})
-                },
+                json!({"reasoning_effort": effort}),
             );
         }
         if !request.tools.is_empty() {
@@ -685,8 +690,18 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .and_then(Value::as_u64)
             .unwrap_or_default(),
         provider_output,
+        // Non-streaming servers can include reasoning tokens in this array.
+        // Without token/channel alignment, do not treat them as verdict confidence.
         first_token_logprobs: choice
             .get("logprobs")
+            .filter(|_| {
+                !["reasoning_content", "reasoning"].iter().any(|key| {
+                    message
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty())
+                })
+            })
             .and_then(crate::application::ports::llm_port::first_token_logprobs),
     })
 }

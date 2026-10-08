@@ -1046,12 +1046,12 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
     assert_eq!(
         llm.request_limits(),
         vec![
-            (Some("none".into()), Some(8_192)),
-            (Some("none".into()), Some(8_192)),
-            (Some("none".into()), Some(4_096)),
-            (Some("none".into()), Some(8_192)),
+            (None, Some(8_192)),
+            (None, Some(8_192)),
+            (None, Some(4_096)),
+            (None, Some(8_192)),
         ],
-        "every structured utility request must disable reasoning, and review gets the tighter cap"
+        "structured utility requests keep model-default reasoning and the review output budget"
     );
     assert!(
         llm.samplings()

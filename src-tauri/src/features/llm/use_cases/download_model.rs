@@ -586,6 +586,41 @@ impl DownloadModelUseCase {
             "Initiating single-file model download"
         );
 
+        let auth_token = if curated.requires_auth {
+            match self.credentials.get_api_key("huggingface_token").await {
+                Ok(Some(token)) => {
+                    info!(model_id = %model_id, "Model requires authentication, using HuggingFace token");
+                    Some(token)
+                }
+                Ok(None) => {
+                    return Err(AppError::InvalidInput(format!(
+                        "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
+                        model_name
+                    )));
+                }
+                Err(e) => {
+                    warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
+                    return Err(AppError::Other(format!(
+                        "Failed to retrieve HuggingFace token: {}. Please check your keychain settings.",
+                        e
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Inspect the selected file before persisting a download or fetching
+        // gigabytes of weights. A GGUF extension alone says nothing about
+        // whether the bundled engine recognizes its architecture.
+        if curated.category == crate::features::model_management::domain::ModelCategory::LLM {
+            crate::features::llm::engine::compatibility::check_download(
+                &model_file_url,
+                auth_token.as_deref(),
+            )
+            .await?;
+        }
+
         // STEP 1: Create parent Model record FIRST (satisfies FK constraint)
         // Use explicit scope to ensure connections are released before download starts
         let mut uow = self.uow_factory.create().await?;
@@ -709,30 +744,6 @@ impl DownloadModelUseCase {
 
         // Yield to allow connection pool to reclaim connections
         tokio::task::yield_now().await;
-
-        let auth_token = if curated.requires_auth {
-            match self.credentials.get_api_key("huggingface_token").await {
-                Ok(Some(token)) => {
-                    info!(model_id = %model_id, "Model requires authentication, using HuggingFace token");
-                    Some(token)
-                }
-                Ok(None) => {
-                    return Err(AppError::InvalidInput(format!(
-                        "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
-                        model_name
-                    )));
-                }
-                Err(e) => {
-                    warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
-                    return Err(AppError::Other(format!(
-                        "Failed to retrieve HuggingFace token: {}. Please check your keychain settings.",
-                        e
-                    )));
-                }
-            }
-        } else {
-            None
-        };
 
         let download_request = DownloadRequest {
             url: model_file_url.clone(),

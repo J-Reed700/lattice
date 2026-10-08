@@ -235,6 +235,20 @@ pub(super) fn startup_failure(
         };
     }
 
+    if let Some(detail) = output.iter().find_map(|line| {
+        line.find("unknown model architecture:")
+            .and_then(|index| line.get(index..))
+            .map(|detail| clip(detail, ERROR_LINE_MAX_BYTES))
+    }) {
+        // CPU offload cannot add an architecture to the same executable.
+        // Name the incompatibility rather than suggesting a corrupt download.
+        return AttemptError::fatal(format!(
+            "Lattice's bundled local model engine does not support this model ({detail}). \
+             Update Lattice's model engine or select a compatible model. \
+             Downloading the same file again or switching to CPU will not add support."
+        ));
+    }
+
     // llama.cpp initializes its backends before touching the model, so a
     // crash or hang before the model loader ever spoke happened in backend
     // (GPU) initialization. A plain non-zero exit is an orderly error

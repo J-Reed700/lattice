@@ -57,10 +57,10 @@ pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
 /// sequential path.
 pub(super) const MAX_CONCURRENT_CALLS: usize = 3;
 
-/// Output ceiling for one judge request. The verdict still comes first so its
-/// first-token probability remains useful, but the rest of the response now
-/// carries a short factual explanation and an exact source quote.
-const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 128;
+/// Output room for the model's reasoning followed by the public verdict,
+/// factual explanation, and exact source quote. Reasoning tokens count toward
+/// the provider's output budget even though they are not shown in the verdict.
+const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
 
 /// Cited sources read per claim.
 const MAX_SOURCES_PER_CLAIM: usize = 3;
@@ -112,9 +112,8 @@ impl ClaimJudge {
         }
     }
 
-    /// Apply the user's verification settings: the sampling only. The output
-    /// ceiling is not a setting, because a verdict is one word and anything
-    /// past it is never read.
+    /// Apply the user's sampling settings while retaining enough output room
+    /// for reasoning, a verdict, and its supporting explanation.
     pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
         self.sampling = SamplingOverride {
             temperature: Some(tuning.temperature),
@@ -617,7 +616,7 @@ mod tests {
         let request = &sent[0];
         assert!(request.want_logprobs);
         assert!(request.json_schema.is_none());
-        assert_eq!(request.reasoning_effort.as_deref(), Some("none"));
+        assert!(request.reasoning_effort.is_none());
         assert!(!request.no_time_limit);
         // A verdict is a classification. Sampling one from the chat model's
         // distribution made the same claim against the same passage come back

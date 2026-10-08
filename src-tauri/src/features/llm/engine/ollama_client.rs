@@ -257,14 +257,13 @@ impl OllamaClient {
         );
 
         let think = match request.reasoning_effort.as_deref() {
-            None => None,
-            Some("none") => Some(serde_json::Value::Bool(false)),
+            None | Some("none") => None,
             Some(effort @ ("low" | "medium" | "high")) => {
                 Some(serde_json::Value::String(effort.to_string()))
             }
             Some(_) => {
                 return Err(AppError::InvalidInput(
-                    "Ollama supports reasoning off or model-defined low, medium, and high levels"
+                    "Ollama supports model-default reasoning or low, medium, and high levels"
                         .into(),
                 ));
             }
@@ -2105,8 +2104,7 @@ mod tests {
             ],
             "stream":false,
             "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"num_predict":2048},
-            "format":schema,
-            "think":false
+            "format":schema
         });
         Mock::given(method("POST"))
             .and(path("/api/chat"))

@@ -1,5 +1,9 @@
 # Intel macOS candidate validation — 2026-09-19
 
+> Historical validation record. The release and results below describe the
+> 2026-09-19 candidate. See [Desktop platform scope](platform-support.md) for
+> the current sidecar pin, build instructions, and remaining release gates.
+
 Scope: add Intel Macs to the desktop targets, retaining macOS 13.3 as the
 minimum. No Windows ARM, Linux ARM or mobile target was added.
 

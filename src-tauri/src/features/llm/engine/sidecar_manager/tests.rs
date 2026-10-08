@@ -366,6 +366,31 @@ fn corrupt_model_is_a_startup_failure_not_a_binary_failure() {
 }
 
 #[test]
+fn unknown_architectures_report_the_engine_mismatch_without_cpu_retries() {
+    for architecture in ["laguna", "future-model-family"] {
+        let output = lines(&format!(
+            "llama_model_load: error loading model architecture: unknown model architecture: '{architecture}'"
+        ));
+        let err = classify(SidecarBinary::Primary, &exited(Some(1), None), &output);
+        assert_eq!(err.kind, AttemptFailure::Fatal);
+        assert!(err.message.contains(architecture));
+        assert!(err.message.contains("Update Lattice's model engine"));
+        assert!(!err.message.contains("corrupt"));
+        assert_eq!(
+            next_attempt(
+                Attempt {
+                    binary: SidecarBinary::Primary,
+                    gpu_offload: true
+                },
+                err.kind,
+                true,
+            ),
+            None
+        );
+    }
+}
+
+#[test]
 fn gpu_backend_failures_are_classified_as_gpu_init() {
     let err = classify(
         SidecarBinary::Primary,
@@ -1024,6 +1049,21 @@ async fn drain_signals_ready_on_the_real_b8981_startup_log() {
 }
 
 #[tokio::test]
+async fn drain_signals_ready_on_semver_engine_startup() {
+    let harness = drain_harness();
+    send(
+        &harness.tx,
+        stderr("I srv llama_server: listening on http://127.0.0.1:18099"),
+    )
+    .await;
+    let ready = tokio::time::timeout(Duration::from_secs(2), harness.ready)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready, Ok(()));
+}
+
+#[tokio::test]
 async fn drain_reports_an_exit_before_readiness_and_keeps_the_bind_signal() {
     let harness = drain_harness();
     send(
@@ -1132,7 +1172,7 @@ fn ready_needle_is_present_in_every_bundled_binary() {
                 .windows(READY_NEEDLE.len())
                 .any(|window| window == READY_NEEDLE.as_bytes()),
             "{} does not contain the readiness needle {READY_NEEDLE:?}; \
-             llama.cpp reworded it and every model load will time out",
+             update the log fast path for this engine (HTTP health remains authoritative)",
             path.display()
         );
         checked += 1;
