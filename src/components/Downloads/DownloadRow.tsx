@@ -201,7 +201,7 @@ export function DownloadRow({ storeKey, download, actions, nested = false }: Dow
       )}
 
       {download.error_message && (
-        <p className="mt-1.5 break-words text-xs text-[hsl(var(--danger,0_70%_50%))]">
+        <p className="mt-1.5 wrap-break-word text-xs text-[hsl(var(--danger,0_70%_50%))]">
           {download.error_message}
         </p>
       )}

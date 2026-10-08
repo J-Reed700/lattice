@@ -1345,7 +1345,7 @@ export function ChatPanel() {
       </div>
 
       {/* Composer pinned to the bottom of the panel. */}
-      <div className="relative bg-bg before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-[hsl(var(--bg))] before:to-transparent">
+      <div className="relative bg-bg before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-[hsl(var(--bg))] before:to-transparent">
         <ChatDropStaging
           staged={staged}
           isImporting={isImportingFiles}
@@ -1396,7 +1396,7 @@ export function ChatPanel() {
                 aria-activedescendant={
                   suggest.isOpen ? `${SUGGEST_LIST_ID}-${suggest.activeIndex}` : undefined
                 }
-                className="block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 font-sans text-[15px] leading-[1.55] text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                className="block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 font-sans text-[15px] leading-[1.55] text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ minHeight: '44px', maxHeight: '240px' }}
               />
 
@@ -1447,7 +1447,7 @@ export function ChatPanel() {
                     side="top"
                     align="start"
                     sideOffset={8}
-                    className="surface-pop z-50 w-[320px] max-h-[480px] overflow-y-auto rounded-xl bg-surface-overlay p-4 text-[hsl(var(--text-primary))] shadow-lg outline-none"
+                    className="surface-pop z-50 w-[320px] max-h-[480px] overflow-y-auto rounded-xl bg-surface-overlay p-4 text-[hsl(var(--text-primary))] shadow-lg outline-hidden"
                   >
                     <ComposerControls
                       turnMode={turnMode}

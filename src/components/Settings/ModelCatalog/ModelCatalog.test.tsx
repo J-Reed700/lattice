@@ -94,9 +94,16 @@ describe('ModelFilterPanel', () => {
     expect(screen.queryByRole('tab', { name: 'LLM' })).not.toBeInTheDocument();
   });
 
-  it('has no filters heading and no pills', () => {
+  it('keeps common controls visible and discloses secondary filters', async () => {
+    const user = userEvent.setup();
     render(<ModelFilterPanel />);
-    expect(screen.queryByText('Filters')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sort models')).toBeInTheDocument();
+    expect(screen.getByLabelText('Estimated fit')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Maximum size')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Filters' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByLabelText('Maximum size')).toHaveValue('');
     expect(screen.getByLabelText('Minimum downloads')).toBeInTheDocument();
     expect(screen.getByLabelText('Capability')).toBeInTheDocument();
@@ -109,6 +116,7 @@ describe('ModelFilterPanel', () => {
     expect(screen.queryByLabelText('Embedding dimensions')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'Embedding' }));
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
     expect(screen.getByLabelText('Embedding dimensions')).toBeInTheDocument();
   });
 
@@ -117,6 +125,7 @@ describe('ModelFilterPanel', () => {
     render(<ModelFilterPanel />);
     expect(screen.queryByRole('button', { name: 'Reset filters' })).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
     await user.selectOptions(screen.getByLabelText('Maximum size'), '4');
     expect(useModelCatalogStore.getState().filters.max_size_gb).toBe(4);
 
@@ -128,6 +137,7 @@ describe('ModelFilterPanel', () => {
   it('clears precision and hardware filters together', async () => {
     const user = userEvent.setup();
     render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
     await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
     await user.selectOptions(screen.getByLabelText('Estimated fit'), 'fits');
     expect(useModelCatalogStore.getState().quantizationFilter).toBe('Q8_0');
@@ -135,6 +145,28 @@ describe('ModelFilterPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
     expect(useModelCatalogStore.getState().quantizationFilter).toBe('');
     expect(useModelCatalogStore.getState().fitFilter).toBe('all');
+  });
+
+  it('keeps an applied secondary filter discoverable after collapsing and reopening', async () => {
+    const user = userEvent.setup();
+    render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
+    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
+    await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
+    expect(screen.queryByLabelText('Listed quantization')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
+    expect(screen.getByLabelText('Listed quantization')).toHaveValue('Q8_0');
+  });
+
+  it('supports keyboard navigation between purpose tabs', async () => {
+    const user = userEvent.setup();
+    render(<ModelFilterPanel />);
+    screen.getByRole('tab', { name: 'All' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveFocus();
+    expect(useModelCatalogStore.getState().filters.category).toBe('LLM');
+    await user.keyboard('{End}');
+    expect(useModelCatalogStore.getState().filters.category).toBe('Transcription');
   });
 });
 

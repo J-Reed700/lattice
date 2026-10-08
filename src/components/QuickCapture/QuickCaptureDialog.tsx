@@ -107,7 +107,7 @@ export function QuickCaptureDialog({
           rows={5}
           autoFocus
           placeholder="What do you want to keep?"
-          className="w-full resize-none rounded-sm border border-border-default bg-bg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full resize-none rounded-sm border border-border-default bg-bg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:ring-2 focus:ring-ring"
         />
 
         {importUrl && text.trim() === '' ? (

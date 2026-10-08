@@ -93,7 +93,7 @@ function App() {
           <AppContent />
         </div>
         {shutdown.isQuitting && (
-          <div role="status" className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-bg/90 text-text-primary">
+          <div role="status" className="fixed inset-0 z-100 flex flex-col items-center justify-center gap-4 bg-bg/90 text-text-primary">
             <span>Saving your work before quitting…</span>
             {shutdown.canCancelQuit && <button type="button" onClick={() => void shutdown.cancelQuit()} className="rounded-md border border-border-default bg-surface px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
               Keep working
@@ -101,7 +101,7 @@ function App() {
           </div>
         )}
         {shutdown.error && (
-          <div role="alert" className="fixed bottom-4 left-1/2 z-[100] max-w-lg -translate-x-1/2 rounded-lg border border-border-default bg-surface px-5 py-4 text-sm text-text-primary shadow-lg">
+          <div role="alert" className="fixed bottom-4 left-1/2 z-100 max-w-lg -translate-x-1/2 rounded-lg border border-border-default bg-surface px-5 py-4 text-sm text-text-primary shadow-lg">
             {shutdown.error}
           </div>
         )}

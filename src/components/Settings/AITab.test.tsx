@@ -12,6 +12,8 @@ const mockLlmSettings: LlmSettingsContextValue = {
   llmSettings: {
     provider: 'auto',
     ollamaUrl: 'http://localhost:11434',
+    ollamaConfigured: false,
+    ollamaUtilityModel: '',
     model: '',
     ollamaAuthHeaderName: '',
     ollamaAuthHeaderValue: '',
@@ -82,6 +84,8 @@ describe('ChatTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLlmSettings.llmSettings!.provider = 'auto';
+    mockLlmSettings.llmSettings!.ollamaConfigured = false;
+    mockLlmSettings.llmSettings!.model = '';
     mockLlmSettings.llmSettings!.llamaCpp = { url: 'http://localhost:8080', model: 'qwen.gguf', authHeaderName: '', authHeaderValue: '' };
   });
 
@@ -132,6 +136,22 @@ describe('ChatTab', () => {
       expect(within(modelSelect).getByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
       expect(modelSelect).not.toBeDisabled();
     });
+
+    it('explicitly saves a default localhost connection without switching the provider', async () => {
+      mockLlmSettings.llmSettings!.model = 'llama3.2:latest';
+      const user = userEvent.setup();
+      render(<ChatTab />);
+      await user.click(screen.getByRole('button', { name: 'Save Ollama connection' }));
+      expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
+        ollamaConfigured: true,
+        ollamaUrl: 'http://localhost:11434',
+        model: 'llama3.2:latest',
+        ollamaUtilityModel: '',
+        ollamaAuthHeaderName: '',
+        ollamaAuthHeaderValue: '',
+      });
+    });
+
   });
   it('offers llama.cpp separately and keeps the saved Ollama connection when switching', async () => {
     const user = userEvent.setup();
@@ -157,7 +177,7 @@ describe('ChatTab', () => {
     const connection = { url: 'https://llama.example.com', model: 'qwen.gguf', authHeaderName: 'Authorization', authHeaderValue: 'Basic test-token' };
     expect(VaultAPI.testLlamaCppConnection).toHaveBeenCalledWith(connection);
     await user.click(screen.getByRole('button', { name: 'Save connection' }));
-    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'llamacpp', llamaCpp: connection });
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ llamaCpp: connection });
     expect(screen.getByLabelText('llama.cpp auth header value')).toHaveAttribute('type', 'password');
   });
 
@@ -168,7 +188,7 @@ describe('ChatTab', () => {
     expect(screen.getByText('Ollama server')).toBeInTheDocument();
     expect(screen.getByLabelText('Chat provider')).toHaveValue('auto');
     await user.click(screen.getByRole('button', { name: 'Save connection' }));
-    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'auto', llamaCpp: mockLlmSettings.llmSettings!.llamaCpp });
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ llamaCpp: mockLlmSettings.llmSettings!.llamaCpp });
   });
 
   it('does not save a partial llama.cpp authentication header', async () => {
@@ -178,6 +198,19 @@ describe('ChatTab', () => {
     await user.type(screen.getByLabelText('llama.cpp auth header name'), 'Authorization');
     await user.click(screen.getByRole('button', { name: 'Save connection' }));
     expect(mockLlmSettings.saveLlmUpdates).not.toHaveBeenCalled();
+  });
+
+  it.each(['local', 'ollama'] as const)('edits a saved llama.cpp connection while preserving the %s provider', async provider => {
+    mockLlmSettings.llmSettings!.provider = provider;
+    const user = userEvent.setup();
+    render(<ChatTab />);
+    expect(screen.getByLabelText('Chat provider')).toHaveValue(provider);
+    await user.clear(screen.getByLabelText('llama.cpp URL'));
+    await user.type(screen.getByLabelText('llama.cpp URL'), 'https://new-server.example.com');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
+      llamaCpp: { ...mockLlmSettings.llmSettings!.llamaCpp, url: 'https://new-server.example.com' },
+    });
   });
 
 });

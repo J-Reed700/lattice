@@ -85,6 +85,7 @@ pub(super) async fn save(
             coverage: audit.clone(),
         };
         if saved.valid(section, audit.index) {
+            inventory::revisions::save(llm, content, unit).await?;
             crate::features::learning::lesson_drafts::record_checkpoint(
                 &key(llm, section, audit.index),
                 serde_json::to_value(saved)?,

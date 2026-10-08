@@ -29,7 +29,7 @@ export function ReferenceBody({ bookmark, payload, resolutionFailed }: Reference
   if (bookmark.messageRole === 'system') {
     return (
       <div className="border-l-2 border-[hsl(var(--border-default))] pl-4">
-        <div className="max-w-none break-words text-sm text-[hsl(var(--text-secondary))] [overflow-wrap:anywhere]">
+        <div className="max-w-none wrap-break-word text-sm text-[hsl(var(--text-secondary))] wrap-anywhere">
           <TiptapViewer content={content} />
         </div>
         {resolutionFailed && (
@@ -47,8 +47,8 @@ export function ReferenceBody({ bookmark, payload, resolutionFailed }: Reference
       <div
         className={
           isAssistant
-            ? 'max-w-none break-words font-serif text-base leading-[1.65] text-[hsl(var(--text-primary))] [overflow-wrap:anywhere]'
-            : 'max-w-none break-words text-base leading-[1.5] text-[hsl(var(--text-primary))] [overflow-wrap:anywhere]'
+            ? 'max-w-none wrap-break-word font-serif text-base leading-[1.65] text-[hsl(var(--text-primary))] wrap-anywhere'
+            : 'max-w-none wrap-break-word text-base leading-normal text-[hsl(var(--text-primary))] wrap-anywhere'
         }
       >
         <TiptapViewer content={content} />

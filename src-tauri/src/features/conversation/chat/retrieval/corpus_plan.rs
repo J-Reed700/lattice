@@ -637,7 +637,6 @@ async fn plan_with(
                     CompletionInput::Message { role: "system".into(), content: PLANNER_SYSTEM.into() },
                     CompletionInput::Message { role: "user".into(), content: prompt.clone() },
                 ],
-                reasoning_effort: Some("none".into()),
                 json_schema: Some(serde_json::json!({
                     "type":"object", "additionalProperties":false,
                     "properties":{

@@ -1,5 +1,9 @@
 # Desktop compatibility validation — 2026-09-19
 
+> Historical validation record. The results and remaining gates below describe
+> the 2026-09-19 candidate. See the current [native test guide](../../e2e/desktop/README.md)
+> and [desktop platform scope](platform-support.md).
+
 Added a packaged native application suite and a four-platform CI matrix. The
 suite drives the real Tauri webview and Rust handlers, using an isolated test
 application identity and library. See the [test guide](../../e2e/desktop/README.md)

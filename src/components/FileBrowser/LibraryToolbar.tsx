@@ -91,7 +91,7 @@ export function LibraryToolbar({
           onChange={(event) => onSearchQueryChange(event.target.value)}
           placeholder="Search files"
           aria-label="Search files"
-          className="h-9 w-full rounded-md border border-border-default bg-surface pl-9 pr-16 text-sm text-text-primary outline-none transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
+          className="h-9 w-full rounded-md border border-border-default bg-surface pl-9 pr-16 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
         />
         {isContentSearchLoading && hasQuery ? (
           <Loader2 className="pointer-events-none absolute right-9 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-text-muted" />

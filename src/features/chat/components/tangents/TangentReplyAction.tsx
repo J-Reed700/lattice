@@ -52,11 +52,11 @@ export function TangentReplyAction({ source, className, disabled }: {
         <label htmlFor={passageId} className="text-sm font-medium">Passage to explore</label>
         <textarea id={passageId} value={passage ?? ''} rows={8} onChange={event => setPassage(event.target.value)}
           aria-describedby={`${passageId}-length`}
-          className="w-full resize-y rounded-lg border border-border-subtle bg-surface p-3 text-sm leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          className="w-full resize-y rounded-lg border border-border-subtle bg-surface p-3 text-sm leading-relaxed outline-hidden focus-visible:ring-2 focus-visible:ring-ring" />
         <div className="flex items-center justify-between gap-3">
           <span id={`${passageId}-length`} className="text-xs text-text-muted">{length.toLocaleString()} / 8,000 characters</span>
           <button type="button" disabled={!length || length > MAX_TANGENT_PASSAGE_LENGTH || disabled || tangents.creating}
-            className="rounded-lg bg-accent px-3 py-2 text-sm text-[hsl(var(--accent-fg))] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-lg bg-accent px-3 py-2 text-sm text-[hsl(var(--accent-fg))] disabled:opacity-40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => { start(passage!.trim()); setPassage(null); }}>Start tangent</button>
         </div>
       </DialogContent>

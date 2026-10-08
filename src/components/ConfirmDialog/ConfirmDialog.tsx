@@ -186,7 +186,7 @@ export function ConfirmDialog({
                 type="text"
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
-                className="mt-1.5 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                className="mt-1.5 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
                 placeholder={requireConfirmation}
                 disabled={isLoading}
                 autoComplete="off"

@@ -146,7 +146,7 @@ export function JournalWorkspace() {
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
     new Set(),
   );
-  const appliedInitialJournalRef = useRef(false);
+  const initialJournalHandledRef = useRef(false);
   const journalCreationRef = useRef<ReturnType<typeof VaultAPI.createJournal> | null>(null);
 
   const createJournalOnce = useCallback(() => {
@@ -287,6 +287,7 @@ export function JournalWorkspace() {
       const fetched = await queryClient.fetchQuery(journalsQueryOptions());
       if (cancelled) return;
       const active = fetched.filter(journal => !journal.isArchived);
+      if (fetched.length > 0) initialJournalHandledRef.current = true;
 
       if (requestedJournalSpaceId) {
         const requestedIsActive = active.some((j) => j.id === requestedJournalSpaceId);
@@ -312,10 +313,14 @@ export function JournalWorkspace() {
         return;
       }
 
-      if (appliedInitialJournalRef.current) return;
-      appliedInitialJournalRef.current = true;
-
+      // Opening Journal again removes the selection from the URL without
+      // unmounting this workspace. Resolve it on every such navigation;
+      // createJournalOnce already shares any pending first-journal creation.
       if (active.length === 0 && fetched.length === 0) {
+        // Deleting the last journal should leave the workspace empty. A
+        // navigation during first-run creation may still await that operation.
+        if (initialJournalHandledRef.current && !journalCreationRef.current) return;
+        initialJournalHandledRef.current = true;
         const created = await createJournalOnce();
         if (cancelled) return;
         if (!created.ok) {
@@ -834,10 +839,10 @@ export function JournalWorkspace() {
           <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
           <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
           <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
-          <button type="button" onClick={() => { appliedInitialJournalRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
+          <button type="button" onClick={() => { initialJournalHandledRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
           <details className="mt-5 text-xs text-text-tertiary">
             <summary className="cursor-pointer">Error details</summary>
-            <p className="mt-2 break-words text-left">{topLevelError}</p>
+            <p className="mt-2 wrap-break-word text-left">{topLevelError}</p>
           </details>
         </div>
       </div>
@@ -864,7 +869,7 @@ export function JournalWorkspace() {
             type="button"
             onClick={() => void handleCreateJournal()}
             disabled={isCreatingJournal}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
             {isCreatingJournal ? 'Creating journal…' : 'New journal'}

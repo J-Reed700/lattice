@@ -13,6 +13,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # LunarG no longer serves 1.3.290.0. Keep both Windows checks on the
+  # same available runtime, including the path used after extraction.
+  VULKAN_RUNTIME_VERSION: 1.4.363.0
 
 jobs:
   # Build on each supported platform to catch target-specific dependencies.
@@ -48,8 +51,9 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - name: Restore cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -166,6 +170,19 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
+      # A test failure should not discard a completed native compilation and
+      # force the next repair attempt to rebuild every dependency.
+      - name: Save cargo cache
+        if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   # The pinned llama-server release must exist, match the lock's checksums, be
   # self-contained, and start on every platform we ship.
   sidecar-binaries:
@@ -195,14 +212,14 @@ jobs:
         if: runner.os == 'Windows'
         uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
-          vulkan_version: 1.3.290.0
+          vulkan_version: ${{ env.VULKAN_RUNTIME_VERSION }}
           install_runtime_only: true
           cache: true
 
       - name: Install Vulkan loader (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item "C:\VulkanSDK\1.3.290.0\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
+        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
 
       - name: Fetch, verify and run the pinned binaries
         shell: bash
@@ -244,17 +261,18 @@ jobs:
         if: runner.os == 'Windows'
         uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
-          vulkan_version: 1.3.290.0
+          vulkan_version: ${{ env.VULKAN_RUNTIME_VERSION }}
           install_runtime_only: true
           cache: true
       - name: Install Windows Vulkan loader
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item "C:\VulkanSDK\1.3.290.0\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
+        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           key: desktop-compatibility-${{ matrix.name }}
+          cache-on-failure: true
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash

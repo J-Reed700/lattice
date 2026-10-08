@@ -1,0 +1,68 @@
+[
+  {
+    "policy": "strict",
+    "claim": "To compute the mean, add all the values and divide the total by the count.",
+    "statements": [
+      "The mean is the sum of the data points divided by the number of data points."
+    ],
+    "expected": "supported"
+  },
+  {
+    "policy": "strict",
+    "claim": "For the stipulated example [3, 5, 8], the arithmetic mean is 16/3.",
+    "statements": [
+      "The mean is the sum of the data points divided by the number of data points."
+    ],
+    "expected": "supported"
+  },
+  {
+    "policy": "strict",
+    "claim": "When computing the mean, the denominator is the count of data points, not the largest data value.",
+    "statements": [
+      "The mean is the sum of the data points divided by the number of data points."
+    ],
+    "expected": "supported"
+  },
+  {
+    "policy": "strict",
+    "claim": "Every extra dose in this experiment produces a proportional response.",
+    "statements": [
+      "The first dose produced a measurable response."
+    ],
+    "expected": "unsupported"
+  },
+  {
+    "policy": "strict",
+    "claim": "The procedure is safe because this component is dry.",
+    "statements": [
+      "The procedure is safe if every component in the assembly is dry."
+    ],
+    "expected": "unsupported"
+  },
+  {
+    "policy": "strict",
+    "claim": "For the stipulated example [2, 4], the arithmetic mean is 5.",
+    "statements": [
+      "The mean is the sum of the data points divided by the number of data points."
+    ],
+    "expected": "contradicted"
+  },
+  {
+    "policy": "strict",
+    "claim": "In Example Delta, for the stipulated values [2, 4], the arithmetic mean is 3.",
+    "statements": ["The mean is the sum of the data points divided by the number of data points."],
+    "expected": "supported"
+  },
+  {
+    "policy": "strict",
+    "claim": "In Example Delta, the procedure is safe because one component in the assembly is dry.",
+    "statements": ["The procedure is safe if every component in the assembly is dry."],
+    "expected": "unsupported"
+  },
+  {
+    "policy": "strict",
+    "claim": "The source documents an official protocol named Aurora with exactly three steps.",
+    "statements": ["This training procedure has exactly three steps."],
+    "expected": "unsupported"
+  }
+]

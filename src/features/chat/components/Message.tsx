@@ -761,7 +761,7 @@ export const Message = memo(({
                 type="button"
                 onClick={() => { void selectConversation(continuedFrom.conversationId); }}
                 title={`Open "${continuedFrom.title}"`}
-                className="inline-flex min-w-0 items-center gap-1 rounded-sm text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex min-w-0 items-center gap-1 rounded-sm text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <MessageSquareShare className="h-3 w-3 shrink-0" strokeWidth={1.6} aria-hidden="true" />
                 <span className="truncate">Summary of {continuedFrom.title}</span>
@@ -790,7 +790,7 @@ export const Message = memo(({
                   else void handleRegenerate();
                 }}
                 disabled={isBusy}
-                className="inline-flex items-center gap-1 rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] disabled:opacity-50"
               >
                 <RefreshCw className="h-3 w-3" />
                 Try again
@@ -800,7 +800,7 @@ export const Message = memo(({
               <button
                 type="button"
                 onClick={() => dismissFailedMessage(message.tempId)}
-                className="rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm px-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Dismiss
               </button>
@@ -990,7 +990,7 @@ export const Message = memo(({
           onClick={isUser ? undefined : handleBodyClick}
           onMouseOver={isUser ? undefined : handleBodyMouseOver}
           onMouseLeave={isUser ? undefined : handleBodyMouseLeave}
-          className={`break-words [overflow-wrap:anywhere] ${
+          className={`wrap-break-word wrap-anywhere ${
             isUser
               ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
               : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'

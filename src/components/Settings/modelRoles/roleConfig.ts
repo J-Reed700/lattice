@@ -10,6 +10,7 @@
  * every consumer picks up the new role automatically.
  */
 
+import type { LLMSettings } from '../../../types/api/settings';
 import type { DownloadedModel } from '../../../types/downloadedModels';
 
 export type RoleId = 'chat' | 'utility' | 'embedding';
@@ -76,4 +77,14 @@ export function isModelActiveForRole(
   role: RoleDescriptor,
 ): boolean {
   return Boolean(model[role.activeKey]);
+}
+
+/** An explicit remote provider overrides any saved downloaded chat assignment. */
+export function isChatModelSelected(
+  model: DownloadedModel,
+  provider: LLMSettings['provider'] | undefined,
+): boolean {
+  return model.backend === 'ollama'
+    ? provider === 'ollama'
+    : model.is_active_for_chat && (provider === 'local' || provider === 'auto');
 }

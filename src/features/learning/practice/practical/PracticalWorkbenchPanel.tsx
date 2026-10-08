@@ -339,7 +339,7 @@ function SimulationPanel({
                     void send();
                 }}
                 placeholder={`Respond as ${session.learnerRole}…`}
-                className="min-w-0 flex-1 resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none focus:border-accent"
+                className="min-w-0 flex-1 resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
               />
               <button
                 type="button"
@@ -831,7 +831,7 @@ export function PracticalWorkbenchPanel({
                           setSelectedFilePath(editorFiles[target].path);
                           document.getElementById(`lab-file-tab-${activeActivity.id}-${target}`)?.focus();
                         }}
-                        className={`max-w-full break-all rounded-lg px-3 py-2 font-mono text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${file.path === selectedFile?.path ? "bg-surface text-accent shadow-sm" : "text-text-secondary hover:bg-surface"}`}>{file.path}</button>)}
+                        className={`max-w-full break-all rounded-lg px-3 py-2 font-mono text-xs transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${file.path === selectedFile?.path ? "bg-surface text-accent shadow-sm" : "text-text-secondary hover:bg-surface"}`}>{file.path}</button>)}
                     </div>}
                     {editorFiles.map((file, index) => <div key={`${activeActivity.id}:${activeActivity.revision}:${file.path}`} id={`lab-file-panel-${activeActivity.id}-${index}`} role="tabpanel" aria-labelledby={`lab-file-tab-${activeActivity.id}-${index}`} hidden={selectedFile?.path !== file.path}>
                       <LearningCodeEditor path={file.path} showPath={false} value={file.content} ariaLabel={`Edit ${file.path}`} readOnly={draft.loadState !== "ready"} onChange={(content) => draft.setFileContent(file.path, content)} onRunShortcut={() => void beginRun()} />
@@ -932,7 +932,7 @@ export function PracticalWorkbenchPanel({
                       <h4 className="text-xs font-semibold uppercase tracking-[.14em] text-[#b8b0a6]">
                         Output
                       </h4>
-                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/25 p-3 font-mono text-[11px] leading-5">
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word rounded-xl border border-white/10 bg-black/25 p-3 font-mono text-[11px] leading-5">
                         {output.stdout ||
                           (output.status === "running"
                             ? "Waiting for runtime output…"
@@ -943,7 +943,7 @@ export function PracticalWorkbenchPanel({
                       <h4 className="text-xs font-semibold uppercase tracking-[.14em] text-[#b8b0a6]">
                         Errors
                       </h4>
-                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/25 p-3 font-mono text-[11px] leading-5">
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word rounded-xl border border-white/10 bg-black/25 p-3 font-mono text-[11px] leading-5">
                         {output.stderr || "No error output."}
                       </pre>
                     </div>

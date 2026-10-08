@@ -1,0 +1,324 @@
+[
+  {
+    "topic": "Learn the three-state card workflow defined by the supplied training manual. Teach only this fictional workflow and its documented examples; do not add productivity, software, psychology or industry claims.: Card workflow: a small manual-based lesson",
+    "query": "deterministic finite automaton traceability verification property",
+    "gaps": [
+      {
+        "claim": "Determinism makes the system fully traceable: you can always verify your work by re-checking each step against the rules.",
+        "missingEvidence": "The passage describes a deterministic system with defined transitions and gives tracing instructions, but it never states that 'determinism makes the system fully traceable' or that you can 'always verify your work by re-checking each step against the rules.' These are interpretive generalizations not present in the source text."
+      },
+      {
+        "claim": "The teaching text states that Reset is powerful (it works from any state) but destructive (you lose all prior progress).",
+        "missingEvidence": "The passage states 'Reset changes any state to New' and 'Reset does not complete work; it returns the card to New,' but it never uses the words 'powerful' or 'destructive,' nor does it frame Reset as causing you to 'lose all prior progress.' These characterizations are not stated in the text."
+      },
+      {
+        "claim": "The teaching text states that skipping a step would give an incomplete trace and could lead to errors if you later try to verify your work.",
+        "missingEvidence": "The passage instructs to record each step and notes that an unchanged action 'is still a step in the sequence,' but it never states what happens if you skip a step, nor does it say skipping would give an 'incomplete trace' or 'could lead to errors if you later try to verify your work.' These consequences are not stated."
+      }
+    ],
+    "results": [
+      {
+        "snippet": "An algorithm to verify local threshold testability of deterministic ... arxiv.org/abs/2105.10654 A finite deterministic automaton is called l-threshold k-testable if the automaton accepts a l-threshold k-testable language. In this paper, the necessary and sufficient conditions for an automaton to be locally threshold testable are found.",
+        "title": "An algorithm to verify local threshold testability of deterministic ...",
+        "url": "https://arxiv.org/abs/2105.10654"
+      },
+      {
+        "snippet": "Deterministic automaton - Wikipedia en.wikipedia.org/wiki/Deterministic_automaton In computer science, a deterministic automaton is a concept of automata theory where the outcome of a transition from one state to another is determined by the input. [1]: 41 A common deterministic automaton is a deterministic finite automaton (DFA) which is a finite state machine, where for each pair of state and input symbol there is one and only one transition to a next state. DFAs ...",
+        "title": "Deterministic automaton - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Deterministic_automaton"
+      },
+      {
+        "snippet": "An Algorithm to Verify Local Threshold Testability of Deterministic ... link.springer.com/chapter/10.1007/3-540-45526-4_15 A finite deterministic automaton is called l -threshold k -testable New version of polynomial time algorithm to verify the local testability will be presented too.",
+        "title": "An Algorithm to Verify Local Threshold Testability of Deterministic ...",
+        "url": "https://link.springer.com/chapter/10.1007/3-540-45526-4_15"
+      },
+      {
+        "snippet": "Automata-less Monitoring via Trace-Checking | Proceedings of the AAAI ... ojs.aaai.org/index.php/AAAI/article/view/38968 In runtime verification, monitoring consists of analyzing the current execution of a system and determining, on the basis of the observed finite trace, whether all its possible continuations satisfy or violate a given specification. This is typically done by synthesizing a monitor-often a Deterministic Finite State Automaton (DFA)-from logical specifications expressed in Linear Temporal ...",
+        "title": "Automata-less Monitoring via Trace-Checking | Proceedings of the AAAI ...",
+        "url": "https://ojs.aaai.org/index.php/AAAI/article/view/38968"
+      },
+      {
+        "snippet": "Deterministic Finite Automata | Text | CS251 Spring 2023 s23.cs251.com/Text/04_Deterministic_Finite_Automata/contents.html The term algorithm is synonymous to computer (and machine) and makes it more clear that we are not necessarily talking about a physical device. In this section we give the basic definitions regarding the computational model known as deterministic finite automata.",
+        "title": "Deterministic Finite Automata | Text | CS251 Spring 2023",
+        "url": "https://s23.cs251.com/Text/04_Deterministic_Finite_Automata/contents.html"
+      },
+      {
+        "snippet": "PDF Deterministic Finite Automata: Discrete Math for Computer Science ... sites.duke.edu/compsci230sp2024/files/2024/06/Deterministic-Finite-Automata.pdf That makes it a Non-deterministic Finite Automata (NFA) which is beyond what we can discuss in 230. \u2022 DFAs are finite because every of the five elements of it is finite. \u2022 The set of strings that make the DFA end at a final state is a language.",
+        "title": "PDF Deterministic Finite Automata: Discrete Math for Computer Science ...",
+        "url": "https://sites.duke.edu/compsci230sp2024/files/2024/06/Deterministic-Finite-Automata.pdf"
+      },
+      {
+        "snippet": "PDF Deterministic Finite Automata - brown-cs181.github.io brown-cs181.github.io/lectures/DFA.pdf Formal Definition Deterministic Finite Automaton (DFA) M = ( Q , S , d , q 0 , F ) Q : set of states S : input alphabet l\u00cfS d : transition function",
+        "title": "PDF Deterministic Finite Automata - brown-cs181.github.io",
+        "url": "https://brown-cs181.github.io/lectures/DFA.pdf"
+      },
+      {
+        "snippet": "Deterministic Finite Automata (DFA): Design, Tracing and Minimisation ... www.knowledgegate.ai/blog/deterministic-fa-dfa-theory-computation-complete-guide Deterministic finite automata explained through state design, string tracing, complements, products and DFA minimisation, with two complete worked examples.",
+        "title": "Deterministic Finite Automata (DFA): Design, Tracing and Minimisation ...",
+        "url": "https://www.knowledgegate.ai/blog/deterministic-fa-dfa-theory-computation-complete-guide"
+      },
+      {
+        "snippet": "DETERMINISTIC definition: 1. believing that everything that happens must happen as it does and could not have happened any\u2026. \u2026",
+        "title": "DETERMINISTIC | English meaning - Cambridge Dictionary",
+        "url": "https://dictionary.cambridge.org/dictionary/english/deterministic"
+      },
+      {
+        "snippet": "DETERMINISTIC definition: following or relating to the philosophical doctrine of determinism, which holds that all facts and events \u2026",
+        "title": "DETERMINISTIC Definition & Meaning | Dictionary.com",
+        "url": "https://www.dictionary.com/browse/deterministic"
+      },
+      {
+        "snippet": "The meaning of DETERMINISTIC is relating to or implying determinism.",
+        "title": "DETERMINISTIC Definition & Meaning - Merriam-Webster",
+        "url": "https://www.merriam-webster.com/dictionary/deterministic"
+      },
+      {
+        "snippet": "A deterministic philosophy says that every action we take was already pre-determined by past events, even when it feels like we're \u2026",
+        "title": "Deterministic - Definition, Meaning & Synonyms | Vocabulary.com",
+        "url": "https://www.vocabulary.com/dictionary/deterministic"
+      }
+    ],
+    "expectedUrls": []
+  },
+  {
+    "topic": "Learn the three-state card workflow defined by the supplied training manual. Teach only this fictional workflow and its documented examples; do not add productivity, software, psychology or industry claims.: Card workflow: a small manual-based lesson",
+    "query": "reset operation state machine properties consequences of reset",
+    "gaps": [
+      {
+        "claim": "Determinism makes the system fully traceable: you can always verify your work by re-checking each step against the rules.",
+        "missingEvidence": "The passage describes a deterministic system with defined transitions and gives tracing instructions, but it never states that 'determinism makes the system fully traceable' or that you can 'always verify your work by re-checking each step against the rules.' These are interpretive generalizations not present in the source text."
+      },
+      {
+        "claim": "The teaching text states that Reset is powerful (it works from any state) but destructive (you lose all prior progress).",
+        "missingEvidence": "The passage states 'Reset changes any state to New' and 'Reset does not complete work; it returns the card to New,' but it never uses the words 'powerful' or 'destructive,' nor does it frame Reset as causing you to 'lose all prior progress.' These characterizations are not stated in the text."
+      },
+      {
+        "claim": "The teaching text states that skipping a step would give an incomplete trace and could lead to errors if you later try to verify your work.",
+        "missingEvidence": "The passage instructs to record each step and notes that an unchanged action 'is still a step in the sequence,' but it never states what happens if you skip a step, nor does it say skipping would give an 'incomplete trace' or 'could lead to errors if you later try to verify your work.' These consequences are not stated."
+      }
+    ],
+    "results": [
+      {
+        "snippet": "Resetting the NIM state - IBM www.ibm.com/docs/en/aix/7.1.0?topic=nim-resetting-state After the operation completes, the machine returns to the ready state. If an operation on a machine is interrupted, the machine state may continue to reflect the operation. If this occurs, the machine must be reset to the ready state before performing any further operations. To return a machine to the ready state, use the NIM reset operation.",
+        "title": "Resetting the NIM state - IBM",
+        "url": "https://www.ibm.com/docs/en/aix/7.1.0?topic=nim-resetting-state"
+      },
+      {
+        "snippet": "Fundamental properties of reset control systems - ScienceDirect www.sciencedirect.com/science/article/pii/S0005109804000196 The present paper, which reports on results from Beker (2001), provides a summary of fundamental properties of reset control. It considers more general reset structures than previously considered, allowing for higher-order controllers and partial-state resetting. The paper shows the previously mentioned H\u03b2 -condition to be necessary and sufficient for quadratic stability and links it to both ...",
+        "title": "Fundamental properties of reset control systems - ScienceDirect",
+        "url": "https://www.sciencedirect.com/science/article/pii/S0005109804000196"
+      },
+      {
+        "snippet": "6.8.5.3. Configuration SDM State Machine Logic Protection - To ... docs.altera.com/r/docs/813773/26.1/device-configuration-user-guide-agilextm-5-fpgas-and-socs/configuration-sdm-state-machine-logic-protection?contentId=2gTiB7WM85fJ1sGnJO7T~w To guarantee correct operation of state machines, your reset logic must hold the FPGA fabric in reset until the entire fabric enters user mode. The following example shows how an inadequate reset strategy might result in an illegal state in a one-hot state machine. In this example, the design does not reset any of the ...",
+        "title": "6.8.5.3. Configuration SDM State Machine Logic Protection - To ...",
+        "url": "https://docs.altera.com/r/docs/813773/26.1/device-configuration-user-guide-agilextm-5-fpgas-and-socs/configuration-sdm-state-machine-logic-protection?contentId=2gTiB7WM85fJ1sGnJO7T~w"
+      },
+      {
+        "snippet": "Reset Function - Execute subsystem on model reset event - Simulink www.mathworks.com/help/simulink/slref/resetfunction.html Examples Initialize, Reset, and Terminate State of Simulink Block Use the Initialize Function, Reset Function, and Terminate Function blocks to respond to events in a Simulink model.",
+        "title": "Reset Function - Execute subsystem on model reset event - Simulink",
+        "url": "https://www.mathworks.com/help/simulink/slref/resetfunction.html"
+      },
+      {
+        "snippet": "Reset State Machines - Reset State Machines - 1.7 English - PG182 docs.amd.com/r/en-US/pg182-gtwizard-ultrascale/Reset-State-Machines See This Figure to visualize the specific effects of the reset all state machine for your core customization, noting that the reset all state machine is initialized by the falling edge of the synchronized gtwiz_reset_all_in input.",
+        "title": "Reset State Machines - Reset State Machines - 1.7 English - PG182",
+        "url": "https://docs.amd.com/r/en-US/pg182-gtwizard-ultrascale/Reset-State-Machines"
+      },
+      {
+        "snippet": "Improved stability analysis and control design of reset systems ietresearch.onlinelibrary.wiley.com/doi/10.1049/iet-cta.2018.5410 A reset methodology in controller design can affect the performance and stability of control systems. Stability of reset time delay systems can be addressed based on a similar theorem of Lyapunov-Krasoviskii theory. In this study, a robust delay-dependent stability analysis of reset control systems is proposed for linear time invariant case.",
+        "title": "Improved stability analysis and control design of reset systems",
+        "url": "https://ietresearch.onlinelibrary.wiley.com/doi/10.1049/iet-cta.2018.5410"
+      },
+      {
+        "snippet": "Reset steps You can reset your PC when you are signed in to Windows or from the Windows Recovery Environment (Windows RE). \u2026",
+        "title": "Reset your PC | Microsoft Support",
+        "url": "https://support.microsoft.com/en-us/windows/experience/backup-recovery/reset-your-pc"
+      },
+      {
+        "snippet": "Sep 16, 2025 \u00b7 On Windows 11, you can use these steps to reset your computer to the factory default settings by removing \u2026",
+        "title": "How to reset to factory settings in Windows 11 or Windows 10",
+        "url": "https://www.windowscentral.com/microsoft/windows-help/how-to-reset-to-factory-settings-in-windows-11-or-windows-10"
+      },
+      {
+        "snippet": "Jul 25, 2026 \u00b7 If you want to reset Windows 10 and keep your files, you should read this guide instead: How to reset Windows 10 \u2026",
+        "title": "How to Reset Your PC for a Fresh Start in Windows 10",
+        "url": "https://www.digitalcitizen.life/reset-windows-10-factory-settings-wipe-data/"
+      },
+      {
+        "snippet": "Reset your Android device to factory settings To remove all data from your phone, you can reset your phone to factory settings. \u2026",
+        "title": "Reset your Android device to factory settings - Google Help",
+        "url": "https://support.google.com/android/answer/6088915?hl=en"
+      },
+      {
+        "snippet": "Dec 8, 2025 \u00b7 A factory reset wipes down everything and doesn't keep files. If that's what you want, a factory reset, you should back \u2026",
+        "title": "reset computer to factory - Microsoft Q&A",
+        "url": "https://learn.microsoft.com/en-us/answers/questions/5652417/reset-computer-to-factory"
+      },
+      {
+        "snippet": "Sep 1, 2025 \u00b7 Learn how to reset your PC for a fresh start Windows 11/10. Easy step-by-step guide with 3 proven methods. Fix slow \u2026",
+        "title": "How To Reset Your PC For A Fresh Start In Windows 11/10",
+        "url": "https://www.techcommuters.com/how-to-reset-your-pc-for-a-fresh-start-windows/"
+      }
+    ],
+    "expectedUrls": []
+  },
+  {
+    "topic": "Learn the three-state card workflow defined by the supplied training manual. Teach only this fictional workflow and its documented examples; do not add productivity, software, psychology or industry claims.: Card workflow: a small manual-based lesson",
+    "query": "incomplete trace sequential process error detection formal methods",
+    "gaps": [
+      {
+        "claim": "Determinism makes the system fully traceable: you can always verify your work by re-checking each step against the rules.",
+        "missingEvidence": "The passage describes a deterministic system with defined transitions and gives tracing instructions, but it never states that 'determinism makes the system fully traceable' or that you can 'always verify your work by re-checking each step against the rules.' These are interpretive generalizations not present in the source text."
+      },
+      {
+        "claim": "The teaching text states that Reset is powerful (it works from any state) but destructive (you lose all prior progress).",
+        "missingEvidence": "The passage states 'Reset changes any state to New' and 'Reset does not complete work; it returns the card to New,' but it never uses the words 'powerful' or 'destructive,' nor does it frame Reset as causing you to 'lose all prior progress.' These characterizations are not stated in the text."
+      },
+      {
+        "claim": "The teaching text states that skipping a step would give an incomplete trace and could lead to errors if you later try to verify your work.",
+        "missingEvidence": "The passage instructs to record each step and notes that an unchanged action 'is still a step in the sequence,' but it never states what happens if you skip a step, nor does it say skipping would give an 'incomplete trace' or 'could lead to errors if you later try to verify your work.' These consequences are not stated."
+      }
+    ],
+    "results": [
+      {
+        "snippet": "Fault Detection Methods in Sequential Systems - ScienceDirect www.sciencedirect.com/science/article/pii/S1474667017683484 The length of fault detection sequence will be shorter than in [3J, [4J, [5] , [6 ] , and the types of fault will be more general than in the case of the path sensitizing method.",
+        "title": "Fault Detection Methods in Sequential Systems - ScienceDirect",
+        "url": "https://www.sciencedirect.com/science/article/pii/S1474667017683484"
+      },
+      {
+        "snippet": "Precise and maximal race detection from incomplete traces dl.acm.org/doi/10.1145/3022671.2984024 We present RDIT, a novel dynamic technique to detect data races in multithreaded programs with incomplete trace information, i.e., in the presence of missing events. RDIT is both precise and maximal: it does not report any false alarms and it detects a maximal set of true traces from the observed incomplete trace. RDIT is underpinned by a sound BarrierPair model that abstracts away the missing ...",
+        "title": "Precise and maximal race detection from incomplete traces",
+        "url": "https://dl.acm.org/doi/10.1145/3022671.2984024"
+      },
+      {
+        "snippet": "A Process Tree-Based Incomplete Event Log Repair Approach www.mdpi.com/2078-2489/16/5/390 Furthermore, incomplete traces complicate process compliance verification by disrupting temporal and sequential information, thereby making it challenging to detect non-compliant decision paths. Therefore, repairing incomplete traces and enhancing event log quality are crucial for achieving more reliable business process analysis [9].",
+        "title": "A Process Tree-Based Incomplete Event Log Repair Approach",
+        "url": "https://www.mdpi.com/2078-2489/16/5/390"
+      },
+      {
+        "snippet": "A Sequential Inspection Procedure for Fault Detection in Multistage ... pmc.ncbi.nlm.nih.gov/articles/PMC8618403/ In this paper, a sequential inspection procedure to detect the process fault based on a sequential testing algorithm and a minimum monitoring system is proposed.",
+        "title": "A Sequential Inspection Procedure for Fault Detection in Multistage ...",
+        "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8618403/"
+      },
+      {
+        "snippet": "Pragmatic Formal Verification of Sequential Error Detection and ... arxiv.org/pdf/2404.18270 It becomes more evident that efficient methods of verification can be used in order to make sure that such safety critical designs are exhaustively verified. Formal verification is one such method that uses mathematical proofs to verify designs in a brute-force approach.",
+        "title": "Pragmatic Formal Verification of Sequential Error Detection and ...",
+        "url": "https://arxiv.org/pdf/2404.18270"
+      },
+      {
+        "snippet": "Precise and maximal race detection from incomplete traces www.researchgate.net/publication/311481242_Precise_and_maximal_race_detection_from_incomplete_traces Request PDF | Precise and maximal race detection from incomplete traces | We present RDIT, a novel dynamic technique to detect data races in multithreaded programs with incomplete trace ...",
+        "title": "Precise and maximal race detection from incomplete traces",
+        "url": "https://www.researchgate.net/publication/311481242_Precise_and_maximal_race_detection_from_incomplete_traces"
+      },
+      {
+        "snippet": "An integrated framework for diagnosing process faults with incomplete ... link.springer.com/article/10.1007/s10115-021-01625-w Handling missing values and large-dimensional features are crucial requirements for data-driven fault diagnosis systems. However, most intelligent data-driven diagnostic systems are not able to handle missing data. The presence of high-dimensional feature sets can also further complicate the process of fault diagnosis. This paper aims to devise a missing data imputation unit along with a ...",
+        "title": "An integrated framework for diagnosing process faults with incomplete ...",
+        "url": "https://link.springer.com/article/10.1007/s10115-021-01625-w"
+      },
+      {
+        "snippet": "Sep 30, 2026 \u00b7 The meaning of INCOMPLETE is not complete : unfinished. How to use incomplete in a sentence.",
+        "title": "INCOMPLETE Definition & Meaning - Merriam-Webster",
+        "url": "https://www.merriam-webster.com/dictionary/incomplete"
+      },
+      {
+        "snippet": "Oct 25, 2009 \u00b7 Chorus: I tried to go on like I never knew you I\u2019m awake but my world is half asleep I pray for this heart to be unbroken \u2026",
+        "title": "Backstreet Boys - Incomplete (Official HD Video) - YouTube",
+        "url": "https://www.youtube.com/watch?v=WVe80iZtlYU"
+      },
+      {
+        "snippet": "The decision was based on incomplete or inaccurate information. The building is still incomplete.",
+        "title": "INCOMPLETE | English meaning - Cambridge Dictionary",
+        "url": "https://dictionary.cambridge.org/dictionary/english/incomplete"
+      },
+      {
+        "snippet": "Incomplete describes things that are missing something. A chess set with a lost piece is incomplete. Incomplete also means \u2026",
+        "title": "Incomplete - Definition, Meaning & Synonyms | Vocabulary.com",
+        "url": "https://www.vocabulary.com/dictionary/incomplete"
+      },
+      {
+        "snippet": "INCOMPLETE definition: not complete; lacking some part. See examples of incomplete used in a sentence.",
+        "title": "INCOMPLETE Definition & Meaning | Dictionary.com",
+        "url": "https://www.dictionary.com/browse/incomplete"
+      }
+    ],
+    "expectedUrls": []
+  },
+  {
+    "topic": "Rust programming and the Rust toolchain",
+    "query": "cargo new generated Cargo.toml main.rs Hello world default project files",
+    "results": [
+      {
+        "title": "CARGO Definition & Meaning - Merriam-Webster",
+        "url": "https://www.merriam-webster.com/dictionary/cargo",
+        "snippet": "Cargo: goods or merchandise conveyed in a ship, airplane, or vehicle.",
+        "published_date": null,
+        "source": null
+      },
+      {
+        "title": "Cargo - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Cargo",
+        "snippet": "Cargo includes freight carried by air, sea and land.",
+        "published_date": null,
+        "source": null
+      },
+      {
+        "title": "Hello, Cargo! - The Rust Programming Language",
+        "url": "https://doc.rust-lang.org/book/ch01-03-hello-cargo.html",
+        "snippet": "The official Rust book explains cargo new, Cargo.toml, src/main.rs, and building and running the generated project.",
+        "published_date": null,
+        "source": null
+      },
+      {
+        "title": "Best Rust Books and Learning Resources",
+        "url": "https://rustify.rs/articles/best-rust-books-resources-2026",
+        "snippet": "A curated list of recommended books about Rust programming.",
+        "published_date": null,
+        "source": null
+      }
+    ],
+    "expectedUrls": [
+      "https://doc.rust-lang.org/book/ch01-03-hello-cargo.html"
+    ],
+    "gaps": [
+      {
+        "claim": "cargo new creates a Cargo.toml manifest and src/main.rs.",
+        "missingEvidence": "The current saved source does not describe project creation."
+      }
+    ]
+  },
+  {
+    "topic": "Biology: eukaryotic cell division",
+    "query": "mitosis stages and eukaryotic cell cycle",
+    "results": [
+      {
+        "title": "Cell processor",
+        "url": "https://en.wikipedia.org/wiki/Cell_(processor)",
+        "snippet": "The Cell Broadband Engine is a multicore microprocessor.",
+        "published_date": null,
+        "source": null
+      },
+      {
+        "title": "10.2 The Cell Cycle - Biology 2e | OpenStax",
+        "url": "https://openstax.org/books/biology-2e/pages/10-2-the-cell-cycle",
+        "snippet": "OpenStax Biology 2e explains the cell cycle and the stages of mitosis.",
+        "published_date": null,
+        "source": null
+      },
+      {
+        "title": "Shop cell phones",
+        "url": "https://www.apple.com/iphone/",
+        "snippet": "Compare and buy smartphones.",
+        "published_date": null,
+        "source": null
+      }
+    ],
+    "expectedUrls": [
+      "https://openstax.org/books/biology-2e/pages/10-2-the-cell-cycle"
+    ],
+    "gaps": [
+      {
+        "claim": "Mitosis divides a eukaryotic nucleus through a series of stages.",
+        "missingEvidence": "The current saved source does not describe mitosis."
+      }
+    ]
+  }
+]

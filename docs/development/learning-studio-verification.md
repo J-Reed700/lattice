@@ -178,10 +178,41 @@ validated through evidence bindings separately, including research performed by
 the job itself.
 
 Every completed factual comparison is checkpointed. Approvals require both strict
-evidence checking and independent challenge. Each key binds the exact claim, quote,
+evidence checking and independent challenge. Each key binds the section, exact factual statement,
 ordered source versions, passage bytes and offsets, checker policy, configured
-model name and context size. Retrieval runs again on resume. Changed evidence or
-checker inputs require a new comparison; failed or incomplete model responses
+model name and context size. Each claim also checkpoints its selected passage
+locations and hashes plus the source versions searched. Unchanged sources retain
+the selected evidence across resume and repair, so corpus ranking changes do not
+replace an already completed comparison. Added sources participate in normal
+hybrid retrieval; newly retrieved passages from those sources are appended to
+that claim's saved evidence, including counterevidence, and require a new strict
+comparison and challenge. Old passages are not dropped to make room for additions.
+Changed or removed source snapshots invalidate selections that used them; changed claims,
+checker inputs, or retrieval configuration also require a current selection.
+Selection checkpoints contain no approval. Failed or interrupted new comparisons
+cannot inherit an earlier verdict. The existing exact-comparison receipts remain
+valid, so adding selection checkpoints does not invalidate all saved decisions.
+The lesson quotation is a location, not an input to the factual judge. Editing
+neighboring text does not invalidate an identical statement/evidence comparison.
+Saved section inventories recover older quote-bound receipts using exact statement,
+model, policy and evidence matches; semantic similarity never transfers approval.
+
+Factual repairs and ordinary teaching corrections return explicit edits to existing
+text spans or scalar fields. The application applies them atomically, rejects
+ambiguous/overlapping locations and full-section replacement responses, and preserves
+unmentioned content. Structural lesson defects can still require broader authoring.
+Changed sections update their saved claim inventories through explicit additions,
+replacements, removals or location changes. Unmentioned statements remain unchanged;
+the whole changed section still undergoes independent coverage and fidelity checks.
+The saved inventory is representation only and never grants factual approval.
+Before starting any
+model checks, preparation looks up every comparison's saved receipt and restores
+all reusable results. The UI shows that lookup explicitly, then the exact number
+needing model review alongside the reused count. Pending claims are grouped across
+inventory gaps, so a slow early check cannot hide later saved work or force each
+sparse gap into a separate request. Finishing the claim count means the pass has
+reviewed all claims; unresolved findings can still require research or repair.
+Changed evidence or checker inputs require a new comparison; failed or incomplete model responses
 are never reusable. Concurrent checks save independently as they finish, even if
 an earlier call is slow. A crash may repeat in-flight requests, so model-call
 delivery is at least once; it is not an exactly-once billing guarantee.
@@ -259,8 +290,11 @@ content; internal conflicts require candidate evidence. Unsupported reviewer
 assertions do not drive edits. This is another fallible model judgment, not a
 guarantee. It cannot override deterministic schema or quotation failures, and
 the complete factual-verification gate still runs before publication. Teaching
-receipts include the review policy and hashes of the current reference snapshots,
-so new evidence invalidates a previous teaching approval. Regression fixtures
+receipts include the review policy and hashes of the reference snapshots. Added
+references do not repeat a completed teaching/answer-key review of an unchanged
+candidate with unchanged authoring inputs; the separate factual gate evaluates
+new evidence. Its previous source snapshots must remain present and unchanged.
+Changed snapshots or content require another review. Regression fixtures
 exercise valid and invalid criticisms across subjects; their expected answers
 and subject labels are never supplied to the production checker.
 Lesson quotations also run through the publication validator during teaching
@@ -1181,6 +1215,155 @@ pull, no network, and a deterministic container name for cancellation/recovery.
 When a container exercise has no available Docker or Podman engine, its recorded
 status is `runtime_unavailable`. Built-in Python and JavaScript practice,
 authoring, and artifact review remain available.
+
+## Small live lesson publication check
+
+`live_small_lesson_reaches_ready` runs one narrowly scoped lesson through the
+production worker with the configured llama.cpp model. The fixture supplies
+only an outline and reference text. Drafting, teaching review, claim extraction,
+coverage, evidence checks, repairs and publication use real model responses.
+The test creates a new SQLite database in the artifact directory and refuses
+to overwrite an existing database. It never opens the user's library.
+
+```bash
+LATTICE_LLAMACPP_SETTINGS=/path/to/settings.json \
+LATTICE_LESSON_FIXTURE="$PWD/src-tauri/src/features/learning/lessons/live_fixtures/card_workflow.json" \
+LATTICE_LESSON_CALLS=/path/to/new-test-directory \
+cargo test --manifest-path src-tauri/Cargo.toml --lib \
+  live_small_lesson_reaches_ready --no-default-features \
+  --features search,indexing,qa,extraction -- --ignored --nocapture
+```
+
+Success requires a completed job and a published `ready` lesson, read through a
+new database connection after closing the worker's pool. `summary.json` records
+wall time and completed model calls; `program.json` contains the published lesson.
+Request and response artifacts contain lesson/source content, never credentials.
+This proves completion of that run, not accuracy for arbitrary subjects.
+The `live_fixtures/card_workflow.json` fixture supplies a complete one-page
+specification for a fictional three-state training workflow. It exercises the
+same publication gates with a fully defined source, without pretending to
+validate real-world claims. Choose it with `LATTICE_LESSON_FIXTURE` and use a new
+artifact directory for each independent run.
+
+To test recovery, interrupt the test after a saved checkpoint, then run
+`live_small_lesson_resumes_to_ready` with the same settings and artifact directory
+(no fixture argument is needed). It uses startup job recovery against that
+isolated database and applies the same publication and reopen assertions.
+Completed calls keep their artifact numbers; unfinished calls may repeat.
+If a previous run failed a content check, the same test uses the UI's repository
+retry operation to continue its saved draft. It never changes an approval or
+readiness flag. Reported wall time includes the original run and its retries.
+The production worker initializes the accepted outline snapshot before any
+model work, independently of whether the plan view has opened. Concurrent UI
+and worker initialization share a serialized transaction. This outline record
+does not approve lesson content; publication still validates the saved report.
+
+Text repairs automatically relocate neighboring claim quotations within their
+original fields. Their statements remain unchanged unless explicitly revised.
+Relocation is not approval: independent coverage/fidelity and factual checks
+still run. Ambiguous or oversized locations require an explicit model-selected
+passage; correction feedback identifies the affected claims. Inventory delta
+checkpoints bind both the exact original inventory and revised section.
+
+Review-finding decisions use a flat output schema. Conditional citation rules
+are validated in Rust: external claims require reference passages, internal
+contradictions require candidate passages, and contract findings require both
+the candidate and the stated requirement. Invalid combinations are corrected
+explicitly instead of allowing an early schema branch to force a later verdict.
+Free-text reasons never override the structured verdict.
+Malformed finding responses receive the specific field rule they violated and
+their previous response as untrusted correction input. An actionable finding
+with an empty evidence-ID list cannot pass, even if its explanation names the
+right candidate. Correction must supply valid IDs; prose is never converted
+into an approval automatically.
+Section findings carry both the human section number and the exact candidate
+ID (for example, `Section 2 (candidate blocks-1)`), making the different numbering
+conventions explicit for subsequent grounding and repair.
+Teaching approvals bind this decision protocol's version, so an approval from
+the former branch-coupled schema cannot skip the corrected validator. This
+invalidation preserves the draft, inventory and separate factual receipts.
+Section reviews likewise use application-assigned `section-N` response keys.
+Each key has its own passage-ID enum; a reviewer cannot renumber its findings
+or select a passage from another section. Runtime validation also rejects
+duplicate keys and retains valid section checks during response correction.
+Completed answer-key and teaching reviews are saved before later finding
+grounding or repair can fail. Restart reuses their recorded findings, including
+defects, only for identical inputs and model context. Changed questions rerun
+the answer check; changed teaching content or review instructions rerun the
+teaching review. Incomplete responses are not saved as completed reviews, and
+saved findings still require grounding and the separate publication gates.
+Claim extraction uses the same pattern with `unit-N` keys and unit-specific
+passage IDs. Completed inventories remain reusable: this changes the response
+transport, not the meaning or validity rules for saved claims. The opt-in
+`live_inventory_slots_keep_every_section` check accepts captured units through
+`LATTICE_INVENTORY_SECTIONS` and requires a complete inventory in one real model
+call; it does not approve those claims as true.
+Coverage saves its validated passage mapping before checking fidelity, then
+saves each completed comparison independently. A model disconnect midway
+through a batch therefore reuses the same mapping and completed comparisons.
+Each fidelity request receives the complete same-section inventory and the
+original section or assessment context at once. This replaces the former
+selected-claims, contextual-retry, full-inventory sequence with one comparison.
+Context still cannot supply omitted inventory facts, and assertions from other
+sections are not borrowed. Existing exact-input receipts remain usable.
+Reported mapping omissions receive that same independent full-passage comparison
+before they can trigger inventory repair. Only a supported fidelity judgment can
+clear a disputed omission; an empty inventory or an unfinished judgment cannot.
+This prevents a mapping flag about an already represented implication from
+forcing repeated no-change repairs. Legacy completed coverage remains reusable;
+legacy negative mappings are reconciled before they drive more repairs.
+These receipts bind the exact section, passage, selected assertions, model and
+coverage policies; changed inputs require new checks. Failed requests are not
+cached, and neither checkpoint constitutes factual publication approval.
+Malformed coverage responses retain valid passage decisions, including reported
+omissions, and request only unfinished decisions. Empty, duplicate or foreign
+decisions cannot approve a passage. The partial mapping also survives a failed
+response-correction request, so Retry does not restart the completed decisions.
+Coverage distinguishes empirical assertions from instructor choices. Assumed
+starting skills, chosen rubric levels and submission requirements do not need
+duplicate factual claims. Factual premises, calculated results and guarantees
+inside those instructions still require representation and evidence. The
+`teaching-context-v2` migration retains positive v1 coverage and reconsiders its
+negative findings; unrelated factual receipts are unchanged. The opt-in
+`live_contract_fidelity_controls` test checks captured prerequisite/rubric
+passages and omitted factual assertions embedded in instructional wording.
+Assessment fidelity receives every original answer choice, including distractors,
+as labeled interpretation context. This lets it resolve references such as
+"Option 0" without extracting the label mapping as an external fact. Choice text
+is never added to the evidence bank; factual assertions about a resolved choice
+still need inventory support. `assessment-fidelity-v3` retains positive v2 audits
+and their inventories while reconsidering incomplete assessments.
+Strict evidence checking permits faithful paraphrases and deductions from
+explicit source rules and stipulated example inputs. It still rejects missing
+domain premises, unjustified guarantees and incorrect calculations. Durable
+negative receipts bind `semantic-entailment-v2`; older positive receipts remain
+reusable with their original evidence. Live controls include equivalent wording,
+worked calculations, missing conditions and a contradicted numeric result.
+Locally assigned example labels do not need to appear in a reference when the
+claim fully specifies the scenario. Its behavior and results still need support;
+real-world names, source attribution and undefined referents are not exempt.
+Research planning can return no searches when a gap requires correcting an
+embellishment of the supplied specification rather than finding an external
+fact. Reference selection receives the unresolved claims and their findings,
+not only the generated search query. Matching terminology or an analogous
+system does not establish relevance to the scoped claim. This reduces unrelated
+captures that would otherwise enlarge every claim's retrieved evidence and
+force another factual pass; relevant new counterevidence still reopens checks.
+Each candidate decision includes an explicit `useForGap` boolean. Only true
+decisions can be captured; a returned explanation of why a candidate is rejected
+does not accidentally include that page. IDs, duplicates and the selection count
+are validated separately from the model's prose.
+The opt-in `live_reference_selection` test defaults to the committed
+`live_fixtures/reference_scope_controls.json`, covering captured out-of-scope
+research hits and relevant documentation for two other subjects. Set
+`LATTICE_REFERENCE_CASES` to supply additional captured cases. These are
+selection controls over recorded discovery metadata, not source captures or
+factual publication approvals.
+`live_contract_fidelity_controls` defaults to the committed
+`live_fixtures/verification_controls.json`; set `LATTICE_CHECK_BATCH=1` to check
+those same controls through the production batched checker. A captured-case
+file can be supplied with `LATTICE_FIDELITY_CASES`. These controls test the judge,
+not lesson publication; the end-to-end test above must independently reach Ready.
 
 ## Opt-in live-model benchmark
 

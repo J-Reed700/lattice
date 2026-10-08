@@ -58,7 +58,7 @@ const SearchResultSkeletonItem: React.FC = memo(() => (
         </div>
 
         {/* Score and file type */}
-        <div className="ml-4 flex flex-col items-end flex-shrink-0 space-y-2">
+        <div className="ml-4 flex flex-col items-end shrink-0 space-y-2">
           <Skeleton height="1rem" width="48px" />
           <Skeleton height="0.75rem" width="40px" />
         </div>

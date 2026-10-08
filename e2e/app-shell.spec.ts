@@ -316,6 +316,12 @@ for (const width of [1440, 620]) {
     await progress.getByRole('button', { name: 'Open journal page' }).click();
     await expect(progress).toHaveCount(0);
     await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
+    // Reopening the current workspace clears the selection from the URL.
+    // It must restore the saved journal instead of showing an empty notebook.
+    await page.getByRole('button', { name: 'Journal', exact: true }).click();
+    await expect(page).toHaveURL(/journalSpaceId=research-journal/);
+    await expect(page.getByRole('textbox', { name: 'Page title' })).toHaveValue('Forest notes');
+    await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
     // Journal scopes use the same progress and save to their original page,
     // even after their editor unmounts.
     const showContext = page.getByRole('button', { name: 'Show conversation and highlights' });
@@ -530,6 +536,40 @@ for (const [cached, system, expected] of [
   });
 }
 
+test('production utilities preserve theme tokens in light and dark mode', async ({ page }) => {
+  await page.goto('/settings');
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const styles = await page.evaluate(() => {
+      const actual = document.createElement('div');
+      actual.className = 'bg-surface text-text-primary border border-border rounded-sm shadow-sm font-mono text-ui duration-fast';
+      const reference = document.createElement('div');
+      reference.style.cssText = 'background-color:hsl(var(--surface));color:hsl(var(--text-primary));border:1px solid hsl(var(--border-subtle));border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);font-family:var(--font-mono);font-size:0.8125rem;transition-duration:var(--duration-fast)';
+      document.body.append(actual, reference);
+      const read = (element: HTMLElement) => {
+        const css = getComputedStyle(element);
+        return {
+          background: css.backgroundColor, color: css.color, border: css.borderColor,
+          borderWidth: css.borderWidth, radius: css.borderRadius, shadow: css.boxShadow,
+          font: css.fontFamily, size: css.fontSize, duration: css.transitionDuration,
+        };
+      };
+      const result = { actual: read(actual), reference: read(reference) };
+      actual.remove(); reference.remove();
+      return result;
+    });
+    const { shadow: actualShadow, ...actual } = styles.actual;
+    const { shadow: expectedShadow, ...reference } = styles.reference;
+    expect(actual, theme).toEqual(reference);
+    expect(styles.actual.radius).toBe('5px');
+    // Tailwind composes transparent ring placeholders ahead of the theme shadow.
+    expect(actualShadow).toContain(expectedShadow);
+    expect(expectedShadow).not.toBe('none');
+    expect(styles.actual.font).toContain('JetBrains Mono');
+  }
+});
+
 test('theme text and destructive actions keep readable contrast', async ({ page }) => {
   await page.goto('/settings');
   for (const theme of ['light', 'dark'] as const) {
@@ -714,12 +754,32 @@ test('conversation outline navigates long virtualized replies and tracks the rea
 
   // A jump to a very long answer must show its beginning, not its middle.
   const answer = page.locator('#message-outline-11');
-  await expect.poll(() => answer.evaluate((element) => {
+  await expect.poll(() => answer.evaluate(async (element) => {
     const scroller = element.closest('.overflow-y-auto')!;
-    return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top);
-  })).toBeLessThan(50);
+    const geometry = () => [
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+      scroller.scrollTop,
+      scroller.scrollHeight,
+    ];
+    const initial = geometry();
+    // Selection can update before the virtualizer finishes measuring rows and
+    // checking the jump over two animation frames. Require stable geometry
+    // across that cycle before starting a separate reading-position scroll.
+    for (let frame = 0; frame < 3; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (geometry().some((value, index) => Math.abs(value - initial[index]) > 1)) return false;
+    }
+    return Math.abs(initial[0]) < 50;
+  })).toBe(true);
   const scroller = page.locator('.chat-panel .overflow-y-auto').first();
-  await scroller.evaluate((element) => { element.scrollTop += 1000; });
+  const readingOffset = await scroller.evaluate((element) => {
+    element.scrollTop += 1000;
+    return element.scrollTop;
+  });
+  await expect.poll(() => answer.evaluate((element) => {
+    return element.getBoundingClientRect().top - element.closest('.overflow-y-auto')!.getBoundingClientRect().top;
+  })).toBeLessThan(-900);
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeCloseTo(readingOffset, 0);
   await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toHaveAttribute('aria-current', 'location');
   await answer.evaluate((element) => {
     const scroll = element.closest('.overflow-y-auto')!;
@@ -857,6 +917,124 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('Downloaded switches chat between llama.cpp and local while keeping the utility assignment', async ({ page }, testInfo) => {
+  await page.addInitScript(defaults => {
+    let settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+    settings.llm.provider = 'llamacpp';
+    settings.llm.llamaCpp = {
+      url: 'https://llama.example.com', model: 'remote-model.gguf',
+      authHeaderName: '', authHeaderValue: '',
+    };
+    const model = {
+      id: 'local-model', model_id: 'local-model', model_name: 'Local model',
+      file_path: '/models/local.gguf', file_size_bytes: 1000000000,
+      model_type: 'chat', backend: 'local', downloaded_at: '2026-10-01T00:00:00Z',
+      last_used_at: null, use_count: 0, is_active_for_chat: true,
+      is_active_for_embedding: false, is_active_for_utility: true,
+    };
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:settings|update_settings') {
+        const payload = args as { settings: { updates: Record<string, unknown> } };
+        settings = { ...settings, llm: { ...settings.llm, ...payload.settings.updates } };
+        localStorage.setItem('test:settings', JSON.stringify(settings));
+        return settings;
+      }
+      if (command === 'plugin:model|list_downloaded_models') return [model];
+      if (command === 'plugin:model|set_active_chat_model') {
+        if ((args as { modelId: string }).modelId !== model.model_id) throw new Error('Unexpected model selection');
+        return null;
+      }
+      if (command.startsWith('plugin:model|get_active')) return null;
+      if (['plugin:conversation|list_journals', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      throw new Error(`Unsupported model selection fixture command: ${command}`);
+    };
+  }, makeAppSettings());
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+  await page.goto('/settings');
+  const navigation = page.getByRole('navigation', { name: 'Settings sections' });
+  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  const local = page.getByText('Local model', { exact: true }).locator('../..');
+  const remote = page.getByText('llama.cpp connection', { exact: true }).locator('../..');
+  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(local.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+  await local.getByRole('button', { name: 'Chat', exact: true }).click();
+  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await remote.getByRole('button', { name: 'Edit connection' }).click();
+  await expect(page.getByLabel('Chat provider')).toHaveValue('local');
+  await expect(page.getByLabel('llama.cpp URL')).toHaveValue('https://llama.example.com');
+  await page.getByRole('button', { name: 'Save connection' }).click();
+  await expect(page.getByText('llama.cpp settings saved')).toBeVisible();
+  await expect(page.getByLabel('Chat provider')).toHaveValue('local');
+
+  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await remote.getByRole('button', { name: 'Chat', exact: true }).click();
+  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(local.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(local.getByRole('button', { name: 'Utility', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test:settings')!).llm.provider)).toBe('llamacpp');
+  await page.screenshot({ path: testInfo.outputPath('downloaded-models-chat.png'), animations: 'disabled' });
+  expect(errors).toEqual([]);
+});
+
+test('Downloaded only lists configured connections and remembers a saved localhost server', async ({ page }, testInfo) => {
+  await page.addInitScript(defaults => {
+    defaults.llm.model = 'llama3.2:latest';
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
+      const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:settings|update_settings') {
+        const payload = args as { settings: { updates: Record<string, unknown> } };
+        Object.assign(settings.llm, payload.settings.updates);
+        localStorage.setItem('test:settings', JSON.stringify(settings));
+        return settings;
+      }
+      if (command === 'plugin:settings|test_ollama_connection') return { endpoint: '/api/tags', models: ['llama3.2:latest'] };
+      if (command === 'plugin:model|list_downloaded_models') return [{
+        id: 'ollama', model_id: '__ollama_server__', model_name: 'Ollama',
+        file_path: '', file_size_bytes: 0, model_type: 'chat', backend: 'ollama',
+        downloaded_at: '2026-10-01T00:00:00Z', last_used_at: null, use_count: 0,
+        is_active_for_chat: true, is_active_for_embedding: false, is_active_for_utility: true,
+      }];
+      if (command.startsWith('plugin:model|get_active')) return null;
+      if (['plugin:conversation|list_journals', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      throw new Error(`Unsupported configured connection fixture command: ${command}`);
+    };
+  }, makeAppSettings());
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+  await page.goto('/settings');
+  const navigation = page.getByRole('navigation', { name: 'Settings sections' });
+  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await expect(page.getByText('No models downloaded.')).toBeVisible();
+  await expect(page.getByText('Ollama connection', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('llama.cpp connection', { exact: true })).toHaveCount(0);
+
+  await navigation.getByRole('button', { name: 'Chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Test connection', exact: true }).click();
+  await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Save Ollama connection' }).click();
+  await expect(page.getByText('Ollama settings saved')).toBeVisible();
+  await expect(page.getByLabel('Chat provider')).toHaveValue('auto');
+  await page.getByLabel('Chat provider').selectOption('local');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test:settings')!).llm.provider)).toBe('local');
+
+  // Reopen the settings surface from persisted settings, with a different
+  // provider selected and the exact same URL/model as the untouched defaults.
+  await page.reload();
+  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  const remote = page.getByText('Ollama connection', { exact: true }).locator('../..');
+  await expect(remote).toBeVisible();
+  await expect(remote.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByText('llama.cpp connection', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('configured-connections.png'), animations: 'disabled' });
+  expect(errors).toEqual([]);
+});
+
 test('keeps Ollama and llama.cpp connections separate across provider changes', async ({ page }) => {
   await page.addInitScript((defaults) => {
     (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
@@ -953,12 +1131,22 @@ test('catalog offers category previews, bounded pages, and honest search results
   await page.goto('/settings');
   await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Models', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Explore by purpose' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Tools', exact: true })).toBeInViewport({ ratio: 1 });
   const chat = page.getByRole('region', { name: 'Chat & writing' });
   await expect(chat.getByRole('button', { name: 'Download', exact: true })).toHaveCount(3);
   await expect(page.getByRole('button', { name: 'Download', exact: true })).toHaveCount(12);
   await expect(page.getByRole('region', { name: 'Search & retrieval' })).toBeVisible();
   await page.getByRole('heading', { name: 'Catalog', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/lattice-catalog-overview.png' });
+
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect(page.getByRole('button', { name: 'Filters', exact: true })).toHaveAttribute('aria-expanded', 'false');
+    expect(await chat.getByRole('button', { name: /Qwen 3 8B.*Fits/ }).first().evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(650);
+    await page.screenshot({ path: test.info().outputPath(`catalog-overview-${theme}.png`), animations: 'disabled' });
+  }
+  await page.emulateMedia({ colorScheme: 'light' });
 
   await chat.getByRole('button', { name: 'View all chat & writing models' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 24 models');
@@ -993,6 +1181,7 @@ test('catalog offers category previews, bounded pages, and honest search results
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
   await page.getByRole('combobox', { name: 'Sort models' }).selectOption('size_asc');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 24 models');
+  await page.getByRole('button', { name: 'Filters', exact: true }).click();
   await page.getByLabel('Listed quantization').selectOption('Q8_0');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 8 models');
   await page.getByLabel('Listed quantization').selectOption('');
@@ -1019,6 +1208,7 @@ test('catalog offers category previews, bounded pages, and honest search results
   await page.getByRole('heading', { name: 'Catalog', exact: true }).scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(800);
   await page.screenshot({ path: '/tmp/lattice-catalog-compact.png' });
+  expect(await page.locator('.settings-content').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 });
 
 test('restores a 45-PDF import and updates progress as files finish', async ({ page }) => {

@@ -158,7 +158,7 @@ export function ContentViewer({ filePath, onClose }: ContentViewerProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl h-[85vh] p-0 gap-0 !flex !flex-col" aria-describedby={undefined}>
+      <DialogContent className="max-w-5xl h-[85vh] p-0 gap-0 flex! flex-col!" aria-describedby={undefined}>
         <DialogTitle className="sr-only">{fileName}</DialogTitle>
         <ViewerHeader fileName={fileName} />
         <div className="flex-1 overflow-hidden">

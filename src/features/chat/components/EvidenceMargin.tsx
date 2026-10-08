@@ -160,7 +160,7 @@ export function EvidenceMargin({
           <button
             type="button"
             onClick={() => onCompareDocuments(comparableDocumentIds)}
-            className="mt-2 flex w-full items-center gap-1.5 rounded-md border-t border-border-subtle px-2.5 pb-1 pt-2.5 text-left text-xs text-text-muted transition-colors duration-fast hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="mt-2 flex w-full items-center gap-1.5 rounded-md border-t border-border-subtle px-2.5 pb-1 pt-2.5 text-left text-xs text-text-muted transition-colors duration-fast hover:text-text-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Columns3 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden="true" />
             Compare these {comparableDocumentIds.length} documents

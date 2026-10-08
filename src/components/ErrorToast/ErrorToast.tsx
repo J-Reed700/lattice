@@ -100,7 +100,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
     >
       <div className="p-4">
         <div className="flex items-start gap-3">
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <svg
               className={`w-4 h-4 ${styles.icon}`}
               fill="none"
@@ -129,7 +129,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
 
           <button
             onClick={() => onDismiss(error.id)}
-            className={`flex-shrink-0 ${styles.icon} hover:opacity-70 transition-opacity duration-fast`}
+            className={`shrink-0 ${styles.icon} hover:opacity-70 transition-opacity duration-fast`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

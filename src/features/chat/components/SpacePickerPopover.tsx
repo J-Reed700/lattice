@@ -56,7 +56,7 @@ export function SpacePickerPopover({
           side={side}
           sideOffset={6}
           align={align}
-          className="surface-pop z-50 w-[300px] rounded-xl bg-surface-overlay p-2 shadow-lg outline-none"
+          className="surface-pop z-50 w-[300px] rounded-xl bg-surface-overlay p-2 shadow-lg outline-hidden"
         >
           <p className="px-2 pb-1.5 pt-1 text-xs text-[hsl(var(--text-muted))]">{heading}</p>
           {spaces.map((space) => {

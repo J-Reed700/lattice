@@ -145,6 +145,7 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.checks_completed = 0;
             state.activity.checks_reused = 0;
             state.activity.checks_unresolved = 0;
+            state.activity.model_checks_total = None;
             state.activity.verification_pass = 0;
         }
         state.activity.lesson_title = Some(title.into());
@@ -171,6 +172,18 @@ pub(in crate::features::learning) fn begin_checks(total: usize) {
         activity.checks_completed = 0;
         activity.checks_reused = 0;
         activity.checks_unresolved = 0;
+        activity.model_checks_total = None;
+    });
+}
+
+pub(in crate::features::learning) fn plan_model_checks(total: usize) {
+    let _ = CURRENT.try_with(|progress| {
+        progress
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .activity
+            .model_checks_total = Some(total as u32);
     });
 }
 

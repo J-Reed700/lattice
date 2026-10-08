@@ -126,7 +126,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
               border rounded-md
               transition-colors duration-fast
               placeholder-[hsl(var(--text-tertiary))]
-              focus:outline-none focus:ring-2 focus:ring-offset-0
+              focus:outline-hidden focus:ring-2 focus:ring-offset-0
               disabled:opacity-50 disabled:cursor-not-allowed
               ${leftIcon ? 'pl-10' : ''}
               ${showRightContent ? 'pr-10' : ''}
@@ -188,7 +188,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             role="alert"
           >
             <svg
-              className="w-4 h-4 mt-0.5 flex-shrink-0"
+              className="w-4 h-4 mt-0.5 shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20"
             >

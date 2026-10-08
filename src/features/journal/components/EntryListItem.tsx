@@ -109,7 +109,7 @@ export function EntryListItem({
             }}
             onBlur={onCommitRename}
             maxLength={120}
-            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-1.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-1.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
           />
         ) : (
           <>

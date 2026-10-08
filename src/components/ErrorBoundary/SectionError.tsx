@@ -27,7 +27,7 @@ export function SectionError({ error, errorInfo, resetError, sectionName = 'this
     <div className="flex min-h-[320px] items-center justify-center p-8">
       <div className="w-full max-w-md text-center">
         <p className="text-sm text-text-secondary">Couldn't load {sectionName}.</p>
-        <p className="mt-1 text-xs text-text-muted break-words">{userFriendlyMessage}</p>
+        <p className="mt-1 text-xs text-text-muted wrap-break-word">{userFriendlyMessage}</p>
 
         <div className="mt-4 flex items-center justify-center gap-2">
           <button
@@ -60,7 +60,7 @@ export function SectionError({ error, errorInfo, resetError, sectionName = 'this
             </button>
             {showDetails ? (
               <div className="mt-2 space-y-2">
-                <p className="font-mono text-xs text-text-secondary break-words">
+                <p className="font-mono text-xs text-text-secondary wrap-break-word">
                   <span className="text-danger-fg">{error.name}</span> {error.message}
                 </p>
                 {error.stack ? (

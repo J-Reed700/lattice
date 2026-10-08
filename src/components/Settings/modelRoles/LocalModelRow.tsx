@@ -13,11 +13,11 @@
 import { useEffect, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { Flame, Trash2 } from 'lucide-react';
+import { Box, Flame, Trash2 } from 'lucide-react';
 
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
-import { ROLES } from './roleConfig';
+import { isChatModelSelected, ROLES } from './roleConfig';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../../lib/api';
 import { useModelWarmupStore } from '../../../stores/modelWarmupStore';
@@ -48,7 +48,8 @@ interface Props {
 }
 
 export function LocalModelRow({ model }: Props) {
-  const { refresh } = useModelRoles();
+  const { refresh, chatProvider } = useModelRoles();
+  const chatActive = isChatModelSelected(model, chatProvider);
   const { deleteDownloadedModel } = useDownloadedModels();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -62,9 +63,9 @@ export function LocalModelRow({ model }: Props) {
   // whichever model held them before. A role's failure belongs to the model
   // that failed, not to the next one assigned to the slot.
   useEffect(() => {
-    if (model.is_active_for_chat) claimRole('chat', model.id);
+    if (chatActive) claimRole('chat', model.id);
     if (model.is_active_for_utility) claimRole('utility', model.id);
-  }, [claimRole, model.id, model.is_active_for_chat, model.is_active_for_utility]);
+  }, [claimRole, model.id, chatActive, model.is_active_for_utility]);
 
   // The backend's own reason this model didn't load for a role it holds
   // (boot prewarm or the warm-up button). Chat first: it blocks more.
@@ -73,7 +74,7 @@ export function LocalModelRow({ model }: Props) {
       ? role.error
       : null;
   const loadError =
-    (model.is_active_for_chat ? failedFor(chatWarmup) : null) ??
+    (chatActive ? failedFor(chatWarmup) : null) ??
     (model.is_active_for_utility ? failedFor(utilityWarmup) : null);
 
   // Warm up whichever roles this model is currently active for. Each
@@ -88,7 +89,7 @@ export function LocalModelRow({ model }: Props) {
         role: 'chat' | 'utility';
         call: () => Promise<{ ok: boolean; error?: string }>;
       }> = [];
-      if (model.is_active_for_chat) {
+      if (chatActive) {
         targets.push({ role: 'chat', call: VaultAPI.warmUpActiveChatModel });
       }
       if (model.is_active_for_utility) {
@@ -145,33 +146,33 @@ export function LocalModelRow({ model }: Props) {
     .filter(Boolean)
     .join(' · ');
 
-  const canWarmUp = model.is_active_for_chat || model.is_active_for_utility;
+  const canWarmUp = chatActive || model.is_active_for_utility;
 
   return (
     <>
-      <div className="group flex items-center gap-4 border-b border-border-subtle py-3">
+      <div className="downloaded-model-row group flex flex-wrap items-center gap-3 border-b border-border-subtle py-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-accent"><Box className="h-[18px] w-[18px]" aria-hidden="true" /></span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
+          <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
           {loadError ? (
             <div
               role="alert"
               title={loadError}
-              className="mt-0.5 line-clamp-3 break-words text-xs text-danger-fg"
+              className="mt-0.5 line-clamp-3 wrap-break-word text-xs text-danger-fg"
             >
               Didn&apos;t load: {loadError.split('\n')[0]}
             </div>
           ) : null}
         </div>
 
-        <div className="hidden shrink-0 text-xs text-text-muted tabular-nums lg:block">{meta}</div>
-
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="downloaded-model-actions flex shrink-0 flex-wrap items-center gap-1.5">
           {ROLES.map((role) => (
             <RoleButton key={role.id} model={model} role={role} />
           ))}
 
-          <div className="ml-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-fast focus-within:opacity-100 group-hover:opacity-100">
+          <div className="ml-1 flex items-center gap-0.5 border-l border-border-subtle pl-1.5">
             {canWarmUp ? (
               <IconButton
                 label={isWarming ? 'Warming up…' : 'Warm up'}

@@ -37,8 +37,8 @@ export function JournalCapturePreview({ content, onClose, onOpenNote }: JournalC
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !pendingRef.current) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[70] bg-[hsl(var(--overlay))]" />
-        <Dialog.Content className="capture-preview fixed left-1/2 top-1/2 z-[71] w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border-default bg-surface p-6 shadow-md">
+        <Dialog.Overlay className="fixed inset-0 z-70 bg-[hsl(var(--overlay))]" />
+        <Dialog.Content className="capture-preview fixed left-1/2 top-1/2 z-71 w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border-default bg-surface p-6 shadow-md">
           <div className="flex items-start justify-between gap-4">
             <div>
               <NotebookPen className="mb-4 h-6 w-6 text-accent" strokeWidth={1.5} />

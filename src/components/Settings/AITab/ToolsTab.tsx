@@ -270,7 +270,7 @@ export function ToolsTab() {
   if (isLoading || !llmSettings) {
     return (
       <>
-        <PageHeader title="Tools" />
+        <PageHeader title="Tools" description="Choose the capabilities available to your conversations." />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -278,7 +278,7 @@ export function ToolsTab() {
 
   return (
     <>
-      <PageHeader title="Tools" />
+      <PageHeader title="Tools" description="Choose the capabilities available to your conversations." />
 
       <SettingsSection title="Built in">
         {BUILT_IN_TOOLS.map((toolName) => (

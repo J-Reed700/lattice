@@ -139,7 +139,7 @@ export function EntryHeader({
           placeholder="Untitled page"
           aria-label="Page title"
           spellCheck={false}
-          className="-mx-1.5 block w-[calc(100%+12px)] resize-none overflow-hidden rounded-md bg-transparent px-1.5 font-serif text-[clamp(30px,3vw,40px)] font-normal leading-[1.12] tracking-[-0.03em] text-[hsl(var(--text-primary))] outline-none transition-colors duration-fast placeholder:text-[hsl(var(--text-disabled))] hover:bg-[hsl(var(--text-primary)/0.035)] focus:bg-[hsl(var(--text-primary)/0.035)]"
+          className="-mx-1.5 block w-[calc(100%+12px)] resize-none overflow-hidden rounded-md bg-transparent px-1.5 font-serif text-[clamp(30px,3vw,40px)] font-normal leading-[1.12] tracking-[-0.03em] text-[hsl(var(--text-primary))] outline-hidden transition-colors duration-fast placeholder:text-[hsl(var(--text-disabled))] hover:bg-[hsl(var(--text-primary)/0.035)] focus:bg-[hsl(var(--text-primary)/0.035)]"
         />
       </h1>
     </header>

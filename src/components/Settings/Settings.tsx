@@ -1,9 +1,7 @@
 /**
  * Settings — shell.
  *
- * Plain-text tab list on the left (no icons, no icon box), reading column
- * on the right. Every tab renders exactly one PageHeader whose title is a
- * noun.
+ * Icon-led navigation and grouped settings in a responsive reading column.
  */
 
 import { useEffect, useState } from 'react';
@@ -11,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Layers3, MessageCircle, Palette, RotateCcw, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Wrench, type LucideIcon } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { cn } from '@/lib/utils';
@@ -28,6 +27,7 @@ import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { SidebarHeader } from '../ui';
+import './settings.css';
 
 type SettingsTab =
   | 'search'
@@ -48,6 +48,7 @@ interface Tab {
   id: SettingsTab;
   label: string;
   component: React.ComponentType;
+  icon: LucideIcon;
 }
 
 type TabGroup = {
@@ -59,24 +60,24 @@ const tabGroups: TabGroup[] = [
   {
     label: 'General',
     tabs: [
-      { id: 'search', label: 'Search', component: SearchTab },
-      { id: 'indexing', label: 'Indexing', component: IndexingTab },
-      { id: 'vault', label: 'Vault', component: VaultTab },
-      { id: 'spaces', label: 'Spaces', component: SpacesTab },
-      { id: 'display', label: 'Display', component: DisplayTab },
-      { id: 'privacy', label: 'Privacy', component: PrivacyTab },
-      { id: 'logs', label: 'Logs', component: LogsTab },
+      { id: 'search', label: 'Search', icon: Search, component: SearchTab },
+      { id: 'indexing', label: 'Indexing', icon: ScanLine, component: IndexingTab },
+      { id: 'vault', label: 'Vault', icon: FolderOpen, component: VaultTab },
+      { id: 'spaces', label: 'Spaces', icon: Layers3, component: SpacesTab },
+      { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
+      { id: 'privacy', label: 'Privacy', icon: ShieldCheck, component: PrivacyTab },
+      { id: 'logs', label: 'Logs', icon: FileText, component: LogsTab },
     ],
   },
   {
     label: 'AI',
     tabs: [
-      { id: 'chat', label: 'Chat', component: ChatTab },
-      { id: 'models', label: 'Models', component: ModelsTab },
-      { id: 'downloaded-models', label: 'Downloaded', component: AIModelsTab },
-      { id: 'prompts', label: 'Prompts', component: PromptsTab },
-      { id: 'tuning', label: 'Tuning', component: TuningTab },
-      { id: 'tools', label: 'Tools', component: ToolsTab },
+      { id: 'chat', label: 'Chat', icon: MessageCircle, component: ChatTab },
+      { id: 'models', label: 'Models', icon: Boxes, component: ModelsTab },
+      { id: 'downloaded-models', label: 'Downloaded', icon: Download, component: AIModelsTab },
+      { id: 'prompts', label: 'Prompts', icon: FileText, component: PromptsTab },
+      { id: 'tuning', label: 'Tuning', icon: SlidersHorizontal, component: TuningTab },
+      { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
     ],
   },
 ];
@@ -85,7 +86,7 @@ const tabs: Tab[] = tabGroups.flatMap((group) => group.tabs);
 const tabIds = new Set<string>(tabs.map((tab) => tab.id));
 
 const footerButtonClass =
-  'flex w-full items-center rounded-sm px-2.5 py-1.5 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
+  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 export function Settings() {
   const [searchParams] = useSearchParams();
@@ -202,20 +203,21 @@ export function Settings() {
     activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
 
   return (
-    <div className="flex h-full bg-bg">
+    <div className="settings-workspace flex h-full min-w-0 bg-bg">
       {/* Sidebar */}
-      <div className="flex w-[240px] shrink-0 flex-col border-r border-border-subtle bg-bg">
+      <div className="settings-navigation flex w-[208px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken">
         <SidebarHeader title="Settings" />
 
         {/* Tab list — scrolls so the footer never clips it */}
         <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
           {tabGroups.map((group) => (
-            <div key={group.label} className="mb-5 last:mb-0">
-              <div className="px-2.5 pb-1.5 text-xxs uppercase tracking-[0.08em] text-text-muted">
+            <div key={group.label} className="mb-4 last:mb-0">
+              <div className="px-3 pb-2 text-xxs font-semibold uppercase tracking-[0.1em] text-text-muted">
                 {group.label}
               </div>
               {group.tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
+                const Icon = tab.icon;
                 return (
                   <button
                     key={tab.id}
@@ -223,16 +225,15 @@ export function Settings() {
                     onClick={() => setActiveTab(tab.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'relative flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors duration-fast',
+                      'relative mb-0.5 flex min-h-8 w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-ui transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                       isActive
-                        ? 'bg-surface-raised text-text-primary'
+                        ? 'bg-accent-muted font-semibold text-accent shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.12)]'
                         : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary',
                     )}
                   >
-                    {isActive ? (
-                      <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
-                    ) : null}
+                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
                     {tab.label}
+                    {isActive ? <ChevronRight className="ml-auto h-3.5 w-3.5" aria-hidden="true" /> : null}
                   </button>
                 );
               })}
@@ -243,26 +244,29 @@ export function Settings() {
         {/* Footer — never scrolls, never clips the list above it */}
         <div className="shrink-0 border-t border-border-subtle p-2">
           <button type="button" onClick={handleExport} disabled={isExporting} className={footerButtonClass}>
+            <Archive className="h-3.5 w-3.5" aria-hidden="true" />
             {isExporting ? 'Exporting…' : 'Export'}
           </button>
           <button type="button" onClick={handleImport} disabled={isImporting} className={footerButtonClass}>
+            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
             {isImporting ? 'Importing…' : 'Import'}
           </button>
           <button
             type="button"
             onClick={() => setShowResetDialog(true)}
-            className="flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-sm text-danger-fg transition-colors duration-fast hover:bg-danger-muted"
+            className={cn(footerButtonClass, 'text-danger-fg hover:bg-danger-muted hover:text-danger-fg')}
           >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
             Reset all
           </button>
         </div>
       </div>
 
       {/* Main content — reading column */}
-      <main className="h-full flex-1 overflow-y-auto bg-bg">
+      <main className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg" aria-label="Settings content">
         <div
           className={cn(
-            'mx-auto w-full px-6 pb-16 pt-10',
+            'settings-content mx-auto w-full px-6 pb-16 pt-8',
             isWideContentTab ? 'max-w-[1100px]' : 'max-w-[760px]',
           )}
         >

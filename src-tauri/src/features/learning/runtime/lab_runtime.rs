@@ -982,7 +982,8 @@ mod tests {
 
     #[test]
     fn command_contains_every_containment_and_resource_flag() {
-        let args = container_run_args(&spec(), Path::new("/tmp/lattice-lab")).unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let args = container_run_args(&spec(), workspace.path()).unwrap();
         let text = args
             .iter()
             .map(|value| value.to_string_lossy())
@@ -1005,28 +1006,27 @@ mod tests {
                 "missing {sequence:?} in {text:?}"
             );
         }
-        assert!(text
-            .iter()
-            .any(|arg| { arg == "type=bind,src=/tmp/lattice-lab,dst=/input,readonly" }));
+        let input_mount = format!(
+            "type=bind,src={},dst=/input,readonly",
+            workspace.path().display()
+        );
+        assert!(text.iter().any(|arg| arg == &input_mount));
         assert!(text
             .iter()
             .any(|arg| { arg == "/workspace:rw,exec,nosuid,nodev,size=64m,mode=1777" }));
         assert!(text
             .iter()
             .any(|arg| arg == "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"));
-        assert!(text.iter().any(|arg| {
-            arg == "type=bind,src=/tmp/lattice-lab/src/answer.py,dst=/workspace/src/answer.py,readonly"
-        }));
+        let protected_mount = format!(
+            "type=bind,src={},dst=/workspace/src/answer.py,readonly",
+            workspace.path().join("src/answer.py").display()
+        );
+        assert!(text.iter().any(|arg| arg == &protected_mount));
         let image_index = text
             .iter()
             .position(|arg| arg.starts_with("sha256:"))
             .unwrap();
-        let protected_mount_index = text
-            .iter()
-            .position(|arg| {
-                arg == "type=bind,src=/tmp/lattice-lab/src/answer.py,dst=/workspace/src/answer.py,readonly"
-            })
-            .unwrap();
+        let protected_mount_index = text.iter().position(|arg| arg == &protected_mount).unwrap();
         assert!(protected_mount_index < image_index);
         let container_command = text
             .get(image_index.saturating_add(1)..)
@@ -1051,7 +1051,8 @@ mod tests {
             }),
             8
         );
-        assert!(container_run_args(&spec(), Path::new("/tmp/lattice,lab")).is_err());
+        assert!(container_run_args(&spec(), &workspace.path().join("lattice,lab")).is_err());
+        assert!(container_run_args(&spec(), Path::new("relative-lab")).is_err());
     }
 
     #[test]

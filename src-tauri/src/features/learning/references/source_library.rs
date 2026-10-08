@@ -11,7 +11,6 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 pub(in crate::features::learning) const MAX_TEXT_CHARS: usize = 2_000_000;
 const MAX_EXCERPT_CHARS: usize = 2_400;
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
-const MAX_SOURCE_COUNT: i64 = 100;
 const MAX_VERSION_COUNT: i64 = 100;
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
 /// Chunks read when a library document is captured as a source; reaching it
@@ -230,17 +229,6 @@ impl LearningSourceLibraryRepository {
         if active.is_none() {
             return Err(AppError::NotFound(
                 "Active learning program not found".into(),
-            ));
-        }
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
-                .bind(program_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(db)?;
-        if count >= MAX_SOURCE_COUNT {
-            return Err(invalid(
-                "A learning program can contain at most 100 sources.",
             ));
         }
         let collision: Option<i64> = sqlx::query_scalar(
@@ -585,17 +573,6 @@ impl LearningSourceLibraryRepository {
         .is_some()
         {
             return Ok(());
-        }
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
-                .bind(program_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
-        if count >= MAX_SOURCE_COUNT {
-            return Err(invalid(
-                "A learning program can contain at most 100 sources.",
-            ));
         }
         let collision: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM learning_source_library WHERE program_id=? AND id IN (?,?) UNION SELECT 1 FROM learning_source_versions WHERE program_id=? AND id IN (?,?) LIMIT 1",

@@ -15,11 +15,15 @@ npm run test:desktop:build
 npm run test:desktop
 ```
 
-On an Intel Mac, build the unpublished candidate sidecar with
-`bash src-tauri/scripts/build-intel-macos-sidecar.sh` before the application build.
-The local debug helper allows that unpinned development sidecar. Release builds
-still require verified checksum pins. CI pins its source-built Intel candidate
-only inside that job; it does not change the repository release pin.
+On an Intel Mac, the fetch command installs the published binary pinned in
+`src-tauri/scripts/llama-server.lock`; no local sidecar build is required. To
+test the source-build path, run
+`bash src-tauri/scripts/build-intel-macos-sidecar.sh` before the application
+build. `npm run test:desktop:build` allows that local development binary
+automatically on Intel. For a direct Tauri debug build, set
+`LATTICE_ALLOW_UNPINNED_SIDECAR=1`. CI deliberately builds and checksum-pins an
+Intel candidate inside that job so it tests the build pipeline too; it does not
+change the repository release pin.
 
 Linux without a desktop session: `xvfb-run --auto-servernum npm run test:desktop`.
 To build an optimized candidate, use `npm run test:desktop:build -- --release`.

@@ -43,19 +43,21 @@ export function ModelCatalogResults({
           const categoryModels = models.filter(({ model }) => model.category === category);
           if (categoryModels.length === 0) return null;
           return (
-            <section key={category} aria-label={title} className="min-w-0 rounded-lg border border-border-subtle p-4">
-              <div className="mb-1 flex items-center gap-2 text-text-primary">
-                <Icon className="h-4 w-4 text-text-secondary" aria-hidden="true" />
-                <h4 className="text-sm font-semibold">{title}</h4>
-                <span className="ml-auto text-xs tabular-nums text-text-muted">{categoryModels.length}</span>
+            <section key={category} aria-label={title} data-category={category} className="model-category min-w-0 overflow-hidden rounded-xl border border-border-default bg-surface shadow-sm">
+              <div className="model-category-heading flex items-center gap-3 border-b border-border-subtle px-4 py-4">
+                <span className="model-category-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"><Icon className="h-[18px] w-[18px]" aria-hidden="true" /></span>
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-semibold text-text-primary">{title}</h4>
+                  <p className="mt-1 text-xs leading-relaxed text-text-secondary">{description}</p>
+                </div>
+                <span className="text-xs tabular-nums text-text-muted">{categoryModels.length}</span>
               </div>
-              <p className="mb-3 text-xs text-text-muted">{description}</p>
-              {categoryModels.slice(0, PREVIEW_SIZE).map(renderModel)}
+              <div className="px-4">{categoryModels.slice(0, PREVIEW_SIZE).map(renderModel)}</div>
               <button
                 type="button"
                 onClick={() => onBrowseCategory(category)}
                 aria-label={`View all ${title.toLowerCase()} models`}
-                className={`${CATALOG_TEXT_BUTTON_CLASS} mt-2 gap-1`}
+                className={`${CATALOG_TEXT_BUTTON_CLASS} w-full justify-between px-4 py-5 font-medium hover:bg-surface-raised`}
               >
                 View all {categoryModels.length}
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />

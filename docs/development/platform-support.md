@@ -14,27 +14,32 @@ to use Metal. macOS 13.3 remains the minimum for both architectures.
 Two separate Mac packages are built: `aarch64-apple-darwin` and
 `x86_64-apple-darwin`. A universal application bundle is not currently offered.
 
-The Intel implementation is a **candidate**, pending native CI, hardware
-acceptance and publication. The current `llama/b8981-r2` sidecar release contains
-five files and has no Intel Mac binary. Fetch/install checks select the files
-already pinned in the lock; the next sidecar release and `--update-lock` require
-all six targets. Production builds still reject missing or unpinned sidecars.
+The Intel application target remains a **qualification candidate**, pending
+native CI evidence, physical-hardware acceptance, and signed/notarized installer
+validation. Its runtime dependency is published: the pinned `llama/v0.6.0-r1`
+sidecar release contains all six platform binaries, including
+`llama-server-x86_64-apple-darwin`. Fetch, install, and production-build checks
+require the checksum in `src-tauri/scripts/llama-server.lock`.
 
 ### Development
 
-On a Mac with Xcode tools, CMake, Python 3.9+ and Rust installed:
+On an Intel Mac with Xcode tools and Rust installed, fetch the published sidecar
+and build the target normally:
 
 ```bash
 rustup target add x86_64-apple-darwin
-bash src-tauri/scripts/build-intel-macos-sidecar.sh
-LATTICE_ALLOW_UNPINNED_SIDECAR=1 npm run tauri -- build --debug --target x86_64-apple-darwin --bundles app
+bash src-tauri/scripts/fetch-llama-binaries.sh
+npm run tauri -- build --debug --target x86_64-apple-darwin --bundles app
 ```
 
-The script uses the pinned llama.cpp tag and release target flags, signs the
-Intel binary, deletes the build tree, and checks its architecture, dependencies
-and minimum OS. On an Intel host it also requires successful execution. On
-Apple Silicon it cross-compiles and performs static checks; that is not an
-Intel hardware test. The development binary does not change the release lock.
+To exercise the source-build path instead, install CMake and Python 3.9+, run
+`bash src-tauri/scripts/build-intel-macos-sidecar.sh`, and set
+`LATTICE_ALLOW_UNPINNED_SIDECAR=1` for the following debug build. The script
+uses the pinned llama.cpp tag and release flags, signs the Intel binary, deletes
+the build tree, and checks its architecture, dependencies, and minimum OS. On
+an Intel host it also requires successful execution. On Apple Silicon it
+cross-compiles and performs static checks; that is not an Intel hardware test.
+The source-built binary does not change the repository release lock.
 
 ### Automated checks
 
@@ -46,7 +51,9 @@ Intel hardware test. The development binary does not change the release lock.
   supported architecture, exercises the native UI and persistence across
   restarts, and executes the packaged AI engine with a checksum-pinned tiny
   model to exercise CPU generation. See the [native test guide](../../e2e/desktop/README.md).
-  A temporary Intel checksum in that job authorizes that candidate only.
+  The Intel job deliberately builds the sidecar from source and writes that
+  candidate's checksum into its temporary checkout; the repository's published
+  release pin remains unchanged.
   Jobs upload results, screenshots and logs. The instrumented Mac bundles are
   ad-hoc signed test candidates, not notarized public installers.
 - The binary verifier tests thin Intel executables, wrong architectures,
@@ -60,8 +67,9 @@ Intel hardware test. The development binary does not change the release lock.
    search, chat with citations, journal saving, quit/reopen and library upgrade.
 3. Measure memory use and model latency on a lower-memory Intel Mac. Recommend
    models using measured CPU performance; do not promise Apple Silicon speed.
-4. Publish a new immutable sidecar release with all six files, then pin its
-   verified checksums using the procedure in `src-tauri/binaries/README.md`.
+4. On the clean Intel test machine, fetch the six-file sidecar release pinned in
+   `src-tauri/scripts/llama-server.lock` and confirm the packaged application
+   runs that exact verified binary.
 5. Build, sign and notarize the separate Mac installers and test installation
    on clean machines before advertising Intel as released support.
 

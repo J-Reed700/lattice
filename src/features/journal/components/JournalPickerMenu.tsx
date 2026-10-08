@@ -159,7 +159,7 @@ export function JournalPickerMenu({
                     setIsRenaming(false);
                   }
                 }}
-                className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1.5 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
+                className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1.5 text-sm text-[hsl(var(--text-primary))] outline-hidden focus:border-[hsl(var(--accent))]"
                 maxLength={120}
               />
               <div className="flex items-center justify-end gap-1.5">

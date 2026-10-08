@@ -75,7 +75,7 @@ describe('Settings', () => {
     mockResetSettings.mockResolvedValue({ ok: true, data: {} });
   });
 
-  it('renders the tab list, grouped, without icons', () => {
+  it('renders the grouped settings navigation', () => {
     renderSettings();
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();

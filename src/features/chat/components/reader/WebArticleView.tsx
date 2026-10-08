@@ -371,7 +371,7 @@ export function WebArticleView({
           <p className="truncate text-xs text-[hsl(var(--text-muted))]">
             {url ? hostOf(url) : 'Web source'}
           </p>
-          <h3 className="mt-1 break-words font-serif text-lg font-semibold leading-snug text-[hsl(var(--text-primary))]">
+          <h3 className="mt-1 wrap-break-word font-serif text-lg font-semibold leading-snug text-[hsl(var(--text-primary))]">
             {title}
           </h3>
           {meta.length > 0 && (

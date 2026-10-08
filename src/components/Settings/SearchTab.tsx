@@ -442,7 +442,7 @@ export function SearchTab() {
   if (isPending) {
     return (
       <>
-        <PageHeader title="Search" />
+        <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -451,7 +451,7 @@ export function SearchTab() {
   if (!searchSettings) {
     return (
       <>
-        <PageHeader title="Search" />
+        <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
         <div className="flex items-center gap-2">
           <p className="text-sm text-text-muted">Couldn&apos;t read search settings.</p>
           <button
@@ -486,7 +486,7 @@ export function SearchTab() {
 
   return (
     <>
-      <PageHeader title="Search" />
+      <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
 
       <SettingsSection title="Retrieval">
         <SettingsRow

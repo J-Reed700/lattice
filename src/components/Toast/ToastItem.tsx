@@ -158,7 +158,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-text-primary">{toast.title}</p>
           {toast.message && (
-            <p className="mt-0.5 text-xs text-text-secondary break-words">{toast.message}</p>
+            <p className="mt-0.5 text-xs text-text-secondary wrap-break-word">{toast.message}</p>
           )}
           {toast.action && (
             <button

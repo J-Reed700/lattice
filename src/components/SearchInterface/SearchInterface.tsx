@@ -191,6 +191,7 @@ export function SearchInterface() {
 
         <SearchInput value={query} onChange={handleQueryChange} isSearching={isSearching} />
         <SidebarTabs
+          variant="segmented"
           value={searchMode}
           onChange={setSearchMode}
           options={SEARCH_MODES}

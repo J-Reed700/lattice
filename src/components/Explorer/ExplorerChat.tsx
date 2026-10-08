@@ -47,7 +47,7 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
                   threads.select(thread.id);
                 }}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[13px] hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-none',
+                  'flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[13px] hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-hidden',
                   thread.id === threads.activeId ? 'text-text-primary' : 'text-text-secondary',
                 )}
               >

@@ -94,7 +94,7 @@ export function ClaimHoverCard({ hover, verdict, citationMap }: ClaimHoverCardPr
     <div
       role="tooltip"
       style={style}
-      className="pointer-events-none fixed z-[60] rounded-lg bg-surface-overlay p-3.5 shadow-lg animate-in fade-in-0 duration-fast"
+      className="pointer-events-none fixed z-60 rounded-lg bg-surface-overlay p-3.5 shadow-lg animate-in fade-in-0 duration-fast"
     >
       <p className={`flex items-center gap-1.5 text-ui font-medium ${tone}`}>
         <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />

@@ -76,6 +76,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       contextWindow: 8192,
       localContextWindow: null,
       ollamaUrl: 'http://localhost:11434',
+      ollamaConfigured: false,
       ollamaUtilityModel: '',
       ollamaAuthHeaderName: '',
       ollamaAuthHeaderValue: '',

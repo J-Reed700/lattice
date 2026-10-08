@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -46,13 +46,14 @@ export function ModelSearchBar() {
 
   return (
     <div className="relative">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" aria-hidden="true" />
       <input
         type="text"
         value={localQuery}
         onChange={(event) => setLocalQuery(event.target.value)}
-        placeholder="Search models"
+        placeholder="Search by model name or publisher…"
         aria-label="Search models"
-        className={cn(settingsFieldClass, 'h-9', localQuery && 'pr-9')}
+        className={cn(settingsFieldClass, 'h-11 pl-10 text-sm', localQuery && 'pr-9')}
       />
       {localQuery ? (
         <button

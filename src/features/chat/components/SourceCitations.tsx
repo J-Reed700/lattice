@@ -222,7 +222,7 @@ export function SourceCitations({
                       <span className="font-mono text-xs text-[hsl(var(--text-muted))]">
                         [{source.citationId ?? idx + 1}]
                       </span>
-                      <span className="text-sm font-semibold text-[hsl(var(--text-primary))] break-words">
+                      <span className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
                         {source.fileName}
                       </span>
                     </div>
@@ -278,7 +278,7 @@ export function SourceCitations({
                             }}>
                             View passage [{chunk.source.citationId ?? source.citationId ?? idx + 1}]
                           </button>
-                          <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 break-words">
+                          <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 wrap-break-word">
                             {chunk.excerpt}
                           </p>
                         </div>

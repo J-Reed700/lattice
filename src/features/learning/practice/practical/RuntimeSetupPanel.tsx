@@ -181,7 +181,7 @@ export function RuntimeSetupPanel({
   return (
     <section
       id="learning-runtime-setup"
-      className="rounded-2xl border border-border bg-surface p-4 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="rounded-2xl border border-border bg-surface p-4 outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
       aria-labelledby="runtime-setup-title"
     >
       <button

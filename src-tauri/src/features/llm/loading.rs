@@ -32,7 +32,7 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
 /// repaired file has a different size or mtime, so it is a different key and
 /// gets a fresh attempt.
 static UNLOADABLE_ARTIFACTS: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, ArtifactStamp>>,
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -49,28 +49,28 @@ fn artifact_stamp(path: &std::path::Path) -> Option<ArtifactStamp> {
     })
 }
 
-/// True when this exact file has already failed to start in this session.
-fn is_known_unloadable(path: &std::path::Path) -> bool {
-    let Some(stamp) = artifact_stamp(path) else {
-        return false;
-    };
+/// Preserve the failure as well as avoiding another expensive load. Returning
+/// `None` from the loader means no model was selected, which makes warmup claim
+/// success and hides the reason the selected utility model is not being used.
+fn known_load_failure(path: &std::path::Path) -> Option<String> {
+    let stamp = artifact_stamp(path)?;
     let mut known = match UNLOADABLE_ARTIFACTS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
     match known.get(path) {
-        Some(recorded) if *recorded == stamp => true,
+        Some((recorded, error)) if *recorded == stamp => Some(error.clone()),
         // The file changed since it failed. Drop the stale entry so the new
         // bytes are judged on their own.
         Some(_) => {
             known.remove(path);
-            false
+            None
         }
-        None => false,
+        None => None,
     }
 }
 
-fn remember_unloadable(path: &std::path::Path) {
+fn remember_unloadable(path: &std::path::Path, error: String) {
     let Some(stamp) = artifact_stamp(path) else {
         return;
     };
@@ -78,7 +78,7 @@ fn remember_unloadable(path: &std::path::Path) {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    known.insert(path.to_path_buf(), stamp);
+    known.insert(path.to_path_buf(), (stamp, error));
 }
 
 pub(crate) struct ModelLoader {
@@ -302,9 +302,12 @@ impl ModelLoader {
             None => {
                 tracing::warn!(
                     model_id = %model_id,
-                    "Active utility model has no loadable path — skipping"
+                    "Selected utility model has no loadable path"
                 );
-                return Ok(None);
+                return Err(AppError::ModelLoadFailed(format!(
+                    "The selected utility model '{}' has no loadable file. Select another model in Settings.",
+                    active.model_name()
+                )));
             }
         };
         if !model_path.exists() {
@@ -313,17 +316,19 @@ impl ModelLoader {
                 path = %model_path.display(),
                 "Active utility model artifact missing on disk — falling back to chat LLM"
             );
-            return Ok(None);
+            return Err(AppError::ModelLoadFailed(format!(
+                "The selected utility model '{}' is missing from disk. Download it again or select another model in Settings.",
+                active.model_name()
+            )));
         }
 
-        if is_known_unloadable(&model_path) {
+        if let Some(error) = known_load_failure(&model_path) {
             tracing::debug!(
                 model_id = %model_id,
                 path = %model_path.display(),
-                "Utility model already failed to start in this session — using the chat LLM \
-                 without retrying the load"
+                "Reporting the selected utility model's cached load failure without retrying the load"
             );
-            return Ok(None);
+            return Err(AppError::ModelLoadFailed(error));
         }
 
         let llm_config = crate::features::llm::engine::factory::LLMConfig::Local {
@@ -360,7 +365,13 @@ impl ModelLoader {
                     // an unsupported architecture, a truncated download, or
                     // one too large for this machine. Retrying it next turn
                     // costs the same minute and fails the same way.
-                    remember_unloadable(&model_path);
+                    let error = format!(
+                        "The selected utility model '{}' could not be loaded: {e}. \
+                         Utility callers may use the chat model instead. Select a compatible \
+                         utility model or update Lattice's local model engine.",
+                        active.model_name()
+                    );
+                    remember_unloadable(&model_path, error.clone());
                     tracing::warn!(
                         model_id = %model_id,
                         path = %model_path.display(),
@@ -368,7 +379,7 @@ impl ModelLoader {
                         "Failed to load utility LLM — falling back to chat LLM and not \
                          retrying this file until it changes"
                     );
-                    Ok(None)
+                    Err(AppError::ModelLoadFailed(error))
                 }
             },
         }
@@ -639,14 +650,64 @@ mod tests {
         let path = dir.path().join("model.gguf");
         std::fs::write(&path, b"broken").expect("write");
 
-        assert!(!is_known_unloadable(&path));
-        remember_unloadable(&path);
-        assert!(is_known_unloadable(&path));
+        assert_eq!(known_load_failure(&path), None);
+        remember_unloadable(&path, "unsupported architecture".into());
+        assert_eq!(
+            known_load_failure(&path).as_deref(),
+            Some("unsupported architecture")
+        );
 
         // A repaired or re-downloaded file is different bytes, so the memo
         // must not keep a working model from ever being tried again.
         std::fs::write(&path, b"repaired and longer").expect("rewrite");
-        assert!(!is_known_unloadable(&path));
+        assert_eq!(known_load_failure(&path), None);
+    }
+
+    #[tokio::test]
+    async fn a_cached_utility_failure_is_an_error_not_a_successful_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-model.gguf");
+        std::fs::write(&path, b"model fixture").unwrap();
+        let active = crate::domain::DownloadedModel::new(
+            "test-id".into(),
+            "Test utility".into(),
+            "test-model".into(),
+            crate::domain::models::downloaded::ModelLocation::LocalFile { path: path.clone() },
+            13,
+            "GGUF".into(),
+            None,
+        )
+        .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        remember_unloadable(
+            &path,
+            "This engine does not support the architecture".into(),
+        );
+
+        for _ in 0..2 {
+            let result = loader
+                .load_utility_local(
+                    &active,
+                    crate::features::llm::engine::GenerationConfig::default(),
+                    None,
+                )
+                .await;
+            assert!(matches!(result, Err(AppError::ModelLoadFailed(message))
+                if message == "This engine does not support the architecture"));
+        }
+        std::fs::remove_file(&path).unwrap();
+        let result = loader
+            .load_utility_local(
+                &active,
+                crate::features::llm::engine::GenerationConfig::default(),
+                None,
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::ModelLoadFailed(message))
+            if message.contains("missing from disk")));
     }
 
     #[test]

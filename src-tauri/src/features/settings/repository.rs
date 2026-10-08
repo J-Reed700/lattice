@@ -1091,7 +1091,25 @@ impl SettingsRepositoryPort for SettingsRepository {
                         settings.search = serde_json::from_value(merged)?;
                     }
                     SettingsCategory::Llm => {
+                        let previously_selected = settings.llm.provider == LLMProvider::Ollama;
                         settings.llm = serde_json::from_value(merged)?;
+                        // Keep an explicitly configured connection discoverable after
+                        // switching providers. The shared `model` field also stores
+                        // cloud model names, so it cannot establish this on its own.
+                        if !updates.contains_key("ollamaConfigured")
+                            && (previously_selected
+                                || settings.llm.provider == LLMProvider::Ollama
+                                || [
+                                    "ollamaUrl",
+                                    "ollamaUtilityModel",
+                                    "ollamaAuthHeaderName",
+                                    "ollamaAuthHeaderValue",
+                                ]
+                                .iter()
+                                .any(|key| updates.contains_key(*key)))
+                        {
+                            settings.llm.ollama_configured = true;
+                        }
                     }
                     SettingsCategory::Ui => {
                         settings.ui = serde_json::from_value(merged)?;
@@ -1249,6 +1267,56 @@ mod tests {
             .await
             .unwrap();
         (repo, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn ollama_connection_registration_survives_provider_changes_and_reopening() {
+        let (repo, dir) = create_test_repository().await;
+        assert!(!repo.get_all().await.unwrap().llm.ollama_configured);
+
+        let cloud = repo
+            .update(
+                Some(SettingsCategory::Llm),
+                HashMap::from([
+                    ("provider".into(), serde_json::json!("openai")),
+                    ("model".into(), serde_json::json!("cloud-model")),
+                ]),
+            )
+            .await
+            .unwrap();
+        assert!(!cloud.llm.ollama_configured);
+
+        for provider in ["ollama", "llamacpp", "local", "auto"] {
+            let settings = repo
+                .update(
+                    Some(SettingsCategory::Llm),
+                    HashMap::from([("provider".into(), serde_json::json!(provider))]),
+                )
+                .await
+                .unwrap();
+            assert!(settings.llm.ollama_configured);
+        }
+        let reopened = SettingsRepository::new(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        assert!(reopened.get_all().await.unwrap().llm.ollama_configured);
+    }
+
+    #[tokio::test]
+    async fn saving_ollama_defaults_registers_a_connection_without_selecting_it() {
+        let (repo, _dir) = create_test_repository().await;
+        let settings = repo
+            .update(
+                Some(SettingsCategory::Llm),
+                HashMap::from([(
+                    "ollamaUrl".into(),
+                    serde_json::json!("http://localhost:11434"),
+                )]),
+            )
+            .await
+            .unwrap();
+        assert!(settings.llm.ollama_configured);
+        assert_eq!(settings.llm.provider, LLMProvider::Auto);
     }
 
     /// Concurrent updates to *different* categories must all survive. Before

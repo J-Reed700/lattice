@@ -40,7 +40,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref
   ) => {
-    const baseStyles = 'inline-flex items-center justify-center font-medium rounded-md transition-colors duration-fast ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))] disabled:opacity-50 disabled:cursor-not-allowed select-none motion-reduce:transition-none';
+    const baseStyles = 'inline-flex items-center justify-center font-medium rounded-md transition-colors duration-fast ease-out focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))] disabled:opacity-50 disabled:cursor-not-allowed select-none motion-reduce:transition-none';
 
     const variantStyles = {
       primary: 'bg-[hsl(var(--action))] text-[hsl(var(--action-fg))] hover:bg-[hsl(var(--action-hover))]',
@@ -89,9 +89,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             </svg>
           </span>
         )}
-        {!isLoading && leftIcon && <span className="flex-shrink-0">{leftIcon}</span>}
+        {!isLoading && leftIcon && <span className="shrink-0">{leftIcon}</span>}
         <span>{children}</span>
-        {!isLoading && rightIcon && <span className="flex-shrink-0">{rightIcon}</span>}
+        {!isLoading && rightIcon && <span className="shrink-0">{rightIcon}</span>}
       </motion.button>
     );
   }

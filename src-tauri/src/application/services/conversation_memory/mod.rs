@@ -282,11 +282,6 @@ async fn complete_json(
                     },
                 ],
                 json_schema: schema,
-                // Extraction, transition review, and summary synthesis are
-                // bounded utility operations. Reasoning-capable local models
-                // otherwise may spend the entire compaction deadline on a
-                // hidden chain of thought before returning any JSON.
-                reasoning_effort: Some("none".into()),
                 // Greedy decoding. Without an override the sidecar samples at
                 // the user's chat temperature, and a small extractor then
                 // returns six items from a batch on one run and nothing from

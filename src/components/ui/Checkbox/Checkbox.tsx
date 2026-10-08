@@ -133,7 +133,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
             role="alert"
           >
             <svg
-              className="w-4 h-4 mt-0.5 flex-shrink-0"
+              className="w-4 h-4 mt-0.5 shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20"
             >

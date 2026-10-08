@@ -242,7 +242,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
               onChange={(e) => setBulkSpaceIdDraft(e.target.value)}
               disabled={isLoadingJournals}
               aria-label="Move to journal"
-              className="h-7 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-xs text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+              className="h-7 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-xs text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
             >
               {isLoadingJournals ? (
                 <option value="" disabled>
@@ -329,7 +329,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div className="flex-1 overflow-y-auto scrollbar-gutter-stable">
         <SidebarReferences query={debouncedQuery} active={filterMode === 'snippets'} />
         <ConversationList isJournalScope={isJournalScope} isSelectionMode={isSelectionMode} selectedConversationIds={selectedConversationIds} toggleConversationSelection={toggleConversationSelection} synthesis={synthesis} exportActions={exportActions} />
       </div>

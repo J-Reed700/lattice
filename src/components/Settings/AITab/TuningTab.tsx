@@ -103,7 +103,7 @@ export function TuningTab() {
   if (isLoading || !llmSettings || !routerDraft || !toolOutputDraft) {
     return (
       <>
-        <PageHeader title="Tuning" />
+        <PageHeader title="Tuning" description="Fine-tune model behavior, context, and resource use." />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -111,7 +111,7 @@ export function TuningTab() {
 
   return (
     <>
-      <PageHeader title="Tuning" />
+      <PageHeader title="Tuning" description="Fine-tune model behavior, context, and resource use." />
 
       <SettingsSection title="Model runtime">
         <SettingsRow label="Temperature" htmlFor="tuning-temperature">
@@ -371,7 +371,7 @@ export function TuningTab() {
               )
             }
             onBlur={() => void saveRouterField('model', routerDraft.model.trim())}
-            className="h-8 w-[220px] rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
+            className="h-8 w-[220px] rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
           />
         </SettingsRow>
 

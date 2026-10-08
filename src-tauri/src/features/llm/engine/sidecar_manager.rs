@@ -76,14 +76,14 @@ pub const SIDECAR_BIN: &str = "llama-server";
 /// loader (`vulkan-1.dll` / `libvulkan.so.1`). macOS ships one build per
 /// architecture. Always reached through [`SidecarBinary::Cpu`].
 pub const SIDECAR_CPU_BIN: &str = "llama-server-cpu";
-/// llama-server's readiness line, as the pinned build prints it on stderr:
-/// `main: server is listening on http://127.0.0.1:<port>`. The pre-b4000
+/// Shared part of both the b-series `server is listening on` log and the
+/// semver releases' `llama_server: listening on` log. The pre-b4000
 /// string was `HTTP server listening`, which appears nowhere in the shipped
 /// binaries — the wait never matched and every model load timed out. It is a
 /// fast path only: `/health` decides, so the next upstream rewording costs a
 /// second of startup rather than the whole feature. `ready_needle_is_present`
 /// pins it to the bundled binaries.
-const READY_NEEDLE: &str = "server is listening on";
+const READY_NEEDLE: &str = "listening on";
 
 /// How long the sidecar may go completely silent — no output line, no
 /// `/health` answer — before an attempt is abandoned. Bounding silence

@@ -16,7 +16,7 @@ function FeatureErrorFallback({ error, reset, featureName }: FeatureErrorFallbac
     <div className="flex min-h-[320px] items-center justify-center p-8">
       <div className="max-w-sm text-center">
         <p className="text-sm text-text-secondary">Couldn't load {featureName}.</p>
-        {error.message ? <p className="mt-1 text-xs text-text-muted break-words">{error.message}</p> : null}
+        {error.message ? <p className="mt-1 text-xs text-text-muted wrap-break-word">{error.message}</p> : null}
         <button
           type="button"
           onClick={reset}

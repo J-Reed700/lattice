@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 
+import { Search, SearchX } from 'lucide-react';
+
 import { SectionHeading } from '@/components/ui';
 
 interface SearchEmptyStateProps {
@@ -36,7 +38,16 @@ export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent
   const recent = useMemo(() => (hasSearched ? [] : readRecentSearches()), [hasSearched]);
 
   if (!hasSearched) {
-    if (recent.length === 0 || !onPickRecent) return null;
+    if (recent.length === 0 || !onPickRecent) return (
+      <div className="mt-8 flex items-start gap-4 rounded-xl border border-border-subtle bg-surface p-6">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent"><Search className="h-5 w-5" aria-hidden="true" /></span>
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Search across your sources</h2>
+          <p className="mt-1.5 max-w-[48ch] text-sm leading-relaxed text-text-secondary">Start with a topic, phrase, or question. Results point you back to the original document.</p>
+          <p className="mt-3 text-xs leading-relaxed text-text-muted">Hybrid combines meaning and keywords. Semantic finds related ideas; Keyword matches words.</p>
+        </div>
+      </div>
+    );
     return (
       <section className="mt-6">
         <SectionHeading>Recent</SectionHeading>
@@ -58,5 +69,13 @@ export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent
 
   if (isSearching) return null;
 
-  return <p className="pt-6 text-sm text-text-muted">No results for “{query}”.</p>;
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border-subtle bg-surface p-5">
+      <SearchX className="mt-0.5 h-5 w-5 shrink-0 text-text-muted" aria-hidden="true" />
+      <div className="min-w-0">
+        <p className="wrap-break-word text-sm font-medium text-text-primary">No results for “{query}”.</p>
+        <p className="mt-1 text-sm text-text-secondary">Try a broader term or a different search mode.</p>
+      </div>
+    </div>
+  );
 }

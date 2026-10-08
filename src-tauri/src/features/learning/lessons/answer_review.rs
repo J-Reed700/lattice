@@ -19,6 +19,24 @@ pub(in crate::features::learning) async fn check(
     llm: &dyn LLMPort,
     candidate: &Value,
 ) -> Result<Vec<String>> {
+    let key = format!("answer-review-v1:{}", crate::features::learning::content_verification::digest(
+        &json!({"model":llm.model_name(),"context":llm.max_context_tokens(),"questions":candidate.get("questions")}).to_string()
+    ));
+    if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key)
+        .await?
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+    {
+        crate::features::learning::lesson_progress::stage(
+            "Reusing completed answer-key review for unchanged questions",
+        );
+        return Ok(saved);
+    }
+    let issues = check_answers(llm, candidate).await?;
+    crate::features::learning::lesson_drafts::record_checkpoint(&key, json!(issues)).await?;
+    Ok(issues)
+}
+
+async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<String>> {
     let Some(questions) = candidate.get("questions").and_then(Value::as_array) else {
         return Ok(vec![]);
     };

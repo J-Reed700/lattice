@@ -593,7 +593,7 @@ export function BackupSection() {
               spellCheck={false}
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
-              className="mt-1 w-full rounded-sm border border-border-default bg-bg px-2.5 py-2 font-mono text-xs leading-relaxed text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+              className="mt-1 w-full rounded-sm border border-border-default bg-bg px-2.5 py-2 font-mono text-xs leading-relaxed text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
             />
             <p className="mt-1 text-xs text-text-muted">
               Either works. Paste the 24 recovery words with spaces between them.
@@ -660,7 +660,7 @@ export function BackupSection() {
                 autoComplete="new-password"
                 value={newPassphrase}
                 onChange={(event) => setNewPassphrase(event.target.value)}
-                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
               />
             </div>
             <div>
@@ -676,7 +676,7 @@ export function BackupSection() {
                 autoComplete="new-password"
                 value={newPassphraseAgain}
                 onChange={(event) => setNewPassphraseAgain(event.target.value)}
-                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
               />
             </div>
             <p className="text-xs text-text-muted">At least {MIN_PASSPHRASE_LENGTH} characters.</p>

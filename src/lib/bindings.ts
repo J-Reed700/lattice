@@ -6368,6 +6368,11 @@ localContextWindow: number | null;
  */
 ollamaUrl: string;
 /**
+ * Whether the user has saved or selected an Ollama connection.
+ * Default URL/model suggestions alone do not constitute a connection.
+ */
+ollamaConfigured: boolean;
+/**
  * Optional Ollama tag used for utility/router calls.
  * Empty string means "fall back to `model`".
  */
@@ -6515,7 +6520,12 @@ export type LearningFollowUpActionKind = "lesson" | "practice" | "assessment" | 
 export type LearningFollowUpReasonCode = "missed_outcome" | "assisted_success" | "low_transfer" | "stale_evidence" | "uncertain_grade"
 export type LearningFollowUpRecommendationDto = { id: string; outcomeId: string | null; reasonCode: LearningFollowUpReasonCode; explanation: string; actionKind: LearningFollowUpActionKind; actionRef: string | null; status: LearningFollowUpStatus; evidenceEventIds: string[]; createdAt: number; decidedAt: number | null }
 export type LearningFollowUpStatus = "pending" | "accepted" | "dismissed" | "completed"
-export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number; checksCompleted: number; checksTotal: number; checksReused: number; checksUnresolved: number; recentSteps: LearningGenerationStep[] }
+export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number; checksCompleted: number; checksTotal: number; checksReused: number; checksUnresolved: number;
+/**
+ * None while looking up saved checks; otherwise the number requiring the
+ * model in this pass, after every reusable comparison has been restored.
+ */
+modelChecksTotal: number | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity"

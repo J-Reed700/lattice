@@ -75,7 +75,7 @@ export function ColumnEditor({ value, onChange, onSubmit, isRunning }: ColumnEdi
             }
           }}
           placeholder="method, sample size, finding"
-          className="h-9 min-w-0 flex-1 rounded-sm border border-border-default bg-surface px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
+          className="h-9 min-w-0 flex-1 rounded-sm border border-border-default bg-surface px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
         />
         <button
           type="button"

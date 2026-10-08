@@ -445,23 +445,21 @@ impl HyDEGenerator {
         Self { llm }
     }
 
-    /// Run a self-contained rewrite prompt with model reasoning disabled.
+    /// Run a self-contained rewrite prompt with the caller's time budget.
     ///
-    /// Reasoning models (e.g. Qwen3) otherwise think for minutes before a
-    /// one-line rewrite. A truncated or failed completion is an error, as in
-    /// the providers' legacy `generate`, never a partial rewrite.
+    /// Keep the model's normal reasoning behavior. A truncated or failed
+    /// completion is an error, as in the providers' legacy `generate`, never
+    /// a partial rewrite.
     async fn rewrite(&self, prompt: &str) -> Result<String> {
         if !self.llm.supports_typed_completions() {
-            // The untyped path carries neither the no-reasoning hint nor a time
-            // budget, so a reasoning model thinks its way through a one-line
-            // rewrite. Warned once: it is a property of the provider, not of
-            // the turn.
+            // The untyped path cannot carry the caller's time budget.
+            // Warn once per process rather than once per query.
             static UNTYPED_REWRITE_WARNED: std::sync::Once = std::sync::Once::new();
             UNTYPED_REWRITE_WARNED.call_once(|| {
                 warn!(
                     model = self.llm.model_name(),
                     "Query rewrites fall back to untyped generation: this provider sees no \
-                     reasoning-effort hint and no time budget"
+                     time budget"
                 );
             });
             return self.llm.generate(prompt, &[], None).await;
@@ -473,7 +471,6 @@ impl HyDEGenerator {
                     role: "user".into(),
                     content: prompt.to_string(),
                 }],
-                reasoning_effort: Some("none".into()),
                 time_budget: Some(REWRITE_TIME_BUDGET),
                 ..Default::default()
             })
@@ -1031,7 +1028,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_typed_rewrites_disable_reasoning() {
+    async fn test_typed_rewrites_keep_model_default_reasoning() {
         let llm = Arc::new(TypedLLM::new(
             "Rust ownership, borrowing, and lifetimes in systems programming.",
             "stop",
@@ -1067,7 +1064,7 @@ mod tests {
         let requests = llm.requests();
         assert_eq!(requests.len(), 5);
         for request in &requests {
-            assert_eq!(request.reasoning_effort.as_deref(), Some("none"));
+            assert!(request.reasoning_effort.is_none());
             assert_eq!(request.time_budget, Some(REWRITE_TIME_BUDGET));
             assert!(request.tools.is_empty());
             assert!(request.json_schema.is_none());

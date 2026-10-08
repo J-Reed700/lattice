@@ -49,7 +49,7 @@ export function ExplorerSearch({ root, onActiveChange }: { root: string; onActiv
           onKeyDown={(event) => { if (event.key === 'Escape') setInput(''); }}
           placeholder="Search in folder"
           aria-label="Search in folder"
-          className="h-7 w-full rounded-md bg-[hsl(var(--text-primary)/0.04)] pl-7 pr-7 text-[12.5px] text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
+          className="h-7 w-full rounded-md bg-[hsl(var(--text-primary)/0.04)] pl-7 pr-7 text-[12.5px] text-text-primary placeholder:text-text-muted focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
         />
         {input && (
           <button

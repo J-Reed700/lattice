@@ -48,7 +48,7 @@ export function InsightMessage({ message, onOpenSource }: InsightMessageProps) {
           <time className="shrink-0 text-xs text-[hsl(var(--text-muted))]">{timestamp}</time>
         )}
       </header>
-      <div className="journal-insight-body max-w-none break-words font-serif text-[15px] leading-[1.65] [overflow-wrap:anywhere]">
+      <div className="journal-insight-body max-w-none wrap-break-word font-serif text-[15px] leading-[1.65] wrap-anywhere">
         <TiptapViewer content={normalized} />
       </div>
       {sources.length > 0 && (

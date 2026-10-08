@@ -21,9 +21,27 @@ mod challenge;
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
+mod claim_reuse;
 mod evidence_checks;
+mod evidence_selection;
 mod execution;
 mod inventory;
+#[cfg(test)]
+pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
+#[cfg(test)]
+pub(in crate::features::learning) async fn live_inventory_fixture(
+    llm: &dyn LLMPort,
+    content: &[Value],
+) -> Result<Value> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, _) = tests::batch_scheduler_tests::setup(&pool).await?;
+    crate::features::learning::lesson_progress::run(&repo, &job, async {
+        Ok(serde_json::to_value(
+            inventory::extract(llm, content).await?,
+        )?)
+    })
+    .await
+}
 mod repair;
 pub(in crate::features::learning) mod research;
 mod section_checkpoints;
@@ -109,10 +127,14 @@ struct Finding {
     evidence: Vec<EvidencePassage>,
     supporting_quote: Option<String>,
 }
-/// Memory cache for the current pass. Durable receipts below survive restarts;
-/// retrieval always runs again before either cache can reuse a comparison.
+/// Completed comparisons and evidence selections. Durable checkpoints retain
+/// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]
-struct ClaimChecks(HashMap<String, Finding>);
+struct ClaimChecks {
+    findings: HashMap<String, Finding>,
+    selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
+    prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
+}
 type CheckedClaim = (usize, String, Finding, bool);
 
 impl ClaimChecks {
@@ -126,11 +148,20 @@ impl ClaimChecks {
         // Each decision is restricted to this claim and its assigned evidence,
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
-        digest(&json!({"unit":unit,"claim":claim,"passages":passages}).to_string())
+        digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
     }
 
-    fn get(&self, key: &str, evidence: &[EvidencePassage]) -> Option<Finding> {
-        self.0.get(key).cloned().map(|mut finding| {
+    fn get(
+        &self,
+        key: &str,
+        unit: usize,
+        claim: &Claim,
+        evidence: &[EvidencePassage],
+    ) -> Option<Finding> {
+        self.findings.get(key).cloned().map(|mut finding| {
+            finding.unit = unit;
+            finding.quote = claim.quote.clone();
+            finding.statement = claim.statement.clone();
             finding.evidence = evidence.to_vec();
             finding
         })
@@ -139,7 +170,7 @@ impl ClaimChecks {
     fn record(&mut self, key: String, finding: &Finding) {
         // A failed/incomplete call is never a reusable decision.
         if finding.verdict != ClaimVerdict::Unverified {
-            self.0.insert(key, finding.clone());
+            self.findings.insert(key, finding.clone());
         }
     }
 }
@@ -152,6 +183,8 @@ struct ClaimReceipt {
     verdict: ClaimVerdict,
     reason: String,
     supporting_quote: Option<String>,
+    #[serde(default)]
+    interpretation_policy: Option<String>,
 }
 
 fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
@@ -170,6 +203,10 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
 impl ClaimReceipt {
     fn finding(self, unit: usize, claim: &Claim, evidence: &[EvidencePassage]) -> Option<Finding> {
         if self.verdict == ClaimVerdict::Unverified
+            || (self.verdict != ClaimVerdict::Supported
+                && self.interpretation_policy.as_deref() != Some(
+                    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY,
+                ))
             || (self.verdict == ClaimVerdict::Supported
                 && self.supporting_quote.as_ref().is_none_or(|q| {
                     q.trim().is_empty() || !evidence.iter().any(|p| p.text.contains(q))
@@ -189,7 +226,7 @@ impl ClaimReceipt {
     }
 }
 type EvidencePassage = ReferencePassage;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SourceBinding {
     id: String,
     sha256: String,
@@ -472,7 +509,12 @@ async fn verify_with_references(
             {
                 saved.coverage.units.clear();
             }
-            if saved.assessment_policy.as_deref() != Some(coverage::ASSESSMENT_POLICY) {
+            // v3 adds original choice labels as interpretation context, without
+            // changing which assertions belong in the saved inventory.
+            if !matches!(
+                saved.assessment_policy.as_deref(),
+                Some(coverage::ASSESSMENT_POLICY) | Some("assessment-fidelity-v2")
+            ) {
                 saved.inventory =
                     inventory::refresh_assessments(llm, &content, saved.inventory).await?;
             }
@@ -597,12 +639,14 @@ fn retain_current_assessment_checks(
     policy: Option<&str>,
 ) {
     if policy != Some(coverage::ASSESSMENT_POLICY) {
-        // Teaching inputs and their judge instructions are unchanged. Only
-        // assessments receive scenario context, so only those audits expire.
+        // v3 adds choice references. Positive v2 comparisons remain valid;
+        // negative ones can have lacked a referent. Older/unknown assessment
+        // protocols still require rechecking. Teaching audits are unaffected.
         coverage.units.retain(|unit| {
-            content
-                .get(unit.index)
-                .is_some_and(|unit| unit["kind"] != "assessment")
+            content.get(unit.index).is_some_and(|section| {
+                section["kind"] != "assessment"
+                    || (policy == Some("assessment-fidelity-v2") && unit.complete)
+            })
         });
     }
 }
@@ -616,10 +660,12 @@ fn retain_current_teaching_checks(
         coverage.units.retain(|unit| {
             content.get(unit.index).is_some_and(|section| {
                 section["kind"] != "teaching"
-                    // Earlier checkpoints had no contextual fallback. Their
-                    // positive base comparisons are unchanged and still valid;
-                    // negative ones must be reconsidered with section context.
-                    || (policy.is_none() && unit.complete)
+                    // v2 only removes normative teaching requirements from
+                    // empirical coverage. A positive comparison from v1 (or
+                    // the original context-free policy) remains valid. Redo
+                    // their negative findings, and distrust unknown policies.
+                    || (matches!(policy, None | Some("teaching-context-v1"))
+                        && unit.complete)
             })
         });
     }

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide a modern, low-latency, citation-grounded architecture for Recall that:
+Provide a modern, low-latency, citation-grounded architecture for Lattice that:
 
 - Works reliably for first-turn conversations with no prior document context.
 - Avoids unnecessary orchestration complexity in the default path.

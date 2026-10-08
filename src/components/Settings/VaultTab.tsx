@@ -97,7 +97,7 @@ export function VaultTab() {
 
   return (
     <>
-      <PageHeader title="Vault" />
+      <PageHeader title="Vault" description="Manage the home for your notes, files, and backups." />
 
       <SettingsSection title="Folder">
         <SettingsRow label="Path" stacked>

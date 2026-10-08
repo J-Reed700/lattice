@@ -122,7 +122,7 @@ Other consumers: `FileBrowser/FileBrowser.tsx`, `Compare/ComparePage.tsx`,
 
 ### Do
 - Use for genuinely empty states, and for a failed load that has one retry
-  (Home and Settings → AI Models do this)
+  (Home and **Settings > AI > Downloaded** do this)
 - Provide clear next actions
 - Keep descriptions concise (1-2 sentences)
 - Test with screen readers

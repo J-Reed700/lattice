@@ -129,7 +129,6 @@ async fn ask_model(llm: &dyn LLMPort, prompt: String) -> Result<String, ApiError
             ],
             // A summary needs no hidden chain of thought, and a reasoning model
             // left to it can spend the whole budget before writing a word.
-            reasoning_effort: Some("none".into()),
             sampling: Some(SamplingOverride::deterministic()),
             max_output_tokens: Some(CALL_MAX_OUTPUT_TOKENS),
             time_budget: Some(CALL_TIME_BUDGET),

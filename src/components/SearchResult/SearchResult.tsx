@@ -157,7 +157,7 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
   return (
     <button
       type="button"
-      className="row-hover group w-full rounded-xl px-3.5 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="row-hover group w-full rounded-xl px-3.5 py-3.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       onClick={handleClick}
     >
       <div className="flex items-center gap-3">

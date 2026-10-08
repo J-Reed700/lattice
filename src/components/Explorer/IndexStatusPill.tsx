@@ -66,7 +66,7 @@ export function IndexStatusPill({ status, onRebuild, onRetry }: IndexStatusPillP
             type="button"
             aria-label={`Folder index: ${label}`}
             data-state-index={status.state}
-            className={`relative inline-flex h-6 max-w-[17rem] items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] tabular-nums transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)] ${
+            className={`relative inline-flex h-6 max-w-68 items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] tabular-nums transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)] ${
               failed ? 'border-[hsl(var(--danger)/0.4)] text-[hsl(var(--danger))]' : 'border-border-subtle text-text-secondary'
             }`}
           >

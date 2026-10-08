@@ -127,10 +127,13 @@ Start with the notice Lattice shows in the chat:
 ## Import problems
 
 - **The file type isn't supported.** See [What file types can I import?](faq.md#what-file-types-can-i-import). Images aren't supported.
-- **The file is over 50 MB.** Imports are limited to 50 MB per file. Split the document or save a smaller copy.
+- **The file is too large.** Documents are limited to 50 MB. Audio recordings
+  are limited to 200 MB and two hours. Split the file or save a smaller copy.
 - **A scanned PDF has no searchable text.** Lattice has no OCR. Pages that are only images are skipped and the rest of the PDF is imported. Run the PDF through an OCR tool first.
 - **A password-protected or damaged file fails.** Remove the password or re-save the file in its original app, then import again.
 - **An audio file fails with "No transcription model is downloaded."** Audio is transcribed on your computer. Download a transcription model from **Settings > AI > Models**, then import again.
+- **A WMA recording fails.** WMA decoding is not supported yet. Convert it to
+  MP3, WAV, Ogg, FLAC, AAC or M4A, then import the converted file.
 - **A web page won't import.** Some sites block automated readers or need you to sign in. Save the page as PDF or HTML and import the file instead.
 - **Adding a folder to Settings > Indexing doesn't import anything.** In this version, the **Watched folders** list in **Settings > General > Indexing** doesn't scan the folders or pick up new files. To import a folder, use **Add folder** in the command palette (⌘K), or add the files on the **Files** tab of **Import** (⌘I).
 

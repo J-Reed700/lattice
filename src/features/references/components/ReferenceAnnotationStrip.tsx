@@ -104,7 +104,7 @@ export function ReferenceAnnotationStrip({
                 }
               }}
               maxLength={200}
-              className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-base text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
+              className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-base text-[hsl(var(--text-primary))] outline-hidden focus:border-[hsl(var(--accent))]"
             />
           ) : (
             <button
@@ -153,7 +153,7 @@ export function ReferenceAnnotationStrip({
               }}
               rows={3}
               maxLength={2000}
-              className="w-full resize-y rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-sm text-[hsl(var(--text-secondary))] outline-none focus:border-[hsl(var(--accent))]"
+              className="w-full resize-y rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-sm text-[hsl(var(--text-secondary))] outline-hidden focus:border-[hsl(var(--accent))]"
             />
           ) : (
             <button

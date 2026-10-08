@@ -30,7 +30,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         aria-pressed={active || undefined}
         className={cn(
           'pressable inline-flex shrink-0 items-center justify-center rounded-md transition-[background-color,color,scale] duration-fast',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
           'disabled:cursor-not-allowed disabled:opacity-50',
           size === 'sm' ? 'h-7 w-7 [&>svg]:h-[15px] [&>svg]:w-[15px]' : 'h-8 w-8 [&>svg]:h-4 [&>svg]:w-4',
           active

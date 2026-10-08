@@ -37,13 +37,13 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-xl bg-[hsl(var(--surface-overlay))] p-6 shadow-lg outline-none [translate:-50%_-50%]",
+        "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-xl bg-[hsl(var(--surface-overlay))] p-6 shadow-lg outline-hidden [translate:-50%_-50%]",
         className
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-3.5 top-3.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:pointer-events-none">
+      <DialogPrimitive.Close className="absolute right-3.5 top-3.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:pointer-events-none">
         <X className="h-4 w-4" strokeWidth={1.75} />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

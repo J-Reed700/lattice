@@ -226,9 +226,13 @@ There are two logs:
 Lattice doesn't have:
 
 - a command-line tool
-- a REST API or plugin system
+- a supported public REST API or plugin system
 - a browser extension
 - OCR
 - cloud sync
+
+The repository's disconnected sync-service scaffold is development code; the
+desktop application does not call it. See
+[API and IPC versioning](../API_VERSIONING.md).
 
 It doesn't scan or watch folders for new files either. The **Watched folders** list in **Settings > General > Indexing** has no effect on importing in this version. Use **Import** (⌘I) or **Add folder** in the command palette instead.

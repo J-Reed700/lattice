@@ -11,7 +11,10 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 #[path = "batch_scheduler_tests.rs"]
-mod batch_scheduler_tests;
+pub(super) mod batch_scheduler_tests;
+
+#[path = "incremental_tests.rs"]
+mod incremental_tests;
 
 const BAD: &str = "DictReader strips field-name whitespace by default.";
 const GOOD: &str = "DictReader preserves field-name whitespace by default.";
@@ -52,6 +55,18 @@ fn context(prompt: &str) -> Value {
 }
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
+    if prompt.starts_with("Update claims after a lesson edit.") {
+        let data = context(prompt);
+        let passages = data["revisedSection"]["passages"].as_array().unwrap();
+        let changes: Vec<_> = data["existingClaims"].as_array().unwrap().iter().map(|claim| {
+            let old = claim["statement"].as_str().unwrap();
+            let statement = if passages.iter().any(|p| p["text"].as_str().unwrap().contains(old)) { old }
+                else if passages.iter().any(|p| p["text"].as_str().unwrap().contains(BAD)) { BAD } else { GOOD };
+            let passage = passages.iter().find(|p| p["text"].as_str().unwrap().contains(statement)).unwrap();
+            json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if old == statement {Value::Null} else {json!(statement)}})
+        }).collect();
+        return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
+    }
     if prompt.starts_with("Plan independent evidence searches") {
         return Some(json!({"queries":[]}).to_string());
     }
@@ -61,14 +76,14 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Extract lesson claims.") {
         let data = context(prompt);
         let units = data["units"].as_array().unwrap();
-        return Some(json!({"units":units.iter().map(|v| {
+        return Some(inventory::fixture_response(units.iter().map(|v| {
             let passages = v["passages"].as_array().unwrap();
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
             let quote = passage["text"].as_str().unwrap();
             let index = v["index"].as_u64().unwrap() as usize;
             let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else { quote };
             json!({"index":index,"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""})
-        }).collect::<Vec<_>>()} ).to_string());
+        }).collect::<Vec<_>>()).to_string());
     }
     if prompt.starts_with("Audit claim coverage independently.") {
         let data = context(prompt);
@@ -117,6 +132,12 @@ impl LLMPort for Model {
             return Ok(json!({"units":[]}).to_string());
         }
         if let Some(index) = self.coverage_gap_in {
+            if prompt.starts_with("Audit claim fidelity.")
+                && prompt.contains(&format!("Section {index}"))
+                && prompt.contains(&format!("\n\nClaim: {GOOD}\n\n"))
+            {
+                return Ok("unsupported\nReason: An additional original assertion is missing from this fixture inventory.\nSource passage: none".into());
+            }
             if prompt.starts_with("Audit claim coverage independently.") {
                 let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
                 for unit in context(prompt)["units"].as_array().unwrap() {
@@ -134,11 +155,14 @@ impl LLMPort for Model {
         if prompt.starts_with("Repair verified lesson defects.") {
             assert!(prompt.contains(GOOD));
             *self.repaired.lock().unwrap() = true;
-            return Ok(candidate(GOOD).to_string());
+            return Ok(repair_body(
+                prompt,
+                candidate(GOOD)["blocks"][0]["body"].clone(),
+            ));
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = context(prompt);
-            return Ok(json!({"issues":[],"blockChecks":data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>()} ).to_string());
+            return Ok(json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>())} ).to_string());
         }
         if prompt.starts_with("Source passages:") {
             *self.judge_calls.lock().unwrap() += 1;
@@ -180,6 +204,9 @@ impl LLMPort for Model {
 fn candidate(statement: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":format!("{} ", statement).repeat(24),"rubric":[]}],"questions":[]})
 }
+fn repair_body(prompt: &str, after: Value) -> String {
+    json!({"edits":[{"path":"/blocks/0/body","before":context(prompt)["candidate"]["blocks"][0]["body"],"after":after}]}).to_string()
+}
 fn source() -> LearningSourceDto {
     LearningSourceDto {
         id: uuid::Uuid::new_v4().to_string(),
@@ -192,6 +219,12 @@ fn source() -> LearningSourceDto {
 
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
+
+#[path = "coverage_resume_tests.rs"]
+mod coverage_resume_tests;
+
+#[path = "review_resume_tests.rs"]
+mod review_resume_tests;
 
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
@@ -289,14 +322,14 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         3,
         "Repairing one section must not repeat the other section's identical comparison"
     );
-    // A changed original passage invalidates the comparison even when this
-    // fixture's extractor returns the same standalone factual statement.
+    // Changed neighboring wording still needs coverage review, but an identical
+    // standalone factual statement keeps its completed evidence comparison.
     lesson["blocks"][0]["body"] = json!(format!(
         "{} Additional wording.",
         lesson["blocks"][0]["body"].as_str().unwrap()
     ));
     verify_with_references(&model, &lesson, &references, &mut checks).await?;
-    assert_eq!(*model.judge_calls.lock().unwrap(), 4);
+    assert_eq!(*model.judge_calls.lock().unwrap(), 3);
     Ok(())
 }
 
@@ -318,13 +351,19 @@ async fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_ide
     evidence[0].score += 1.0;
     assert_eq!(key, ClaimChecks::key(finding.unit, &claim, &evidence));
     assert_eq!(
-        checks.get(&key, &evidence).unwrap().evidence[0].score,
+        checks
+            .get(&key, finding.unit, &claim, &evidence)
+            .unwrap()
+            .evidence[0]
+            .score,
         evidence[0].score
     );
     evidence[0].source_id.push_str("-new-version");
     assert!(checks
         .get(
             &ClaimChecks::key(finding.unit, &claim, &evidence),
+            finding.unit,
+            &claim,
             &evidence
         )
         .is_none());
@@ -337,7 +376,7 @@ async fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_ide
     );
     assert!(
         ClaimChecks::default()
-            .get(&key, &finding.evidence)
+            .get(&key, finding.unit, &claim, &finding.evidence)
             .is_none(),
         "Judgments are not inherited across preparation operations"
     );
@@ -474,7 +513,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                 for block in patch["blocks"].as_array_mut().unwrap() {
                     block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, GOOD));
                 }
-                return Ok(patch.to_string());
+                return Ok(repair_body(prompt, patch["blocks"][0]["body"].clone()));
             }
             if prompt.starts_with("Source passages:") {
                 if prompt.split("\n\nClaim: ").nth(1).unwrap().starts_with(BAD) {
@@ -634,22 +673,28 @@ async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Resul
                     .filter(|s| text.contains(s))
                     .map(|statement| json!({"passageId":passage["id"],"statement":statement}))
                     .collect();
-                return Ok(
-                    json!({"units":[{"index":0,"claims":claims,"nonFactualReason":""}]})
-                        .to_string(),
-                );
+                return Ok(inventory::fixture_response(vec![
+                    json!({"index":0,"claims":claims,"nonFactualReason":""}),
+                ])
+                .to_string());
             }
             if prompt.starts_with("Repair verified lesson defects.") {
                 let repair = self
                     .repairs
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 assert!(repair < 2, "No progress must stop automatic repair");
-                return Ok(candidate(if repair == 0 || self.stall {
+                let mut body = candidate(if repair == 0 || self.stall {
                     SECOND
                 } else {
                     GOOD
-                })
-                .to_string());
+                })["blocks"][0]["body"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                if self.stall && repair > 0 {
+                    body.push(' ');
+                }
+                return Ok(repair_body(prompt, json!(body)));
             }
             if prompt.starts_with("Source passages:")
                 && prompt
@@ -783,6 +828,7 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
         audits: std::sync::atomic::AtomicUsize,
         extracted: Mutex<Vec<Vec<usize>>>,
         audited: Mutex<Vec<Vec<usize>>>,
+        pending_fidelity: Mutex<Vec<String>>,
         resolves: bool,
     }
     #[async_trait::async_trait]
@@ -793,6 +839,17 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
             context_data: &[String],
             history: Option<Vec<String>>,
         ) -> Result<String> {
+            if prompt.starts_with("Audit claim fidelity.")
+                && prompt.contains("\"id\":\"unit-0-passage-")
+                && self
+                    .pending_fidelity
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|text| prompt.contains(&format!("\n\nClaim: {text}\n\n")))
+            {
+                return Ok("unsupported\nReason: The asserted condition is absent from this fixture inventory.\nSource passage: none".into());
+            }
             if prompt.starts_with("Extract lesson claims.") {
                 let data = context(prompt);
                 self.extracted.lock().unwrap().push(
@@ -832,7 +889,10 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
                 } else {
                     2
                 };
-                for (_, check) in response
+                let data = context(prompt);
+                let mut missing = self.pending_fidelity.lock().unwrap();
+                missing.clear();
+                for (id, check) in response
                     .as_object_mut()
                     .unwrap()
                     .iter_mut()
@@ -840,6 +900,15 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
                     .take(remaining)
                 {
                     check["missingClaims"] = json!(["Include the asserted condition explicitly."]);
+                    missing.extend(
+                        data["units"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .flat_map(|unit| unit["passages"].as_array().unwrap())
+                            .filter(|passage| passage["id"] == *id)
+                            .map(|passage| passage["text"].as_str().unwrap().to_owned()),
+                    );
                 }
                 return Ok(response.to_string());
             }
@@ -871,6 +940,7 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
         audits: std::sync::atomic::AtomicUsize::new(0),
         extracted: Mutex::new(Vec::new()),
         audited: Mutex::new(Vec::new()),
+        pending_fidelity: Mutex::new(Vec::new()),
         resolves: true,
     };
     let mut lesson = candidate(GOOD);
@@ -896,6 +966,7 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
         audits: std::sync::atomic::AtomicUsize::new(0),
         extracted: Mutex::new(Vec::new()),
         audited: Mutex::new(Vec::new()),
+        pending_fidelity: Mutex::new(Vec::new()),
         resolves: false,
     };
     let error = verify(&stalled, &lesson, &[source()]).await.err().unwrap();
@@ -911,6 +982,7 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
         audits: std::sync::atomic::AtomicUsize::new(1),
         extracted: Mutex::new(Vec::new()),
         audited: Mutex::new(Vec::new()),
+        pending_fidelity: Mutex::new(Vec::new()),
         resolves: true,
     };
     let content = units(&lesson)?;
@@ -1007,6 +1079,15 @@ fn assessment_policy_changes_expire_assessments_without_repeating_identical_teac
             vec![0]
         );
     }
+    let mut compatible = original.clone();
+    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
+    assert_eq!(compatible.units.len(), 2);
+    compatible.units[1].complete = false;
+    retain_current_assessment_checks(&mut compatible, &content, Some("assessment-fidelity-v2"));
+    assert_eq!(
+        compatible.units.iter().map(|u| u.index).collect::<Vec<_>>(),
+        vec![0]
+    );
     let mut current = original;
     retain_current_assessment_checks(&mut current, &content, Some(coverage::ASSESSMENT_POLICY));
     assert_eq!(current.units.len(), 2);
@@ -1035,6 +1116,7 @@ fn teaching_context_receipts_preserve_only_unchanged_approvals() {
     };
     for (policy, expected) in [
         (None, vec![0, 2]),
+        (Some("teaching-context-v1"), vec![0, 2]),
         (Some("previous-context-policy"), vec![2]),
         (Some(coverage::TEACHING_CONTEXT_POLICY), vec![0, 1, 2]),
     ] {

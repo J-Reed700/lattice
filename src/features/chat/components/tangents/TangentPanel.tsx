@@ -135,10 +135,10 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
   return <>
     <div className="shrink-0 border-b border-border-subtle p-4">
       <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-text-muted">Starting point</p>
-      <blockquote className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-accent pl-3 font-serif text-sm leading-relaxed text-text-secondary">{tangent.selectedText}</blockquote>
+      <blockquote className="max-h-32 overflow-y-auto whitespace-pre-wrap wrap-break-word border-l-2 border-accent pl-3 font-serif text-sm leading-relaxed text-text-secondary">{tangent.selectedText}</blockquote>
       <div className="mt-3 flex items-center justify-between gap-2">
         <button type="button" onClick={() => void finish('promote')} disabled={isSending || mutating}
-          className="inline-flex items-center gap-1.5 rounded px-1 py-1 text-xs text-text-secondary hover:text-accent disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          className="inline-flex items-center gap-1.5 rounded px-1 py-1 text-xs text-text-secondary hover:text-accent disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
           <MessageSquarePlus className="h-3.5 w-3.5" aria-hidden="true" />Make conversation
         </button>
         <IconButton label="Delete tangent" disabled={isSending || mutating} onClick={() => void finish('delete')}><Trash2 /></IconButton>
@@ -162,7 +162,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
     <form className="shrink-0 border-t border-border-subtle p-3" onSubmit={event => { event.preventDefault(); void send(); }}>
       <label htmlFor={`tangent-input-${id}`} className="sr-only">Ask in this tangent</label>
       <textarea ref={textareaRef} id={`tangent-input-${id}`} value={input} rows={3}
-        placeholder="Ask about this passage…" className="w-full resize-none rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        placeholder="Ask about this passage…" className="w-full resize-none rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         onChange={event => saveDraft(event.target.value)} onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
         }} />
@@ -170,7 +170,7 @@ export function TangentPanel({ tangent, toolPreferences, unavailable, drafts, on
         <span className="text-[11px] text-text-muted">{unavailable ? 'Choose an available chat model to reply.' : 'Saved with this conversation'}</span>
         {isSending ? <IconButton label="Stop tangent response" onClick={() => void base.cancelGeneration(id)}><Square /></IconButton> : (
           <button type="submit" aria-label="Send tangent message" disabled={!input.trim() || unavailable || mutating || !messagesQuery.isSuccess || !detailQuery.data}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-[hsl(var(--accent-fg))] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ArrowUp className="h-4 w-4" /></button>
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-[hsl(var(--accent-fg))] disabled:opacity-40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"><ArrowUp className="h-4 w-4" /></button>
         )}
       </div>
     </form>

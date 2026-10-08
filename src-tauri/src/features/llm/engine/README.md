@@ -16,16 +16,20 @@ engine/
 ├── traits.rs                 # LLMClient trait, GenerationConfig
 ├── types.rs                  # Shared request/response types, LLMError
 ├── factory.rs                # LLMConfig, create_llm, create_llm_with_fallback
-├── sidecar_manager.rs        # Spawns and supervises llama-server
+├── compatibility.rs          # Checks a GGUF architecture against the pinned engine
+├── sidecar_manager.rs        # llama-server lifecycle facade
+│   └── sidecar_manager/      # Config, preflight, startup, readiness, process,
+│                             # registry, failure classification, tests
 ├── sidecar_pool.rs           # Shares one llama-server per identical config
 ├── sidecar_client.rs         # SidecarLLMClient: OpenAI-compatible HTTP/SSE client
+│   └── sidecar_client/       # Ignored live smoke test
 ├── ollama_client.rs          # OllamaClient (also implements LLMPort)
 ├── noop_client.rs            # NoOpLLMClient: fallback when nothing can load
 ├── circuit_breaker.rs        # Closed/Open/Half-Open breaker used by OllamaClient
 ├── gguf_metadata.rs          # Reads GGUF headers (context_length, KV sizing)
 ├── models.rs                 # ModelCatalog, ModelRecommender, PerformanceTier
 ├── model_catalog_adapter.rs  # HardcodedModelCatalog
-├── model_storage_adapter.rs  # FilesystemModelStorage
+├── model_storage_adapter.rs  # Legacy filesystem ModelStorage adapter
 └── system/                   # detect_capabilities: platform, GPU, backend devices
 ```
 
@@ -50,6 +54,15 @@ engine/
 Everything above returns `Arc<dyn LLMPort>` (`application/ports/llm_port.rs`),
 which is what features call. `LLMClient` is the engine-internal trait
 (`generate`, `generate_stream`).
+
+## Download compatibility check
+
+Before a catalog GGUF download begins, `compatibility.rs` reads at most the
+first 4 MiB of the selected file, extracts `general.architecture`, and compares
+it with `src-tauri/scripts/llama-architectures.txt`. That manifest is generated
+from the exact llama.cpp tag in `llama-server.lock`. This prevents a known
+unsupported architecture from consuming the full download; it does not promise
+that every quantization fits in memory or runs well on every machine.
 
 ## The llama-server binary
 

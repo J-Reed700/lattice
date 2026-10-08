@@ -81,7 +81,7 @@ fn model() -> ScriptedModel {
 }
 
 fn selection(indices: &[usize]) -> String {
-    json!({"selectedResults":indices.iter().map(|i|json!({"id":format!("result-{i}"),"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
+    json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
 }
 
 #[tokio::test]
@@ -102,7 +102,10 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                selection(&[1]),
+                json!({"decisions":[
+                    {"id":"result-0","useForGap":false,"reason":"A dictionary meaning does not address the software behavior."},
+                    {"id":"result-1","useForGap":true,"reason":"The manual addresses the command's behavior."}
+                ]}).to_string(),
                 selection(&[]),
                 selection(&[2]),
                 selection(&[1, 1]),
@@ -111,22 +114,36 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
         ),
         prompts: Mutex::new(vec![]),
     };
-    let chosen =
-        select_references(&llm, "Rust programming", "cargo build", results.clone()).await?;
+    let chosen = select_references(
+        &llm,
+        "Rust programming",
+        "cargo build",
+        &[],
+        results.clone(),
+    )
+    .await?;
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].url, results[1].url);
+    assert!(select_references(
+        &llm,
+        "Rust programming",
+        "cargo build",
+        &[],
+        results.clone()
+    )
+    .await?
+    .is_empty());
+    assert!(select_references(
+        &llm,
+        "Rust programming",
+        "cargo build",
+        &[],
+        results.clone()
+    )
+    .await
+    .is_err());
     assert!(
-        select_references(&llm, "Rust programming", "cargo build", results.clone())
-            .await?
-            .is_empty()
-    );
-    assert!(
-        select_references(&llm, "Rust programming", "cargo build", results.clone())
-            .await
-            .is_err()
-    );
-    assert!(
-        select_references(&llm, "Rust programming", "cargo build", results)
+        select_references(&llm, "Rust programming", "cargo build", &[], results)
             .await
             .is_err()
     );
@@ -239,6 +256,59 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
             assert!(saved
                 .iter()
                 .all(|source| !source.excerpt.contains("Irrelevant material")));
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    program.sources = (0..100)
+        .map(|index| LearningSourceDto {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: format!("Existing reference {index}"),
+            url: Some(format!("https://example.org/existing-{index}")),
+            excerpt: format!("Existing reference {index} discusses the study design."),
+            acquired_at: 0,
+        })
+        .collect();
+    repo.create(&program).await?;
+    let library = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        pool.clone(),
+    );
+    library
+        .preflight_new_source(
+            &program.summary.id,
+            &uuid::Uuid::new_v4().to_string(),
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let llm = model();
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        async {
+            let expanded = expand(&llm, &references, &[gap()])
+                .await?
+                .expect("new evidence saved");
+            assert_eq!(expanded.sources.len(), 101);
+            let saved = repo.verification_sources(&program.summary.id).await?;
+            assert_eq!(saved.len(), 101);
+            assert!(saved.iter().any(|source| source.excerpt == CAPTURE));
+            for old in &sources {
+                assert!(saved
+                    .iter()
+                    .any(|source| source.id == old.id && source.excerpt == old.excerpt));
+            }
             Ok(())
         },
     )

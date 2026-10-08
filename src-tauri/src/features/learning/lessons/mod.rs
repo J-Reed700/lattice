@@ -13,3 +13,4 @@ pub mod reference_collection;
 pub(crate) mod review_evidence;
 pub mod teaching;
 pub(crate) mod teaching_review;
+mod text_edits;

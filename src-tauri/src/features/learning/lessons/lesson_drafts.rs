@@ -91,6 +91,18 @@ pub(in crate::features::learning) async fn checkpoint(
         .await
 }
 
+pub(in crate::features::learning) async fn checkpoints_with_prefix(
+    prefix: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(Vec::new());
+    };
+    context
+        .repo
+        .lesson_checkpoints_with_prefix(&context.job_id, &context.lesson_id, prefix)
+        .await
+}
+
 pub(in crate::features::learning) async fn record_checkpoint(
     key: &str,
     value: serde_json::Value,

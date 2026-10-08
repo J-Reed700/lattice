@@ -156,7 +156,7 @@ export function IndexingTab() {
 
   return (
     <>
-      <PageHeader title="Indexing" />
+      <PageHeader title="Indexing" description="Choose what enters your library and how it stays up to date." />
 
       <SettingsSection title="Behavior">
         <SettingsRow label="Auto-index new files" htmlFor="autoIndex">

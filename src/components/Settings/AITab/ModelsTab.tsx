@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
-import { Boxes, X } from 'lucide-react';
+import { ArrowDownToLine, Boxes, FolderPlus, X } from 'lucide-react';
 
 import { ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS } from './shared';
 import { useLlmSettings } from './useLlmSettings';
@@ -125,11 +125,20 @@ export function ModelsTab() {
 
   return (
     <>
-      <PageHeader title="Models" />
+      <PageHeader
+        title="Models"
+        description="Find and download models for the way you work."
+        actions={
+          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'downloaded-models' } }))}>
+            <ArrowDownToLine className="mr-2 h-4 w-4" aria-hidden="true" /> Downloaded models
+          </button>
+        }
+      />
 
       <div ref={catalogSectionRef}>
         <SettingsSection
           title="Catalog"
+          className="model-catalog-section"
           actions={
             <button
               type="button"
@@ -142,7 +151,7 @@ export function ModelsTab() {
           }
         >
           {isModelCatalogExpanded ? (
-            <div className="pt-4">
+            <div>
               <ModelCatalogBrowser
                 routerModelId={llmSettings?.router?.model}
                 onSetRouterModel={async (modelId) => {
@@ -192,13 +201,14 @@ export function ModelsTab() {
             disabled={isAddingExternalDirectory}
             className={SECONDARY_BUTTON_CLASS}
           >
+            <FolderPlus className="mr-2 h-4 w-4" aria-hidden="true" />
             {isAddingExternalDirectory ? 'Adding…' : 'Add folder'}
           </button>
         }
       >
         {externalModelDirectories.length === 0 ? (
           <div className="border-b border-border-subtle py-3 text-sm text-text-muted">
-            No external folders.
+            Already have model files? Add a folder to make them available in Lattice.
           </div>
         ) : (
           externalModelDirectories.map((directory) => (

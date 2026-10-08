@@ -17,7 +17,7 @@ import type { ExplorerFolder, ExplorerFolders } from './useExplorerFolders';
 const FILTER_FROM = 7;
 
 const MENU_ITEM_CLASS =
-  'flex w-full items-start gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  'flex w-full items-start gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
 type ChipTone = 'done' | 'paused' | 'live' | 'quiet' | 'alarm';
 
@@ -173,7 +173,7 @@ function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRenam
           aria-busy={opening || undefined}
           onClick={onOpen}
           title={missing ? `${folder.root} is no longer on disk` : `Open ${folder.root}`}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--ring)/0.55)] disabled:cursor-default"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 pl-4 pr-2 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--ring)/0.55)] disabled:cursor-default"
         >
           {body}
         </button>
@@ -186,7 +186,7 @@ function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRenam
         disabled={busy}
         onClick={onTogglePin}
         className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40',
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40',
           folder.pinned ? 'text-accent' : 'text-text-disabled hover:text-text-secondary group-hover:text-text-muted'
         )}
       >
@@ -198,7 +198,7 @@ function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRenam
             type="button"
             aria-label={`Actions for ${folder.name}`}
             disabled={busy}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40"
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
@@ -290,7 +290,7 @@ function RenameField({ name, onDone }: { name: string; onDone: (_name: string | 
         else if (event.key === 'Escape') finish(null);
       }}
       onBlur={() => finish(value)}
-      className="h-6 min-w-0 flex-1 rounded-md border border-border-default bg-surface px-1.5 text-ui font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring)/0.5)]"
+      className="h-6 min-w-0 flex-1 rounded-md border border-border-default bg-surface px-1.5 text-ui font-medium text-text-primary focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring)/0.5)]"
     />
   );
 }
@@ -427,7 +427,7 @@ export function YourFolders({ list, opening, onOpen }: YourFoldersProps) {
             placeholder="Filter folders"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="h-8 w-full rounded-lg border border-border-subtle bg-surface pl-8 pr-3 text-ui text-text-primary placeholder:text-text-muted focus:border-border-default focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring)/0.35)]"
+            className="h-8 w-full rounded-lg border border-border-subtle bg-surface pl-8 pr-3 text-ui text-text-primary placeholder:text-text-muted focus:border-border-default focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring)/0.35)]"
           />
         </div>
       )}

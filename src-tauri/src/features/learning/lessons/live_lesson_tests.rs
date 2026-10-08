@@ -11,6 +11,9 @@ use super::*;
 use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 
+#[path = "live_small_lesson.rs"]
+mod small;
+
 struct ObservedModel {
     inner: LlamaCppLlm,
     directory: std::path::PathBuf,
@@ -418,7 +421,7 @@ async fn live_source_passage_judgments() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit live settings, search candidates and artifact directory"]
+#[ignore = "requires explicit live settings and artifact directory; uses committed source-selection controls by default"]
 async fn live_reference_selection() -> Result<()> {
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
@@ -431,15 +434,19 @@ async fn live_reference_selection() -> Result<()> {
         directory: directory.clone(),
         call: Default::default(),
     };
-    let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_REFERENCE_CASES").unwrap(),
-    )?)?;
+    let cases: Vec<serde_json::Value> = match std::env::var("LATTICE_REFERENCE_CASES") {
+        Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
+        Err(_) => {
+            serde_json::from_str(include_str!("live_fixtures/reference_scope_controls.json"))?
+        }
+    };
     for (index, case) in cases.into_iter().enumerate() {
         let results = serde_json::from_value(case["results"].clone())?;
         let chosen = crate::features::learning::content_verification::research::select_references(
             &model,
             case["topic"].as_str().unwrap(),
             case["query"].as_str().unwrap(),
+            case["gaps"].as_array().map(Vec::as_slice).unwrap_or(&[]),
             results,
         )
         .await?;
