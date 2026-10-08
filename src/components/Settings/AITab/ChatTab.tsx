@@ -51,6 +51,7 @@ export function ChatTab() {
   const [ollamaModelsEndpoint, setOllamaModelsEndpoint] = useState("");
   const [isTestingOllamaConnection, setIsTestingOllamaConnection] =
     useState(false);
+  const [isSavingOllamaConnection, setIsSavingOllamaConnection] = useState(false);
   const [showOllamaAuth, setShowOllamaAuth] = useState(false);
 
   const {
@@ -131,6 +132,32 @@ export function ChatTab() {
     });
   };
 
+  const handleSaveOllamaConnection = async () => {
+    const ollamaUrl = ollamaUrlDraft.trim();
+    const model = ollamaModelDraft.trim();
+    if (!ollamaUrl || !model) {
+      toast.error("Set a server URL and model first");
+      return;
+    }
+    if (isHeaderPartialPair) {
+      toast.error("Set both the header name and value, or clear both");
+      return;
+    }
+    setIsSavingOllamaConnection(true);
+    try {
+      if (await saveLlmUpdates({
+        ollamaConfigured: true,
+        ollamaUrl,
+        model,
+        ollamaUtilityModel: ollamaUtilityModelDraft.trim(),
+        ollamaAuthHeaderName: trimmedHeaderName,
+        ollamaAuthHeaderValue: trimmedHeaderValue,
+      })) toast.success("Ollama settings saved");
+    } finally {
+      setIsSavingOllamaConnection(false);
+    }
+  };
+
   const handleTestOllamaConnection = async () => {
     const ollamaUrl = ollamaUrlDraft.trim();
     const authHeaderName = ollamaHeaderNameDraft.trim();
@@ -182,7 +209,7 @@ export function ChatTab() {
 
   return (
     <>
-      <PageHeader title="Chat" />
+      <PageHeader title="Chat" description="Choose your provider and how conversations use models and memory." />
 
       <SettingsSection title="Provider">
         {isLoading ? (
@@ -293,7 +320,7 @@ export function ChatTab() {
         </SettingsSection>
       )}
 
-      {llmSettings && (provider === "llamacpp" || provider === "auto") && <LlamaCppConnection />}
+      {llmSettings && (provider === "llamacpp" || provider === "auto" || llmSettings.llamaCpp?.url.trim()) && <LlamaCppConnection />}
 
       {llmSettings && showOllamaSettings ? (
         <SettingsSection title="Ollama server">
@@ -320,8 +347,8 @@ export function ChatTab() {
               onChange={(e) => {
                 const selectedModel = e.target.value;
                 setOllamaModelDraft(selectedModel);
-                if (selectedModel && selectedModel !== llmSettings.model) {
-                  saveLlmUpdates({ model: selectedModel });
+                if (selectedModel) {
+                  saveLlmUpdates({ model: selectedModel, ollamaConfigured: true });
                 }
               }}
               disabled={ollamaAvailableModels.length === 0}
@@ -383,10 +410,19 @@ export function ChatTab() {
               <button
                 type="button"
                 onClick={handleTestOllamaConnection}
-                disabled={isTestingOllamaConnection}
+                disabled={isTestingOllamaConnection || isSavingOllamaConnection}
                 className={SECONDARY_BUTTON_CLASS}
               >
                 {isTestingOllamaConnection ? "Testing…" : "Test connection"}
+              </button>
+              <button
+                type="button"
+                aria-label="Save Ollama connection"
+                onClick={() => void handleSaveOllamaConnection()}
+                disabled={isTestingOllamaConnection || isSavingOllamaConnection || !ollamaUrlDraft.trim() || !ollamaModelDraft.trim()}
+                className={SECONDARY_BUTTON_CLASS}
+              >
+                {isSavingOllamaConnection ? "Saving…" : "Save connection"}
               </button>
               <button
                 type="button"

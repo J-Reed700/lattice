@@ -64,11 +64,12 @@ interface SidebarTabsProps<T extends string> {
   onChange: (value: T) => void;
   options: ReadonlyArray<{ id: T; label: string }>;
   className?: string;
+  variant?: 'underline' | 'segmented';
 }
 
-export function SidebarTabs<T extends string>({ value, onChange, options, className }: SidebarTabsProps<T>) {
+export function SidebarTabs<T extends string>({ value, onChange, options, className, variant = 'underline' }: SidebarTabsProps<T>) {
   return (
-    <div role="tablist" className={cn('flex items-center gap-3 text-xs', className)}>
+    <div role="tablist" className={cn('flex items-center gap-3 text-xs', variant === 'segmented' && 'w-fit max-w-full flex-wrap gap-1 rounded-lg border border-border-subtle bg-surface-sunken p-1', className)}>
       {options.map((option) => {
         const isActive = option.id === value;
         return (
@@ -77,12 +78,23 @@ export function SidebarTabs<T extends string>({ value, onChange, options, classN
             type="button"
             role="tab"
             aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(option.id)}
+            onKeyDown={(event) => {
+              const index = options.findIndex(item => item.id === option.id);
+              const nextIndex = event.key === 'ArrowRight' ? (index + 1) % options.length
+                : event.key === 'ArrowLeft' ? (index - 1 + options.length) % options.length
+                  : event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : null;
+              if (nextIndex === null) return;
+              event.preventDefault();
+              onChange(options[nextIndex].id);
+              event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+            }}
             className={cn(
-              '-mb-px border-b-[1.5px] pb-1.5 font-medium transition-colors duration-fast',
-              isActive
+              'font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+              variant === 'segmented' ? cn('rounded-md px-3 py-1.5', isActive ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary') : cn('-mb-px border-b-[1.5px] pb-1.5', isActive
                 ? 'border-accent text-text-primary'
-                : 'border-transparent text-text-tertiary hover:text-text-primary',
+                : 'border-transparent text-text-tertiary hover:text-text-primary'),
             )}
           >
             {option.label}

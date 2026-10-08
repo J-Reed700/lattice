@@ -1,0 +1,48 @@
+.settings-workspace .settings-section.model-catalog-section {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-workspace .model-catalog-section > .settings-section-heading {
+  padding: 0 0 0.75rem;
+  background: transparent;
+}
+.settings-workspace .model-catalog-section > .settings-section-body {
+  border: 0;
+  padding: 0;
+}
+
+.catalog-category-tabs { gap: 0.25rem; }
+.catalog-category-tabs button {
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+.catalog-category-tabs button[aria-selected='true'] {
+  color: hsl(var(--accent));
+  border-color: hsl(var(--accent) / 0.22);
+  background: hsl(var(--accent-muted));
+}
+.catalog-category-tabs button:hover { background: hsl(var(--surface-raised)); }
+.catalog-category-tabs button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.catalog-computer summary::-webkit-details-marker { display: none; }
+
+.model-category { --category-ink: var(--accent); --category-tint: var(--accent-muted); }
+.model-category[data-category='Embedding'] { --category-ink: 173 52% 28%; --category-tint: 170 32% 91%; }
+.model-category[data-category='OCR'] { --category-ink: 36 70% 30%; --category-tint: 42 56% 91%; }
+.model-category[data-category='Transcription'] { --category-ink: 253 33% 43%; --category-tint: 250 40% 94%; }
+[data-theme='dark'] .model-category[data-category='Embedding'] { --category-ink: 170 44% 70%; --category-tint: 170 25% 17%; }
+[data-theme='dark'] .model-category[data-category='OCR'] { --category-ink: 40 64% 72%; --category-tint: 37 30% 17%; }
+[data-theme='dark'] .model-category[data-category='Transcription'] { --category-ink: 253 55% 79%; --category-tint: 253 24% 20%; }
+.model-category-heading { background: hsl(var(--category-tint) / 0.4); }
+.model-category-icon { background: hsl(var(--category-tint)); color: hsl(var(--category-ink)); }
+
+.model-catalog-row:hover { background: hsl(var(--surface-raised) / 0.45); }
+.model-catalog-row:last-child { border-bottom: 0; }
+
+@container settings-content (max-width: 30rem) {
+  .model-catalog-row { flex-wrap: wrap; gap: 0.5rem; }
+  .model-catalog-row > button { flex-basis: 100%; }
+  .model-catalog-row > div { flex-direction: row; align-items: center; }
+}

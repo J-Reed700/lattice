@@ -13,7 +13,7 @@
 
 import { useMemo } from 'react';
 
-import { RefreshCw } from 'lucide-react';
+import { Check, Monitor, Moon, RefreshCw, Sun } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -29,9 +29,9 @@ import { PageHeader, SettingsRow, SettingsSection } from '../ui';
 import type { PaletteCommand } from '../../stores/paletteCommandsStore';
 
 const THEMES = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'System', icon: Monitor },
 ] as const;
 
 export function DisplayTab() {
@@ -72,17 +72,18 @@ export function DisplayTab() {
 
   return (
     <>
-      <PageHeader title="Display" />
+      <PageHeader title="Display" description="Make Lattice feel at home on your screen." />
 
       <SettingsSection title="Appearance">
-        <SettingsRow label="Theme">
+        <SettingsRow label="Theme" hint="Choose a look, or follow your system appearance." stacked>
           <div
             role="radiogroup"
             aria-label="Theme"
-            className="inline-flex items-center gap-0.5 rounded-sm border border-border-default p-0.5"
+            className="grid w-full grid-cols-3 gap-3"
           >
             {THEMES.map((theme) => {
               const isActive = activeTheme === theme.value;
+              const Icon = theme.icon;
               return (
                 <button
                   key={theme.value}
@@ -106,13 +107,20 @@ export function DisplayTab() {
                     updateSettings.mutate({ category: 'ui', updates: { theme: theme.value } })
                   }
                   className={cn(
-                    'rounded-sm px-3 py-1 text-sm transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50',
+                    'min-w-0 rounded-lg border p-2 text-sm transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
                     isActive
-                      ? 'bg-accent-muted text-accent'
-                      : 'text-text-secondary hover:text-text-primary',
+                      ? 'border-accent bg-accent-muted text-accent'
+                      : 'border-border-default text-text-secondary hover:border-border-strong hover:text-text-primary',
                   )}
                 >
-                  {theme.label}
+                  <span className="theme-preview" data-preview={theme.value} aria-hidden="true">
+                    <span className="theme-preview-sidebar"><span /><span /><span /></span>
+                    <span className="theme-preview-page"><span /><span /><span /></span>
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center justify-center gap-1.5 py-1 text-xs font-medium">
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />{theme.label}
+                    {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
+                  </span>
                 </button>
               );
             })}

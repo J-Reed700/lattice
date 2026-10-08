@@ -5,8 +5,8 @@ import { cn } from '@/lib/utils';
 /**
  * SettingsSection / SettingsRow
  *
- * The two primitives every Settings pane is built from. No cards, no
- * backgrounds, no icons. Hairlines separate rows. See
+ * Shared settings anatomy. The Settings workspace adds grouped surfaces;
+ * embedded forms retain their lightweight rows.
  */
 
 interface SettingsSectionProps {
@@ -21,15 +21,15 @@ interface SettingsSectionProps {
 
 export function SettingsSection({ title, description, actions, children, className }: SettingsSectionProps) {
   return (
-    <section className={cn('mb-10', className)}>
-      <div className="flex items-end justify-between gap-4 pb-2">
+    <section className={cn('settings-section mb-10', className)}>
+      <div className="settings-section-heading flex items-end justify-between gap-4 pb-2">
         <div className="min-w-0">
           <h2 className="text-base font-medium text-text-primary">{title}</h2>
           {description ? <p className="mt-0.5 text-sm text-text-tertiary">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
-      <div className="border-t border-border-subtle">{children}</div>
+      <div className="settings-section-body border-t border-border-subtle">{children}</div>
     </section>
   );
 }
@@ -51,19 +51,20 @@ export function SettingsRow({ label, hint, htmlFor, stacked = false, children, c
   return (
     <div
       className={cn(
-        'border-b border-border-subtle py-3',
+        'settings-row border-b border-border-subtle py-3',
+        stacked && 'settings-row-stacked',
         stacked ? 'flex flex-col gap-2' : 'flex items-center justify-between gap-6',
         className,
       )}
     >
       <div className="min-w-0">
-        <LabelTag htmlFor={htmlFor} className="block text-sm text-text-primary">
+        <LabelTag htmlFor={htmlFor} className="block text-sm font-medium text-text-primary">
           {label}
         </LabelTag>
-        {hint ? <div className="mt-0.5 text-xs text-text-muted">{hint}</div> : null}
+        {hint ? <div className="mt-1 max-w-[60ch] text-xs leading-relaxed text-text-muted">{hint}</div> : null}
       </div>
       {children ? (
-        <div className={cn(stacked ? 'w-full' : 'flex shrink-0 items-center justify-end min-w-[220px]')}>
+        <div className={cn('settings-row-control', stacked ? 'w-full' : 'flex shrink-0 items-center justify-end min-w-[220px]')}>
           {children}
         </div>
       ) : null}

@@ -103,7 +103,7 @@ export function TuningTab() {
   if (isLoading || !llmSettings || !routerDraft || !toolOutputDraft) {
     return (
       <>
-        <PageHeader title="Tuning" />
+        <PageHeader title="Tuning" description="Fine-tune model behavior, context, and resource use." />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -111,7 +111,7 @@ export function TuningTab() {
 
   return (
     <>
-      <PageHeader title="Tuning" />
+      <PageHeader title="Tuning" description="Fine-tune model behavior, context, and resource use." />
 
       <SettingsSection title="Model runtime">
         <SettingsRow label="Temperature" htmlFor="tuning-temperature">

@@ -49,8 +49,8 @@ describe('IngestHub', () => {
   it('renders all four tabs', () => {
     render(<IngestHub />);
 
-    expect(screen.getByRole('tab', { name: 'URL' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'URLs' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'One link' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Multiple links' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Files' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument();
   });
@@ -65,7 +65,7 @@ describe('IngestHub', () => {
     const user = userEvent.setup();
     render(<IngestHub />);
 
-    await user.click(screen.getByRole('tab', { name: 'URLs' }));
+    await user.click(screen.getByRole('tab', { name: 'Multiple links' }));
 
     expect(screen.getByTestId('batch-url-import')).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe('IngestHub', () => {
     localStorage.removeItem('ingestHub.lastTab');
     render(<IngestHub />);
 
-    const singleUrlTab = screen.getByRole('tab', { name: 'URL' });
+    const singleUrlTab = screen.getByRole('tab', { name: 'One link' });
     expect(singleUrlTab).toHaveAttribute('data-state', 'active');
   });
 

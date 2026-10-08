@@ -8,6 +8,8 @@
 
 import { useCallback, useMemo, useState } from 'react';
 
+import { ChevronDown, Monitor } from 'lucide-react';
+
 import { CatalogManagementSection } from './CatalogManagementSection';
 import { CATALOG_TEXT_BUTTON_CLASS, computeModelFit, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
@@ -18,6 +20,7 @@ import { modelQuantization } from './quantization';
 import { SystemCapabilitiesCard } from './SystemCapabilitiesCard';
 import { useModelCatalog } from '../../../hooks/useModelCatalog';
 import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
+import './modelCatalog.css';
 
 interface ModelCatalogBrowserProps {
   routerModelId?: string;
@@ -210,15 +213,25 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   return (
     <div className="space-y-5">
-      <p className="max-w-[75ch] text-sm text-text-secondary">Find a model, compare its quantized versions, and choose the download that suits your computer. Downloads are local; configure remote providers in Chat settings.</p>
-      <ModelSearchBar />
-      <ModelFilterPanel quantizations={quantizations} />
+      <details className="catalog-computer group rounded-lg border border-border-subtle bg-surface">
+        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-xs text-text-secondary">
+          <Monitor className="h-4 w-4 text-accent" aria-hidden="true" />
+          <span className="font-medium text-text-primary">This computer</span>
+          {systemCapabilities ? <span className="tabular-nums">{Math.round(systemCapabilities.total_ram_gb)} GB memory · {systemCapabilities.gpu_acceleration}</span> : <span>Hardware and available memory</span>}
+          <ChevronDown className="ml-auto h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
+        </summary>
+        <div className="px-4 pb-2"><SystemCapabilitiesCard /></div>
+      </details>
+      <div className="space-y-4 rounded-xl border border-border-default bg-surface p-4 shadow-sm">
+        <ModelSearchBar />
+        <ModelFilterPanel quantizations={quantizations} />
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-base font-medium text-text-primary">
             {overview ? 'Explore by purpose' : isSearching ? 'Search results' : 'Browse models'}
           </h3>
-          {overview ? <p className="mt-1 text-sm text-text-muted">A few models from each category. Open a category to see more.</p> : null}
+          {overview ? <p className="mt-1 text-xs text-text-muted">Choose a purpose, then compare models and versions.</p> : null}
         </div>
         {!isSearching && !filtersActive ? (
           <button type="button" onClick={() => setBrowseAll((previous) => !previous)} className={CATALOG_TEXT_BUTTON_CLASS}>
@@ -245,12 +258,8 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         }}
         onAddToken={focusTokenField}
       />
-      <details className="border-t border-border-subtle pt-3">
-        <summary className="cursor-pointer text-sm text-text-secondary">This computer</summary>
-        <div className="mt-3"><SystemCapabilitiesCard /></div>
-      </details>
-      <details className="border-t border-border-subtle pt-3">
-        <summary className="cursor-pointer text-sm text-text-secondary">Catalog maintenance</summary>
+      <details className="rounded-lg border border-border-subtle bg-surface px-4 py-3">
+        <summary className="cursor-pointer text-xs font-medium text-text-secondary">Catalog maintenance</summary>
         <div className="mt-3"><CatalogManagementSection /></div>
       </details>
     </div>

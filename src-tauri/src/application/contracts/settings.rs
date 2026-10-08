@@ -309,6 +309,11 @@ pub struct LLMSettingsDto {
     /// Ollama server URL
     pub ollama_url: String,
 
+    /// Whether the user has saved or selected an Ollama connection.
+    /// Default URL/model suggestions alone do not constitute a connection.
+    #[serde(default)]
+    pub ollama_configured: bool,
+
     /// Optional Ollama tag used for utility/router calls.
     /// Empty string means "fall back to `model`".
     #[serde(default)]
@@ -1091,6 +1096,7 @@ impl Default for LLMSettingsDto {
             context_window: 131072,
             local_context_window: None,
             ollama_url: "http://localhost:11434".to_string(),
+            ollama_configured: false,
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),
             ollama_auth_header_value: String::new(),

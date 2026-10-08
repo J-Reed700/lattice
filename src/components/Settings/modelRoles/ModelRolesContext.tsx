@@ -15,16 +15,19 @@ import type { ReactNode } from 'react';
 
 import { invoke } from '@tauri-apps/api/core';
 
+import { useSettingsQuery, useUpdateSettingsMutation } from '../../../hooks/queries/useSettingsQuery';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { toast } from '../../../stores/toastStore';
 
 import type { RoleId } from './roleConfig';
+import type { LLMSettings } from '../../../types/api/settings';
 import type { DownloadedModel } from '../../../types/downloadedModels';
 
 interface ModelRolesContextValue {
   models: DownloadedModel[];
   localModels: DownloadedModel[];
   ollamaModels: DownloadedModel[];
+  chatProvider: LLMSettings['provider'] | undefined;
   isLoading: boolean;
   /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
@@ -49,6 +52,9 @@ interface ProviderProps {
 }
 
 export function ModelRolesProvider({ children }: ProviderProps) {
+  const { data: settings } = useSettingsQuery();
+  const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
+  const chatProvider = settings?.llm.provider;
   const {
     fetchDownloadedModels,
     setActiveChatModel,
@@ -85,10 +91,24 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     async (modelId: string | null, role: RoleId) => {
       try {
         if (role === 'chat') {
+          if (!chatProvider) throw new Error('Chat settings have not loaded. Please try again.');
           if (modelId === null) {
             await invoke('plugin:model|clear_active_chat_model');
+            // An explicit Ollama provider keeps working even without a model
+            // row assignment. Deselecting it must also stop that provider.
+            if (chatProvider === 'ollama') {
+              await updateSettings({ category: 'llm', updates: { provider: 'local' } });
+            }
           } else {
+            const model = models.find(candidate => candidate.model_id === modelId);
+            if (!model) throw new Error('Model is no longer available. Please refresh and try again.');
             await setActiveChatModel(modelId);
+            const provider = model.backend === 'ollama' ? 'ollama' : 'local';
+            // Setting a row flag alone cannot override an explicit remote
+            // provider. Persist the user's choice through both selection paths.
+            if (chatProvider !== provider) {
+              await updateSettings({ category: 'llm', updates: { provider } });
+            }
           }
         } else if (role === 'embedding') {
           if (modelId === null) {
@@ -104,11 +124,14 @@ export function ModelRolesProvider({ children }: ProviderProps) {
             await setActiveUtilityModel(modelId);
           }
         }
-        await refresh();
       } catch (error) {
         toast.error(`Failed to set ${role} role`, {
           message: error instanceof Error ? error.message : String(error),
         });
+      } finally {
+        // A provider write can fail after the model assignment succeeded.
+        // Always re-read the persisted assignments, including that case.
+        await refresh();
       }
     },
     [
@@ -117,6 +140,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       setActiveUtilityModel,
       clearActiveUtilityModel,
       refresh,
+      chatProvider,
+      models,
+      updateSettings,
     ],
   );
 
@@ -127,12 +153,13 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       models,
       localModels,
       ollamaModels,
+      chatProvider,
       isLoading,
       error,
       refresh,
       assignRole,
     };
-  }, [models, isLoading, error, refresh, assignRole]);
+  }, [models, chatProvider, isLoading, error, refresh, assignRole]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

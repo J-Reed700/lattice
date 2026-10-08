@@ -1,6 +1,7 @@
 import { type FC, useState, useEffect, useRef } from 'react';
 
 import * as Tabs from '@radix-ui/react-tabs';
+import { Files, History, Link, List, type LucideIcon } from 'lucide-react';
 
 import { BatchFileImport } from '@/components/Ingest/BatchFileImport';
 import { BatchUrlImport } from '@/components/Ingest/BatchUrlImport';
@@ -30,11 +31,11 @@ interface IngestHubProps {
   onImportComplete?: (result: ImportResult) => void;
 }
 
-const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: 'single-url', label: 'URL' },
-  { id: 'bulk-url', label: 'URLs' },
-  { id: 'files', label: 'Files' },
-  { id: 'history', label: 'History' },
+const TABS: ReadonlyArray<{ id: TabId; label: string; icon: LucideIcon }> = [
+  { id: 'single-url', label: 'One link', icon: Link },
+  { id: 'bulk-url', label: 'Multiple links', icon: List },
+  { id: 'files', label: 'Files', icon: Files },
+  { id: 'history', label: 'History', icon: History },
 ];
 
 /** The corpus shape, or null on any failure — the sentence is optional, the toast is not. */
@@ -67,10 +68,10 @@ const openLibrary = (): void => {
 };
 
 const triggerClass = cn(
-  'border-b-2 pb-1 text-sm transition-colors duration-fast',
-  'data-[state=active]:border-[hsl(var(--accent))] data-[state=active]:text-text-primary',
-  'data-[state=inactive]:border-transparent data-[state=inactive]:text-text-tertiary',
-  'hover:text-text-primary'
+  'inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-fast',
+  'data-[state=active]:bg-surface data-[state=active]:text-accent data-[state=active]:shadow-sm',
+  'data-[state=inactive]:text-text-tertiary hover:text-text-primary',
+  'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring'
 );
 
 /**
@@ -125,15 +126,16 @@ export const IngestHub: FC<IngestHubProps> = ({
   return (
     <main className="h-full overflow-y-auto bg-bg">
       <div className="mx-auto w-full max-w-[760px] px-6 pt-10 pb-16">
-        <PageHeader title="Import" />
+        <PageHeader title="Import" description="Bring articles, documents, and files into your library." />
 
         <Tabs.Root
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabId)}
         >
-          <Tabs.List className="flex items-center gap-4">
-            {TABS.map((tab) => (
+          <Tabs.List aria-label="Import source" className="flex flex-wrap items-center gap-1 rounded-lg border border-border-subtle bg-surface-sunken p-1">
+            {TABS.map(({ icon: Icon, ...tab }) => (
               <Tabs.Trigger key={tab.id} value={tab.id} className={triggerClass}>
+                <Icon className="h-4 w-4" aria-hidden="true" />
                 {tab.label}
               </Tabs.Trigger>
             ))}

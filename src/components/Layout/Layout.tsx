@@ -129,7 +129,7 @@ function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
               layoutId="rail-active"
               aria-hidden="true"
               transition={reduceMotion ? { duration: 0 } : { type: 'spring', visualDuration: 0.22, bounce: 0.12 }}
-              className="absolute inset-0 rounded-md bg-[hsl(var(--text-primary)/0.08)] shadow-[inset_0_0_0_1px_hsl(var(--text-primary)/0.04)]"
+              className="absolute inset-0 rounded-md bg-accent-muted shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.14)]"
             />
           ) : (
             <span aria-hidden="true" className="row-hover absolute inset-0 rounded-md" />

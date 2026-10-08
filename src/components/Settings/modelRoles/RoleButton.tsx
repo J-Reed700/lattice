@@ -14,10 +14,12 @@
 
 import { useState } from 'react';
 
+import { Check, Plus } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
 
 import { useModelRoles } from './ModelRolesContext';
-import { canModelFulfillRole, isModelActiveForRole, type RoleDescriptor } from './roleConfig';
+import { canModelFulfillRole, isChatModelSelected, isModelActiveForRole, type RoleDescriptor } from './roleConfig';
 
 import type { DownloadedModel } from '../../../types/downloadedModels';
 
@@ -27,7 +29,7 @@ interface RoleButtonProps {
 }
 
 export function RoleButton({ model, role }: RoleButtonProps) {
-  const { assignRole } = useModelRoles();
+  const { assignRole, chatProvider } = useModelRoles();
   const [pending, setPending] = useState(false);
 
   if (!canModelFulfillRole(model, role)) {
@@ -35,7 +37,9 @@ export function RoleButton({ model, role }: RoleButtonProps) {
     return null;
   }
 
-  const isActive = isModelActiveForRole(model, role);
+  const isActive = role.id === 'chat'
+    ? isChatModelSelected(model, chatProvider)
+    : isModelActiveForRole(model, role);
 
   const handleClick = async () => {
     if (pending) return;
@@ -51,17 +55,18 @@ export function RoleButton({ model, role }: RoleButtonProps) {
     <button
       type="button"
       onClick={handleClick}
-      disabled={pending}
+      disabled={pending || (role.id === 'chat' && !chatProvider)}
       aria-pressed={isActive}
       title={isActive ? `Active ${role.label.toLowerCase()} model. Click to stop using it.` : role.hint}
       className={cn(
-        'h-7 rounded-sm px-2 text-xs transition-colors duration-fast',
+        'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
         isActive
-          ? 'bg-accent-muted text-accent'
-          : 'text-text-muted hover:bg-surface-raised hover:text-text-primary',
+          ? 'border-accent/25 bg-accent-muted font-medium text-accent'
+          : 'border-border-default text-text-secondary hover:bg-surface-raised hover:text-text-primary',
         pending && 'opacity-60',
       )}
     >
+      {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : <Plus className="h-3 w-3" aria-hidden="true" />}
       {role.label}
     </button>
   );

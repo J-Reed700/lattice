@@ -6368,6 +6368,11 @@ localContextWindow: number | null;
  */
 ollamaUrl: string;
 /**
+ * Whether the user has saved or selected an Ollama connection.
+ * Default URL/model suggestions alone do not constitute a connection.
+ */
+ollamaConfigured: boolean;
+/**
  * Optional Ollama tag used for utility/router calls.
  * Empty string means "fall back to `model`".
  */

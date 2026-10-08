@@ -49,9 +49,9 @@ interface ModelDetailPanelProps {
 
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section>
-      <h3 className="pb-2 text-sm font-medium text-text-secondary">{title}</h3>
-      <div className="border-t border-border-subtle">{children}</div>
+    <section className="rounded-lg border border-border-default bg-surface">
+      <h3 className="rounded-t-lg bg-surface-sunken px-4 py-3 text-sm font-semibold text-text-primary">{title}</h3>
+      <div className="border-t border-border-subtle px-4 [&>:last-child]:border-b-0">{children}</div>
     </section>
   );
 }
@@ -66,11 +66,11 @@ function DetailRow({
   tone?: 'default' | 'danger';
 }) {
   return (
-    <div className="flex items-start justify-between gap-6 border-b border-border-subtle py-2.5">
-      <span className="shrink-0 text-sm text-text-secondary">{label}</span>
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-1 border-b border-border-subtle py-3">
+      <span className="text-sm text-text-secondary">{label}</span>
       <span
         className={cn(
-          'text-right text-sm tabular-nums',
+          'min-w-0 text-sm tabular-nums',
           tone === 'danger' ? 'text-danger-fg' : 'text-text-primary',
         )}
       >
@@ -362,7 +362,7 @@ function ModelDetailContent({
 
   return (
     <div className="space-y-8">
-      <div className="space-y-3">
+      <div className="space-y-3 rounded-xl border border-accent/20 bg-accent-muted/40 p-4">
         <div>
           <h3 className="text-base font-medium text-text-primary">Selected download</h3>
           <p className="mt-0.5 break-all font-mono text-xs text-text-muted">

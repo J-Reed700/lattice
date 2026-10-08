@@ -17,18 +17,22 @@ import { cn } from '@/lib/utils';
  */
 interface PageHeaderProps {
   title: string;
+  description?: string;
   meta?: ReactNode;
   actions?: ReactNode;
   className?: string;
 }
 
-export function PageHeader({ title, meta, actions, className }: PageHeaderProps) {
+export function PageHeader({ title, description, meta, actions, className }: PageHeaderProps) {
   return (
     <header className={cn('mb-6 flex flex-wrap items-end justify-between gap-4', className)}>
       <div className="min-w-0">
         <h1 className="font-serif text-[28px] font-normal leading-[1.15] tracking-tight text-text-primary">
           {title}
         </h1>
+        {description ? (
+          <p className="mt-2 max-w-[62ch] text-sm leading-relaxed text-text-secondary">{description}</p>
+        ) : null}
         {meta ? (
           <p className="mt-1.5 text-ui text-text-muted tabular-nums">{meta}</p>
         ) : null}

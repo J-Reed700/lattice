@@ -32,7 +32,7 @@ export function LlamaCppConnection() {
       toast.error('Set both authentication header fields, or clear both');
       return;
     }
-    if (await saveLlmUpdates({ provider: llmSettings?.provider === 'auto' ? 'auto' : 'llamacpp', llamaCpp: connection })) toast.success('llama.cpp settings saved');
+    if (await saveLlmUpdates({ llamaCpp: connection })) toast.success('llama.cpp settings saved');
   };
   const test = async () => {
     setTesting(true);

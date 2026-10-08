@@ -12,6 +12,8 @@
  * tags manually on the Chat settings page. This row shows them read-only.
  */
 
+import { Network } from 'lucide-react';
+
 import { useModelRoles } from './ModelRolesContext';
 import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
@@ -55,14 +57,13 @@ export function OllamaMetaRow() {
   };
 
   const meta = [
-    'Ollama',
-    ollamaUrl || 'no server URL',
-    chatTag ? `assigned chat model ${chatTag}` : 'chat tag not set',
-    resolvedUtilityTag ? `utility ${resolvedUtilityTag}` : 'utility tag not set',
+    chatTag ? `Chat · ${chatTag}` : 'Chat tag not set',
+    resolvedUtilityTag ? `Utility · ${resolvedUtilityTag}` : 'Utility tag not set',
   ].join(' · ');
 
   return (
-    <div className="group flex items-center gap-4 border-b border-border-subtle py-3">
+    <div className="connected-model-row group flex items-center gap-3 border-b border-border-subtle py-4">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-accent"><Network className="h-4 w-4" aria-hidden="true" /></span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-text-primary">Ollama connection</div>
         {ollamaUrl ? (

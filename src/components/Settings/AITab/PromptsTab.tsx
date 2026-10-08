@@ -135,7 +135,7 @@ export function PromptsTab() {
   if (isLoading || !llmSettings) {
     return (
       <>
-        <PageHeader title="Prompts" />
+        <PageHeader title="Prompts" description="Guide how Lattice responds and checks its answers." />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -187,7 +187,7 @@ export function PromptsTab() {
 
   return (
     <>
-      <PageHeader title="Prompts" />
+      <PageHeader title="Prompts" description="Guide how Lattice responds and checks its answers." />
 
       <SettingsSection title="Verification">
         <SettingsRow
