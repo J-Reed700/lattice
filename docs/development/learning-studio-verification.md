@@ -7,6 +7,41 @@ and optional runtime named in its retained artifacts.
 
 ## Saved outline drafts and repair
 
+Course packs now use format v2, with a separately versioned
+`program/provenance.json` entry for saved outline drafts/checkpoints and private
+lesson-verification reports. Provenance is included even when learner activity
+is excluded. Create-copy remaps the owned lesson, module, and source-version
+identities, while preserving quotations, verdicts, original fingerprints and
+check timestamps. Import is not a new verification, and private assessment
+findings still pass through the learner-safe evidence projection. If full source
+bodies are omitted, original source hashes are retained in the report and may
+correctly show the imported reference collection as changed.
+
+Replacement backups include the target's current provenance before any deletion.
+An invalid/unexportable report blocks replacement rather than allowing an
+incomplete recovery backup. Format-v1 packs remain readable, with an explicit
+preview warning when verification history is absent; older applications reject
+v2 packs instead of silently importing them without provenance.
+
+Replacement acquires a SQLite `BEGIN IMMEDIATE` transaction before checking
+recoverability and capturing the backup, retaining the write lock through
+restoration. Other saves cannot commit between that snapshot and deletion. The
+backup file is durably written before deletion; any import failure rolls back
+the existing program. This deliberately holds the write lock during backup I/O.
+Two-connection WAL tests cover writers arriving before and after capture, plus
+unportable data added after preview.
+
+Import flushes pending editor saves before invoking the backend, then refreshes
+all program workspaces, linked study decks, and owned practice/assessment detail
+queries. Old in-flight detail reads are cancelled, removed records lose their
+cached snapshots, and retained editor/session state is reset after replacing the
+open program. Importing a separate copy does not reset the original workspace.
+
+Source writes invalidate evidence queries independently of the program revision,
+including cached queries reopened in clean-reading mode. Outline evidence fetch
+failures are shown with an explicit retry control; failed cached results are not
+rendered as current citations.
+
 Course generation saves the first structurally valid outline and its captured
 references before reviewing it. The raw candidate, including its quotations,
 review findings and ordered reference IDs, is checkpointed in SQLite. Each module
@@ -165,8 +200,14 @@ Connection loss, model-service failures, and rate limits have distinct progress
 messages. Repeated service failures are described as preventing progress, rather
 than evidence that the laptop is offline. Sleep can break an in-flight request;
 unfinished work repeats when connectivity returns. Cancellation wins over late
-errors. Invalid input and unusable verification responses remain explicit
-failures or unresolved checks, never automatic approval.
+errors. Invalid user input and conflicting course revisions remain explicit failures.
+Unusable teaching, answer-key, inventory, or coverage-review responses return the
+lesson job to its saved queue with backoff after the immediate response-correction
+attempt. The displayed interruption includes the actual cause. Accepted inventory
+sections and completed coverage decisions survive that retry. No response failure
+can approve content. Repairs that cannot reduce unresolved factual or coverage
+defects still stop with the saved draft and findings, rather than silently publish
+unverified material or repeatedly rewrite the same content.
 
 Learner progress does not invalidate background preparation. Completing a ready
 lesson or submitting an assessment can advance the UI revision while the same
@@ -636,8 +677,8 @@ retrieves for every extracted claim. Ranking scores are not correctness scores.
 
 New course creation retains complete captured source text instead of only its
 outline excerpts. Library documents must finish indexing before capture. Web
-references use the existing safe DNS/redirect/body-limited reader with a separate
-two-million-character allowance; a short chat cache cannot masquerade as a whole
+references retain all extracted text from the existing safe DNS/redirect/body-limited
+reader; a short chat cache cannot masquerade as a whole
 book. The reference path does not use the bounded browser-display fallback.
 Reference extraction keeps headings, ordered lists, code indentation, and table
 rows. Initial imports are one page per URL; there is no website crawler.
@@ -645,10 +686,31 @@ The saved draft workflow automatically researches missing references and review
 gaps as described above. The extraction can still omit information in images, complex tables,
 or dynamic pages. Review the saved source text before relying on it.
 
-Bounds: two million characters per source, twenty million per retrieval collection,
-and the existing source-count limits. Old excerpt-only or truncated active
-sources block new background lesson preparation until replaced with complete
-material. Topic-only requests automatically seek references after saving the first
+Saved references have no application-imposed count, version-count, local-text-size,
+or aggregate collection-size cutoff. Local imports preserve all indexed chunks;
+pasted snapshots and re-imports retain their complete normalized text. Retrieval
+indexes passages in batches, reusing completed versions. Character offsets are
+computed per passage rather than allocated for an entire document. The current
+retrieval representation still uses memory proportional to the collection; disk,
+RAM, and SQLite remain real resource constraints.
+
+Source catalogs and outline evidence are selected within a fraction of the chosen
+model's context window, while source indices still identify the complete collection.
+A partial catalog says how many entries were omitted from that prompt; it does
+not remove sources from retrieval. Claim inventories and coverage findings have
+no per-section count cutoff. Corrections retain unmentioned claims and the normal
+coverage, fidelity, and evidence gates still apply.
+Teaching findings and valid research selections are not rejected for exceeding
+an item count. Every runnable worked example is observed, without a per-lesson
+example-count ceiling; each run retains the runtime's execution and output
+containment. Long combined execution output does not discard reference evidence.
+Verification groups still respect the model's actual context capacity.
+
+Web acquisition retains the shared reader's five-MiB decoded response-body limit,
+redirect protections, and parser isolation, without a second extracted-text cutoff.
+A capture marked incomplete cannot be treated as a complete
+reference. Old excerpt-only or truncated active sources block new background
+lesson preparation until replaced with complete material. Topic-only requests automatically seek references after saving the first
 outline; missing evidence keeps that draft unresolved. Lesson preparation requires
 references.
 Completed per-source indexes are reused. Interrupted indexing cannot publish a

@@ -431,6 +431,7 @@ export async function installLearningStudioBackend(page: Page) {
       // The app retries mutations once automatically before surfacing its
       // recoverable error, so two transport failures reach the explicit retry UI.
       generationFailuresRemaining: 1,
+      outlineEvidenceFailuresRemaining: 0,
       // Mutations surface the failure; the next user attempt reuses the review ID.
       reviewFailuresRemaining: 1,
       reviewRequests: [] as Array<{
@@ -1062,11 +1063,39 @@ export async function installLearningStudioBackend(page: Page) {
       if (command === "plugin:learning|list_learning_programs")
         return [program.summary];
       if (command === "plugin:learning|get_learning_program") return program;
+      if (command === "plugin:learning|get_learning_outline_evidence") {
+        if (state.outlineEvidenceFailuresRemaining > 0) {
+          state.outlineEvidenceFailuresRemaining -= 1;
+          throw new Error("Saved outline evidence unavailable.");
+        }
+        if (program.sources.length === 0) return null;
+        const module = program.modules[0];
+        const currentLesson = module?.lessons[0];
+        if (!module || !currentLesson) return null;
+        return {
+          reviewStatus: "passed",
+          contentSha256: "outline-evidence-fixture",
+          unavailableCount: 0,
+          citations: [
+            {
+              path: "/modules/0/summary", target: "module_summary", moduleId: module.id,
+              lessonId: null, itemIndex: null, claim: module.summary, sourceId: source.id,
+              sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+            },
+            {
+              path: "/modules/0/lessons/0/objective", target: "lesson_objective", moduleId: module.id,
+              lessonId: currentLesson.id, itemIndex: 0, claim: currentLesson.objective, sourceId: source.id,
+              sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+            },
+          ],
+        };
+      }
       if (command === "plugin:learning|get_learning_lesson_evidence") return {
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
         claimCount: 14, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
-        teachingClaims: [{ sectionIndex: 0, claim: "A careful comparison records the chosen measure and observation period.",
+        teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
+          claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
             startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }] }],
