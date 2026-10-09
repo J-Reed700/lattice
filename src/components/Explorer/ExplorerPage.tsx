@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
+import {
+  explorerFoldersQueryOptions,
+  resolveExplorerRoot,
+  useExplorerFolderMutations,
+  useExplorerIndexCommands,
+  useExplorerIndexStatus,
+  useExplorerIndexStatusEvents,
+} from '@/features/explorer/api/queries';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
-import { VaultAPI } from '@/lib/api';
-import { queryClient } from '@/lib/queryClient';
 import { useConversationsStore } from '@/stores/conversationsStore';
-import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
+import { useExplorerStore } from '@/stores/explorerStore';
 import { toast } from '@/stores/toastStore';
-import type { ApiResult } from '@/types';
 
 import { ExplorerChat } from './ExplorerChat';
 import { ExplorerFileView } from './ExplorerFileView';
@@ -18,14 +22,11 @@ import { ExplorerSearch } from './ExplorerSearch';
 import { ExplorerStart } from './ExplorerStart';
 import { ExplorerTree } from './ExplorerTree';
 import { FolderSettingsDialog, type FolderSettingsTarget } from './FolderSettingsDialog';
-import { INDEX_STATUS_EVENT } from './indexProgress';
 import { ScopeBar } from './ScopeBar';
 import { SplitHandle } from './SplitHandle';
 import { useExplorerThread } from './useExplorerThread';
 
 import './explorer.css';
-
-export { INDEX_STATUS_EVENT } from './indexProgress';
 
 const TREE_WIDTH_KEY = 'explorer.treeWidth';
 const TREE_HIDDEN_KEY = 'explorer.treeHidden';
@@ -70,40 +71,6 @@ function writeFlag(key: string, value: boolean): void {
   }
 }
 
-/** A command that failed outright, shown the way a failed run is. */
-function failedIndex(root: string, message: string): FolderIndexStatus {
-  return {
-    root,
-    indexRoot: root,
-    state: 'error',
-    filesTotal: 0,
-    filesIndexed: 0,
-    passagesTotal: 0,
-    passagesEmbedded: 0,
-    passagesPerSecond: null,
-    etaSeconds: null,
-    message,
-  };
-}
-
-/**
- * Runs an index command and shows its result, unless an event arrived while
- * it ran: the event is newer than the command's snapshot, and a small folder
- * can finish indexing before the command's reply is back.
- */
-async function indexCommand(
-  command: () => Promise<ApiResult<FolderIndexStatus>>,
-  root: string,
-  stillWanted: () => boolean
-): Promise<void> {
-  const before = useExplorerStore.getState().indexEvents;
-  const result = await command();
-  if (!stillWanted()) return;
-  const { setIndexStatus, indexEvents } = useExplorerStore.getState();
-  if (!result.ok) setIndexStatus(failedIndex(root, result.error));
-  else if (indexEvents === before) setIndexStatus(result.data);
-}
-
 /**
  * Explorer: a folder from disk beside a chat.
  *
@@ -113,8 +80,9 @@ async function indexCommand(
 export function ExplorerPage() {
   const root = useExplorerStore((state) => state.root);
   const setRoot = useExplorerStore((state) => state.setRoot);
-  const indexStatus = useExplorerStore((state) => state.indexStatus);
-  const setIndexStatus = useExplorerStore((state) => state.setIndexStatus);
+  const queryClient = useQueryClient();
+  const index = useExplorerIndexCommands();
+  const { setSettings } = useExplorerFolderMutations();
   const loadSpaces = useConversationsStore((state) => state.loadSpaces);
   const { fetchDownloadedModels } = useDownloadedModels();
   /** The folder being resolved before it opens. */
@@ -142,25 +110,15 @@ export function ExplorerPage() {
   useEffect(() => {
     if (!rootPath) return;
     let current = true;
-    void indexCommand(() => VaultAPI.explorerIndexOpen(rootPath), rootPath, () => current);
+    void index.open(rootPath, () => current);
     return () => {
       current = false;
     };
-  }, [rootPath]);
+  }, [index, rootPath]);
 
-  // Progress arrives as events; the store keeps only the open folder's.
-  useEffect(() => {
-    let mounted = true;
-    let unlisten: UnlistenFn | undefined;
-    void listen<FolderIndexStatus>(INDEX_STATUS_EVENT, (event) => setIndexStatus(event.payload, true)).then((fn) => {
-      if (mounted) unlisten = fn;
-      else fn();
-    });
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, [setIndexStatus]);
+  // Progress arrives as events, for the scope bar, the chat and the folders list.
+  useExplorerIndexStatusEvents();
+  const indexStatus = useExplorerIndexStatus(rootPath);
 
   useEffect(() => writeWidth(TREE_WIDTH_KEY, treeWidth), [treeWidth]);
   useEffect(() => writeWidth(CHAT_WIDTH_KEY, chatWidth), [chatWidth]);
@@ -192,7 +150,7 @@ export function ExplorerPage() {
   const openRoot = async (path: string, name?: string) => {
     setOpening(path);
     try {
-      const result = await VaultAPI.explorerResolveRoot(path);
+      const result = await resolveExplorerRoot(path);
       if (!result.ok) {
         toast.error("Couldn't open that folder", { message: result.error });
         return;
@@ -207,7 +165,7 @@ export function ExplorerPage() {
   const closeFolder = async () => {
     setClosing(true);
     try {
-      await VaultAPI.explorerIndexClose();
+      await index.close(rootPath);
       setRoot(null);
     } finally {
       setClosing(false);
@@ -217,21 +175,20 @@ export function ExplorerPage() {
   const rebuildIndex = async (retry: boolean) => {
     if (!rootPath) return;
     // Opening a failed index again retries it without wiping what it has.
-    await indexCommand(
-      () => (retry ? VaultAPI.explorerIndexOpen(rootPath) : VaultAPI.explorerIndexRebuild(rootPath)),
-      rootPath,
-      () => true
-    );
+    await index.rebuild(rootPath, retry);
   };
 
   /** The open folder's row, read fresh: its settings may have changed on the start screen. */
   const openSettings = async () => {
     if (!rootPath) return;
-    const result = await VaultAPI.explorerFoldersList();
-    const folder = result.ok ? result.data.folders.find((item) => item.root === rootPath) : undefined;
-    if (!folder) {
+    let folder: FolderSettingsTarget | undefined;
+    try {
+      const list = await queryClient.fetchQuery({ ...explorerFoldersQueryOptions(), staleTime: 0 });
+      folder = list.folders.find((item) => item.root === rootPath);
+      if (!folder) throw new Error('It isn’t in Your folders yet. Try again in a moment.');
+    } catch (error) {
       toast.error("Couldn't load this folder's settings", {
-        message: result.ok ? 'It isn’t in Your folders yet. Try again in a moment.' : result.error,
+        message: error instanceof Error ? error.message : String(error),
       });
       return;
     }
@@ -239,14 +196,15 @@ export function ExplorerPage() {
   };
 
   const saveSettings = async (target: FolderSettingsTarget, instructions: string, spaceId: string) => {
-    const result = await VaultAPI.explorerFolderSetSettings(target.root, instructions, spaceId);
-    if (!result.ok) {
-      toast.error("Couldn't save this folder's settings", { message: result.error });
+    try {
+      await setSettings.mutateAsync({ root: target.root, instructions, spaceId });
+      return true;
+    } catch (error) {
+      toast.error("Couldn't save this folder's settings", {
+        message: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
-    // Moved threads change space in the Chat sidebar and the thread bar.
-    if (result.data > 0) void queryClient.invalidateQueries({ queryKey: conversationKeys.all });
-    return true;
   };
 
   const chooseFolder = async (defaultPath?: string) => {

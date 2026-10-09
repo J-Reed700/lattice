@@ -1,3 +1,4 @@
+import { useExplorerIndexStatus } from '@/features/explorer/api/queries';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
 
@@ -24,7 +25,7 @@ export function ExplorerIndexNotice() {
   const explorerRoot = useConversationsStore((state) =>
     state.conversations.find((conversation) => conversation.id === state.activeConversationId)?.explorerRoot ?? null);
   const root = useExplorerStore((state) => state.root?.root ?? null);
-  const status = useExplorerStore((state) => state.indexStatus);
+  const status = useExplorerIndexStatus(root);
 
   const words = describeIndexNotice(status);
   if (!explorerRoot || explorerRoot !== root || !words) return null;

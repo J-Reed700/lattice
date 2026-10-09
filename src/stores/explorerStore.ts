@@ -3,15 +3,14 @@
  *
  * One store for the page and for the chat code that has to know what the
  * Explorer shows (the send path reads the focus, answers reveal references).
- * The open folder and the thread last used per folder survive a restart;
- * what is expanded, open and selected belongs to the session. The folders
- * picked before are the backend's list, not kept here.
+ * The open folder survives a restart; what is expanded, open and selected
+ * belongs to the session. The folders picked before, the thread each last
+ * showed and their index statuses are the backend's, kept in React Query.
  */
 
 import { create } from 'zustand';
 
 const ROOT_KEY = 'explorer.root';
-const THREADS_KEY = 'explorer.threadByRoot';
 
 /** Lines of a file, 1-based and inclusive, as the backend's `ExplorerLineRangeDto`. */
 export interface ExplorerLineRange {
@@ -79,16 +78,6 @@ export interface ExplorerState {
    * for again. Kept for the open folder only.
    */
   aliases: Readonly<Record<string, string>>;
-  /** The thread last used for each root, so a folder reopens its own chat. */
-  threadByRoot: Record<string, string>;
-  /** The open folder's search index; `null` until the backend has said. */
-  indexStatus: FolderIndexStatus | null;
-  /**
-   * Index statuses taken from events. A command's result is a snapshot from
-   * when it ran; an event that arrived meanwhile is newer, so a caller drops
-   * the result when this moved while it waited.
-   */
-  indexEvents: number;
 
   setRoot: (_root: ExplorerRoot | null) => void;
   toggleExpanded: (_path: string) => void;
@@ -107,11 +96,6 @@ export interface ExplorerState {
   setSelection: (_range: ExplorerLineRange | null) => void;
   /** Open a file and light up the lines a line reference names. */
   reveal: (_path: string, _range: ExplorerLineRange) => void;
-  rememberThread: (_root: string, _conversationId: string) => void;
-  /** Forgets which thread a folder last used: its threads were deleted. */
-  forgetThread: (_root: string) => void;
-  /** Takes an index status from a command or an event; one for another root is dropped. */
-  setIndexStatus: (_status: FolderIndexStatus | null, _fromEvent?: boolean) => void;
 }
 
 function read<T>(key: string, fallback: T): T {
@@ -166,15 +150,12 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
   selection: null,
   highlight: null,
   aliases: {},
-  threadByRoot: read<Record<string, string>>(THREADS_KEY, {}),
-  indexStatus: null,
-  indexEvents: 0,
 
   setRoot: (root) => {
     if (root?.root === get().root?.root) return;
     write(ROOT_KEY, root);
     // Paths are relative to the root, so nothing about the old view carries over.
-    set({ root, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, aliases: {}, indexStatus: null });
+    set({ root, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, aliases: {} });
   },
 
   toggleExpanded: (path) => {
@@ -254,25 +235,6 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       ...(get().openPath === path ? {} : { ...leaving(get()), openPath: path, selection: null }),
       highlight: { path, range, nonce },
     });
-  },
-
-  rememberThread: (root, conversationId) => {
-    if (get().threadByRoot[root] === conversationId) return;
-    const threadByRoot = { ...get().threadByRoot, [root]: conversationId };
-    write(THREADS_KEY, threadByRoot);
-    set({ threadByRoot });
-  },
-
-  forgetThread: (root) => {
-    if (!(root in get().threadByRoot)) return;
-    const threadByRoot = Object.fromEntries(Object.entries(get().threadByRoot).filter(([key]) => key !== root));
-    write(THREADS_KEY, threadByRoot);
-    set({ threadByRoot });
-  },
-
-  setIndexStatus: (indexStatus, fromEvent = false) => {
-    if (indexStatus && indexStatus.root !== get().root?.root) return;
-    set(fromEvent ? { indexStatus, indexEvents: get().indexEvents + 1 } : { indexStatus });
   },
 }));
 

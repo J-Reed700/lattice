@@ -15,7 +15,7 @@ export async function installExplorerFixture(page: Page) {
   const stamp = '2026-10-08T12:00:00Z';
   const folders: ExplorerFolderDto[] = [ROOT, OTHER_ROOT].map(root => ({
     root, name: root.split('/').pop()!, pinned: false, exists: true,
-    addedAt: stamp, lastOpenedAt: stamp, threadCount: 1, instructions: null, spaceId: 'space_general',
+    addedAt: stamp, lastOpenedAt: stamp, threadCount: 1, instructions: null, spaceId: 'space_general', lastThreadId: null,
     index: { state: 'indexed', filesTotal: 6, filesIndexed: 6, passagesTotal: 8, passagesEmbedded: 8, bytes: 1024, indexRoot: null, etaSeconds: null, message: null },
   }));
   const threads = folders.map((folder, i) => ({ id: `thread-${i}`, title: `${folder.name} discussion`, modelName: '', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false, explorerRoot: folder.root }));
@@ -53,6 +53,11 @@ export async function installExplorerFixture(page: Page) {
       case 'plugin:conversation|get_conversation_messages': return { messages: [], total: 0 };
       case 'plugin:conversation|list_message_bookmarks': return { bookmarks: [], total: 0 };
       case 'plugin:explorer|explorer_folders_list': return { home: '/fixtures', folders };
+      case 'plugin:explorer|explorer_folder_set_last_thread': {
+        const folder = folders.find(item => item.root === args.root);
+        if (folder) folder.lastThreadId = String(args.conversationId);
+        return undefined;
+      }
       case 'plugin:explorer|explorer_resolve_root': {
         if (state.failOpen) throw new Error('Folder permission denied');
         const folder = folders.find(folder => folder.root === args.path);

@@ -1,14 +1,14 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { spaceKeys } from '@/features/spaces/api/queries';
 import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
 
-const storeState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+const listConversationSpaces = vi.hoisted(() => vi.fn());
 
-vi.mock('@/stores/conversationsStore', () => ({
-  useConversationsStore: (selector: (_state: unknown) => unknown) => selector(storeState.current),
-}));
+vi.mock('@/lib/api', () => ({ default: { listConversationSpaces } }));
 
 const space = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -20,24 +20,28 @@ const space = (id: string, name: string, extra: Record<string, unknown> = {}) =>
   ...extra,
 });
 
+const SPACES = [
+  space('space_general', 'General'),
+  space('space_movies', 'Movies'),
+  space('space_old', 'Old project', { isArchived: true }),
+];
+
 function renderPicker(onSelect = vi.fn(), activeSpaceId: string | null = 'space_movies') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(spaceKeys.list, SPACES);
   render(
-    <SpacePickerPopover activeSpaceId={activeSpaceId} heading="This chat searches" onSelect={onSelect}>
-      <button type="button">Movies</button>
-    </SpacePickerPopover>
+    <QueryClientProvider client={client}>
+      <SpacePickerPopover activeSpaceId={activeSpaceId} heading="This chat searches" onSelect={onSelect}>
+        <button type="button">Movies</button>
+      </SpacePickerPopover>
+    </QueryClientProvider>
   );
   return onSelect;
 }
 
 describe('SpacePickerPopover', () => {
   beforeEach(() => {
-    storeState.current = {
-      spaces: [
-        space('space_general', 'General'),
-        space('space_movies', 'Movies'),
-        space('space_old', 'Old project', { isArchived: true }),
-      ],
-    };
+    listConversationSpaces.mockResolvedValue({ ok: true, data: SPACES });
   });
 
   it('says what is being chosen and what each space can reach', async () => {

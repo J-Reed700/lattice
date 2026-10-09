@@ -103,6 +103,7 @@ fn main() {
             lattice::features::explorer::plugin::explorer_folders_list::<tauri::Wry>,
             lattice::features::explorer::plugin::explorer_folder_rename,
             lattice::features::explorer::plugin::explorer_folder_set_pinned,
+            lattice::features::explorer::plugin::explorer_folder_set_last_thread,
             lattice::features::explorer::plugin::explorer_folder_set_settings,
             lattice::features::explorer::plugin::explorer_folder_delete_index::<tauri::Wry>,
             lattice::features::explorer::plugin::explorer_folder_remove::<tauri::Wry>,
@@ -378,6 +379,8 @@ fn main() {
             lattice::features::conversation::plugin::list_message_bookmarks,
             lattice::features::conversation::plugin::list_conversations_explorer,
             lattice::features::conversation::plugin::list_journal_conversations,
+            lattice::features::conversation::plugin::set_journal_entry_pinned,
+            lattice::features::conversation::plugin::list_journal_entry_pins,
             lattice::features::conversation::plugin::synthesize_journal_entries,
             // Batch plugin
             lattice::features::batch::plugin::batch_import_files,

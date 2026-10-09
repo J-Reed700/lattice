@@ -1,40 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { useNavigate } from 'react-router';
-
+import { useSpaceMutations } from '@/features/spaces/api/queries';
 import {
   buildSpaceToolPreferencesJson,
-  JOURNAL_SPACE_DEFAULT_ACCENT,
-  JOURNAL_SPACE_DEFAULT_ICON,
+  GENERAL_SPACE_ID,
+  normalizeHexColor,
   parseSpaceToolPreferences,
-  SpaceKind,
-} from '@/features/chat/components/sidebar/sidebarUtils';
-import { useCreateJournalMutation, useJournalsQuery, useSpaceMutations } from '@/features/chat/components/sidebar/workspaceQueries';
-import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
+  uniqueName,
+} from '@/features/spaces/model/spaces';
 import { useSettingsQuery } from '@/hooks/queries/useSettingsQuery';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/**
+ * Creates spaces and edits the one selected in Chat: its name, look, default
+ * model, prompt and tools, and whether it is archived. The drafts follow the
+ * selected space; saving writes them all at once.
+ */
 export function useSpaceEditor() {
-  const navigate = useNavigate();
-  const { spaces, selectedSpaceId, setSelectedSpace, loadSpaces, loadConversations } = useConversationsStore();
+  const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
-  const { journals, refetch: refetchJournals } = useJournalsQuery();
-  const createJournal = useCreateJournalMutation();
   const mutations = useSpaceMutations();
   const settings = useSettingsQuery();
   const ollamaDefaultModel = settings.data?.llm?.model?.trim() ?? '';
   const { downloadedModelMap } = useDownloadedModels();
-  const [newSpaceKindDraft, setNewSpaceKindDraft] = useState<SpaceKind>('standard');
   const [isSpaceEditorOpen, setIsSpaceEditorOpen] = useState(false);
-  const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
-  const [newSpaceNameDraft, setNewSpaceNameDraft] = useState('');
-  const [isCreatingSpace, setIsCreatingSpace] = useState(false);
-  const [isSavingSpace, setIsSavingSpace] = useState(false);
-  const [isArchivingSpace, setIsArchivingSpace] = useState(false);
-  const [isRestoringSpace, setIsRestoringSpace] = useState(false);
   const [spaceNameDraft, setSpaceNameDraft] = useState('');
   const [spaceDescriptionDraft, setSpaceDescriptionDraft] = useState('');
   const [spaceIconDraft, setSpaceIconDraft] = useState('');
@@ -92,88 +85,41 @@ export function useSpaceEditor() {
     setSpaceDeepResearchDefault(defaults.deepResearchMode);
   }, [selectedSpace]);
 
-  const createSpace = async () => {
-    setIsCreatingSpace(true);
+  /**
+   * Creates a space named `requestedName` (made unique; blank picks "Space N"),
+   * selects it and opens its editor. Resolves `true` once created.
+   */
+  const createSpace = async (requestedName: string): Promise<boolean> => {
+    const name = uniqueName(requestedName, spaces.map((space) => space.name), 'Space');
     try {
-      const requestedName = newSpaceNameDraft.trim();
-      const existingNames = new Set(
-        (newSpaceKindDraft === 'journal' ? journals : spaces).map((item) =>
-          item.name.toLowerCase()
-        )
-      );
-      const defaultBaseName = newSpaceKindDraft === 'journal' ? 'Journal' : 'Space';
-
-      let name = requestedName;
-      if (!name) {
-        let idx = (newSpaceKindDraft === 'journal' ? journals.length : spaces.length) + 1;
-        name = `${defaultBaseName} ${idx}`;
-        while (existingNames.has(name.toLowerCase())) {
-          idx += 1;
-          name = `${defaultBaseName} ${idx}`;
-        }
-      } else if (existingNames.has(name.toLowerCase())) {
-        let suffix = 2;
-        let candidate = `${name} ${suffix}`;
-        while (existingNames.has(candidate.toLowerCase())) {
-          suffix += 1;
-          candidate = `${name} ${suffix}`;
-        }
-        name = candidate;
-      }
-
-      if (newSpaceKindDraft === 'journal') {
-        const result = await createJournal.mutateAsync({
-          name,
-          description: null,
-          icon: JOURNAL_SPACE_DEFAULT_ICON,
-          accentColor: JOURNAL_SPACE_DEFAULT_ACCENT,
-          spacePrompt: null,
-          defaultModelName: null,
-          toolPreferencesJson: null,
-        });
-
-        await refetchJournals();
-        setSelectedSpace(null);
-        await loadConversations({ spaceId: null });
-        navigate(`/journals?journalSpaceId=${encodeURIComponent(result.id)}&panel=entries`);
-      } else {
-        const result = await mutations.create.mutateAsync({
-          name,
-          description: null,
-          icon: null,
-          accentColor: null,
-          spacePrompt: null,
-          defaultModelName: null,
-          toolPreferencesJson: buildSpaceToolPreferencesJson({
-            knowledgeBase: false,
-            webSearch: false,
-            deepResearchMode: false,
-          }),
-        });
-
-        await loadSpaces();
-        setSelectedSpace(result.id);
-        await loadConversations({ spaceId: result.id });
-        setIsSpaceEditorOpen(true);
-      }
-
-      setIsCreateSpaceOpen(false);
-      setNewSpaceNameDraft('');
-      setNewSpaceKindDraft('standard');
-      toast.success(`${newSpaceKindDraft === 'journal' ? 'Journal' : 'Space'} created`, { message: name });
+      const created = await mutations.create.mutateAsync({
+        name,
+        description: null,
+        icon: null,
+        accentColor: null,
+        spacePrompt: null,
+        defaultModelName: null,
+        toolPreferencesJson: buildSpaceToolPreferencesJson({
+          knowledgeBase: false,
+          webSearch: false,
+          deepResearchMode: false,
+        }),
+      });
+      setSelectedSpace(created.id);
+      await loadConversations({ spaceId: created.id });
+      setIsSpaceEditorOpen(true);
+      toast.success('Space created', { message: name });
+      return true;
     } catch (error) {
-      toast.error('Could not update space', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setIsCreatingSpace(false);
+      toast.error('Could not update space', { message: errorMessage(error) });
+      return false;
     }
   };
 
   const saveSpaceEnvironment = async () => {
     if (!selectedSpace) return;
-
-    setIsSavingSpace(true);
     try {
-      const payload = {
+      await mutations.update.mutateAsync({
         spaceId: selectedSpace.id,
         name: spaceNameDraft.trim() || selectedSpace.name,
         description: spaceDescriptionDraft.trim() ? spaceDescriptionDraft.trim() : null,
@@ -186,57 +132,31 @@ export function useSpaceEditor() {
           webSearch: spaceWebDefault,
           deepResearchMode: spaceDeepResearchDefault,
         }),
-      };
-
-      await mutations.update.mutateAsync(payload);
-
-      await loadSpaces();
+      });
     } catch (error) {
-      toast.error('Could not update space', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setIsSavingSpace(false);
+      toast.error('Could not update space', { message: errorMessage(error) });
     }
   };
 
   const setSelectedSpaceArchived = async (archived: boolean) => {
     if (!selectedSpace || selectedSpace.id === GENERAL_SPACE_ID) return;
-
-    setIsArchivingSpace(true);
     try {
-      await mutations.archive.mutateAsync({
-        spaceId: selectedSpace.id,
-        archived,
-      });
-
+      await mutations.archive.mutateAsync({ spaceId: selectedSpace.id, archived });
       if (archived) {
         setIsSpaceEditorOpen(false);
         setSelectedSpace(null);
-        await Promise.all([
-          loadSpaces(),
-          loadConversations({ spaceId: null }),
-        ]);
-      } else {
-        await loadSpaces();
+        await loadConversations({ spaceId: null });
       }
     } catch (error) {
-      toast.error('Could not update space', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setIsArchivingSpace(false);
+      toast.error('Could not update space', { message: errorMessage(error) });
     }
   };
 
   const restoreArchivedSpace = async (spaceId: string) => {
-    setIsRestoringSpace(true);
     try {
-      await mutations.archive.mutateAsync({
-        spaceId,
-        archived: false,
-      });
-      await loadSpaces();
+      await mutations.archive.mutateAsync({ spaceId, archived: false });
     } catch (error) {
-      toast.error('Could not update space', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setIsRestoringSpace(false);
+      toast.error('Could not update space', { message: errorMessage(error) });
     }
   };
 
@@ -255,16 +175,10 @@ export function useSpaceEditor() {
   return {
     isSpaceEditorOpen,
     setIsSpaceEditorOpen,
-    isCreateSpaceOpen,
-    setIsCreateSpaceOpen,
-    newSpaceKindDraft,
-    setNewSpaceKindDraft,
-    newSpaceNameDraft,
-    setNewSpaceNameDraft,
-    isCreatingSpace,
-    isSavingSpace,
-    isArchivingSpace,
-    isRestoringSpace,
+    isCreatingSpace: mutations.create.isPending,
+    isSavingSpace: mutations.update.isPending,
+    isArchivingSpace: mutations.archive.isPending && mutations.archive.variables?.spaceId === selectedSpaceId,
+    isRestoringSpace: mutations.archive.isPending && mutations.archive.variables?.spaceId !== selectedSpaceId,
     availableSpaceModels,
     createSpace,
     saveSpaceEnvironment,

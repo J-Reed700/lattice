@@ -25,8 +25,8 @@ use crate::features::conversation::space_dto::{
     ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
     MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
     RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
-    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
-    UpsertConversationSpaceMemberRequestDto,
+    SetJournalEntryPinnedRequestDto, UpdateConversationJournalRequestDto,
+    UpdateConversationSpaceRequestDto, UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
@@ -346,6 +346,26 @@ pub async fn remove_conversation_from_journal_impl(
 ) -> Result<RenameConversationResponseDto, ApiError> {
     ConversationRepository::new(container.db_pool().clone())
         .remove_conversation_from_journal(request)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn set_journal_entry_pinned_impl(
+    request: SetJournalEntryPinnedRequestDto,
+    container: &Container,
+) -> Result<(), ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .set_journal_entry_pinned(request)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn list_journal_entry_pins_impl(
+    journal_space_id: String,
+    container: &Container,
+) -> Result<Vec<String>, ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .list_journal_entry_pins(&journal_space_id)
         .await
         .map_err(ApiError::from)
 }

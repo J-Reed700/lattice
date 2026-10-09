@@ -7,6 +7,8 @@ export interface CapturedChatReference {
   capturedAt: string;
   noteId: string;
   noteTitle: string;
+  /** The journal that owns the note; `null` for an unfiled page. */
+  journalId: string | null;
 }
 
 export const chatReferenceKey = (conversationId: string, messageId: string): string =>
@@ -46,6 +48,7 @@ export const buildCapturedChatReferenceIndex = (
         capturedAt: snapshot.capturedAt,
         noteId: note.id,
         noteTitle: note.title,
+        journalId: note.journalId ?? null,
       };
       const current = index.get(key);
       if (!current || toTime(nextValue.capturedAt) >= toTime(current.capturedAt)) {

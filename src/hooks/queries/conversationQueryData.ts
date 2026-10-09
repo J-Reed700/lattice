@@ -1,7 +1,7 @@
 import { VaultAPI } from '@/lib/api';
 import type { MessageDto } from '@/lib/bindings';
 import type {
-  ApiResult, ConversationLinkedDocumentDto, ConversationSpaceDto,
+  ApiResult, ConversationLinkedDocumentDto,
   ConversationWebSourceDto, DocumentSpaceMembershipDto,
 } from '@/types';
 import type { Conversation, ConversationMessage, ConversationMessageBookmark } from '@/types/conversation';
@@ -14,9 +14,6 @@ export const unwrap = <T,>(result: ApiResult<T>): T => {
   }
   return result.data;
 };
-
-export const fetchSpaces = async (): Promise<ConversationSpaceDto[]> =>
-  unwrap(await VaultAPI.listConversationSpaces());
 
 export const fetchConversationList = async (params: ConversationListParams): Promise<Conversation[]> => {
   const trimmedQuery = params.searchQuery.trim();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import type {
   ConversationsState,
 } from '@/stores/conversationsStore.types';
@@ -16,7 +17,7 @@ import { useConversationTurnLifecycle } from './conversations/useConversationTur
 import { conversationKeys, type ConversationListParams } from './queries/conversationKeys';
 import {
   fetchBookmarks, fetchConversationDetail, fetchConversationList, fetchLinkedDocuments,
-  fetchMemberships, fetchMessages, fetchSpaces, fetchWebSources,
+  fetchMemberships, fetchMessages, fetchWebSources,
 } from './queries/conversationQueryData';
 
 export { conversationKeys } from './queries/conversationKeys';
@@ -56,11 +57,7 @@ export function useConversationsController(): ConversationsState {
     searchQuery: ui.searchQuery,
   }), [ui.filterMode, ui.searchQuery, ui.selectedSpaceId]);
 
-  const spacesQuery = useQuery({
-    queryKey: conversationKeys.spaces,
-    queryFn: fetchSpaces,
-    staleTime: 30_000,
-  });
+  const spacesQuery = useQuery(spacesQueryOptions());
   const conversationsQuery = useQuery({
     queryKey: conversationKeys.list(listParams),
     queryFn: () => fetchConversationList(listParams),

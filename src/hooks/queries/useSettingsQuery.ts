@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
@@ -6,8 +6,8 @@ import type { AppSettings } from '@/types/api/settings';
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const;
 
-export function useSettingsQuery() {
-  return useQuery<AppSettings>({
+export const settingsQueryOptions = () =>
+  queryOptions<AppSettings>({
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: async () => {
       const result = await VaultAPI.getSettings();
@@ -18,6 +18,9 @@ export function useSettingsQuery() {
     },
     staleTime: 60_000,
   });
+
+export function useSettingsQuery() {
+  return useQuery(settingsQueryOptions());
 }
 
 export type UpdateSettingsArgs = Pick<UpdateSettingsRequest, 'updates'> & Partial<Pick<UpdateSettingsRequest, 'category'>>;

@@ -204,6 +204,12 @@ export function ChatPanel() {
   const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
   const queryClient = useQueryClient();
   const settings = useSettingsQuery().data;
+  const customTools = useMemo<CustomToolSettings[]>(
+    () => (settings?.llm.customTools ?? [])
+      .filter((tool) => tool.enabled && tool.name.trim().length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [settings],
+  );
 
   const isSending = activeConversationId
     ? inFlightGenerations.has(activeConversationId)
@@ -211,7 +217,6 @@ export function ChatPanel() {
 
   const [input, setInput] = useState('');
   const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(defaultToolPreferences);
-  const [customTools, setCustomTools] = useState<CustomToolSettings[]>([]);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [isImportingFiles, setIsImportingFiles] = useState(false);
@@ -323,22 +328,6 @@ export function ChatPanel() {
     }
     return fresh;
   }, [activeConversationId, getMessageKey, messages]);
-
-  useEffect(() => {
-    const loadCustomTools = async () => {
-      const result = await VaultAPI.getSettings();
-      if (!result.ok) {
-        return;
-      }
-
-      const configured = (result.data.llm.customTools ?? [])
-        .filter((tool) => tool.enabled && tool.name.trim().length > 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setCustomTools(configured);
-    };
-
-    void loadCustomTools();
-  }, []);
 
   useEffect(() => {
     const container = scrollContainerRef.current;

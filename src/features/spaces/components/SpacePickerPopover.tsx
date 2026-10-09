@@ -3,8 +3,8 @@ import { type ReactNode, useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Check, Library } from 'lucide-react';
 
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
-import { useConversationsStore } from '@/stores/conversationsStore';
 
 /**
  * Picks the space a chat belongs to — which is to say, the documents it can
@@ -31,8 +31,8 @@ export interface SpacePickerPopoverProps {
 
 /** The spaces a chat can be put in: archived ones take no new chats. */
 export function useOpenSpaces() {
-  const spaces = useConversationsStore((s) => s.spaces);
-  return useMemo(() => spaces.filter((space) => !space.isArchived), [spaces]);
+  const { data } = useSpacesQuery();
+  return useMemo(() => (data ?? []).filter((space) => !space.isArchived), [data]);
 }
 
 export function SpacePickerPopover({

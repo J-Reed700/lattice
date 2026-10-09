@@ -435,7 +435,6 @@ export function JournalWorkspace() {
       localStorage.removeItem(`journal.noteBySpace.${requestedJournalSpaceId}`);
       localStorage.removeItem(`journal.pinnedBookmarks.${requestedJournalSpaceId}`);
       localStorage.removeItem(`journal.pinnedNoteHighlights.${requestedJournalSpaceId}`);
-      localStorage.removeItem(`journal.pinnedEntries.${requestedJournalSpaceId}`);
       const last = localStorage.getItem(LAST_JOURNAL_SPACE_KEY);
       if (last === requestedJournalSpaceId) {
         localStorage.removeItem(LAST_JOURNAL_SPACE_KEY);

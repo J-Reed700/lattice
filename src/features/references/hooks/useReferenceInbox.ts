@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useJournalsQuery, useCapturedReferencesQuery, WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
+import { rememberedJournalPageId } from '@/features/journal/hooks/useJournalNote';
 import { useBookmarkMutations, useInboxBookmarksQuery } from '@/features/references/api/queries';
 import { mergeInboxItems, type InboxItem } from '@/features/references/model/inboxItems';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
-import { fetchSpaces } from '@/hooks/queries/conversationQueryData';
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import {
   useDeletePassageReferenceMutation,
   usePassageReferencesQuery,
@@ -72,17 +72,6 @@ export interface UseReferenceInboxResult {
   ) => Promise<boolean>;
   removePassage: (passage: PassageReferenceDto) => Promise<boolean>;
   getPayload: (bookmark: ConversationMessageBookmarkDto) => Promise<BookmarkPayload>;
-  resolveJournalSpaceIdForNote: (noteId: string) => string | null;
-}
-
-function readJournalNoteIdForSpace(spaceId: string): string | null {
-  try {
-    const value = localStorage.getItem(`journal.noteBySpace.${spaceId}`);
-    const resolved = value?.trim() ?? '';
-    return resolved || null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -117,7 +106,7 @@ export function useReferenceInbox(options: {
   const client = useQueryClient();
   const bookmarksQuery = useInboxBookmarksQuery(debouncedQuery);
   const { save: saveBookmark, remove: removeBookmark } = useBookmarkMutations();
-  const spacesQuery = useQuery({ queryKey: conversationKeys.spaces, queryFn: fetchSpaces });
+  const spacesQuery = useSpacesQuery();
   const journalsQuery = useJournalsQuery();
   const capturesQuery = useCapturedReferencesQuery();
   const bookmarks = useMemo(() => bookmarksQuery.data ?? [], [bookmarksQuery.data]);
@@ -305,22 +294,10 @@ export function useReferenceInbox(options: {
         return {
           type: 'journal',
           space: journal,
-          preferredNoteId: readJournalNoteIdForSpace(journal.id),
+          preferredNoteId: rememberedJournalPageId(journal.id),
         };
       }
       return { type: 'daily', space: null, preferredNoteId: null };
-    },
-    [journalsById],
-  );
-
-  const resolveJournalSpaceIdForNote = useCallback(
-    (noteId: string): string | null => {
-      for (const journal of journalsById.values()) {
-        if (readJournalNoteIdForSpace(journal.id) === noteId) {
-          return journal.id;
-        }
-      }
-      return null;
     },
     [journalsById],
   );
@@ -364,6 +341,9 @@ export function useReferenceInbox(options: {
         capturedAt: new Date().toISOString(),
         noteId: result.noteId,
         noteTitle: result.noteTitle,
+        // The page the journal was on, when the capture went there; the
+        // refreshed notes list says for any other page.
+        journalId: destination.space && result.noteId === destination.preferredNoteId ? destination.space.id : null,
       };
       await client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
       return captured;
@@ -455,6 +435,5 @@ export function useReferenceInbox(options: {
     savePassageAnnotations,
     removePassage,
     getPayload,
-    resolveJournalSpaceIdForNote,
   };
 }

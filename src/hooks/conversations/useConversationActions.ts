@@ -2,7 +2,9 @@ import { useCallback } from 'react';
 
 
 import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
+import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { settingsQueryOptions } from '@/hooks/queries/useSettingsQuery';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
 import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
@@ -14,7 +16,7 @@ import type { Conversation, ConversationMessage } from '@/types/conversation';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 
 import { conversationKeys, type ConversationListParams } from '../queries/conversationKeys';
-import { fetchBookmarks, fetchConversationDetail, fetchConversationList, fetchLinkedDocuments, fetchMemberships, fetchMessages, fetchSpaces, fetchWebSources, toConversationMessage } from '../queries/conversationQueryData';
+import { fetchBookmarks, fetchConversationDetail, fetchConversationList, fetchLinkedDocuments, fetchMemberships, fetchMessages, fetchWebSources, toConversationMessage } from '../queries/conversationQueryData';
 
 import type { ConversationLifecycleRegistry } from './lifecycleRegistry';
 import type { QueryClient } from '@tanstack/react-query';
@@ -89,7 +91,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
 
   const loadSpaces = useCallback(async () => {
     try {
-      await queryClient.fetchQuery({ queryKey: conversationKeys.spaces, queryFn: fetchSpaces });
+      await queryClient.fetchQuery({ ...spacesQueryOptions(), staleTime: 0 });
     } catch (error) {
       setUiError(error);
     }
@@ -165,22 +167,19 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     // made on behalf of another one names its space instead: what is selected
     // in the sidebar says nothing about the conversation being branched.
     const state = { selectedSpaceId: spaceId ?? conversationUiStore.getState().selectedSpaceId };
-    const spaces = await queryClient.ensureQueryData({
-      queryKey: conversationKeys.spaces,
-      queryFn: fetchSpaces,
-    });
+    const spaces = await queryClient.ensureQueryData(spacesQueryOptions());
     const selectedSpace = spaces.find(space => space.id === state.selectedSpaceId);
     if (state.selectedSpaceId && !selectedSpace) {
       const error = new Error('The selected space is unavailable. Select a space and try again.');
       setUiError(error);
       throw error;
     }
-    const [activeModelsResult, settingsResult] = await Promise.all([
+    const [activeModelsResult, settings] = await Promise.all([
       VaultAPI.getActiveModels(),
-      VaultAPI.getSettings(),
+      queryClient.ensureQueryData(settingsQueryOptions()).catch(() => null),
     ]);
     const activeModel = activeModelsResult.ok ? activeModelsResult.data.chat_model : null;
-    const llmSettings = settingsResult.ok ? settingsResult.data.llm : null;
+    const llmSettings = settings?.llm ?? null;
     const spaceModel = selectedSpace?.defaultModelName?.trim();
     const modelName = spaceModel || resolveChatModel(llmSettings, activeModel?.model_id ?? null);
     if (!modelName) {

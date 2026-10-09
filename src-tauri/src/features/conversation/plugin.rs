@@ -27,8 +27,8 @@ use crate::features::conversation::space_dto::{
     ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
     MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
     RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
-    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
-    UpsertConversationSpaceMemberRequestDto,
+    SetJournalEntryPinnedRequestDto, UpdateConversationJournalRequestDto,
+    UpdateConversationSpaceRequestDto, UpsertConversationSpaceMemberRequestDto,
 };
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
@@ -485,6 +485,26 @@ pub async fn list_conversations_explorer(
     conversation_impl::list_conversations_explorer_impl(query, container.inner()).await
 }
 
+/// Pins or unpins an entry in one journal.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_journal_entry_pinned(
+    request: SetJournalEntryPinnedRequestDto,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    conversation_impl::set_journal_entry_pinned_impl(request, container.inner()).await
+}
+
+/// The conversations pinned in a journal, the most recently pinned first.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_entry_pins(
+    journal_space_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<String>, ApiError> {
+    conversation_impl::list_journal_entry_pins_impl(journal_space_id, container.inner()).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_journal_conversations(
@@ -675,6 +695,8 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             list_message_bookmarks,
             list_conversations_explorer,
             list_journal_conversations,
+            set_journal_entry_pinned,
+            list_journal_entry_pins,
             synthesize_journal_entries,
             truncate_conversation_after,
             fork_conversation,

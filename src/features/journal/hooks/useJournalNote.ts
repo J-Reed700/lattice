@@ -29,9 +29,9 @@ function storageKeyFor(spaceId: string): string {
  * Which page this journal was last on. A remembered selection is a UI
  * preference, not state the backend reads, so localStorage is the right home.
  */
-function readRememberedNoteId(spaceId: string): string | null {
+export function rememberedJournalPageId(spaceId: string): string | null {
   try {
-    return localStorage.getItem(storageKeyFor(spaceId));
+    return localStorage.getItem(storageKeyFor(spaceId))?.trim() || null;
   } catch {
     return null;
   }
@@ -288,7 +288,7 @@ export function useJournalNote(options: {
         }
       }
 
-      const storedNoteId = readRememberedNoteId(journalSpaceId);
+      const storedNoteId = rememberedJournalPageId(journalSpaceId);
       if (!target && storedNoteId) {
         target = allPages.find((n) => n.id === storedNoteId) ?? null;
       }

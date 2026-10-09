@@ -1,7 +1,10 @@
+import { useState } from 'react';
+
 import { useNavigate } from 'react-router';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
-import { useSpaceEditor } from '@/features/chat/components/sidebar/useSpaceEditor';
+import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
+import { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -9,9 +12,10 @@ import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from './settingsStyles';
 
 export function SpacesTab() {
   const navigate = useNavigate();
-  const { spaces, setSelectedSpace } = useConversationsStore();
-  const { newSpaceNameDraft, setNewSpaceNameDraft, isCreatingSpace, createSpace } = useSpaceEditor();
-  const activeSpaces = spaces.filter(space => !space.isArchived);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const { isCreatingSpace, createSpace } = useSpaceEditor();
+  const activeSpaces = useOpenSpaces();
+  const [newSpaceNameDraft, setNewSpaceNameDraft] = useState('');
 
   return (
     <>
@@ -20,7 +24,7 @@ export function SpacesTab() {
       <SettingsSection title="New space" description="Keep related conversations together.">
         <form onSubmit={handleAsyncEvent(async (event) => {
           event.preventDefault();
-          if (!isCreatingSpace) await createSpace();
+          if (!isCreatingSpace && await createSpace(newSpaceNameDraft)) setNewSpaceNameDraft('');
         })}>
           <SettingsRow label="Space name" htmlFor="settings-new-space-name" stacked>
             <div className="flex flex-wrap items-center gap-2">

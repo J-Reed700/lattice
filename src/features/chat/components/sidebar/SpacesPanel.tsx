@@ -15,15 +15,21 @@ import {
 import { createPortal } from 'react-dom';
 
 import { SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
-import type { useSpaceEditor } from '@/features/chat/components/sidebar/useSpaceEditor';
+import type { useNewSpaceForm } from '@/features/chat/components/sidebar/useNewSpaceForm';
+import type { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 
 
-interface SpacesPanelProps { anchorRef: RefObject<HTMLDivElement | null>; onClose: () => void; editor: ReturnType<typeof useSpaceEditor> }
-export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
+interface SpacesPanelProps {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+  editor: ReturnType<typeof useSpaceEditor>;
+  newSpace: ReturnType<typeof useNewSpaceForm>;
+}
+export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPanelProps) {
   const prefersReducedMotion = useReducedMotion();
   const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
@@ -33,8 +39,6 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
   const [spacesPanelFrame, setSpacesPanelFrame] = useState<{ left: number; top: number; height: number; width: number } | null>(null);
   const handleSpaceSelect = async (spaceId: string | null) => { setSelectedSpace(spaceId); await loadConversations({ spaceId }); };
   const {
-    isSpaceEditorOpen,
-    setIsSpaceEditorOpen,
     isCreateSpaceOpen,
     setIsCreateSpaceOpen,
     newSpaceKindDraft,
@@ -42,11 +46,15 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
     newSpaceNameDraft,
     setNewSpaceNameDraft,
     isCreatingSpace,
+    createSpace,
+  } = newSpace;
+  const {
+    isSpaceEditorOpen,
+    setIsSpaceEditorOpen,
     isSavingSpace,
     isArchivingSpace,
     isRestoringSpace,
     availableSpaceModels,
-    createSpace,
     saveSpaceEnvironment,
     setSelectedSpaceArchived,
     restoreArchivedSpace,

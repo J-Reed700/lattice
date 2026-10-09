@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
-import { VaultAPI } from '@/lib/api';
-import { queryClient } from '@/lib/queryClient';
-import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
+import {
+  useExplorerFolderMutations,
+  useExplorerFoldersQuery,
+  useExplorerIndexStatuses,
+} from '@/features/explorer/api/queries';
+import type { FolderIndexStatus } from '@/stores/explorerStore';
 import { toast } from '@/stores/toastStore';
-
-import { INDEX_STATUS_EVENT } from './indexProgress';
 
 /** What a folder's index holds, as the backend's `FolderIndexSummaryState`. */
 export type FolderIndexSummaryState = 'indexed' | 'partial' | 'indexing' | 'notIndexed' | 'tooLarge' | 'refused' | 'error';
@@ -43,6 +41,8 @@ export interface ExplorerFolder {
   instructions: string | null;
   /** The space its threads belong to; General unless one was chosen. */
   spaceId: string;
+  /** The thread the folder's chat last showed; `null` when none or deleted. */
+  lastThreadId: string | null;
 }
 
 /** A live status event as the list shows it; `unavailable` keeps what the list had. */
@@ -69,13 +69,6 @@ export function summaryFromStatus(status: FolderIndexStatus, previous: FolderInd
   };
 }
 
-/** Pinned first, then the most recently opened: the backend's order. */
-export function sortFolders(folders: ExplorerFolder[]): ExplorerFolder[] {
-  return [...folders].sort(
-    (a, b) => Number(b.pinned) - Number(a.pinned) || b.lastOpenedAt.localeCompare(a.lastOpenedAt) || a.root.localeCompare(b.root)
-  );
-}
-
 export interface ExplorerFolders {
   /** `null` until the first load lands. */
   folders: ExplorerFolder[] | null;
@@ -93,57 +86,28 @@ export interface ExplorerFolders {
   saveSettings: (_root: string, _instructions: string, _spaceId: string) => Promise<boolean>;
 }
 
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /**
- * The folders list, loaded once and kept fresh by actions and by the open
- * folder's status events, so a row that is indexing moves live.
+ * The folders list, kept fresh by its actions and by index status events, so
+ * a row that is indexing moves live.
  */
 export function useExplorerFolders(): ExplorerFolders {
-  const forgetThread = useExplorerStore((state) => state.forgetThread);
-  const [folders, setFolders] = useState<ExplorerFolder[] | null>(null);
-  const [home, setHome] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const query = useExplorerFoldersQuery();
+  const mutations = useExplorerFolderMutations();
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
-  const [live, setLive] = useState<Record<string, FolderIndexStatus>>({});
-
-  const reload = useCallback(async () => {
-    const result = await VaultAPI.explorerFoldersList();
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setError(null);
-    setHome(result.data.home);
-    setFolders(result.data.folders);
-    // The list is newer than any event seen before it.
-    setLive({});
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  useEffect(() => {
-    let mounted = true;
-    let unlisten: UnlistenFn | undefined;
-    void listen<FolderIndexStatus>(INDEX_STATUS_EVENT, (event) => {
-      setLive((current) => ({ ...current, [event.payload.root]: event.payload }));
-    }).then((fn) => {
-      if (mounted) unlisten = fn;
-      else fn();
-    });
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, []);
+  const list = query.data;
+  const roots = useMemo(() => list?.folders.map((folder) => folder.root) ?? [], [list]);
+  // A status from before the list was read is already in it.
+  const live = useExplorerIndexStatuses(roots, query.dataUpdatedAt);
 
   const shown = useMemo(
     () =>
-      folders?.map((folder) => {
-        const status = live[folder.root];
+      list?.folders.map((folder) => {
+        const status = live.get(folder.root);
         return status ? { ...folder, index: summaryFromStatus(status, folder.index) } : folder;
       }) ?? null,
-    [folders, live]
+    [list, live]
   );
 
   /** Runs one row's action with the row marked busy. */
@@ -160,73 +124,81 @@ export function useExplorerFolders(): ExplorerFolders {
     }
   }, []);
 
+  const { rename: renameMutation, setPinned: pinMutation, deleteIndex: deleteIndexMutation, remove: removeMutation, setSettings } = mutations;
+  const { refetch } = query;
+
+  const reload = useCallback(async () => {
+    await refetch();
+  }, [refetch]);
+
   const rename = useCallback(
     (root: string, name: string) =>
       withBusy(root, async () => {
-        const result = await VaultAPI.explorerFolderRename(root, name);
-        if (!result.ok) toast.error("Couldn't rename that folder", { message: result.error });
-        await reload();
+        await renameMutation.mutateAsync({ root, name }).catch((error: unknown) => {
+          toast.error("Couldn't rename that folder", { message: message(error) });
+        });
       }),
-    [reload, withBusy]
+    [renameMutation, withBusy]
   );
 
   const setPinned = useCallback(
     (root: string, pinned: boolean) =>
       withBusy(root, async () => {
-        // Moves at once; the reload confirms it.
-        setFolders((current) => current && sortFolders(current.map((folder) => (folder.root === root ? { ...folder, pinned } : folder))));
-        const result = await VaultAPI.explorerFolderSetPinned(root, pinned);
-        if (!result.ok) toast.error(pinned ? "Couldn't pin that folder" : "Couldn't unpin that folder", { message: result.error });
-        await reload();
+        await pinMutation.mutateAsync({ root, pinned }).catch((error: unknown) => {
+          toast.error(pinned ? "Couldn't pin that folder" : "Couldn't unpin that folder", { message: message(error) });
+        });
       }),
-    [reload, withBusy]
+    [pinMutation, withBusy]
   );
 
   const deleteIndex = useCallback(
     (root: string) =>
       withBusy(root, async () => {
-        const result = await VaultAPI.explorerFolderDeleteIndex(root);
-        if (!result.ok) toast.error("Couldn't delete that folder's index", { message: result.error });
-        await reload();
+        await deleteIndexMutation.mutateAsync(root).catch((error: unknown) => {
+          toast.error("Couldn't delete that folder's index", { message: message(error) });
+        });
       }),
-    [reload, withBusy]
+    [deleteIndexMutation, withBusy]
   );
 
   const remove = useCallback(
     (root: string, deleteThreads: boolean) =>
       withBusy(root, async () => {
-        const result = await VaultAPI.explorerFolderRemove(root, deleteThreads);
-        if (!result.ok) {
-          toast.error("Couldn't remove that folder", { message: result.error });
-          await reload();
+        try {
+          await removeMutation.mutateAsync({ root, deleteThreads });
+          return true;
+        } catch (error) {
+          toast.error("Couldn't remove that folder", { message: message(error) });
           return false;
         }
-        if (result.data > 0) {
-          forgetThread(root);
-          void queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
-        }
-        setFolders((current) => current?.filter((folder) => folder.root !== root) ?? null);
-        await reload();
-        return true;
       }),
-    [forgetThread, reload, withBusy]
+    [removeMutation, withBusy]
   );
 
   const saveSettings = useCallback(
     (root: string, instructions: string, spaceId: string) =>
       withBusy(root, async () => {
-        const result = await VaultAPI.explorerFolderSetSettings(root, instructions, spaceId);
-        if (!result.ok) {
-          toast.error("Couldn't save that folder's settings", { message: result.error });
+        try {
+          await setSettings.mutateAsync({ root, instructions, spaceId });
+          return true;
+        } catch (error) {
+          toast.error("Couldn't save that folder's settings", { message: message(error) });
           return false;
         }
-        // Moved threads change space in the Chat sidebar too.
-        if (result.data > 0) void queryClient.invalidateQueries({ queryKey: conversationKeys.all });
-        await reload();
-        return true;
       }),
-    [reload, withBusy]
+    [setSettings, withBusy]
   );
 
-  return { folders: shown, home, error, busy, reload, rename, setPinned, deleteIndex, remove, saveSettings };
+  return {
+    folders: shown,
+    home: list?.home ?? null,
+    error: query.error ? query.error.message : null,
+    busy,
+    reload,
+    rename,
+    setPinned,
+    deleteIndex,
+    remove,
+    saveSettings,
+  };
 }

@@ -402,3 +402,67 @@ async fn a_folder_cannot_take_a_missing_or_archived_space() {
         Err(AppError::NotFound(_))
     ));
 }
+
+async fn last_thread(pool: &SqlitePool, root: &str) -> Option<String> {
+    repository::list_folders(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.root == root)
+        .and_then(|row| row.last_thread_id)
+}
+
+/// A folder reopens on the thread it last showed, kept on its row; a thread
+/// of another folder is refused, and deleting the thread forgets it.
+#[tokio::test]
+async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
+    let pool = database().await;
+    let root = "/Users/me/notes";
+    let first = thread(&pool, Some(Path::new(root)), "First").await;
+    let second = thread(&pool, Some(Path::new(root)), "Second").await;
+    let elsewhere = thread(&pool, Some(Path::new("/Users/me/other")), "Other").await;
+    let chat = thread(&pool, None, "Chat").await;
+
+    // A thread used before the open was recorded lists the folder.
+    folders::remember_thread(&pool, root, &first).await.unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(
+        repository::list_folders(&pool).await.unwrap()[0].name,
+        "notes"
+    );
+
+    // Opening again keeps it; using another thread replaces it.
+    folders::record_open(&pool, root).await.unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(first.as_str())
+    );
+    folders::remember_thread(&pool, root, &second)
+        .await
+        .unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(second.as_str())
+    );
+
+    for foreign in [&elsewhere, &chat] {
+        assert!(matches!(
+            folders::remember_thread(&pool, root, foreign).await,
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(second.as_str())
+    );
+
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(last_thread(&pool, root).await, None);
+}

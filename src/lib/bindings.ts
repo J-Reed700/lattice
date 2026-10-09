@@ -142,6 +142,18 @@ async explorerFolderSetPinned(root: string, pinned: boolean) : Promise<Result<nu
 }
 },
 /**
+ * Remembers the thread the folder's chat is showing, so reopening the
+ * folder lands on it. The thread must be bound to the folder.
+ */
+async explorerFolderSetLastThread(root: string, conversationId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_last_thread", { root, conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Sets a folder's system prompt and the space its threads belong to; an
  * empty prompt is none, and General is the default space. The folder's
  * threads move to the space. Returns how many threads moved.
@@ -1422,9 +1434,9 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * # Search Modes
  *
- * - **Semantic** (`SearchMode::Vector`): Pure embedding similarity search
- * - **Keyword** (`SearchMode::Keyword`): Traditional BM25 full-text search
- * - **Hybrid** (`SearchMode::Hybrid`): Combines vector + BM25 with RRF ranking
+ * - **Semantic**: Pure embedding similarity search
+ * - **Keyword**: Traditional BM25 full-text search
+ * - **Hybrid**: Combines vector + BM25 with RRF ranking, exactly as chat searches
  *
  * # Caching Strategy
  *
@@ -1727,9 +1739,9 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * 3. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
  * 4. Validate recency_weight ∈ [0, 1]
  * 5. Validate max_age_days > 0
- * 6. Embed query
- * 7. Execute recency-aware hybrid search
- * 8. Enrich results with metadata
+ * 6. Run the library search orchestrator
+ * 7. Enrich results with metadata
+ * 8. Boost recently updated documents
  * 9. Log audit event
  * 10. Return time-boosted results
  */
@@ -3157,6 +3169,28 @@ async listConversationsExplorer(query: ListConversationsExplorerQueryDto) : Prom
 async listJournalConversations(query: ListJournalConversationsQueryDto) : Promise<Result<ListConversationsResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_journal_conversations", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pins or unpins an entry in one journal.
+ */
+async setJournalEntryPinned(request: SetJournalEntryPinnedRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_journal_entry_pinned", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The conversations pinned in a journal, the most recently pinned first.
+ */
+async listJournalEntryPins(journalSpaceId: string) : Promise<Result<string[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_journal_entry_pins", { journalSpaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5568,7 +5602,12 @@ instructions: string | null;
 /**
  * The space its threads belong to; General unless one was chosen.
  */
-spaceId: string }
+spaceId: string;
+/**
+ * The thread the folder's chat last showed; `None` when it has none or
+ * that thread was deleted.
+ */
+lastThreadId: string | null }
 /**
  * The folders list, with the home folder so paths under it can be shown
  * as `~/…`.
@@ -7439,6 +7478,11 @@ export type SetArchivePassphraseRequestDto = {
  */
 passphrase?: string | null }
 export type SetConversationStateRequestDto = { conversationId: string; value: boolean }
+/**
+ * Pins or unpins an entry in one journal; the conversation's own pin in the
+ * Chat sidebar is separate.
+ */
+export type SetJournalEntryPinnedRequestDto = { journalSpaceId: string; conversationId: string; pinned: boolean }
 /**
  * Complete application settings structure.
  */

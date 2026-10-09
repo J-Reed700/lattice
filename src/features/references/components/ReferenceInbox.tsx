@@ -68,7 +68,6 @@ export function ReferenceInbox() {
     isResolvingSelected,
     resolutionFailed,
     resolveCaptureDestination,
-    resolveJournalSpaceIdForNote,
     captureReference,
     removeReference,
     saveAnnotations,
@@ -135,13 +134,12 @@ export function ReferenceInbox() {
         noteId: reference.noteId,
         snapshotId: reference.snapshotId,
       });
-      const journalSpaceId = resolveJournalSpaceIdForNote(reference.noteId);
-      if (journalSpaceId) {
-        params.set('journalSpaceId', journalSpaceId);
+      if (reference.journalId) {
+        params.set('journalSpaceId', reference.journalId);
       }
       navigate(`/journals?${params.toString()}`);
     },
-    [navigate, resolveJournalSpaceIdForNote],
+    [navigate],
   );
 
   const handleCopy = useCallback(

@@ -3,8 +3,8 @@ import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Search, X } from 'lucide-react';
 
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import VaultAPI from '@/lib/api';
 import { useConversationUiStore } from '@/stores/conversationUiStore';
 
@@ -19,14 +19,7 @@ export function LearningDocumentPicker({ selected, onChange, limit }: {
   const initialSpace = useConversationUiStore((state) => state.selectedSpaceId);
   const [spaceId, setSpaceId] = useState(initialSpace ?? GENERAL_SPACE_ID);
   const [search, setSearch] = useState('');
-  const spaces = useQuery({
-    queryKey: conversationKeys.spaces,
-    queryFn: async () => {
-      const result = await VaultAPI.listConversationSpaces();
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-  });
+  const spaces = useSpacesQuery();
   const documents = useQuery({
     queryKey: ['learning-space-documents', spaceId, search.trim()],
     queryFn: async () => {

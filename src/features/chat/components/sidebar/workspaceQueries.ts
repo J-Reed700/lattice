@@ -28,23 +28,6 @@ export function useAddConversationsToJournalMutation() {
     onSuccess: () => client.invalidateQueries({ queryKey: conversationKeys.all }),
   });
 }
-export function useSpaceMutations() {
-  const client = useQueryClient();
-  const invalidate = () => client.invalidateQueries({ queryKey: conversationKeys.all });
-  const create = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.createConversationSpace>[0]) => value(await VaultAPI.createConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  const update = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.updateConversationSpace>[0]) => value(await VaultAPI.updateConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  const archive = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.archiveConversationSpace>[0]) => value(await VaultAPI.archiveConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  return { create, update, archive };
-}
 export function useSidebarBookmarksQuery(query: string, spaceId: string | null, enabled = true) {
   return useQuery({
     queryKey: [...SIDEBAR_BOOKMARKS_QUERY_KEY, query, spaceId],

@@ -33,11 +33,13 @@ vi.mock('@/hooks/queries/useCustomCollectionsQuery', () => ({
   useCustomCollectionsQuery: () => mocks.collectionsQuery,
   useCustomCollectionActions: () => mocks.collectionActions,
 }));
+vi.mock('@/features/spaces/api/queries', () => ({
+  useSpacesQuery: () => ({ data: [], isLoading: false }),
+}));
 vi.mock('@/lib/api', () => ({
   default: {
     selectMultipleFiles: mocks.selectFiles,
     indexFile: mocks.indexFile,
-    listConversationSpaces: async () => ({ ok: true, data: [] }),
   },
 }));
 

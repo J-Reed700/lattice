@@ -259,6 +259,14 @@ export const COMMAND_DOMAIN_MAP: Record<
     domain: 'conversation',
     command: 'list_journal_conversations',
   },
+  list_journal_entry_pins: {
+    domain: 'conversation',
+    command: 'list_journal_entry_pins',
+  },
+  set_journal_entry_pinned: {
+    domain: 'conversation',
+    command: 'set_journal_entry_pinned',
+  },
   list_space_documents: {
     domain: 'conversation',
     command: 'list_space_documents',
@@ -381,6 +389,10 @@ export const COMMAND_DOMAIN_MAP: Record<
   explorer_folder_set_pinned: {
     domain: 'explorer',
     command: 'explorer_folder_set_pinned',
+  },
+  explorer_folder_set_last_thread: {
+    domain: 'explorer',
+    command: 'explorer_folder_set_last_thread',
   },
   explorer_folder_set_settings: {
     domain: 'explorer',

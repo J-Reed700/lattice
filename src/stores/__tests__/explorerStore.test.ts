@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { currentExplorerFocus, useExplorerStore as store, type FolderIndexStatus } from '../explorerStore';
+import { currentExplorerFocus, useExplorerStore as store } from '../explorerStore';
 
 beforeEach(() => {
   localStorage.clear();
-  store.setState({ root: null, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, aliases: {}, threadByRoot: {}, indexStatus: null, indexEvents: 0 });
+  store.setState({ root: null, expanded: new Set(), openPath: null, back: [], forward: [], selection: null, highlight: null, aliases: {} });
 });
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -78,9 +78,8 @@ describe('Explorer session invariants', () => {
     expect(store.getState()).toBe(current);
   });
 
-  it('isolates file state between roots but preserves each root’s remembered thread', () => {
+  it('isolates file state between roots', () => {
     store.getState().setRoot(root);
-    store.getState().rememberThread(root.root, 'thread-a');
     store.getState().reveal('file.ts', range);
     store.getState().retarget('file.ts', 'src/file.ts');
     const unchanged = store.getState();
@@ -88,7 +87,7 @@ describe('Explorer session invariants', () => {
     expect(store.getState()).toBe(unchanged);
     store.getState().setRoot({ root: '/work/other', name: 'other' });
     expect(currentExplorerFocus()).toBeNull();
-    expect(store.getState()).toMatchObject({ openPath: null, selection: null, highlight: null, back: [], forward: [], aliases: {}, threadByRoot: { [root.root]: 'thread-a' } });
+    expect(store.getState()).toMatchObject({ openPath: null, selection: null, highlight: null, back: [], forward: [], aliases: {} });
     expect(store.getState().expanded.size).toBe(0);
     store.getState().setRoot(null);
     expect(localStorage.getItem('explorer.root')).toBeNull();
@@ -108,26 +107,9 @@ describe('Explorer session invariants', () => {
     expect(store.getState().expanded.size).toBe(0);
   });
 
-  it('ignores late index events from a closed root', () => {
-    store.getState().setRoot(root);
-    const status: FolderIndexStatus = { root: root.root, indexRoot: root.root, state: 'ready', filesTotal: 1, filesIndexed: 1, passagesTotal: 2, passagesEmbedded: 2, passagesPerSecond: null, etaSeconds: null, message: null };
-    store.getState().setIndexStatus(status, true);
-    expect(store.getState().indexEvents).toBe(1);
-    store.getState().setIndexStatus({ ...status, root: '/closed' }, true);
-    expect(store.getState().indexStatus).toBe(status);
-    expect(store.getState().indexEvents).toBe(1);
-    store.getState().setIndexStatus(null);
-    expect(store.getState().indexStatus).toBeNull();
-  });
-
-  it('keeps preferences usable when storage writes fail', () => {
+  it('keeps the open folder usable when storage writes fail', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Quota exceeded', 'QuotaExceededError'); });
     store.getState().setRoot(root);
-    store.getState().rememberThread(root.root, 'thread');
-    store.getState().rememberThread(root.root, 'thread');
-    store.getState().forgetThread('/unknown');
-    expect(store.getState().threadByRoot[root.root]).toBe('thread');
-    store.getState().forgetThread(root.root);
-    expect(store.getState().threadByRoot).toEqual({});
+    expect(store.getState().root).toEqual(root);
   });
 });

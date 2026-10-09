@@ -1,11 +1,15 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render as renderBare, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { explorerKeys, INDEX_STATUS_EVENT } from '@/features/explorer/api/queries';
 import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
 
 import { describeIndexNotice, ExplorerIndexNotice } from '../ExplorerIndexNotice';
-import { ExplorerPage, INDEX_STATUS_EVENT } from '../ExplorerPage';
+import { ExplorerPage } from '../ExplorerPage';
 import { formatEta, formatRate, tildePath } from '../indexProgress';
 import { describeIndexCounts, describeIndexStatus } from '../IndexStatusPill';
 import { ScopeBar } from '../ScopeBar';
@@ -50,6 +54,15 @@ vi.mock('@/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ fe
 vi.mock('@/stores/conversationsStore', () => ({
   useConversationsStore: (select: (state: object) => unknown) => select({ loadSpaces: vi.fn(), ...mocks.conversations }),
 }));
+
+let client = new QueryClient();
+
+/** Renders inside a fresh query cache, kept in `client` for the test to read and seed. */
+function render(ui: ReactElement) {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = renderBare(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return { ...result, rerender: (next: ReactElement) => result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>) };
+}
 
 const ROOT = '/Users/me/project';
 const PROJECT = { root: ROOT, name: 'project' };
@@ -153,28 +166,28 @@ describe('the chat column while the folder indexes', () => {
       { id: 'chat', explorerRoot: null },
     ];
     mocks.conversations.activeConversationId = 'thread';
-    useExplorerStore.setState({ root: PROJECT, indexStatus: null });
+    useExplorerStore.setState({ root: PROJECT });
   });
 
-  it('says how far along the index is, and nothing once it is ready', () => {
+  it('says how far along the index is, and nothing once it is ready', async () => {
     expect(describeIndexNotice(INDEXING)).toBe('Indexing this folder · 27%');
     expect(describeIndexNotice(status({ state: 'scanning', filesTotal: 412 }))).toBe('Scanning this folder · 412 files');
     expect(describeIndexNotice(status())).toBeNull();
     expect(describeIndexNotice(null)).toBeNull();
 
-    useExplorerStore.setState({ indexStatus: INDEXING });
     const { rerender } = render(<ExplorerIndexNotice />);
-    expect(screen.getByRole('status')).toHaveTextContent("Indexing this folder · 27% — search covers what's indexed so far");
+    act(() => { client.setQueryData(explorerKeys.indexStatus(ROOT), INDEXING); });
+    expect(await screen.findByRole('status')).toHaveTextContent("Indexing this folder · 27% — search covers what's indexed so far");
 
-    act(() => useExplorerStore.setState({ indexStatus: status() }));
+    act(() => { client.setQueryData(explorerKeys.indexStatus(ROOT), status()); });
     rerender(<ExplorerIndexNotice />);
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
   });
 
   it('stays out of a chat that is not this folder’s thread', () => {
-    useExplorerStore.setState({ indexStatus: INDEXING });
     mocks.conversations.activeConversationId = 'chat';
     render(<ExplorerIndexNotice />);
+    act(() => { client.setQueryData(explorerKeys.indexStatus(ROOT), INDEXING); });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });
@@ -184,7 +197,7 @@ describe('ExplorerPage and the folder index', () => {
     vi.clearAllMocks();
     mocks.listeners.clear();
     localStorage.clear();
-    useExplorerStore.setState({ root: null, indexStatus: null, indexEvents: 0 });
+    useExplorerStore.setState({ root: null });
     mocks.indexClose.mockResolvedValue({ ok: true, data: undefined });
     mocks.foldersList.mockResolvedValue({ ok: true, data: { home: '/Users/me', folders: [] } });
   });

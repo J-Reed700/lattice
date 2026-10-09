@@ -3,9 +3,6 @@
  * chat column's line and the folders list all say it the same way.
  */
 
-/** Carries a `FolderIndexStatusDto` whenever the open folder's index moves. */
-export const INDEX_STATUS_EVENT = 'explorer-index://status';
-
 /** `1,379`. */
 export const count = (value: number) => value.toLocaleString('en-US');
 

@@ -294,6 +294,7 @@ for (const width of [1440, 620]) {
         if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: 2 };
         if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
         if (command === 'plugin:conversation|list_journals') return [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }];
+        if (command === 'plugin:conversation|list_journal_entry_pins') return [];
         if (command === 'plugin:dailynotes|list_workspace_notes') return { notes: [note] };
         if (command === 'plugin:dailynotes|update_workspace_note') {
           const next = (args as { note: typeof note }).note;

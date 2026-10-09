@@ -1,6 +1,8 @@
 import {
   queryOptions,
+  useMutation,
   useQuery,
+  useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
 
@@ -66,3 +68,39 @@ export const deleteJournal = (
   client: QueryClient,
   request: Parameters<typeof VaultAPI.deleteJournal>[0],
 ) => persistJournal(client, VaultAPI.deleteJournal(request));
+
+/** Under the journals prefix, so a journal's create or delete refreshes its pins. */
+export const journalEntryPinsKey = (journalSpaceId: string) =>
+  [...JOURNALS_QUERY_KEY, 'entry-pins', journalSpaceId] as const;
+export const journalEntryPinsQueryOptions = (journalSpaceId: string) =>
+  queryOptions({
+    queryKey: journalEntryPinsKey(journalSpaceId),
+    queryFn: async () => unwrapApiResult(await VaultAPI.listJournalEntryPins(journalSpaceId)),
+  });
+
+/**
+ * Pins or unpins an entry in one journal. The pin shows at once and is put
+ * back if the backend refuses it.
+ */
+export function useSetJournalEntryPinnedMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (request: Parameters<typeof VaultAPI.setJournalEntryPinned>[0]) =>
+      unwrapApiResult(await VaultAPI.setJournalEntryPinned(request)),
+    onMutate: async ({ journalSpaceId, conversationId, pinned }) => {
+      const key = journalEntryPinsKey(journalSpaceId);
+      await client.cancelQueries({ queryKey: key });
+      const previous = client.getQueryData<string[]>(key);
+      client.setQueryData<string[]>(key, (current = []) => {
+        const rest = current.filter((id) => id !== conversationId);
+        return pinned ? [conversationId, ...rest] : rest;
+      });
+      return { previous };
+    },
+    onError: (_error, { journalSpaceId }, context) => {
+      client.setQueryData(journalEntryPinsKey(journalSpaceId), context?.previous);
+    },
+    onSettled: (_data, _error, { journalSpaceId }) =>
+      client.invalidateQueries({ queryKey: journalEntryPinsKey(journalSpaceId) }),
+  });
+}

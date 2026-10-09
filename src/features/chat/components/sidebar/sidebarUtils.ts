@@ -12,65 +12,10 @@ export const formatRoleLabel = (role: string | null | undefined): string => {
       return role ? role.charAt(0).toUpperCase() + role.slice(1) : '';
   }
 };
-export interface SpaceToolPreferences {
-  knowledgeBase: boolean;
-  webSearch: boolean;
-  deepResearchMode: boolean;
-  enabledTools: string[];
-}
-
 export type SpaceKind = 'standard' | 'journal';
 
 export const JOURNAL_SPACE_DEFAULT_ICON = '📓';
 export const JOURNAL_SPACE_DEFAULT_ACCENT = '#aa503d'; // Default notebook cover accent; saved custom colors are preserved.
-
-export const buildSpaceToolPreferencesJson = ({
-  knowledgeBase,
-  webSearch,
-  deepResearchMode,
-}: {
-  knowledgeBase: boolean;
-  webSearch: boolean;
-  deepResearchMode: boolean;
-}): string =>
-  JSON.stringify({
-    knowledgeBase,
-    webSearch,
-    deepResearchMode,
-    enabledTools: webSearch ? ['web_search', 'fetch_url_content'] : [],
-  });
-
-export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferences => {
-  if (!raw) {
-    return { knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const knowledgeBase =
-      typeof parsed.knowledgeBase === 'boolean'
-        ? parsed.knowledgeBase
-        : (typeof parsed.knowledge_base === 'boolean' ? parsed.knowledge_base : false);
-    const webSearch =
-      typeof parsed.webSearch === 'boolean'
-        ? parsed.webSearch
-        : (typeof parsed.web_search === 'boolean' ? parsed.web_search : false);
-    const deepResearchMode =
-      typeof parsed.deepResearchMode === 'boolean'
-        ? parsed.deepResearchMode
-        : (typeof parsed.deep_research_mode === 'boolean' ? parsed.deep_research_mode : false);
-    const enabledToolsRaw =
-      (Array.isArray(parsed.enabledTools) ? parsed.enabledTools : undefined) ??
-      (Array.isArray(parsed.enabled_tools) ? parsed.enabled_tools : undefined);
-    const enabledTools = enabledToolsRaw
-      ? [...new Set(enabledToolsRaw.filter((tool): tool is string => typeof tool === 'string').map((tool) => tool.trim()).filter(Boolean))]
-      : (webSearch ? ['web_search', 'fetch_url_content'] : []);
-
-    return { knowledgeBase, webSearch, deepResearchMode, enabledTools };
-  } catch {
-    return { knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
-  }
-};
 
 export const RELATIVE_UNIT_SUFFIX: Record<string, string> = {
   second: 's',

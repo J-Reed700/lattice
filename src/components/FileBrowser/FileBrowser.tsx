@@ -9,12 +9,12 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { EyeOff, LayoutGrid, Layers, List, ListTree, MessageSquare, PanelRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { isHttpUrl, isWebDocument, pathBasename, typeBucket } from '@/features/files/model/documentMetadata';
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 
 import { AddToCollectionDialog, CollectionDocumentsDialog, RenameCollectionDialog } from './CollectionDialogs';
 import { ContentSearchCache } from './contentSearchCache';
@@ -38,14 +38,15 @@ import {
 import { useCustomCollectionActions } from '../../hooks/queries/useCustomCollectionsQuery';
 import { useIndexedFoldersQuery } from '../../hooks/queries/useIndexedFoldersQuery';
 import {
-  LIBRARY_DOCUMENTS_QUERY_KEY,
-  useLibraryDocumentsQuery,
-} from '../../hooks/queries/useLibraryDocumentsQuery';
+  openDocumentFile,
+  readDocumentText,
+  resolveDocumentPath,
+  useLibraryDocumentActions,
+} from '../../hooks/queries/useLibraryDocumentActions';
+import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useRegisterPaletteCommands } from '../../hooks/useRegisterPaletteCommands';
-import VaultAPI from '../../lib/api';
 import { filterLibraryDocuments, useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { toast } from '../../stores/toastStore';
-import { type ConversationSpaceDto } from '../../types';
 import { type CustomCollection, type DocumentMetadata, type SortField, type SortOrder } from '../../types/fileBrowser';
 import { isSupportedFileType } from '../../utils/fileTypeDetector';
 import { handleAsyncEvent } from '../../utils/promiseHandlers';
@@ -102,6 +103,8 @@ const canSearchByContent = (doc: DocumentMetadata): boolean => {
   return !NON_TEXT_FILE_TYPES.has(normalizedFileType);
 };
 
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 const plural = (count: number, noun: string): string =>
   `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
 
@@ -155,12 +158,20 @@ export function FileBrowser() {
   const [savedSearchNameDialogMode, setSavedSearchNameDialogMode] = useState<SavedSearchNameDialogMode | null>(null);
   const [savedSearchNameDialogValue, setSavedSearchNameDialogValue] = useState('');
   const [savedSearchNameDialogTargetId, setSavedSearchNameDialogTargetId] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const bulkDeleteCancelled = useRef(false);
   const [deleteProgress, setDeleteProgress] = useState(0);
-  const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
-  const [isLoadingSpaces, setIsLoadingSpaces] = useState(false);
-  const [isAssigningSpace, setIsAssigningSpace] = useState(false);
+  const documentActions = useLibraryDocumentActions();
+  const isDeleting = documentActions.deleteDocuments.isPending;
+  const isAssigningSpace = documentActions.addToSpace.isPending;
+  const spacesQuery = useSpacesQuery();
+  // Open spaces first, then archived ones, each by name.
+  const spaces = useMemo(
+    () => (spacesQuery.data ?? [])
+      .slice()
+      .sort((a, b) => Number(a.isArchived) - Number(b.isArchived) || a.name.localeCompare(b.name)),
+    [spacesQuery.data]
+  );
+  const isLoadingSpaces = spacesQuery.isLoading;
   const [collectionSelection, setCollectionSelection] = useState<string[] | null>(null);
   const [addDocumentsCollectionId, setAddDocumentsCollectionId] = useState<string | null>(null);
   const [renameCollection, setRenameCollection] = useState<CustomCollection | null>(null);
@@ -170,36 +181,6 @@ export function FileBrowser() {
   const contentSearchSequenceRef = useRef(0);
 
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSpaces = async () => {
-      setIsLoadingSpaces(true);
-      const result = await VaultAPI.listConversationSpaces();
-
-      if (cancelled) return;
-
-      if (result.ok) {
-        setSpaces(
-          result.data
-            .slice()
-            .sort((a, b) => Number(a.isArchived) - Number(b.isArchived) || a.name.localeCompare(b.name))
-        );
-      } else {
-        setSpaces([]);
-      }
-
-      setIsLoadingSpaces(false);
-    };
-
-    void loadSpaces();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const currentIds = new Set(documents.map(doc => doc.id));
@@ -334,7 +315,7 @@ export function FileBrowser() {
               return cachedContent.includes(normalizedSearchQuery) ? doc.id : null;
             }
 
-            const result = await VaultAPI.readFileContent(doc.filePath);
+            const result = await readDocumentText(doc.filePath);
             if (!result.ok) {
               return null;
             }
@@ -390,7 +371,7 @@ export function FileBrowser() {
         return;
       }
 
-      const webOpen = await VaultAPI.openFileById(doc.id);
+      const webOpen = await openDocumentFile(doc.id);
       if (!webOpen.ok) {
         toast.error('Failed to open web article', { message: webOpen.error });
         return;
@@ -408,25 +389,21 @@ export function FileBrowser() {
         return;
       }
 
-      const resolvedPath = await VaultAPI.getFilePathById(doc.id);
-      if (resolvedPath.ok) {
-        setViewerFilePath(resolvedPath.data);
+      const resolvedPath = await resolveDocumentPath(doc);
+      if (resolvedPath) {
+        setViewerFilePath(resolvedPath);
         return;
       }
 
-      toast.error('Failed to resolve file path', { message: resolvedPath.error });
+      toast.error('Failed to resolve file path', { message: 'No file path for this document.' });
       return;
     }
 
-    const openById = await VaultAPI.openFileById(doc.id);
+    const openById = await openDocumentFile(doc.id);
     if (!openById.ok) {
       toast.error('Failed to open file', { message: openById.error });
     }
   }, [setFocusedDocument]);
-
-  const invalidateLibrary = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
-  }, [queryClient]);
 
   const askAbout = useCallback(
     (doc: DocumentMetadata) => {
@@ -435,48 +412,30 @@ export function FileBrowser() {
     [navigate]
   );
 
-  /** An absolute local path, resolving through the backend when needed. */
-  const resolveDocumentPath = useCallback(async (doc: DocumentMetadata): Promise<string | null> => {
-    if (!isHttpUrl(doc.filePath) && isAbsolutePath(doc.filePath)) return doc.filePath;
-    const result = await VaultAPI.getFilePathById(doc.id);
-    return result.ok ? result.data : null;
-  }, []);
+  const { reindex, removeFromIndex: unindex, addToSpace, deleteDocuments } = documentActions;
 
   const reindexDocument = useCallback(
     async (doc: DocumentMetadata) => {
-      const path = await resolveDocumentPath(doc);
-      if (!path) {
-        toast.error(`Couldn't reindex ${doc.fileName}`, { message: 'No file path for this document.' });
-        return;
-      }
-      const result = await VaultAPI.reindexFile(path);
-      if (result.ok) {
+      try {
+        await reindex.mutateAsync(doc);
         toast.success(`Reindexing ${doc.fileName}`);
-      } else {
-        toast.error(`Couldn't reindex ${doc.fileName}`, { message: result.error });
+      } catch (error) {
+        toast.error(`Couldn't reindex ${doc.fileName}`, { message: errorMessage(error) });
       }
     },
-    [resolveDocumentPath]
+    [reindex]
   );
 
   const removeFromIndex = useCallback(
     async (doc: DocumentMetadata) => {
-      const path = await resolveDocumentPath(doc);
-      if (!path) {
-        toast.error(`Couldn't remove ${doc.fileName} from the index`, {
-          message: 'No file path for this document.',
-        });
-        return;
-      }
-      const result = await VaultAPI.removeIndexedFile(path);
-      if (result.ok) {
+      try {
+        await unindex.mutateAsync(doc);
         toast.success(`Removed ${doc.fileName} from the index`);
-        invalidateLibrary();
-      } else {
-        toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: result.error });
+      } catch (error) {
+        toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: errorMessage(error) });
       }
     },
-    [invalidateLibrary, resolveDocumentPath]
+    [unindex]
   );
 
   const handleFindThemes = useCallback(() => {
@@ -709,66 +668,46 @@ export function FileBrowser() {
       return;
     }
 
-    setIsAssigningSpace(true);
     try {
-      const result = await VaultAPI.setDocumentsSpaceMembership(selectedIds, spaceId, true);
-      if (result.ok) {
-        const spaceName = spaces.find((space) => space.id === spaceId)?.name ?? 'space';
-        toast.success(`${plural(selectedIds.length, 'document')} added to ${spaceName}`);
-        clearSelection();
-      } else {
-        toast.error('Failed to add documents to space', { message: result.error });
-      }
+      await addToSpace.mutateAsync({ documentIds: selectedIds, spaceId });
+      const spaceName = spaces.find((space) => space.id === spaceId)?.name ?? 'space';
+      toast.success(`${plural(selectedIds.length, 'document')} added to ${spaceName}`);
+      clearSelection();
     } catch (error) {
-      toast.error('Failed to add documents to space', { message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setIsAssigningSpace(false);
+      toast.error('Failed to add documents to space', { message: errorMessage(error) });
     }
-  }, [clearSelection, selectedDocumentIds, spaces]);
+  }, [addToSpace, clearSelection, selectedDocumentIds, spaces]);
 
   const executeBulkDelete = useCallback(async () => {
     if (!pendingBulkDelete || isDeleting) return;
 
     bulkDeleteCancelled.current = false;
     setDeleteProgress(0);
-    setIsDeleting(true);
-
-    let successCount = 0;
-    let errorCount = 0;
-    const errors: string[] = [];
 
     try {
-      for (const docId of pendingBulkDelete.ids) {
-        if (bulkDeleteCancelled.current) break;
-        const result = await VaultAPI.deleteDocument(docId);
-        if (result.ok) {
-          successCount++;
-        } else {
-          errorCount++;
-          errors.push(result.error || 'Unknown error');
-        }
-        setDeleteProgress(successCount + errorCount);
-      }
+      const { deleted, errors } = await deleteDocuments.mutateAsync({
+        ids: pendingBulkDelete.ids,
+        shouldStop: () => bulkDeleteCancelled.current,
+        onProgress: setDeleteProgress,
+      });
 
-      if (successCount > 0) {
-        toast.success(`${plural(successCount, 'document')} deleted`);
+      if (deleted > 0) {
+        toast.success(`${plural(deleted, 'document')} deleted`);
         clearSelection();
       }
 
-      if (errorCount > 0) {
-        toast.error(`Failed to delete ${plural(errorCount, 'document')}`, {
+      if (errors.length > 0) {
+        toast.error(`Failed to delete ${plural(errors.length, 'document')}`, {
           message: errors.slice(0, 3).join(', ') + (errors.length > 3 ? '…' : ''),
         });
       }
 
     } catch (error) {
-      toast.error('Deletion stopped', { message: error instanceof Error ? error.message : String(error) });
+      toast.error('Deletion stopped', { message: errorMessage(error) });
     } finally {
-      setIsDeleting(false);
       setPendingBulkDelete(null);
-      void refreshFiles();
     }
-  }, [pendingBulkDelete, isDeleting, clearSelection, refreshFiles]);
+  }, [pendingBulkDelete, isDeleting, clearSelection, deleteDocuments]);
 
   const handleRename = useCallback((doc: DocumentMetadata) => {
     setRenameDocument(doc);
@@ -785,17 +724,11 @@ export function FileBrowser() {
   const executeDelete = useCallback(async () => {
     if (!pendingDeleteDoc) return;
 
-    setIsDeleting(true);
-    try {
-      const result = await VaultAPI.deleteDocument(pendingDeleteDoc.id);
-      if (!result.ok) throw new Error(result.error || 'Failed to delete document');
-      toast.success('Document deleted');
-      await refreshFiles();
-      setPendingDeleteDoc(null);
-    } finally {
-      setIsDeleting(false);
-    }
-  }, [pendingDeleteDoc, refreshFiles]);
+    const { errors } = await deleteDocuments.mutateAsync({ ids: [pendingDeleteDoc.id] });
+    if (errors.length > 0) throw new Error(errors[0]);
+    toast.success('Document deleted');
+    setPendingDeleteDoc(null);
+  }, [deleteDocuments, pendingDeleteDoc]);
 
   const viewProps = {
     onFileOpen: handleAsyncEvent(handleFileOpen),
@@ -985,7 +918,6 @@ export function FileBrowser() {
           }}
           onRename={handleRename}
           onDelete={handleAsyncEvent(handleDelete)}
-          onIndexChanged={invalidateLibrary}
           onAddToCollection={doc => setCollectionSelection([doc.id])}
           onRemoveFromCollection={activeCollection?.kind === 'manual' && activeCollection.documentIds.includes(contextMenuDocument.id)
             ? doc => handleRemoveFromCollection([doc.id]) : undefined}

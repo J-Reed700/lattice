@@ -1,8 +1,10 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
+import { useExplorerIndexStatusEvents } from '@/features/explorer/api/queries';
+import type { FolderIndexStatus } from '@/stores/explorerStore';
 
 import { describeFolderChip, openedAgo } from '../ExplorerFolders';
 import { ExplorerStart } from '../ExplorerStart';
@@ -20,8 +22,8 @@ const mocks = vi.hoisted(() => ({
   listeners: new Set<(event: { payload: unknown }) => void>(),
 }));
 
-vi.mock('@/lib/api', () => ({
-  VaultAPI: {
+vi.mock('@/lib/api', () => {
+  const api = {
     explorerFoldersList: mocks.list,
     explorerFolderRename: mocks.rename,
     explorerFolderSetPinned: mocks.setPinned,
@@ -29,8 +31,9 @@ vi.mock('@/lib/api', () => ({
     explorerFolderRemove: mocks.remove,
     explorerFolderSetSettings: mocks.saveSettings,
     listConversationSpaces: mocks.spaces,
-  },
-}));
+  };
+  return { VaultAPI: api, default: api };
+});
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((_name: string, handler: (event: { payload: unknown }) => void) => {
     mocks.listeners.add(handler);
@@ -70,6 +73,7 @@ function folder(name: string, overrides: Partial<ExplorerFolder> = {}): Explorer
     index: index(),
     instructions: null,
     spaceId: 'space_general',
+    lastThreadId: null,
     ...overrides,
   };
 }
@@ -91,8 +95,20 @@ function listed(folders: ExplorerFolder[]) {
   return { ok: true, data: { home: HOME, folders } };
 }
 
+/** The Explorer page's one status listener. */
+function StatusEvents() {
+  useExplorerIndexStatusEvents();
+  return null;
+}
+
 function showStart(onOpen = vi.fn()) {
-  render(<ExplorerStart opening={null} onChoose={vi.fn()} onOpen={onOpen} />);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <StatusEvents />
+      <ExplorerStart opening={null} onChoose={vi.fn()} onOpen={onOpen} />
+    </QueryClientProvider>
+  );
   return onOpen;
 }
 
@@ -234,7 +250,6 @@ describe('Your folders', () => {
 
   it('asks before removing, keeps the threads unless ticked, and leaves the folder on disk', async () => {
     const user = userEvent.setup();
-    useExplorerStore.setState({ threadByRoot: { [CANOPY.root]: 'conv-1' } });
     showStart();
     await screen.findByRole('heading', { name: 'Your folders' });
 
@@ -259,7 +274,6 @@ describe('Your folders', () => {
     expect(mocks.remove).toHaveBeenCalledWith(CANOPY.root, true);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.queryByText('canopy-logger')).not.toBeInTheDocument();
-    expect(useExplorerStore.getState().threadByRoot[CANOPY.root]).toBeUndefined();
   });
 
   it('edits a folder’s system prompt and keeps its space', async () => {
@@ -352,8 +366,8 @@ describe('Your folders', () => {
       message: null,
     };
     act(() => mocks.listeners.forEach((handler) => handler({ payload: event })));
-    expect(rows()[0]).toHaveTextContent('Indexing 60% · ~4 min');
+    await waitFor(() => expect(rows()[0]).toHaveTextContent('Indexing 60% · ~4 min'));
     act(() => mocks.listeners.forEach((handler) => handler({ payload: { ...event, state: 'ready', passagesEmbedded: 10958, etaSeconds: null } })));
-    expect(rows()[0]).toHaveTextContent('Indexed · 1,379 files');
+    await waitFor(() => expect(rows()[0]).toHaveTextContent('Indexed · 1,379 files'));
   });
 });

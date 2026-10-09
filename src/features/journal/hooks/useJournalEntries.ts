@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+
+import {
+  journalEntryPinsKey,
+  journalEntryPinsQueryOptions,
+  useSetJournalEntryPinnedMutation,
+} from '@/features/journal/api/queries';
 import VaultAPI from '@/lib/api';
+import { toast } from '@/stores/toastStore';
 import { useVaultImportStore } from '@/stores/vaultImportStore';
 import type { ConversationDto, MessageDto } from '@/types/api/conversation';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
@@ -86,30 +94,6 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
-function readPinnedEntries(journalSpaceId: string | null): Set<string> {
-  if (!journalSpaceId) return new Set();
-  try {
-    const raw = localStorage.getItem(`journal.pinnedEntries.${journalSpaceId}`);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((v): v is string => typeof v === 'string' && v.length > 0));
-  } catch {
-    return new Set();
-  }
-}
-
-function writePinnedEntries(journalSpaceId: string, ids: Set<string>): void {
-  try {
-    localStorage.setItem(
-      `journal.pinnedEntries.${journalSpaceId}`,
-      JSON.stringify([...ids]),
-    );
-  } catch {
-    // Ignore localStorage failures in constrained environments.
-  }
-}
-
 export interface UseJournalEntriesResult {
   entries: JournalEntrySummary[];
   isLoading: boolean;
@@ -144,9 +128,16 @@ export function useJournalEntries(options: {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<EntryFilter>('all');
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
-  const [pinsSpaceId, setPinsSpaceId] = useState<string | null>(null);
-  const [loadedSpaceId, setLoadedSpaceId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const pinsQuery = useQuery({
+    ...journalEntryPinsQueryOptions(journalSpaceId ?? ''),
+    enabled: Boolean(journalSpaceId),
+  });
+  const pinnedIds = useMemo(
+    () => new Set(journalSpaceId ? pinsQuery.data ?? [] : []),
+    [journalSpaceId, pinsQuery.data],
+  );
+  const setEntryPinned = useSetJournalEntryPinnedMutation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messagesByConversation, setMessagesByConversation] = useState<
     Record<string, SnapshotMessage[]>
@@ -179,13 +170,11 @@ export function useJournalEntries(options: {
     }
     const normalized = parseRawConversations(result.data).map((c) => normalizeConversation(c));
     setEntries(normalized);
-    setLoadedSpaceId(journalSpaceId);
     setIsLoading(false);
   }, [journalSpaceId]);
 
   useEffect(() => {
     setEntries([]);
-    setLoadedSpaceId(null);
     void reload();
     return () => { requestRef.current += 1; };
   }, [reload]);
@@ -198,36 +187,23 @@ export function useJournalEntries(options: {
   }, [importTick, reload]);
 
   useEffect(() => {
-    setPinnedIds(readPinnedEntries(journalSpaceId));
-    setPinsSpaceId(journalSpaceId);
     appliedRequestedEntryKeyRef.current = null;
     setSelectedId(null);
   }, [journalSpaceId]);
 
-  useEffect(() => {
-    if (!journalSpaceId || pinsSpaceId !== journalSpaceId) return;
-    writePinnedEntries(journalSpaceId, pinnedIds);
-  }, [journalSpaceId, pinnedIds, pinsSpaceId]);
-
-  // Sync pinnedIds to only valid conversation IDs
-  useEffect(() => {
-    // An empty list before loading is not evidence that saved pins were deleted.
-    if (!journalSpaceId || loadedSpaceId !== journalSpaceId || pinsSpaceId !== journalSpaceId) return;
-    const valid = new Set(entries.map((e) => e.id));
-    setPinnedIds((current) => {
-      const next = new Set([...current].filter((id) => valid.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [entries, journalSpaceId, loadedSpaceId, pinsSpaceId]);
-
+  const { mutate: mutateEntryPinned } = setEntryPinned;
   const togglePinned = useCallback((conversationId: string) => {
-    setPinnedIds((current) => {
-      const next = new Set(current);
-      if (next.has(conversationId)) next.delete(conversationId);
-      else next.add(conversationId);
-      return next;
-    });
-  }, []);
+    if (!journalSpaceId) return;
+    const pinned = !pinnedIds.has(conversationId);
+    mutateEntryPinned(
+      { journalSpaceId, conversationId, pinned },
+      {
+        onError: (error) => toast.error(pinned ? "Couldn't pin that entry" : "Couldn't unpin that entry", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      },
+    );
+  }, [journalSpaceId, mutateEntryPinned, pinnedIds]);
 
   const sortedEntries = useMemo(() => {
     const withPinned = entries.map((entry, index) => ({
@@ -316,16 +292,15 @@ export function useJournalEntries(options: {
     void loadMessages(selectedId);
   }, [selectedId, messagesByConversation, loadMessages]);
 
+  /** The entry left the journal, and its pin went with it. */
   const removeEntry = useCallback((conversationId: string) => {
     setEntries((current) => current.filter((e) => e.id !== conversationId));
-    setPinnedIds((current) => {
-      if (!current.has(conversationId)) return current;
-      const next = new Set(current);
-      next.delete(conversationId);
-      return next;
-    });
+    if (journalSpaceId) {
+      queryClient.setQueryData<string[]>(journalEntryPinsKey(journalSpaceId), (current) =>
+        current?.filter((id) => id !== conversationId));
+    }
     setSelectedId((current) => (current === conversationId ? null : current));
-  }, []);
+  }, [journalSpaceId, queryClient]);
 
   return {
     entries: filteredEntries,

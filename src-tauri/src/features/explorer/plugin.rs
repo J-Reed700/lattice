@@ -245,6 +245,20 @@ pub async fn explorer_folder_set_pinned(
         .map_err(ApiError::from)
 }
 
+/// Remembers the thread the folder's chat is showing, so reopening the
+/// folder lands on it. The thread must be bound to the folder.
+#[tauri::command]
+#[specta::specta]
+pub async fn explorer_folder_set_last_thread(
+    root: String,
+    conversation_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    folders::remember_thread(container.db_pool(), &root, &conversation_id)
+        .await
+        .map_err(ApiError::from)
+}
+
 /// Sets a folder's system prompt and the space its threads belong to; an
 /// empty prompt is none, and General is the default space. The folder's
 /// threads move to the space. Returns how many threads moved.
@@ -309,6 +323,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             explorer_folders_list,
             explorer_folder_rename,
             explorer_folder_set_pinned,
+            explorer_folder_set_last_thread,
             explorer_folder_set_settings,
             explorer_folder_delete_index,
             explorer_folder_remove

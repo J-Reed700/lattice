@@ -47,6 +47,9 @@ pub struct FolderRow {
     pub instructions: Option<String>,
     /// `None` is General.
     pub space_id: Option<String>,
+    /// The thread the folder's chat last showed; `None` when it has none or
+    /// that thread was deleted.
+    pub last_thread_id: Option<String>,
 }
 
 /// The space a folder with no space of its own files its threads in.
@@ -106,7 +109,8 @@ pub async fn adopt_folder(
 /// Every folder: pinned first, then the most recently opened.
 pub async fn list_folders(pool: &SqlitePool) -> Result<Vec<FolderRow>> {
     let rows = sqlx::query(
-        "SELECT root, name, pinned, added_at, last_opened_at, instructions, space_id
+        "SELECT root, name, pinned, added_at, last_opened_at, instructions, space_id,
+                last_thread_id
          FROM explorer_folders
          ORDER BY pinned DESC, last_opened_at DESC, root",
     )
@@ -123,6 +127,7 @@ pub async fn list_folders(pool: &SqlitePool) -> Result<Vec<FolderRow>> {
             instructions: row.get("instructions"),
             space_id: row.get("space_id"),
             last_opened_at: row.get("last_opened_at"),
+            last_thread_id: row.get("last_thread_id"),
         })
         .collect())
 }
@@ -153,7 +158,30 @@ pub async fn set_folder_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> R
     Ok(())
 }
 
-/// Drops the folder's row. Its threads and index are the caller's business.
+/// Records the thread the folder's chat is showing. A folder not listed yet
+/// is added (named `name`, opened at `now`), as opening it would add it.
+pub async fn set_folder_last_thread(
+    pool: &SqlitePool,
+    root: &str,
+    name: &str,
+    conversation_id: &str,
+    now: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO explorer_folders (root, name, pinned, added_at, last_opened_at, last_thread_id)
+         VALUES (?1, ?2, 0, ?3, ?3, ?4)
+         ON CONFLICT(root) DO UPDATE SET last_thread_id = excluded.last_thread_id",
+    )
+    .bind(root)
+    .bind(name)
+    .bind(now)
+    .bind(conversation_id)
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(folder_error("remember the folder's thread"))
+}
+
 /// Sets a folder's instructions and space, and moves its threads into that
 /// space, in one transaction. `space_id` is `None` for General. Returns how
 /// many threads moved.
@@ -244,6 +272,7 @@ pub async fn move_thread_to_space(
     .map_err(folder_error("move the thread to its folder's space"))
 }
 
+/// Drops the folder's row. Its threads and index are the caller's business.
 pub async fn delete_folder(pool: &SqlitePool, root: &str) -> Result<()> {
     sqlx::query("DELETE FROM explorer_folders WHERE root = ?")
         .bind(root)

@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { bindThreadToFolder, useExplorerFolderMutations, useExplorerFoldersQuery } from '@/features/explorer/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { fetchConversationList } from '@/hooks/queries/conversationQueryData';
-import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
-import { useExplorerStore } from '@/stores/explorerStore';
 import type { Conversation } from '@/types/conversation';
 
 
@@ -34,8 +33,8 @@ function threadTitle(rootName: string): string {
 /**
  * The conversations bound to a folder, and which of them the chat shows.
  *
- * Entering a folder opens the thread last used there, else its most recent
- * one, else a new one. The chat column only ever shows a thread of the
+ * Entering a folder opens the thread last used there (kept on the folder's
+ * row), else its most recent one, else a new one. The chat column only ever shows a thread of the
  * current folder: the send path reads the folder's focus, and a Chat
  * conversation must not receive it.
  */
@@ -45,11 +44,25 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const createConversation = useConversationsStore((state) => state.createConversation);
   const deleteConversation = useConversationsStore((state) => state.deleteConversation);
-  const threadByRoot = useExplorerStore((state) => state.threadByRoot);
-  const rememberThread = useExplorerStore((state) => state.rememberThread);
+  const foldersQuery = useExplorerFoldersQuery();
+  const lastThreadId = foldersQuery.data?.folders.find((folder) => folder.root === root)?.lastThreadId ?? null;
+  const { mutate: saveLastThread } = useExplorerFolderMutations().setLastThread;
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const creatingForRef = useRef<string | null>(null);
+  /** The last thread written per folder, so a write is not repeated while the list refreshes. */
+  const writtenRef = useRef<Record<string, string>>({});
+
+  const rememberThread = useCallback((folder: string, conversationId: string) => {
+    if (lastThreadId === conversationId || writtenRef.current[folder] === conversationId) return;
+    writtenRef.current[folder] = conversationId;
+    // Best effort: losing it only means the folder reopens on its newest thread.
+    saveLastThread({ root: folder, conversationId }, {
+      onError: () => {
+        if (writtenRef.current[folder] === conversationId) delete writtenRef.current[folder];
+      },
+    });
+  }, [lastThreadId, saveLastThread]);
 
   const threadsQuery = useQuery({
     queryKey: threadsKey(root ?? ''),
@@ -74,7 +87,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
       // Made in General, never the Chat sidebar's space: binding it to the
       // folder files it in the folder's own space.
       const id = await createConversation(threadTitle(rootName), GENERAL_SPACE_ID);
-      const bound = await VaultAPI.setConversationExplorerRoot(id, root);
+      const bound = await bindThreadToFolder(id, root);
       if (!bound.ok) throw new Error(bound.error);
       // The create response predates the binding; the send path reads it.
       queryClient.setQueryData<Conversation>(conversationKeys.detail(id), (current) =>
@@ -97,17 +110,18 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
   }, [createConversation, queryClient, rememberThread, root, rootName]);
 
   // Land on this folder's thread whenever the folder or its threads change.
+  // The folders list says which thread that is, so it is waited for.
   useEffect(() => {
-    if (!root || !threadsQuery.isSuccess || creating || error) return;
+    if (!root || !threadsQuery.isSuccess || foldersQuery.isPending || creating || error) return;
     if (activeIsThread) {
       rememberThread(root, activeConversationId!);
       return;
     }
-    const remembered = threads.find((thread) => thread.id === threadByRoot[root]);
+    const remembered = threads.find((thread) => thread.id === lastThreadId);
     const next = remembered ?? threads[0];
     if (next) void selectConversation(next.id);
     else void create();
-  }, [activeConversationId, activeIsThread, create, creating, error, rememberThread, root, selectConversation, threadByRoot, threads, threadsQuery.isSuccess]);
+  }, [activeConversationId, activeIsThread, create, creating, error, foldersQuery.isPending, lastThreadId, rememberThread, root, selectConversation, threads, threadsQuery.isSuccess]);
 
   return {
     threads,

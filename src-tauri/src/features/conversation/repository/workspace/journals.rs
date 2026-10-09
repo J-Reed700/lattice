@@ -325,6 +325,60 @@ impl ConversationRepository {
         })
     }
 
+    /// Pins or unpins one journal entry. Pinning an entry that is already
+    /// pinned keeps when it was first pinned.
+    pub async fn set_journal_entry_pinned(
+        &self,
+        request: SetJournalEntryPinnedRequestDto,
+    ) -> Result<(), AppError> {
+        let journal_space_id = request.journal_space_id.trim();
+        let conversation_id = request.conversation_id.trim();
+        if journal_space_id.is_empty() || conversation_id.is_empty() {
+            return Err(AppError::InvalidInput(
+                "journalSpaceId and conversationId are required".to_string(),
+            ));
+        }
+        ensure_journal_space(&self.pool, journal_space_id).await?;
+
+        let result = sqlx::query(
+            "UPDATE journal_conversation_entries
+             SET pinned_at = CASE WHEN ? THEN COALESCE(pinned_at, ?) ELSE NULL END
+             WHERE journal_space_id = ? AND conversation_id = ?",
+        )
+        .bind(request.pinned)
+        .bind(crate::shared::persistence::timestamps::now_db_timestamp())
+        .bind(journal_space_id)
+        .bind(conversation_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to pin journal entry: {}", e)))?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Conversation {} is not in journal {}",
+                conversation_id, journal_space_id
+            )));
+        }
+        Ok(())
+    }
+
+    /// The conversations pinned in a journal, the most recently pinned first.
+    pub async fn list_journal_entry_pins(
+        &self,
+        journal_space_id: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let journal_space_id = journal_space_id.trim();
+        ensure_journal_space(&self.pool, journal_space_id).await?;
+        sqlx::query_scalar(
+            "SELECT conversation_id FROM journal_conversation_entries
+             WHERE journal_space_id = ? AND pinned_at IS NOT NULL
+             ORDER BY pinned_at DESC, conversation_id",
+        )
+        .bind(journal_space_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))
+    }
+
     pub async fn list_journal_conversations(
         &self,
         query: ListJournalConversationsQueryDto,

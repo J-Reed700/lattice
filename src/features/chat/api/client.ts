@@ -462,6 +462,18 @@ export const chatApi = {
       query,
     }),
 
+  /** The conversations pinned in a journal, the most recently pinned first. */
+  listJournalEntryPins: (
+    journalSpaceId: string,
+  ): Promise<ApiResult<string[]>> =>
+    apiCall('list_journal_entry_pins', { journalSpaceId }),
+
+  /** Pins or unpins an entry in one journal; the Chat sidebar's pin is separate. */
+  setJournalEntryPinned: (
+    request: Wire.SetJournalEntryPinnedRequestDto,
+  ): Promise<ApiResult<void>> =>
+    apiCall('set_journal_entry_pinned', { request }),
+
   /**
    * The documents a chat in this space may read, newest first.
    *

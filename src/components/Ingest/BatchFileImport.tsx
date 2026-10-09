@@ -6,6 +6,7 @@ import { X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/hooks/queries/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/hooks/useIndexing';
 import { useToast } from '@/hooks/useToast';
@@ -14,6 +15,7 @@ import type { SourceGroup } from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { cn } from '@/lib/utils';
 import { useConversationsStore } from '@/stores/conversationsStore';
+import type { ConversationSpaceDto } from '@/types';
 import type { CustomCollection } from '@/types/fileBrowser';
 import {
   filterIndexablePaths,
@@ -43,6 +45,7 @@ interface BatchFileImportProps {
 const isRetryableStatus = (status: FileItem['status']): boolean =>
   status === 'pending' || status === 'error';
 const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
+const EMPTY_SPACES: ConversationSpaceDto[] = [];
 
 export const BatchFileImport: FC<BatchFileImportProps> = ({
   onImportComplete,
@@ -65,18 +68,10 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   const [isCancelling, setIsCancelling] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [spaces, setSpaces] = useState<
-    Array<{
-      id: string;
-      name: string;
-      icon: string | null;
-      description: string | null;
-      isArchived: boolean;
-    }>
-  >([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState('');
   const [selectedCollectionId, setSelectedCollectionId] = useState('');
-  const [isLoadingSpaces, setIsLoadingSpaces] = useState(false);
+  const spacesQuery = useSpacesQuery();
+  const spaces = spacesQuery.data ?? EMPTY_SPACES;
   const [hasCustomizedSpaceScope, setHasCustomizedSpaceScope] = useState(false);
   const restoredImport = useRef(false);
 
@@ -251,38 +246,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       unlisten?.();
     };
   }, [addFilePaths]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSpaces = async () => {
-      setIsLoadingSpaces(true);
-      const result = await VaultAPI.listConversationSpaces();
-      if (cancelled) return;
-
-      if (result.ok) {
-        setSpaces(
-          result.data.map((space) => ({
-            id: space.id,
-            name: space.name,
-            icon: space.icon ?? null,
-            description: space.description ?? null,
-            isArchived: Boolean(space.isArchived),
-          }))
-        );
-      } else {
-        setSpaces([]);
-      }
-
-      setIsLoadingSpaces(false);
-    };
-
-    void loadSpaces();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (hasCustomizedSpaceScope) {
@@ -539,7 +502,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
               setHasCustomizedSpaceScope(true);
               setSelectedSpaceId(event.target.value);
             }}
-            disabled={isImporting || isLoadingSpaces}
+            disabled={isImporting || spacesQuery.isLoading}
             className={settingsFieldClass}
           >
             <option value="">None</option>

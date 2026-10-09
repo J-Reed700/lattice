@@ -1,11 +1,10 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import { VaultAPI } from '@/lib/api';
-import type { ConversationSpaceDto } from '@/types/api/conversation';
 
 
 /** What the dialog edits: a row of "Your folders", or the folder open now. */
@@ -32,33 +31,23 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  * memory it reads; the instructions stand in for that space's prompt.
  */
 export function FolderSettingsDialog({ folder, onCancel, onSave }: FolderSettingsDialogProps) {
-  const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
+  const spacesQuery = useSpacesQuery();
   const [instructions, setInstructions] = useState(folder.instructions ?? '');
   const [spaceId, setSpaceId] = useState(folder.spaceId);
   const [saving, setSaving] = useState(false);
   const spaceLabelId = useId();
   const instructionsId = useId();
 
-  // Read fresh: a space made in Chat a moment ago is offered too.
-  useEffect(() => {
-    let live = true;
-    void VaultAPI.listConversationSpaces().then((result) => {
-      if (live && result.ok) setSpaces(result.data);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-
   // General first, then the open spaces in their sidebar order. An archived
   // space the folder already uses stays listed so the choice isn't lost.
   const options = useMemo(() => {
+    const spaces = spacesQuery.data ?? [];
     const general = spaces.find((space) => space.id === GENERAL_SPACE_ID);
     const rest = spaces
       .filter((space) => space.id !== GENERAL_SPACE_ID && (!space.isArchived || space.id === folder.spaceId))
       .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     return [{ id: GENERAL_SPACE_ID, name: general?.name ?? 'General' }, ...rest.map(({ id, name }) => ({ id, name }))];
-  }, [folder.spaceId, spaces]);
+  }, [folder.spaceId, spacesQuery.data]);
 
   const spaceChanged = spaceId !== folder.spaceId;
   const unchanged = !spaceChanged && instructions.trim() === (folder.instructions ?? '').trim();

@@ -13,7 +13,7 @@
  * - Delete file
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import {
   Check,
@@ -31,12 +31,19 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import VaultAPI from '../../lib/api';
+import { useSpacesQuery } from '../../features/spaces/api/queries';
+import {
+  openDocumentFile,
+  showDocumentInFolder,
+  useDocumentSpaceMembershipsQuery,
+  useLibraryDocumentActions,
+} from '../../hooks/queries/useLibraryDocumentActions';
 import { toast } from '../../stores/toastStore';
 import { type DocumentMetadata } from '../../types/fileBrowser';
 import { isSupportedFileType } from '../../utils/fileTypeDetector';
 
-import type { ConversationSpaceDto } from '../../types';
+
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 interface ContextMenuProps {
   doc: DocumentMetadata;
@@ -45,8 +52,6 @@ interface ContextMenuProps {
   onViewInRecall?: (doc: DocumentMetadata) => void;
   onRename?: (doc: DocumentMetadata) => void;
   onDelete?: (doc: DocumentMetadata) => void;
-  /** Called after the document leaves the index, so the list can refetch. */
-  onIndexChanged?: () => void;
   onAddToCollection?: (_doc: DocumentMetadata) => void;
   onRemoveFromCollection?: (_doc: DocumentMetadata) => void;
 }
@@ -58,16 +63,27 @@ export function ContextMenu({
   onViewInRecall,
   onRename,
   onDelete,
-  onIndexChanged,
   onAddToCollection,
   onRemoveFromCollection,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
-  const [assignedSpaceIds, setAssignedSpaceIds] = useState<Set<string>>(new Set());
-  const [isLoadingSpaces, setIsLoadingSpaces] = useState(true);
-  const [savingSpaceId, setSavingSpaceId] = useState<string | null>(null);
+  const spacesQuery = useSpacesQuery();
+  const membershipsQuery = useDocumentSpaceMembershipsQuery(doc.id);
+  const { reindex, removeFromIndex, setSpaceMembership } = useLibraryDocumentActions();
+  // Open spaces first, then archived ones, each by name.
+  const spaces = useMemo(
+    () => (spacesQuery.data ?? [])
+      .slice()
+      .sort((a, b) => Number(a.isArchived) - Number(b.isArchived) || a.name.localeCompare(b.name)),
+    [spacesQuery.data]
+  );
+  const assignedSpaceIds = useMemo(
+    () => new Set((membershipsQuery.data ?? []).map((membership) => membership.spaceId)),
+    [membershipsQuery.data]
+  );
+  const isLoadingSpaces = spacesQuery.isPending || membershipsQuery.isPending;
+  const savingSpaceId = setSpaceMembership.isPending ? setSpaceMembership.variables?.spaceId ?? null : null;
   const normalizedCategory = doc.category.toLowerCase().replace(/[_-]+/g, ' ').trim();
   const isWebDocument =
     normalizedCategory.includes('web article') ||
@@ -100,45 +116,6 @@ export function ContextMenu({
     };
   }, [onClose]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSpaceScope = async () => {
-      setIsLoadingSpaces(true);
-
-      const [spacesResult, membershipsResult] = await Promise.all([
-        VaultAPI.listConversationSpaces(),
-        VaultAPI.listDocumentSpaceMemberships(doc.id),
-      ]);
-
-      if (cancelled) return;
-
-      if (spacesResult.ok) {
-        setSpaces(
-          spacesResult.data
-            .slice()
-            .sort((a, b) => Number(a.isArchived) - Number(b.isArchived) || a.name.localeCompare(b.name))
-        );
-      } else {
-        setSpaces([]);
-      }
-
-      if (membershipsResult.ok) {
-        setAssignedSpaceIds(new Set(membershipsResult.data.map((membership) => membership.spaceId)));
-      } else {
-        setAssignedSpaceIds(new Set());
-      }
-
-      setIsLoadingSpaces(false);
-    };
-
-    void loadSpaceScope();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [doc.id]);
-
   // Adjust position to keep menu on screen
   useEffect(() => {
     if (menuRef.current) {
@@ -163,37 +140,14 @@ export function ContextMenu({
   }, [position, spaces.length, isLoadingSpaces]);
 
   const toggleSpaceAssignment = async (spaceId: string) => {
-    const currentlyAssigned = assignedSpaceIds.has(spaceId);
-    setSavingSpaceId(spaceId);
-
-    const result = await VaultAPI.setDocumentSpaceMembership(doc.id, spaceId, !currentlyAssigned);
-    if (!result.ok) {
-      toast.error('Failed to update document scope', { message: result.error });
-      setSavingSpaceId(null);
-      return;
+    try {
+      await setSpaceMembership.mutateAsync({ documentId: doc.id, spaceId, assigned: !assignedSpaceIds.has(spaceId) });
+    } catch (error) {
+      toast.error('Failed to update document scope', { message: errorMessage(error) });
     }
-
-    setAssignedSpaceIds((prev) => {
-      const next = new Set(prev);
-      if (currentlyAssigned) {
-        next.delete(spaceId);
-      } else {
-        next.add(spaceId);
-      }
-      return next;
-    });
-
-    setSavingSpaceId(null);
   };
 
   const canPreview = isSupportedFileType(doc.filePath) || isWebDocument;
-
-  /** An absolute local path, resolving through the backend when the row only carries an id. */
-  const resolvePath = async (): Promise<string | null> => {
-    if (!/^https?:\/\//i.test(doc.filePath) && doc.filePath.startsWith('/')) return doc.filePath;
-    const result = await VaultAPI.getFilePathById(doc.id);
-    return result.ok ? result.data : null;
-  };
 
   const actions = [
     ...(onAddToCollection ? [{
@@ -235,7 +189,7 @@ export function ContextMenu({
       label: 'Open in system viewer',
       icon: <ExternalLink className="w-4 h-4" />,
       action: async () => {
-        const result = await VaultAPI.openFileById(doc.id);
+        const result = await openDocumentFile(doc.id);
         if (!result.ok) {
           toast.error('Failed to open file in system viewer', {
             message: result.error,
@@ -254,15 +208,10 @@ export function ContextMenu({
       label: 'Show in folder',
       icon: <FolderOpen className="w-4 h-4" />,
       action: async () => {
-        const pathResult = await VaultAPI.getFilePathById(doc.id);
-        if (!pathResult.ok) {
-          toast.error('Failed to locate file path', { message: pathResult.error });
-          onClose();
-          return;
-        }
-        const result = await VaultAPI.showInFolder(pathResult.data);
-        if (!result.ok) {
-          toast.error('Failed to show in folder', { message: result.error });
+        try {
+          await showDocumentInFolder(doc.id);
+        } catch (error) {
+          toast.error('Failed to show in folder', { message: errorMessage(error) });
         }
         onClose();
       },
@@ -306,17 +255,11 @@ export function ContextMenu({
       label: 'Reindex',
       icon: <RefreshCw className="w-4 h-4" />,
       action: async () => {
-        const path = await resolvePath();
-        if (!path) {
-          toast.error(`Couldn't reindex ${doc.fileName}`, { message: 'No file path for this document.' });
-          onClose();
-          return;
-        }
-        const result = await VaultAPI.reindexFile(path);
-        if (result.ok) {
+        try {
+          await reindex.mutateAsync(doc);
           toast.success(`Reindexing ${doc.fileName}`);
-        } else {
-          toast.error(`Couldn't reindex ${doc.fileName}`, { message: result.error });
+        } catch (error) {
+          toast.error(`Couldn't reindex ${doc.fileName}`, { message: errorMessage(error) });
         }
         onClose();
       },
@@ -334,20 +277,11 @@ export function ContextMenu({
       label: 'Remove from index',
       icon: <EyeOff className="w-4 h-4" />,
       action: async () => {
-        const path = await resolvePath();
-        if (!path) {
-          toast.error(`Couldn't remove ${doc.fileName} from the index`, {
-            message: 'No file path for this document.',
-          });
-          onClose();
-          return;
-        }
-        const result = await VaultAPI.removeIndexedFile(path);
-        if (result.ok) {
+        try {
+          await removeFromIndex.mutateAsync(doc);
           toast.success(`Removed ${doc.fileName} from the index`);
-          onIndexChanged?.();
-        } else {
-          toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: result.error });
+        } catch (error) {
+          toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: errorMessage(error) });
         }
         onClose();
       },

@@ -915,6 +915,12 @@
           "markdownDescription": "Enables the list_journal_conversations command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_journal_entry_pins command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-journal-entry-pins",
+          "markdownDescription": "Enables the list_journal_entry_pins command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_journals command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-list-journals",
@@ -1021,6 +1027,12 @@
           "type": "string",
           "const": "conversation:allow-set-documents-space-membership",
           "markdownDescription": "Enables the set_documents_space_membership command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_journal_entry_pinned command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-set-journal-entry-pinned",
+          "markdownDescription": "Enables the set_journal_entry_pinned command without any pre-configured scope."
         },
         {
           "description": "Enables the synthesize_journal_entries command without any pre-configured scope.",
@@ -1233,6 +1245,12 @@
           "markdownDescription": "Denies the list_journal_conversations command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_journal_entry_pins command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-journal-entry-pins",
+          "markdownDescription": "Denies the list_journal_entry_pins command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_journals command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-list-journals",
@@ -1339,6 +1357,12 @@
           "type": "string",
           "const": "conversation:deny-set-documents-space-membership",
           "markdownDescription": "Denies the set_documents_space_membership command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_journal_entry_pinned command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-set-journal-entry-pinned",
+          "markdownDescription": "Denies the set_journal_entry_pinned command without any pre-configured scope."
         },
         {
           "description": "Denies the synthesize_journal_entries command without any pre-configured scope.",
@@ -3789,6 +3813,12 @@
           "markdownDescription": "Enables the explorer_folder_rename command without any pre-configured scope."
         },
         {
+          "description": "Enables the explorer_folder_set_last_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:allow-explorer-folder-set-last-thread",
+          "markdownDescription": "Enables the explorer_folder_set_last_thread command without any pre-configured scope."
+        },
+        {
           "description": "Enables the explorer_folder_set_pinned command without any pre-configured scope.",
           "type": "string",
           "const": "explorer:allow-explorer-folder-set-pinned",
@@ -3883,6 +3913,12 @@
           "type": "string",
           "const": "explorer:deny-explorer-folder-rename",
           "markdownDescription": "Denies the explorer_folder_rename command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_folder_set_last_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "explorer:deny-explorer-folder-set-last-thread",
+          "markdownDescription": "Denies the explorer_folder_set_last_thread command without any pre-configured scope."
         },
         {
           "description": "Denies the explorer_folder_set_pinned command without any pre-configured scope.",
