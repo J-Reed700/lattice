@@ -5,7 +5,6 @@ use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
-use tauri::State;
 
 /// Exports all indexed documents to HTML format
 ///
@@ -28,19 +27,6 @@ use tauri::State;
 /// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output directory path (directory traversal detected)
 /// * `AppError::Other` - Path exists but is not a directory, or filesystem errors
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Export documents to HTML
-/// const fileCount = await invoke<number>('export_html', {
-///   outputDir: '/Users/example/exports/lattice-html'
-/// });
-///
-/// console.log(`Exported ${fileCount} HTML files`);
-/// ```
 ///
 /// # HTML Structure
 ///
@@ -203,14 +189,4 @@ pub async fn export_html_impl(
     }
 
     result
-}
-
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn export_html(
-    output_dir: String,
-    container: State<'_, Container>,
-) -> Result<usize, AppError> {
-    export_html_impl(output_dir, container.inner()).await
 }

@@ -1,110 +1,10 @@
-//! Mock implementations for testing
-//!
-//! This module provides mock implementations of service traits.
+//! Mock search enrichment service for testing.
 
-#[cfg(test)]
-use crate::features::search::engine::service::SearchResult;
-#[cfg(test)]
-use crate::infrastructure::services::traits::*;
-#[cfg(test)]
+use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
-#[cfg(test)]
 use std::sync::{Arc, RwLock};
 
-#[cfg(test)]
-/// Mock context manager for testing
-///
-/// Simulates context management without actual token counting complexity.
-/// Allows testing of context formatting and composition.
-/// All operations are deterministic and fast.
-pub struct MockContextManager {
-    max_context_tokens: usize,
-}
-
-#[cfg(test)]
-impl MockContextManager {
-    /// Create new mock with default token budget
-    pub fn new() -> Self {
-        Self {
-            max_context_tokens: 4000,
-        }
-    }
-
-    /// Create mock with custom token budget
-    pub fn with_budget(max_context_tokens: usize) -> Self {
-        Self { max_context_tokens }
-    }
-}
-
-#[cfg(test)]
-impl Default for MockContextManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-impl ContextManagerTrait for MockContextManager {
-    fn build_context_for_llm(
-        &self,
-        conversation: &crate::domain::conversation::ConversationAggregate,
-        search_results: Vec<SearchResult>,
-    ) -> Result<crate::infrastructure::services::context_manager::LLMContext> {
-        // Simple mock implementation
-        let system_prompt = self.format_system_context(conversation.system_prompt());
-        let messages = self.format_conversation_history(conversation.messages());
-        let document_context = self.format_document_context(search_results, 2000)?;
-
-        // Simplified token counting
-        let total_tokens = crate::features::qa::engine::tokenizer::count_tokens(&system_prompt)
-            + messages
-                .iter()
-                .map(|m| crate::features::qa::engine::tokenizer::count_tokens(&m.content))
-                .sum::<usize>()
-            + crate::features::qa::engine::tokenizer::count_tokens(&document_context);
-
-        Ok(
-            crate::infrastructure::services::context_manager::LLMContext {
-                system_prompt,
-                messages,
-                document_context,
-                total_tokens,
-            },
-        )
-    }
-
-    fn format_system_context(&self, system_prompt: Option<&str>) -> String {
-        crate::infrastructure::services::context_manager::ContextManager::format_system_context(
-            system_prompt,
-        )
-    }
-
-    fn format_document_context(
-        &self,
-        search_results: Vec<SearchResult>,
-        max_tokens: usize,
-    ) -> Result<String> {
-        crate::infrastructure::services::context_manager::ContextManager::format_document_context(
-            search_results,
-            max_tokens,
-        )
-    }
-
-    fn format_conversation_history(
-        &self,
-        messages: &[crate::domain::conversation::ConversationMessage],
-    ) -> Vec<crate::domain::conversation::LLMMessage> {
-        crate::infrastructure::services::context_manager::ContextManager::format_conversation_history(messages)
-    }
-
-    fn max_context_tokens(&self) -> usize {
-        self.max_context_tokens
-    }
-}
-
-#[cfg(test)]
 /// Mock search enrichment service for testing
 ///
 /// Simulates search result enrichment without database queries.
@@ -121,7 +21,6 @@ pub struct MockSearchEnrichmentService {
     >,
 }
 
-#[cfg(test)]
 impl MockSearchEnrichmentService {
     /// Create new mock service with empty metadata
     pub fn new() -> Self {
@@ -171,7 +70,6 @@ impl MockSearchEnrichmentService {
     }
 }
 
-#[cfg(test)]
 impl Default for MockSearchEnrichmentService {
     fn default() -> Self {
         Self::new()
@@ -179,7 +77,6 @@ impl Default for MockSearchEnrichmentService {
 }
 
 #[async_trait]
-#[cfg(test)]
 impl SearchEnrichmentServiceTrait for MockSearchEnrichmentService {
     async fn enrich_results(
         &self,

@@ -69,15 +69,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
     context
 }
 
-/// Creates the DDD Container (new architecture).
-///
-/// This is the NEW DDD-aligned container that will replace the legacy one.
-/// It follows proper layering: Domain → Application → Infrastructure → Interfaces.
-///
-/// During migration:
-///   - Legacy commands use legacy ServiceContainer
-///
-/// Creates the unified DI Container (pure DDD architecture).
+/// Creates the unified DI Container.
 ///
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
@@ -214,11 +206,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         .await
         .map_err(|error| format!("Failed to initialize local audit persistence: {error}"))?;
         let security_context = initialize_security_layer();
-
-        // During DDD migration, we run BOTH containers:
-        // 1. Legacy ServiceContainer - for existing commands
-        // 2. DDD Container - for new DDD-aligned commands
-        // This allows gradual migration without breaking existing functionality.
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
 

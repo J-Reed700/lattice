@@ -1,68 +1,13 @@
-//! Audit contracts exercised through public commands, the logger, and real sinks.
+//! Audit contracts exercised through the logger and real sinks.
 //! These tests use temporary storage and never access the OS credential store.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use lattice::features::credentials::commands;
 use lattice::infrastructure::audit::sinks::{memory::MemoryAuditSink, sqlite::SqliteAuditSink};
 use lattice::infrastructure::audit::{
-    get_audit_logger, AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink,
+    AuditAction, AuditEvent, AuditLogger, AuditResult, AuditSink,
 };
-use lattice::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
-use lattice::interfaces::di::Container;
+use lattice::infrastructure::persistence::database::DatabaseConnection;
 use std::{collections::HashSet, sync::Arc};
-
-#[tokio::test]
-async fn rejected_credential_command_records_failure_without_logging_secret() {
-    let directory = tempfile::tempdir().unwrap();
-    let database = Arc::new(
-        DatabaseConnection::new(directory.path().join("app.db"))
-            .await
-            .unwrap(),
-    );
-    initialize_database(database.pool()).await.unwrap();
-    let pool = database.pool().clone();
-    let container = Container::new(
-        pool.clone(),
-        database,
-        None,
-        "http://127.0.0.1:1",
-        "test-model",
-        directory.path().to_path_buf(),
-    )
-    .await
-    .unwrap();
-    let audit_pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    let sink = SqliteAuditSink::from_pool(audit_pool.clone())
-        .await
-        .unwrap();
-    get_audit_logger().add_sink(Box::new(sink)).await;
-    let service = format!("unsupported-{}", uuid::Uuid::new_v4());
-    let secret = "test-secret-must-not-appear-in-audit";
-    let result = commands::set_api_key_impl(&container, service.clone(), secret.into()).await;
-    assert!(result.is_err());
-    let events = SqliteAuditSink::from_pool(audit_pool)
-        .await
-        .unwrap()
-        .query(10, 0)
-        .await
-        .unwrap();
-    let event = events
-        .iter()
-        .find(|event| {
-            event.action == AuditAction::CredentialStored
-                && event.metadata.get("operation").map(String::as_str) == Some("set_api_key")
-        })
-        .unwrap();
-    assert_eq!(event.action, AuditAction::CredentialStored);
-    assert!(event.result.is_failure());
-    assert_eq!(event.resource_id, None);
-    assert_eq!(event.user_id, None);
-    assert_eq!(
-        event.metadata.get("operation").map(String::as_str),
-        Some("set_api_key")
-    );
-    assert!(!serde_json::to_string(event).unwrap().contains(secret));
-}
 
 #[tokio::test]
 async fn sqlite_round_trip_preserves_safe_fields_and_redacts_sensitive_fields() {

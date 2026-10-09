@@ -1293,7 +1293,7 @@ LATTICE_LESSON_FIXTURE="$PWD/src-tauri/src/features/learning/lessons/live_fixtur
 LATTICE_LESSON_CALLS=/path/to/new-test-directory \
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
   live_small_lesson_reaches_ready --no-default-features \
-  --features search,indexing,qa,extraction -- --ignored --nocapture
+  -- --ignored --nocapture
 ```
 
 Success requires a completed job and a published `ready` lesson, read through a

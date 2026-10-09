@@ -1,9 +1,8 @@
 //! QA plugin.
 //!
-//! Thin plugin wrapper for question-answering commands with Retrieval-Augmented Generation (RAG).
-//! Delegates all business logic to `interfaces/commands/domains/qa_commands.rs`.
+//! Thin plugin wrapper for the chat surface's LLM health check and starters.
 
-use crate::features::qa::commands::{check_llm_health, get_qa_model};
+use crate::features::qa::commands::check_llm_health;
 use crate::features::qa::starters_dto::ChatStartersDto;
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
@@ -12,21 +11,10 @@ use tauri::{plugin::Builder, Runtime, State};
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     Builder::new("qa")
         .invoke_handler(tauri::generate_handler![
-            get_qa_model_wrapper,
             check_llm_health_wrapper,
             generate_chat_starters_wrapper,
         ])
         .build()
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_qa_model_wrapper(container: State<'_, Container>) -> Result<String, ApiError> {
-    get_qa_model(container).await.map_err(|e| ApiError {
-        code: crate::shared::ipc::ErrorCode::InternalError,
-        message: e.to_string(),
-        details: None,
-    })
 }
 
 #[tauri::command]

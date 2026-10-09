@@ -91,7 +91,6 @@ fn main() {
                     "get_download_status",
                     "is_model_already_downloaded",
                     "set_active_embedding_model",
-                    "set_active_inference_model",
                     "set_active_chat_model",
                     "set_active_utility_model",
                     "warm_up_active_chat_model",
@@ -102,11 +101,7 @@ fn main() {
                     "clear_active_chat_model",
                     "clear_active_embedding_model",
                     "clear_active_utility_model",
-                    "validate_model_compatibility",
                     "get_model_info",
-                    "export_model",
-                    "import_model",
-                    "refresh_model_cache",
                     "detect_system_capabilities",
                     "get_compatible_models",
                     "get_all_recommended_models",
@@ -142,7 +137,6 @@ fn main() {
                     "delete_conversation",
                     "get_conversation_messages",
                     "rename_conversation",
-                    "chat_with_conversation_wrapper",
                     "chat_with_conversation",
                     "create_conversation_space",
                     "list_conversation_spaces",
@@ -201,8 +195,6 @@ fn main() {
                     "read_file_content",
                     "read_file_bytes",
                     "get_file_content",
-                    "update_file_metadata",
-                    "delete_file_index",
                     "remove_indexed_file",
                     "list_indexed_files",
                     "list_all_documents",
@@ -216,7 +208,6 @@ fn main() {
                     "reindex_file",
                     "delete_document",
                     "rename_document",
-                    "validate_file_path",
                     "open_file",
                     "open_file_by_id",
                     "get_file_path_by_id",
@@ -228,7 +219,6 @@ fn main() {
                     "get_corpus_shape",
                     "list_conversations_citing_document",
                     "list_custom_collections",
-                    "import_legacy_custom_collections",
                     "create_custom_collection",
                     "rename_custom_collection",
                     "move_custom_collection",
@@ -257,18 +247,6 @@ fn main() {
                 ]),
             )
             .plugin(
-                "credentials",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "credentials_store",
-                    "credentials_get",
-                    "credentials_delete",
-                    "credentials_has",
-                    "credentials_clear_all",
-                    "credentials_set_endpoint",
-                    "credentials_get_endpoint",
-                ]),
-            )
-            .plugin(
                 "health",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "health_check",
@@ -284,7 +262,6 @@ fn main() {
                     "get_cache_stats",
                     "get_cache_metrics",
                     "clear_search_cache",
-                    "cache_operation",
                 ]),
             )
             .plugin(
@@ -309,11 +286,9 @@ fn main() {
             .plugin(
                 "embeddings",
                 tauri_build::InlinedPlugin::new().commands(&[
-                    "embedding_operation",
                     "generate_embedding",
                     "generate_embeddings_batch",
                     "get_embedding_model_info",
-                    "initialize_models",
                 ]),
             )
             .plugin(
@@ -362,11 +337,8 @@ fn main() {
             )
             .plugin(
                 "qa",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "get_qa_model_wrapper",
-                    "check_llm_health_wrapper",
-                    "generate_chat_starters_wrapper",
-                ]),
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["check_llm_health_wrapper", "generate_chat_starters_wrapper"]),
             )
             .plugin(
                 "batch",

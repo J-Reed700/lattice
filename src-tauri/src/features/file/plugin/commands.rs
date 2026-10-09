@@ -3,7 +3,6 @@
 //! Connects plugin stubs to actual implementations in `interfaces::commands`.
 
 use crate::features::file::commands as file_commands;
-use crate::features::file::dto::UpdateFileMetadataRequestDto;
 use crate::features::indexing::commands as indexing_commands;
 use crate::features::indexing::dto::{
     ChunkingStrategyDto, IndexDirectoryRequestDto, IndexFileRequestDto, IndexFileResponseDto,
@@ -20,12 +19,6 @@ use tauri::State;
 pub struct IndexingStatus {
     pub active: bool,
     pub progress: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct MetadataUpdate {
-    pub tags: Option<Vec<String>>,
-    pub custom_fields: Option<std::collections::HashMap<String, String>>,
 }
 
 fn unwrap_api_result<T>(result: crate::shared::ipc::ApiResult<T>) -> Result<T, ApiError> {
@@ -126,44 +119,7 @@ pub async fn get_file_content(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn update_file_metadata(
-    path: String,
-    metadata: MetadataUpdate,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    if metadata.custom_fields.is_some() {
-        return Err(ApiError {
-            code: ErrorCode::InvalidInput,
-            message: "custom_fields are not supported for file metadata updates".to_string(),
-            details: None,
-        });
-    }
-
-    let repo = container.search.document_repo();
-    let maybe_id = repo.find_id_by_path(&path).await.map_err(|e| ApiError {
-        code: ErrorCode::InternalError,
-        message: e.to_string(),
-        details: None,
-    })?;
-
-    let document_id = maybe_id.ok_or_else(|| ApiError {
-        code: ErrorCode::NotFound,
-        message: format!("Document not found for path: {}", path),
-        details: None,
-    })?;
-
-    let use_case = container.update_file_metadata_use_case();
-    let request = UpdateFileMetadataRequestDto {
-        document_id,
-        tags: metadata.tags,
-    };
-
-    use_case.execute(request).await.map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_file_index(
+pub async fn remove_indexed_file(
     path: String,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
@@ -195,15 +151,6 @@ pub async fn delete_file_index(
         // Idempotent success
         Ok(())
     }
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn remove_indexed_file(
-    path: String,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    delete_file_index(path, container).await
 }
 
 #[tauri::command]
@@ -439,18 +386,6 @@ pub async fn rename_document(
 ) -> Result<RenameDocumentResponseDto, ApiError> {
     let result = indexing_commands::rename_document_impl(&container, document_id, new_name).await;
     unwrap_api_result(result)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn validate_file_path(
-    path: String,
-    container: State<'_, Container>,
-) -> Result<bool, ApiError> {
-    match container.file_access_config().validate_path(&path) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
 }
 
 #[tauri::command]

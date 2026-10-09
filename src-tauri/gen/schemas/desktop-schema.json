@@ -681,12 +681,6 @@
           "markdownDescription": "Denies the retry_failed_items command without any pre-configured scope."
         },
         {
-          "description": "Enables the cache_operation command without any pre-configured scope.",
-          "type": "string",
-          "const": "cache:allow-cache-operation",
-          "markdownDescription": "Enables the cache_operation command without any pre-configured scope."
-        },
-        {
           "description": "Enables the clear_cache command without any pre-configured scope.",
           "type": "string",
           "const": "cache:allow-clear-cache",
@@ -709,12 +703,6 @@
           "type": "string",
           "const": "cache:allow-get-cache-stats",
           "markdownDescription": "Enables the get_cache_stats command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the cache_operation command without any pre-configured scope.",
-          "type": "string",
-          "const": "cache:deny-cache-operation",
-          "markdownDescription": "Denies the cache_operation command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_cache command without any pre-configured scope.",
@@ -793,12 +781,6 @@
           "type": "string",
           "const": "conversation:allow-chat-with-conversation",
           "markdownDescription": "Enables the chat_with_conversation command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the chat_with_conversation_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "conversation:allow-chat-with-conversation-wrapper",
-          "markdownDescription": "Enables the chat_with_conversation_wrapper command without any pre-configured scope."
         },
         {
           "description": "Enables the compact_conversation command without any pre-configured scope.",
@@ -1117,12 +1099,6 @@
           "type": "string",
           "const": "conversation:deny-chat-with-conversation",
           "markdownDescription": "Denies the chat_with_conversation command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the chat_with_conversation_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "conversation:deny-chat-with-conversation-wrapper",
-          "markdownDescription": "Denies the chat_with_conversation_wrapper command without any pre-configured scope."
         },
         {
           "description": "Denies the compact_conversation command without any pre-configured scope.",
@@ -3453,90 +3429,6 @@
           "markdownDescription": "Denies the list_clusters command without any pre-configured scope."
         },
         {
-          "description": "Enables the credentials_clear_all command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-clear-all",
-          "markdownDescription": "Enables the credentials_clear_all command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_delete command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-delete",
-          "markdownDescription": "Enables the credentials_delete command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_get command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-get",
-          "markdownDescription": "Enables the credentials_get command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_get_endpoint command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-get-endpoint",
-          "markdownDescription": "Enables the credentials_get_endpoint command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_has command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-has",
-          "markdownDescription": "Enables the credentials_has command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_set_endpoint command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-set-endpoint",
-          "markdownDescription": "Enables the credentials_set_endpoint command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the credentials_store command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:allow-credentials-store",
-          "markdownDescription": "Enables the credentials_store command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_clear_all command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-clear-all",
-          "markdownDescription": "Denies the credentials_clear_all command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_delete command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-delete",
-          "markdownDescription": "Denies the credentials_delete command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_get command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-get",
-          "markdownDescription": "Denies the credentials_get command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_get_endpoint command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-get-endpoint",
-          "markdownDescription": "Denies the credentials_get_endpoint command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_has command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-has",
-          "markdownDescription": "Denies the credentials_has command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_set_endpoint command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-set-endpoint",
-          "markdownDescription": "Denies the credentials_set_endpoint command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the credentials_store command without any pre-configured scope.",
-          "type": "string",
-          "const": "credentials:deny-credentials-store",
-          "markdownDescription": "Denies the credentials_store command without any pre-configured scope."
-        },
-        {
           "description": "Enables the capture_reference command without any pre-configured scope.",
           "type": "string",
           "const": "dailynotes:allow-capture-reference",
@@ -3843,12 +3735,6 @@
           "markdownDescription": "Denies the start_model_download command without any pre-configured scope."
         },
         {
-          "description": "Enables the embedding_operation command without any pre-configured scope.",
-          "type": "string",
-          "const": "embeddings:allow-embedding-operation",
-          "markdownDescription": "Enables the embedding_operation command without any pre-configured scope."
-        },
-        {
           "description": "Enables the generate_embedding command without any pre-configured scope.",
           "type": "string",
           "const": "embeddings:allow-generate-embedding",
@@ -3867,18 +3753,6 @@
           "markdownDescription": "Enables the get_embedding_model_info command without any pre-configured scope."
         },
         {
-          "description": "Enables the initialize_models command without any pre-configured scope.",
-          "type": "string",
-          "const": "embeddings:allow-initialize-models",
-          "markdownDescription": "Enables the initialize_models command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the embedding_operation command without any pre-configured scope.",
-          "type": "string",
-          "const": "embeddings:deny-embedding-operation",
-          "markdownDescription": "Denies the embedding_operation command without any pre-configured scope."
-        },
-        {
           "description": "Denies the generate_embedding command without any pre-configured scope.",
           "type": "string",
           "const": "embeddings:deny-generate-embedding",
@@ -3895,12 +3769,6 @@
           "type": "string",
           "const": "embeddings:deny-get-embedding-model-info",
           "markdownDescription": "Denies the get_embedding_model_info command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the initialize_models command without any pre-configured scope.",
-          "type": "string",
-          "const": "embeddings:deny-initialize-models",
-          "markdownDescription": "Denies the initialize_models command without any pre-configured scope."
         },
         {
           "description": "Enables the explorer_folder_delete_index command without any pre-configured scope.",
@@ -4227,12 +4095,6 @@
           "markdownDescription": "Enables the delete_document command without any pre-configured scope."
         },
         {
-          "description": "Enables the delete_file_index command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-delete-file-index",
-          "markdownDescription": "Enables the delete_file_index command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_corpus_shape command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-get-corpus-shape",
@@ -4297,12 +4159,6 @@
           "type": "string",
           "const": "file:allow-get-recent-documents",
           "markdownDescription": "Enables the get_recent_documents command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the import_legacy_custom_collections command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-import-legacy-custom-collections",
-          "markdownDescription": "Enables the import_legacy_custom_collections command without any pre-configured scope."
         },
         {
           "description": "Enables the index_directory command without any pre-configured scope.",
@@ -4419,18 +4275,6 @@
           "markdownDescription": "Enables the show_in_folder command without any pre-configured scope."
         },
         {
-          "description": "Enables the update_file_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-update-file-metadata",
-          "markdownDescription": "Enables the update_file_metadata command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the validate_file_path command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-validate-file-path",
-          "markdownDescription": "Enables the validate_file_path command without any pre-configured scope."
-        },
-        {
           "description": "Denies the add_documents_to_custom_collection command without any pre-configured scope.",
           "type": "string",
           "const": "file:deny-add-documents-to-custom-collection",
@@ -4465,12 +4309,6 @@
           "type": "string",
           "const": "file:deny-delete-document",
           "markdownDescription": "Denies the delete_document command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the delete_file_index command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-delete-file-index",
-          "markdownDescription": "Denies the delete_file_index command without any pre-configured scope."
         },
         {
           "description": "Denies the get_corpus_shape command without any pre-configured scope.",
@@ -4537,12 +4375,6 @@
           "type": "string",
           "const": "file:deny-get-recent-documents",
           "markdownDescription": "Denies the get_recent_documents command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the import_legacy_custom_collections command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-import-legacy-custom-collections",
-          "markdownDescription": "Denies the import_legacy_custom_collections command without any pre-configured scope."
         },
         {
           "description": "Denies the index_directory command without any pre-configured scope.",
@@ -4657,18 +4489,6 @@
           "type": "string",
           "const": "file:deny-show-in-folder",
           "markdownDescription": "Denies the show_in_folder command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the update_file_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-update-file-metadata",
-          "markdownDescription": "Denies the update_file_metadata command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the validate_file_path command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-validate-file-path",
-          "markdownDescription": "Denies the validate_file_path command without any pre-configured scope."
         },
         {
           "description": "Enables the execute_function command without any pre-configured scope.",
@@ -6039,12 +5859,6 @@
           "markdownDescription": "Enables the download_model command without any pre-configured scope."
         },
         {
-          "description": "Enables the export_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-export-model",
-          "markdownDescription": "Enables the export_model command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_active_chat_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-get-active-chat-model",
@@ -6105,12 +5919,6 @@
           "markdownDescription": "Enables the get_model_variants command without any pre-configured scope."
         },
         {
-          "description": "Enables the import_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-import-model",
-          "markdownDescription": "Enables the import_model command without any pre-configured scope."
-        },
-        {
           "description": "Enables the is_model_already_downloaded command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-is-model-already-downloaded",
@@ -6121,12 +5929,6 @@
           "type": "string",
           "const": "model:allow-list-downloaded-models",
           "markdownDescription": "Enables the list_downloaded_models command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the refresh_model_cache command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-refresh-model-cache",
-          "markdownDescription": "Enables the refresh_model_cache command without any pre-configured scope."
         },
         {
           "description": "Enables the refresh_model_catalog command without any pre-configured scope.",
@@ -6153,22 +5955,10 @@
           "markdownDescription": "Enables the set_active_embedding_model command without any pre-configured scope."
         },
         {
-          "description": "Enables the set_active_inference_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-set-active-inference-model",
-          "markdownDescription": "Enables the set_active_inference_model command without any pre-configured scope."
-        },
-        {
           "description": "Enables the set_active_utility_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-set-active-utility-model",
           "markdownDescription": "Enables the set_active_utility_model command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the validate_model_compatibility command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-validate-model-compatibility",
-          "markdownDescription": "Enables the validate_model_compatibility command without any pre-configured scope."
         },
         {
           "description": "Enables the warm_up_active_chat_model command without any pre-configured scope.",
@@ -6243,12 +6033,6 @@
           "markdownDescription": "Denies the download_model command without any pre-configured scope."
         },
         {
-          "description": "Denies the export_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-export-model",
-          "markdownDescription": "Denies the export_model command without any pre-configured scope."
-        },
-        {
           "description": "Denies the get_active_chat_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-get-active-chat-model",
@@ -6309,12 +6093,6 @@
           "markdownDescription": "Denies the get_model_variants command without any pre-configured scope."
         },
         {
-          "description": "Denies the import_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-import-model",
-          "markdownDescription": "Denies the import_model command without any pre-configured scope."
-        },
-        {
           "description": "Denies the is_model_already_downloaded command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-is-model-already-downloaded",
@@ -6325,12 +6103,6 @@
           "type": "string",
           "const": "model:deny-list-downloaded-models",
           "markdownDescription": "Denies the list_downloaded_models command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the refresh_model_cache command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-refresh-model-cache",
-          "markdownDescription": "Denies the refresh_model_cache command without any pre-configured scope."
         },
         {
           "description": "Denies the refresh_model_catalog command without any pre-configured scope.",
@@ -6357,22 +6129,10 @@
           "markdownDescription": "Denies the set_active_embedding_model command without any pre-configured scope."
         },
         {
-          "description": "Denies the set_active_inference_model command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-set-active-inference-model",
-          "markdownDescription": "Denies the set_active_inference_model command without any pre-configured scope."
-        },
-        {
           "description": "Denies the set_active_utility_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-set-active-utility-model",
           "markdownDescription": "Denies the set_active_utility_model command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the validate_model_compatibility command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-validate-model-compatibility",
-          "markdownDescription": "Denies the validate_model_compatibility command without any pre-configured scope."
         },
         {
           "description": "Denies the warm_up_active_chat_model command without any pre-configured scope.",
@@ -6399,12 +6159,6 @@
           "markdownDescription": "Enables the generate_chat_starters_wrapper command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_qa_model_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:allow-get-qa-model-wrapper",
-          "markdownDescription": "Enables the get_qa_model_wrapper command without any pre-configured scope."
-        },
-        {
           "description": "Denies the check_llm_health_wrapper command without any pre-configured scope.",
           "type": "string",
           "const": "qa:deny-check-llm-health-wrapper",
@@ -6415,12 +6169,6 @@
           "type": "string",
           "const": "qa:deny-generate-chat-starters-wrapper",
           "markdownDescription": "Denies the generate_chat_starters_wrapper command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_qa_model_wrapper command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:deny-get-qa-model-wrapper",
-          "markdownDescription": "Denies the get_qa_model_wrapper command without any pre-configured scope."
         },
         {
           "description": "Enables the create_passage_reference command without any pre-configured scope.",

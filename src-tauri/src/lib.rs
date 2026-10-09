@@ -56,12 +56,9 @@ pub use domain::{
 };
 
 /// Cross-feature contracts, ports, mappers, and orchestration.
-#[cfg(feature = "indexing")]
 pub mod application;
 
-#[cfg(feature = "indexing")]
 pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-#[cfg(feature = "indexing")]
 pub use application::{
     mappers,
     ports::{

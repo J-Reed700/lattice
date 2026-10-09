@@ -5,7 +5,6 @@ use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
-use tauri::State;
 
 /// Exports all indexed documents to CSV format
 ///
@@ -28,19 +27,6 @@ use tauri::State;
 /// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output path (directory traversal detected)
 /// * `AppError::Other` - Failed to create parent directory or filesystem errors
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Export documents to CSV
-/// const rowCount = await invoke<number>('export_csv', {
-///   outputPath: '/Users/example/exports/lattice-documents.csv'
-/// });
-///
-/// console.log(`Exported ${rowCount} documents to CSV`);
-/// ```
 ///
 /// # CSV Structure
 ///
@@ -149,14 +135,4 @@ pub async fn export_csv_impl(
     }
 
     result
-}
-
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn export_csv(
-    output_path: String,
-    container: State<'_, Container>,
-) -> Result<usize, AppError> {
-    export_csv_impl(output_path, container.inner()).await
 }

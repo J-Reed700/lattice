@@ -1,4 +1,4 @@
-//! Q&A command handlers: the model and health checks the chat surface uses.
+//! Q&A command handlers: the LLM health check the chat surface uses.
 //!
 //! Question answering itself lives in the conversation chat; the standalone
 //! `ask_question` commands were removed with the use case behind them.
@@ -6,16 +6,6 @@
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;
-
-/// Retrieves the currently configured LLM model for question-answering
-///
-/// Returns the name/identifier of the LLM model currently being used for Q&A
-/// operations. Useful for displaying model information in UI or debugging
-/// which model is being used for answer generation.
-pub async fn get_qa_model(container: State<'_, Container>) -> Result<String> {
-    let llm = container.get_or_load_llm().await?;
-    Ok(llm.model_name().to_string())
-}
 
 /// Checks LLM availability and returns health status information
 ///

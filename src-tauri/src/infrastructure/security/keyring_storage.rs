@@ -9,7 +9,6 @@
 
 use crate::shared::error::{AppError, Result};
 use keyring::Entry;
-use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 /// Service name for keyring entries
@@ -213,113 +212,6 @@ impl Default for SecureStorage {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// Tauri commands for frontend integration
-
-/// Tauri command: Store a credential securely
-///
-/// # Example (TypeScript)
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// await invoke('store_credential', {
-///   keyName: 'anthropic_api_key',
-///   value: 'sk-ant-...'
-/// });
-/// ```
-#[tauri::command]
-pub async fn store_credential(key_name: String, value: String) -> Result<(), String> {
-    let storage = SecureStorage::new();
-    storage
-        .store_api_key(&key_name, &value)
-        .map_err(|e| e.to_string())
-}
-
-/// Tauri command: Retrieve a credential securely
-///
-/// # Example (TypeScript)
-/// ```typescript
-/// const apiKey = await invoke<string | null>('get_credential', {
-///   keyName: 'anthropic_api_key'
-/// });
-///
-/// if (apiKey) {
-///   console.log('API key found');
-/// } else {
-///   console.log('API key not configured');
-/// }
-/// ```
-#[tauri::command]
-pub async fn get_credential(key_name: String) -> Result<Option<String>, String> {
-    let storage = SecureStorage::new();
-    storage.get_api_key(&key_name).map_err(|e| e.to_string())
-}
-
-/// Tauri command: Delete a credential
-///
-/// # Example (TypeScript)
-/// ```typescript
-/// await invoke('delete_credential', {
-///   keyName: 'anthropic_api_key'
-/// });
-/// ```
-#[tauri::command]
-pub async fn delete_credential(key_name: String) -> Result<(), String> {
-    let storage = SecureStorage::new();
-    storage.delete_api_key(&key_name).map_err(|e| e.to_string())
-}
-
-/// Tauri command: Check if credential exists
-///
-/// # Example (TypeScript)
-/// ```typescript
-/// const exists = await invoke<boolean>('has_credential', {
-///   keyName: 'anthropic_api_key'
-/// });
-/// ```
-#[tauri::command]
-pub async fn has_credential(key_name: String) -> Result<bool, String> {
-    let storage = SecureStorage::new();
-    storage.has_api_key(&key_name).map_err(|e| e.to_string())
-}
-
-/// Credential information for UI display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CredentialInfo {
-    pub key_name: String,
-    pub exists: bool,
-    pub last_updated: Option<String>,
-}
-
-/// Tauri command: Get status of all known credentials
-///
-/// Useful for settings UI to show which credentials are configured
-///
-/// # Example (TypeScript)
-/// ```typescript
-/// const credentials = await invoke<CredentialInfo[]>('get_credential_status');
-///
-/// credentials.forEach(cred => {
-///   console.log(`${cred.key_name}: ${cred.exists ? '✓ Configured' : '✗ Not set'}`);
-/// });
-/// ```
-#[tauri::command]
-pub async fn get_credential_status() -> Result<Vec<CredentialInfo>, String> {
-    let storage = SecureStorage::new();
-    let known_keys = vec!["anthropic_api_key", "openai_api_key"];
-
-    let mut infos = Vec::new();
-    for key in known_keys {
-        let exists = storage.has_api_key(key).unwrap_or(false);
-        infos.push(CredentialInfo {
-            key_name: key.to_string(),
-            exists,
-            last_updated: None, // Could be enhanced with timestamp tracking
-        });
-    }
-
-    Ok(infos)
 }
 
 #[cfg(test)]

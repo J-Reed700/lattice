@@ -6,10 +6,6 @@
 //! Each consolidated handler uses tagged enums to dispatch to the appropriate
 //! operation, maintaining type safety while reducing the command surface area.
 
-pub use crate::features::cache::commands::{cache_operation, CacheOperation, CacheResponse};
-pub use crate::features::embedding::commands::{
-    embedding_operation, EmbeddingOperation, EmbeddingResponse,
-};
 pub use crate::features::favorites::commands::{
     favorite_operation, FavoriteOperation, FavoriteResponse,
 };

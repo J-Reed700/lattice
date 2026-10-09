@@ -14,7 +14,7 @@
 //! 1. **CoreModule** - Shared infrastructure (DB, security, runtime)
 //! 2. **SearchModule** - All search functionality
 //! 3. **IndexingModule** - Document ingestion and processing
-//! 4. **AIModule** - LLM, Q&A, conversations
+//! 4. **AIModule** - LLM, conversations
 //! 5. **LibraryModule** - Tags, favorites, mentions
 //! 6. **FileOpsModule** - File system operations
 //! 7. **SystemModule** - Settings, health, backup, cache
@@ -132,7 +132,6 @@ use crate::application::ports::{
 // Service Traits
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::qa::ConversationalQAServiceTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::{
@@ -677,7 +676,6 @@ impl IndexingModule {
 #[derive(Clone)]
 pub struct AIModule {
     conversation: crate::features::conversation::di::ConversationDi,
-    qa: crate::features::qa::di::QaDi,
     llm: crate::features::llm::di::LlmDi,
     ai_tags: crate::features::tags::di::AiTagsDi,
 
@@ -686,7 +684,7 @@ pub struct AIModule {
 }
 
 impl AIModule {
-    /// Build AIModule by composing conversation + qa + llm + ai-tags features.
+    /// Build AIModule by composing conversation + llm + ai-tags features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -695,7 +693,6 @@ impl AIModule {
         _llm_model: &str,
     ) -> crate::shared::error::Result<Self> {
         let conversation = crate::features::conversation::di::build(db_pool.clone());
-        let qa = crate::features::qa::di::build(conversation.conversation_service.clone());
         let llm = crate::features::llm::di::build(
             db_pool.clone(),
             core.db_conn().clone(),
@@ -707,7 +704,6 @@ impl AIModule {
 
         Ok(Self {
             conversation,
-            qa,
             llm,
             ai_tags,
             credentials: core.credentials().clone(),
@@ -798,10 +794,6 @@ impl AIModule {
         &self,
     ) -> &Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
         &self.conversation.conversation_memory
-    }
-
-    pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
-        &self.qa.conversational_qa_service
     }
 
     pub fn downloaded_model_repo(

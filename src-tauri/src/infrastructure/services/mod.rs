@@ -1,6 +1,5 @@
 // Domain service modules moved under domains/ for filesystem organization.
 pub mod article_extractor;
-pub mod context_manager;
 pub mod file_cleanup;
 pub mod file_type_detector;
 pub mod intent;

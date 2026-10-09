@@ -1,7 +1,6 @@
 /// Q&A Module Types
 ///
 /// Data structures and error types for the Q&A engine.
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Q&A engine errors
@@ -41,35 +40,4 @@ impl From<crate::features::llm::engine::types::LLMError> for QAError {
     fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
         QAError::OllamaUnavailable(e.to_string())
     }
-}
-
-/// Reference to a source document used in generating an answer
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceReference {
-    /// Path to the source document
-    pub file_path: String,
-
-    /// Relevance score (0.0 to 1.0)
-    pub score: f32,
-
-    /// Relevant text excerpt
-    pub snippet: String,
-}
-
-/// Stream chunk types
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum StreamChunk {
-    /// Answer token chunk
-    Token { content: String },
-
-    /// Source references (sent after streaming completes)
-    Sources { sources: Vec<SourceReference> },
-
-    /// Streaming completed
-    Done,
-
-    /// Error occurred
-    Error { message: String },
 }

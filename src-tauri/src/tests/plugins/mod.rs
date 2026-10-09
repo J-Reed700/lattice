@@ -4,7 +4,6 @@
 //! DTO tests for other plugin domains live in the `plugins_tests` integration target.
 
 pub mod batch;
-pub mod credentials;
 pub mod embeddings;
 pub mod file;
 pub mod model;

@@ -245,23 +245,12 @@ tokio = { version = "1.35", features = ["full", "test-util"] }   # paused clocks
 
 
 [features]
-default = ["custom-protocol", "search", "indexing", "qa", "extraction"]
+default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
-# Feature flags for optional functionality
-search = []       # Semantic search and embedding generation
-indexing = []     # Document processing and chunking
-qa = []           # Question-answering and LLM integration
-extraction = []   # Content extraction from documents
 test-utils = []   # Testing utilities and mocks
 desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only
 bindings-export = [] # Developer-only TypeScript binding generator; never ship it in app bundles
-
-
-# Quarantine features for temporarily disabled tests
-quarantine_download_tests = []  # Download command tests requiring refactoring
-quarantine_function_tests = []  # Function calling integration tests requiring refactoring
-
 
 # Profile configurations for stack size optimization
 # Increases stack size to prevent overflow with heavy ML dependencies (ONNX, candle)

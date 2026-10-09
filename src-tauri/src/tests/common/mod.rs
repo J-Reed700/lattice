@@ -1,8 +1,7 @@
 //! Common test utilities for plugin smoke tests
 //!
-//! This module provides test harness infrastructure that matches the current
-//! production container architecture, not the legacy
-//! ServiceContainer (15 individual services).
+//! This module provides test harness infrastructure that matches the
+//! production container architecture.
 //!
 //! # Usage
 //!

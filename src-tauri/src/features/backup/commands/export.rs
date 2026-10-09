@@ -10,7 +10,6 @@ use crate::shared::fs::confinement::confine_to_root;
 use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
 
 /// Export writes go under `Container::exports_path()` and nowhere else.
 ///
@@ -69,19 +68,6 @@ fn export_use_case(container: &Container) -> ExportConversationsUseCase {
 /// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output directory path (directory traversal detected)
 /// * `AppError::Other` - Path exists but is not a directory, or filesystem errors
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Export all documents to Markdown
-/// const count = await invoke<number>('export_markdown', {
-///   outputDir: '/Users/example/exports/lattice-markdown'
-/// });
-///
-/// console.log(`Exported ${count} documents to Markdown`);
-/// ```
 ///
 /// # Export Format
 ///
@@ -202,18 +188,6 @@ pub async fn export_markdown_impl(
     result
 }
 
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn export_markdown(
-    output_dir: Option<String>,
-    container: State<'_, Container>,
-) -> Result<usize, AppError> {
-    export_markdown_impl(output_dir, container.inner())
-        .await
-        .map(|summary| summary.count())
-}
-
 /// Exports all indexed documents to JSON format
 ///
 /// Serializes all indexed documents into a single JSON file with complete metadata,
@@ -236,26 +210,6 @@ pub async fn export_markdown(
 /// * `AppError::RateLimitExceeded` - Too many export requests (rate limited)
 /// * `AppError::InvalidInput` - Invalid output path (directory traversal detected)
 /// * `AppError::Other` - Failed to create parent directory or filesystem errors
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Export to pretty-printed JSON
-/// await invoke('export_json', {
-///   outputPath: '/Users/example/exports/lattice-data.json',
-///   pretty: true
-/// });
-///
-/// console.log('Export complete!');
-///
-/// // Export to compact JSON for smaller file size
-/// await invoke('export_json', {
-///   outputPath: '/Users/example/exports/lattice-data-compact.json',
-///   pretty: false
-/// });
-/// ```
 ///
 /// # JSON Structure
 ///
@@ -402,17 +356,4 @@ pub async fn export_json_impl(
     }
 
     result
-}
-
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn export_json(
-    output_path: Option<String>,
-    pretty: bool,
-    container: State<'_, Container>,
-) -> Result<(), AppError> {
-    export_json_impl(output_path, pretty, container.inner())
-        .await
-        .map(|_| ())
 }

@@ -99,33 +99,6 @@ pub async fn rename_conversation(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn chat_with_conversation_wrapper(
-    container: State<'_, Container>,
-    conversation_id: Option<String>,
-    message: String,
-    tool_preferences: Option<ToolPreferences>,
-    cancel_only: Option<bool>,
-    request_id: Option<String>,
-    attachment_names: Option<Vec<String>>,
-    attachment_document_ids: Option<Vec<String>>,
-    window: tauri::Window,
-) -> Result<ChatResponse, ApiError> {
-    conversation_impl::chat_with_conversation_wrapper_impl(
-        container.inner(),
-        conversation_id,
-        message,
-        tool_preferences,
-        cancel_only,
-        request_id,
-        attachment_names,
-        attachment_document_ids,
-        window,
-    )
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn chat_with_conversation(
     container: State<'_, Container>,
     conversation_id: Option<String>,
@@ -666,7 +639,6 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             delete_conversation,
             get_conversation_messages,
             rename_conversation,
-            chat_with_conversation_wrapper,
             chat_with_conversation,
             create_conversation_space,
             list_conversation_spaces,

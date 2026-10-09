@@ -8,7 +8,6 @@ use crate::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::features::model_management::commands::get_all_recommended_models as get_all_recommended_models_impl;
 use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
     clear_active_utility_model_impl, delete_downloaded_model_and_file_impl,
@@ -23,8 +22,6 @@ use crate::interfaces::commands::model_setup::{
 
 use crate::domain::download::DownloadOperationState;
 use crate::features::llm::commands::download_model as download_model_impl;
-use crate::shared::fs::confinement::confine_to_root;
-use std::path::Path;
 
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
 
@@ -255,22 +252,6 @@ pub async fn set_active_chat_model(
         })
 }
 
-/// Set active inference model (chat model)
-#[tauri::command]
-#[specta::specta]
-pub async fn set_active_inference_model(
-    model_id: String,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    set_active_chat_model_impl(container.inner(), &model_id)
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_active_chat_model(
@@ -407,42 +388,6 @@ pub async fn warm_up_active_utility_model(container: State<'_, Container>) -> Re
         })
 }
 
-/// Validate model compatibility with system
-#[tauri::command]
-#[specta::specta]
-pub async fn validate_model_compatibility(
-    model_id: String,
-    container: State<'_, Container>,
-) -> Result<CompatibilityReport, ApiError> {
-    let recommendations = get_all_recommended_models_impl(container)
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e.to_string(),
-            details: None,
-        })?;
-
-    match recommendations
-        .into_iter()
-        .find(|rec| rec.model.id == model_id || rec.model.model_id.as_deref() == Some(&model_id))
-    {
-        Some(rec) => {
-            let warnings = rec.compatibility.recommendations;
-            let errors = rec.compatibility.blockers;
-            Ok(CompatibilityReport {
-                compatible: errors.is_empty(),
-                warnings,
-                errors,
-            })
-        }
-        None => Ok(CompatibilityReport {
-            compatible: false,
-            warnings: vec![],
-            errors: vec![format!("Model not found: {}", model_id)],
-        }),
-    }
-}
-
 /// Get model information by ID
 #[tauri::command]
 #[specta::specta]
@@ -468,104 +413,6 @@ pub async fn get_model_info(
     Ok(models.into_iter().find(|m| m.model_id == model_id))
 }
 
-/// Export model metadata to file
-#[tauri::command]
-#[specta::specta]
-pub async fn export_model(
-    model_id: String,
-    export_path: String,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    let json_str = get_models_with_metadata_impl(container.inner())
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
-
-    let models: Vec<DownloadedModelResponse> =
-        serde_json::from_str(&json_str).map_err(|e| ApiError {
-            code: ErrorCode::InvalidInput,
-            message: format!("Failed to parse models: {}", e),
-            details: None,
-        })?;
-
-    let model = models
-        .into_iter()
-        .find(|candidate| candidate.model_id == model_id)
-        .ok_or(ApiError {
-            code: ErrorCode::NotFound,
-            message: format!("Model not found: {}", model_id),
-            details: None,
-        })?;
-
-    let payload = serde_json::to_string(&model).map_err(|e| ApiError {
-        code: ErrorCode::InvalidInput,
-        message: format!("Failed to serialize model: {}", e),
-        details: None,
-    })?;
-
-    // Confine the destination. This previously called `std::fs::write` on a
-    // fully caller-supplied path with no validation whatsoever, which let a
-    // compromised renderer clobber any user-writable file — for example
-    // `~/.ssh/authorized_keys`.
-    let exports_root = container.exports_path();
-    std::fs::create_dir_all(&exports_root).map_err(|e| ApiError {
-        code: ErrorCode::InternalError,
-        message: format!("Failed to create exports directory: {}", e),
-        details: None,
-    })?;
-
-    let confined =
-        confine_to_root(&exports_root, Path::new(&export_path)).map_err(|e| ApiError {
-            code: ErrorCode::InvalidInput,
-            message: format!(
-                "Models can only be exported into {}: {}",
-                exports_root.display(),
-                e
-            ),
-            details: None,
-        })?;
-
-    std::fs::write(&confined, payload).map_err(|e| ApiError {
-        code: ErrorCode::InvalidInput,
-        message: format!("Failed to write export file: {}", e),
-        details: None,
-    })?;
-
-    Ok(())
-}
-
-/// Import model from file
-#[tauri::command]
-#[specta::specta]
-pub async fn import_model(
-    import_path: String,
-    _container: State<'_, Container>,
-) -> Result<DownloadedModelResponse, ApiError> {
-    let payload = std::fs::read_to_string(&import_path).map_err(|e| ApiError {
-        code: ErrorCode::InvalidInput,
-        message: format!("Failed to read import file: {}", e),
-        details: None,
-    })?;
-
-    serde_json::from_str(&payload).map_err(|e| ApiError {
-        code: ErrorCode::InvalidInput,
-        message: format!("Failed to parse import data: {}", e),
-        details: None,
-    })
-}
-
-/// Refresh model cache (invalidates LLM and embedding caches)
-#[tauri::command]
-#[specta::specta]
-pub async fn refresh_model_cache(container: State<'_, Container>) -> Result<(), ApiError> {
-    container.invalidate_llm_cache();
-    container.invalidate_embedding_cache();
-    Ok(())
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DownloadModelResponse {
     pub download_id: String,
@@ -584,13 +431,6 @@ pub struct DownloadStatus {
 pub struct ActiveModels {
     pub chat_model: Option<DownloadedModelResponse>,
     pub embedding_model: Option<DownloadedModelResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct CompatibilityReport {
-    pub compatible: bool,
-    pub warnings: Vec<String>,
-    pub errors: Vec<String>,
 }
 
 /// Absolute path of the local models folder, created on first call.

@@ -128,10 +128,8 @@ pub async fn plugin_restore_backup(
 pub async fn plugin_list_backups(
     container: State<'_, Container>,
 ) -> Result<ListBackupsResultDto, ApiError> {
-    // `backup::list_backups_impl` scans <data_dir> for "*.lattice-backup"; backups
-    // are written by BackupAdapter to <data_dir>/backups/*.db, so that scan always
-    // returned []. Route through the port, which reads the right directory, matches
-    // the right extension, and fills in created_at, file_count and version by
+    // Backups are written by BackupAdapter to <data_dir>/backups/*.db. The port
+    // reads that directory and fills in created_at, file_count and version by
     // opening each backup.
     let data_dir = container.inner().core.data_dir().to_path_buf();
 

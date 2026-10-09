@@ -16,6 +16,7 @@ pub mod model_file;
 pub mod system;
 
 // Shared repository support.
+#[cfg(any(test, feature = "test-utils"))]
 pub mod mocks;
 pub mod traits;
 pub mod unit_of_work;

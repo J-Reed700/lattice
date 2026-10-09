@@ -385,22 +385,6 @@ pub fn frontend_error_example() -> String {
     serde_json::to_string_pretty(&responses).unwrap()
 }
 
-/// Example of handling errors in a Tauri command
-#[cfg(feature = "custom-protocol")]
-#[tauri::command]
-pub async fn indexed_search(query: String) -> std::result::Result<Vec<String>, String> {
-    // AppError automatically converts to String for Tauri
-    vector_search_example(&query)
-        .await
-        .map(|results| results.into_iter().map(|r| r.id).collect())
-        .map_err(|e| {
-            // Log full error for debugging
-            tracing::error!("Search failed: {:?}", e);
-
-            e.to_user_friendly_message()
-        })
-}
-
 /// Example showing error propagation with context
 pub async fn complex_operation_example(config_path: &str) -> Result<()> {
     let config = load_config(config_path).context("Failed to load configuration")?;
