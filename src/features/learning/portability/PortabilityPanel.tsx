@@ -30,7 +30,7 @@ function uuid() {
 }
 function dateLabel(value: number) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString(); }
 
-export function PortabilityPanel({ programId, programTitle }: { programId: string; programTitle: string }) {
+export function PortabilityPanel({ programId, programTitle, onImported }: { programId: string; programTitle: string; onImported?: (programId: string) => void }) {
   const workspace = useLearningPortability(programId);
   const exportPack = useExportLearningPack(programId);
   const previewPack = usePreviewLearningPackImport(programId);
@@ -104,6 +104,7 @@ export function PortabilityPanel({ programId, programTitle }: { programId: strin
     setError(''); setSuccess(''); setApplyConfirm(false);
     try {
       const updated = await applyPack.mutateAsync(entry.request as never);
+      onImported?.(updated.programId);
       delete retry.current.apply;
       setPreviewSnapshot(updated.importPreviews.find((item) => item.id === selectedPreview.id) ?? null);
       const result = updated.imports.at(0);

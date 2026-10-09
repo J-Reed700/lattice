@@ -66,6 +66,7 @@ export function LessonPreparationProgress({ job, pending, programId, revision, e
           }} className="rounded-full border border-accent/40 bg-background px-4 py-2 text-sm font-medium text-text-primary disabled:opacity-50">{cancel.isPending ? 'Pausing…' : retry.isPending ? paused ? 'Resuming…' : 'Retrying…' : active ? 'Pause lesson preparation' : paused ? 'Resume lesson preparation' : 'Retry lesson preparation'}</button>
         </div>}
       </div>
+      {!active && !paused && job?.finishedAt != null && <p className="mt-2 text-xs text-text-muted">Last attempt stopped at {new Date(job.finishedAt).toLocaleString()}. This is the saved result of that attempt.</p>}
       <p className="mt-3 text-xs leading-5 text-text-secondary">{active ? 'You can pause to change models. Your draft and completed checks stay saved.' : paused ? 'Change your model in Settings, then choose Resume when you are ready.' : 'Retry continues from valid saved checkpoints.'}</p>
       {actionError && <p role="alert" className="mt-3 text-xs text-rose-700">{actionError.message}</p>}
       <button type="button" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(!expanded)} className="mt-3 inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-secondary"><ChevronDown size={14} className={expanded ? 'rotate-180' : ''} aria-hidden="true" />{expanded ? 'Hide details' : 'Show details'}</button>
