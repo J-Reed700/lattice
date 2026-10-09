@@ -1,0 +1,11 @@
+# Tauri command-orphan baseline, read by scripts/check-tauri-command-inventory.py.
+#
+# Each line is `orphan-command <file under src-tauri/src> <fn> <count>`: a
+# production function carrying #[tauri::command] that no generate_handler!
+# registers. CI fails when a new orphan appears and when a listed one is gone,
+# so this file only shrinks. Delete the dead command (or register it), then
+# regenerate every architecture baseline with
+#
+#     bash scripts/check-rust-layer-boundaries.sh --write-baseline
+#
+# and commit the smaller file.
