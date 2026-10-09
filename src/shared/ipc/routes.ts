@@ -1,7 +1,4 @@
-/**
- * Gateway Pattern - Command to Domain mapping
- * Maps old command names to their new domain + command structure
- */
+/** Maps public IPC command names to plugin domains and handler names. */
 export const COMMAND_DOMAIN_MAP: Record<
   string,
   { domain: string; command: string }
@@ -114,7 +111,7 @@ export const COMMAND_DOMAIN_MAP: Record<
   get_system_stats: { domain: 'health', command: 'get_system_stats' },
   get_version: { domain: 'health', command: 'get_version' },
 
-  // Database/initialization domain (routes to health for now)
+  // Initialization command exposed by the health plugin.
   initialize_database: { domain: 'health', command: 'initialize_database' },
 
   // Indexing domain (routes to file)
@@ -462,6 +459,10 @@ export const COMMAND_DOMAIN_MAP: Record<
   get_learning_lesson_evidence: {
     domain: 'learning',
     command: 'get_learning_lesson_evidence',
+  },
+  get_learning_outline_evidence: {
+    domain: 'learning',
+    command: 'get_learning_outline_evidence',
   },
   generate_learning_program: {
     domain: 'learning',
