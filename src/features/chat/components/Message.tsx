@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import {
   AlertCircle,
@@ -20,26 +20,25 @@ import { useRevealStreamingRef } from '@/components/Explorer/useRevealStreamingR
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
 import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
-import { CitationHoverCard, type CitationHover } from '@/features/chat/components/CitationHoverCard';
-import { ClaimHoverCard, type ClaimHover } from '@/features/chat/components/ClaimHoverCard';
+import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
+import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { MessageEditor } from '@/features/chat/components/MessageEditor';
 import { SourceCitations } from '@/features/chat/components/SourceCitations';
 import { TangentSelection } from '@/features/chat/components/tangents/TangentSelection';
 import { TurnRecord } from '@/features/chat/components/turn/TurnRecord';
-import { provenanceLabel, sourceProvenance } from '@/features/chat/model/sourceProvenance';
+import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { verificationSummaryLine } from '@/features/chat/model/verificationSummary';
-import { usePassageReferenceIds, useSettingsQuery } from '@/hooks/queries';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { useChatReaderStore } from '@/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { GenerationOutcome } from '@/stores/conversationsStore.types';
 import { useExplorerStore } from '@/stores/explorerStore';
 import { toast } from '@/stores/toastStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
-import { createCitationMap } from '@/utils/citations';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
 /**
@@ -120,13 +119,10 @@ export const Message = memo(({
 
   // One reader serves the whole thread. A message hands it a citation to show
   // and reads back where the viewer found it.
-  const openReader = useChatReaderStore((s) => s.open);
-  const readerSession = useChatReaderStore((s) => s.session);
   const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
+  const showCitations = useCitationDisplayStore((s) => s.visible);
 
   const { activeModel, setActiveChatModel } = useDownloadedModels();
-  const settings = useSettingsQuery().data;
-  const referenceKeys = usePassageReferenceIds();
 
   const messageId = 'id' in message ? message.id : undefined;
   const messageBookmark = messageId ? messageBookmarkMap.get(messageId) : undefined;
@@ -146,7 +142,6 @@ export const Message = memo(({
     return [];
   }, [message, messageId, lastMessageSources]);
 
-  const citationMap = useMemo(() => createCitationMap(sources), [sources]);
   const isAssistantWithSources = !isUser && sources.length > 0;
 
   // The files this message brought into the conversation, stamped on it when
@@ -177,56 +172,6 @@ export const Message = memo(({
       return null;
     }
   }, [isUser, message]);
-
-  // The ordered list behind the citation numbers — what `[` / `]` travel over.
-  const citationSources = useMemo(
-    () =>
-      Array.from(citationMap.entries())
-        .sort(([a], [b]) => a - b)
-        .map(([, source]) => source),
-    [citationMap]
-  );
-
-  /** What the reader calls this message when it holds its citations. */
-  const ownerKey = messageId ?? domMessageId ?? '';
-
-  const openCitation = useCallback(
-    (index: number, occurrence: number | null = null) => {
-      if (index < 0 || !ownerKey) return;
-      openReader(ownerKey, citationSources, index, occurrence);
-    },
-    [ownerKey, openReader, citationSources]
-  );
-
-  /**
-   * Open the reader on a source by identity, whatever its position.
-   *
-   * `occurrence` is the mark that was clicked, when one was: the answer cites a
-   * source from several sentences and the reader opens on the one that was meant.
-   */
-  const openSource = useCallback(
-    (source: SourceWithMetadata, occurrence: number | null = null) => {
-      const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
-      // A passage the answer never numbered — two chunks that share a citation
-      // id keep one of them out of the map — still opens, on its own.
-      if (index < 0) {
-        if (ownerKey) openReader(ownerKey, [source], 0, occurrence);
-        return;
-      }
-      openCitation(index, occurrence);
-    },
-    [citationSources, openCitation, openReader, ownerKey]
-  );
-
-  const vaultPath = settings?.vault?.vaultPath ?? '';
-  const provenanceBySource = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const source of sources) {
-      const label = provenanceLabel(sourceProvenance(source, vaultPath, referenceKeys));
-      if (label) map.set(source.chunkId, label);
-    }
-    return map;
-  }, [sources, vaultPath, referenceKeys]);
 
   const conversationId = 'conversationId' in message ? message.conversationId : undefined;
   const conversationTitle = useConversationsStore(
@@ -545,8 +490,21 @@ export const Message = memo(({
     await deleteMessage(message.conversationId, messageId);
   };
 
+  const {
+    citationMap, citationNumbers, openCitation, openSource, provenanceBySource,
+    articleRef, citationHover, claimHover, claimActions, setClaimActions,
+    handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave,
+    hoveredSource, hoveredVerdict, activeEvidence, hasEvidenceMargin, setLit,
+  } = useMessageEvidence({
+    sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
+    showCitations, claimVerdicts, showsCodeRefs, revealInExplorer, openInExplorer,
+  });
+  useEffect(() => {
+    if (!showCitations) setIsVerificationPanelExpanded(false);
+  }, [showCitations]);
+
   const citationFootnotes = useMemo(() => {
-    if (!isAssistantWithSources || citationMap.size === 0) return null;
+    if (!showCitations || !isAssistantWithSources || citationMap.size === 0) return null;
     const entries = Array.from(citationMap.entries()).sort(([a], [b]) => a - b);
     return (
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
@@ -563,179 +521,7 @@ export const Message = memo(({
         ))}
       </div>
     );
-  }, [isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations, openCitation]);
-
-  // Inline `[n]` chips live inside the rendered answer, so they are handled by
-  // delegation: one listener on the body, the chip found by its data attribute.
-  const [citationHover, setCitationHover] = useState<CitationHover | null>(null);
-  const citationNumbers = useMemo(
-    () => (isAssistantWithSources ? Array.from(citationMap.keys()) : []),
-    [isAssistantWithSources, citationMap]
-  );
-
-  const chipFromEvent = (event: ReactMouseEvent<HTMLElement>): HTMLElement | null =>
-    event.target instanceof Element ? event.target.closest<HTMLElement>('[data-cite]') : null;
-
-  const articleRef = useRef<HTMLElement>(null);
-  const [claimHover, setClaimHover] = useState<ClaimHover | null>(null);
-  const claimTimerRef = useRef<number | null>(null);
-  const cancelPendingClaim = () => {
-    if (claimTimerRef.current !== null) window.clearTimeout(claimTimerRef.current);
-    claimTimerRef.current = null;
-  };
-  useEffect(() => cancelPendingClaim, []);
-
-  /** True where the thread is wide enough that the evidence sits beside the answer. */
-  const hasEvidenceMargin = () =>
-    Boolean(articleRef.current?.querySelector<HTMLElement>('.evidence-margin')?.offsetParent);
-
-  /**
-   * The citation the reader is showing, if it is showing one of ours.
-   *
-   * Only the answer the reader was opened from lights up: the same number in
-   * the answer above means a different passage.
-   */
-  const readerCitationNumber = useMemo(() => {
-    if (!readerSession || !ownerKey || readerSession.ownerKey !== ownerKey) return null;
-    const shown = readerSession.citations[readerSession.index];
-    if (!shown) return null;
-    for (const [number, source] of citationMap) {
-      if (source.chunkId === shown.chunkId) return number;
-    }
-    return null;
-  }, [readerSession, ownerKey, citationMap]);
-
-  /** What stays lit when nothing is under the pointer. */
-  const restingLitRef = useRef<string | null>(null);
-
-  /** Light every piece of one citation or one sentence; decorations split at each mark. */
-  const setLit = useCallback((selector: string | null) => {
-    const article = articleRef.current;
-    if (!article) return;
-    // Nothing hovered falls back to what the reader is showing, so moving the
-    // pointer away does not put the open citation out.
-    const next = selector ?? restingLitRef.current;
-    article.querySelectorAll('.is-lit').forEach((element) => element.classList.remove('is-lit'));
-    if (next) article.querySelectorAll(next).forEach((element) => element.classList.add('is-lit'));
-  }, []);
-
-  // The open citation is lit in the text as long as the reader shows it: the
-  // one mark that was clicked, since the same number further down stands for a
-  // different passage — or every mark of the source, when it was opened whole.
-  const readerOccurrence = readerSession?.occurrence ?? null;
-  useEffect(() => {
-    if (readerCitationNumber === null) restingLitRef.current = null;
-    else if (readerOccurrence === null) restingLitRef.current = `[data-cite="${readerCitationNumber}"]`;
-    else {
-      restingLitRef.current = `[data-cite="${readerCitationNumber}"][data-cite-at="${readerOccurrence}"]`;
-    }
-    setLit(null);
-  }, [readerCitationNumber, readerOccurrence, setLit]);
-
-  // Resting on a sentence says why it is trusted; clicking it is how the
-  // sentence leaves the chat.
-  const [claimActions, setClaimActions] = useState<{ index: number; rect: DOMRect; maxRight: number } | null>(null);
-
-  const handleBodyClick = (event: ReactMouseEvent<HTMLElement>) => {
-    const chip = chipFromEvent(event);
-    if (chip) {
-      const source = citationMap.get(Number(chip.dataset.cite));
-      if (!source) return;
-      event.preventDefault();
-      setCitationHover(null);
-      const at = Number(chip.dataset.citeAt);
-      openSource(source, Number.isInteger(at) ? at : null);
-      return;
-    }
-
-    const codeRef =
-      showsCodeRefs && event.target instanceof Element ? event.target.closest<HTMLElement>('[data-code-ref]') : null;
-    if (codeRef) {
-      const path = codeRef.dataset.codeRef;
-      if (!path) return;
-      // A chip may sit inside a link whose address is the file; never follow it.
-      event.preventDefault();
-      const startLine = Number(codeRef.dataset.codeRefStart);
-      const endLine = Number(codeRef.dataset.codeRefEnd);
-      if (codeRef.dataset.codeRefStart && Number.isInteger(startLine) && Number.isInteger(endLine)) {
-        revealInExplorer(path, { startLine, endLine });
-      } else {
-        openInExplorer(path);
-      }
-      return;
-    }
-
-    // A click that ends a text selection is a selection, not a request.
-    if (window.getSelection()?.toString()) return;
-    const claim =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('[data-claim]') : null;
-    if (!claim) return;
-    const index = Number(claim.dataset.claim);
-    if (!claimVerdicts[index]) return;
-    cancelPendingClaim();
-    setClaimHover(null);
-    const lines = Array.from(claim.getClientRects());
-    const rect =
-      lines.find((line) => event.clientY >= line.top && event.clientY <= line.bottom) ??
-      claim.getBoundingClientRect();
-    setClaimActions({ index, rect, maxRight: event.currentTarget.getBoundingClientRect().right });
-  };
-
-  const handleBodyMouseOver = (event: ReactMouseEvent<HTMLElement>) => {
-    const chip = chipFromEvent(event);
-    if (chip) {
-      cancelPendingClaim();
-      if (claimHover) setClaimHover(null);
-      setLit(null);
-      const number = Number(chip.dataset.cite);
-      if (citationHover?.number === number) return;
-      setCitationHover({ number, rect: chip.getBoundingClientRect() });
-      return;
-    }
-    if (citationHover) setCitationHover(null);
-
-    const claim =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('[data-claim]') : null;
-    if (!claim) {
-      cancelPendingClaim();
-      if (claimHover) setClaimHover(null);
-      setLit(null);
-      return;
-    }
-    const index = Number(claim.dataset.claim);
-    if (claimHover?.index === index) return;
-    setLit(`[data-claim="${index}"]`);
-    // The line under the pointer, not the box around a sentence that wraps.
-    const lines = Array.from(claim.getClientRects());
-    const rect =
-      lines.find((line) => event.clientY >= line.top && event.clientY <= line.bottom) ??
-      claim.getBoundingClientRect();
-    const next: ClaimHover = { index, rect, maxRight: event.currentTarget.getBoundingClientRect().right };
-    cancelPendingClaim();
-    // Sweeping the pointer across a paragraph should not flash a card per
-    // sentence; once one is open, the next opens at once.
-    if (claimHover) {
-      setClaimHover(next);
-      return;
-    }
-    claimTimerRef.current = window.setTimeout(() => setClaimHover(next), 280);
-  };
-
-  const handleBodyMouseLeave = () => {
-    cancelPendingClaim();
-    setCitationHover(null);
-    setClaimHover(null);
-    setLit(null);
-  };
-
-  const hoveredSource = citationHover ? citationMap.get(citationHover.number) ?? null : null;
-  const hoveredVerdict = claimHover ? claimVerdicts[claimHover.index] ?? null : null;
-  // What the margin lights: the citation under the pointer, or every citation
-  // of the sentence under it.
-  const activeEvidence = useMemo(
-    () => (citationHover ? [citationHover.number] : hoveredVerdict?.citationIds ?? []),
-    [citationHover, hoveredVerdict]
-  );
+  }, [showCitations, isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations, openCitation]);
 
   const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
     hour: '2-digit',
@@ -805,7 +591,7 @@ export const Message = memo(({
                 Dismiss
               </button>
             )}
-            {verificationBadge && (
+            {showCitations && verificationBadge && (
               <button
                 type="button"
                 onClick={() => {
@@ -850,7 +636,7 @@ export const Message = memo(({
         </header>
 
         {/* Verification details panel */}
-        {!isUser && verificationSummary && verificationSummary.enabled && claimsEvaluated > 0 && isVerificationPanelExpanded && (
+        {showCitations && !isUser && verificationSummary && verificationSummary.enabled && claimsEvaluated > 0 && isVerificationPanelExpanded && (
           <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-subtle bg-surface p-4">
             <p className="mb-1 text-sm font-medium text-text-primary">Verification details</p>
             <p className="text-xs text-[hsl(var(--text-muted))]">
@@ -988,8 +774,8 @@ export const Message = memo(({
         <div
           ref={answerRef}
           onClick={isUser ? undefined : handleBodyClick}
-          onMouseOver={isUser ? undefined : handleBodyMouseOver}
-          onMouseLeave={isUser ? undefined : handleBodyMouseLeave}
+          onMouseOver={isUser || !showCitations ? undefined : handleBodyMouseOver}
+          onMouseLeave={isUser || !showCitations ? undefined : handleBodyMouseLeave}
           className={`wrap-break-word wrap-anywhere ${
             isUser
               ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
@@ -1001,6 +787,7 @@ export const Message = memo(({
             content={normalizedMarkdownContent}
             citationNumbers={citationNumbers}
             claims={isUser ? undefined : claimVerdicts}
+            showEvidence={showCitations}
             codeRefs={showsCodeRefs}
           />
           </TangentSelection>
@@ -1037,7 +824,7 @@ export const Message = memo(({
         {citationFootnotes}
 
         {/* Source citations (assistant-only) */}
-        {isAssistantWithSources && (
+        {showCitations && isAssistantWithSources && (
           <SourceCitations
             sources={sources}
             provenanceBySource={provenanceBySource}
@@ -1074,7 +861,7 @@ export const Message = memo(({
           answerTurn={messageId ? messageTurn.get(messageId) : undefined}
         />
         </div>
-        {isAssistantWithSources && (
+        {showCitations && isAssistantWithSources && (
           <EvidenceMargin
             citationMap={citationMap}
             activeNumbers={activeEvidence}
@@ -1096,13 +883,13 @@ export const Message = memo(({
 
       {/* Beside a margin the passage is already on screen; a card would repeat it. */}
       <CitationHoverCard
-        hover={citationHover && !hasEvidenceMargin() ? citationHover : null}
+        hover={showCitations && citationHover && !hasEvidenceMargin() ? citationHover : null}
         source={hoveredSource}
         location={hoveredSource ? resolvedLocations.get(hoveredSource.chunkId) ?? null : null}
         provenanceLabel={hoveredSource ? provenanceBySource.get(hoveredSource.chunkId) : undefined}
       />
-      <ClaimHoverCard hover={claimHover} verdict={hoveredVerdict} citationMap={citationMap} />
-      {claimActions && claimVerdicts[claimActions.index] && (
+      <ClaimHoverCard hover={showCitations ? claimHover : null} verdict={hoveredVerdict} citationMap={citationMap} />
+      {showCitations && claimActions && claimVerdicts[claimActions.index] && (
         <ClaimActionsPopover
           anchor={claimActions.rect}
           verdict={claimVerdicts[claimActions.index]!}

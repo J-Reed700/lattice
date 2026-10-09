@@ -5,6 +5,59 @@ import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
+test('inline citations support keyboard passage navigation and clean reading', async ({ page }) => {
+  const errors: Error[] = [];
+  page.on('pageerror', error => errors.push(error));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript((settings) => {
+    localStorage.setItem('chat.sidebar.collapsed', '1');
+    const stamp = '2026-10-09T00:00:00Z';
+    const conversation = { id: 'citations-chat', title: 'Citation keyboard check', modelName: 'test', createdAt: stamp, updatedAt: stamp, messageCount: 1, totalTokens: 20, spaceId: 'space_general', isArchived: false };
+    const text = 'Record the chosen measure. Keep the observation period.';
+    const source = {
+      documentId: 'web:https://example.org/field-guide', chunkId: 'field-guide-chunk',
+      fileName: 'Field guide', filePath: 'https://example.org/field-guide', mimeType: 'text/html',
+      category: 'Web Article', content: text, score: 1, fileSizeBytes: 0, modifiedAt: stamp, citationId: 1,
+      webSnapshot: { url: 'https://example.org/field-guide', title: 'Field guide', text, fetchedAt: stamp, truncated: false },
+    };
+    const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [1]. Keep the observation period [1].', tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
+    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command) => {
+      if (command === 'plugin:settings|get_settings') return settings;
+      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
+      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
+      if (command === 'plugin:conversation|get_conversation') return { conversation };
+      if (command === 'plugin:conversation|get_conversation_messages') return { messages: [message], total: 1 };
+      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
+      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:references|list_passage_references', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
+      throw new Error(`Unsupported citation fixture command: ${command}`);
+    };
+  }, makeAppSettings());
+  await page.goto('/chat?conversationId=citations-chat');
+  const answer = page.locator('#message-citations-answer');
+  const chips = answer.getByRole('button', { name: 'Citation 1', exact: true });
+  await expect(chips).toHaveCount(2);
+  await chips.first().focus();
+  await chips.first().press('Enter');
+  const reader = page.getByRole('complementary', { name: 'Source reader' });
+  await expect(reader).toBeVisible();
+  await expect(chips.first()).toHaveClass(/is-lit/);
+  await page.keyboard.press('Escape');
+  await expect(reader).toBeHidden();
+  await expect(chips.first()).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(chips.nth(1)).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(reader).toBeVisible();
+  await expect(chips.nth(1)).toHaveClass(/is-lit/);
+  await expect(chips.first()).not.toHaveClass(/is-lit/);
+  await page.getByRole('button', { name: 'Hide citations', exact: true }).click();
+  await expect(reader).toBeHidden();
+  await expect(chips).toHaveCount(0);
+  await expect(answer.locator('.citation-hidden')).toHaveCount(2);
+  await expect(answer).toContainText('Record the chosen measure');
+  expect(errors).toEqual([]);
+});
+
 for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'], [620, 'reply']] as const) {
   test(`chat tangents via ${entry} preserve the parent, reopen after reload, and promote at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
