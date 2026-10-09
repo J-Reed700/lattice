@@ -143,4 +143,17 @@ export const settingsApi = {
     request: TestCustomToolRequest,
   ): Promise<ApiResult<TestCustomToolResponse>> =>
     apiCall<Wire.TestCustomToolResponse>('test_custom_tool', { request }),
+
+  /**
+   * Stores a cloud provider's API key in the system keychain.
+   *
+   * @param provider - Cloud provider the key belongs to
+   * @param key - The API key itself; never persisted in settings
+   * @returns Void on success
+   */
+  setCloudApiKey: async (
+    provider: string,
+    key: string,
+  ): Promise<ApiResult<void>> =>
+    apiCall<void>('set_cloud_api_key', { provider, key }),
 };

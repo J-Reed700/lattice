@@ -7,7 +7,7 @@
 
 import { CATALOG_TEXT_BUTTON_CLASS } from './catalogUtils';
 import { useModelCatalog } from '../../../hooks/useModelCatalog';
-import { Skeleton } from '../../ui/Skeleton/Skeleton';
+import { Skeleton } from '../../Skeleton';
 
 export function SystemCapabilitiesCard() {
   const {
@@ -24,8 +24,8 @@ export function SystemCapabilitiesCard() {
       <div className="border-t border-border-subtle">
         {[1, 2, 3, 4].map((i) => (
           <div key={i} className="flex items-center justify-between border-b border-border-subtle py-2.5">
-            <Skeleton variant="text" width="20%" height="0.875rem" />
-            <Skeleton variant="text" width="30%" height="0.875rem" />
+            <Skeleton width="20%" height="0.875rem" />
+            <Skeleton width="30%" height="0.875rem" />
           </div>
         ))}
       </div>

@@ -28,7 +28,6 @@ import {
   formatShortRelativeTime,
   getLocalDayKey,
   getTimeBucket,
-  normalizeHexColor,
   SpaceKind,
   TIME_BUCKET_LABELS,
   TIME_BUCKET_ORDER,
@@ -39,6 +38,7 @@ import type { useConversationSynthesis } from '@/features/chat/components/sideba
 import { useForkLineage } from '@/features/chat/components/sidebar/useForkLineage';
 import { useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
 import { useGenerateConversationFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
+import { normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';

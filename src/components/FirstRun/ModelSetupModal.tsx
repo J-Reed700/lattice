@@ -4,7 +4,6 @@
  */
 import { useEffect, useState } from 'react';
 
-import { invoke } from '@tauri-apps/api/core';
 import { Cpu } from 'lucide-react';
 
 import { useModelCatalog } from '../../hooks/useModelCatalog';
@@ -79,9 +78,13 @@ export function ModelSetupModal({
       setLoading(true);
       setError(null);
       try {
-        const json = await invoke<string>('plugin:model|check_first_run_status');
+        const result = await VaultAPI.checkFirstRunStatus();
         if (!alive) return;
-        setStatus(JSON.parse(json));
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        setStatus(JSON.parse(result.data));
       } catch (err) {
         if (alive) setError(getErrorMessage(err));
       } finally {
@@ -119,9 +122,11 @@ export function ModelSetupModal({
 
     if (status.embedding_model) {
       tasks.push(
-        invoke<string>('plugin:model|download_default_embedding_model').catch((err) => {
-          console.error('embedding download failed:', err);
-          toast.error('Embedding model download failed', { message: getErrorMessage(err) });
+        VaultAPI.downloadDefaultEmbeddingModel().then((result) => {
+          if (!result.ok) {
+            console.error('embedding download failed:', result.error);
+            toast.error('Embedding model download failed', { message: result.error });
+          }
         }),
       );
     }

@@ -6,11 +6,11 @@ import {
   buildSpaceToolPreferencesJson,
   JOURNAL_SPACE_DEFAULT_ACCENT,
   JOURNAL_SPACE_DEFAULT_ICON,
-  normalizeHexColor,
   parseSpaceToolPreferences,
   SpaceKind,
 } from '@/features/chat/components/sidebar/sidebarUtils';
 import { useCreateJournalMutation, useJournalsQuery, useSpaceMutations } from '@/features/chat/components/sidebar/workspaceQueries';
+import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useSettingsQuery } from '@/hooks/queries/useSettingsQuery';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -199,7 +199,7 @@ export function useSpaceEditor() {
   };
 
   const setSelectedSpaceArchived = async (archived: boolean) => {
-    if (!selectedSpace || selectedSpace.id === 'space_general') return;
+    if (!selectedSpace || selectedSpace.id === GENERAL_SPACE_ID) return;
 
     setIsArchivingSpace(true);
     try {

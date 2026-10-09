@@ -1081,17 +1081,6 @@ async setActiveChatModel(modelId: string) : Promise<Result<null, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Set active inference model (chat model)
- */
-async setActiveInferenceModel(modelId: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_inference_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getActiveChatModel() : Promise<Result<DownloadedModelResponse | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_active_chat_model") };
@@ -1174,55 +1163,11 @@ async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
 }
 },
 /**
- * Validate model compatibility with system
- */
-async validateModelCompatibility(modelId: string) : Promise<Result<CompatibilityReport, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("validate_model_compatibility", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Get model information by ID
  */
 async getModelInfo(modelId: string) : Promise<Result<DownloadedModelResponse | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_model_info", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Export model metadata to file
- */
-async exportModel(modelId: string, exportPath: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("export_model", { modelId, exportPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Import model from file
- */
-async importModel(importPath: string) : Promise<Result<DownloadedModelResponse, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("import_model", { importPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Refresh model cache (invalidates LLM and embedding caches)
- */
-async refreshModelCache() : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("refresh_model_cache") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2297,22 +2242,6 @@ async getFileContent(path: string) : Promise<Result<string, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async updateFileMetadata(path: string, metadata: MetadataUpdate) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_file_metadata", { path, metadata }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async deleteFileIndex(path: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_file_index", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async removeIndexedFile(path: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_indexed_file", { path }) };
@@ -2417,14 +2346,6 @@ async renameDocument(documentId: string, newName: string) : Promise<Result<Renam
     else return { status: "error", error: e  as any };
 }
 },
-async validateFilePath(path: string) : Promise<Result<boolean, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("validate_file_path", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getFilePathById(fileId: string) : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_file_path_by_id", { fileId }) };
@@ -2452,62 +2373,6 @@ async getIndexingActivities(limit: number) : Promise<Result<IndexingActivity[], 
 async getRecentDocuments(limit: number) : Promise<Result<RecentDocument[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_recent_documents", { limit }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsStore(service: string, key: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_store", { service, key }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsGet(service: string) : Promise<Result<string | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_get", { service }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsDelete(service: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_delete", { service }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsHas(service: string) : Promise<Result<boolean, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_has", { service }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsClearAll() : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_clear_all") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsSetEndpoint(endpoint: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_set_endpoint", { endpoint }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async credentialsGetEndpoint() : Promise<Result<string | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("credentials_get_endpoint") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2871,73 +2736,6 @@ async clearSearchCache() : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Unified cache operation dispatcher using enum-based pattern
- *
- * Single command handling multiple cache operations (clear, stats, metrics) via enum
- * dispatch pattern. Simplifies frontend API by consolidating related operations.
- *
- * # Arguments
- *
- * * `operation` - Enum specifying the operation to perform
- *
- * # Returns
- *
- * * `Ok(CacheResponse)` - Operation-specific response (Cleared/Stats/Metrics)
- * * `Err(AppError)` - Cache operation failed (rare)
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * // Clear cache
- * const clearResult = await invoke('cache_operation', {
- * operation: { action: 'clear' }
- * });
- * console.log('Cache cleared');
- *
- * // Get stats
- * const statsResult = await invoke<{ type: 'stats', data: CacheStats }>('cache_operation', {
- * operation: { action: 'getStats' }
- * });
- * console.log('Cache size:', statsResult.data.size);
- * console.log('Hit rate:', statsResult.data.hitRate);
- *
- * // Get metrics
- * const metricsResult = await invoke<{ type: 'metrics', data: CacheMetrics }>('cache_operation', {
- * operation: { action: 'getMetrics' }
- * });
- * console.log('Hits:', metricsResult.data.hits);
- * console.log('Time saved:', metricsResult.data.totalTimeSavedMs, 'ms');
- * ```
- *
- * # Performance
- *
- * - **Clear**: ~1-10ms (depends on cache size)
- * - **Stats/Metrics**: ~1μs (atomic reads)
- * - **Synchronous**: Instant return
- *
- * # Architecture
- *
- * Enum dispatch pattern for unified API (alternative to separate commands)
- */
-async cacheOperation(operation: CacheOperation) : Promise<Result<CacheResponse, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cache_operation", { operation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async embeddingOperation(operation: EmbeddingOperation) : Promise<Result<EmbeddingResponse, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("embedding_operation", { operation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async generateEmbedding(text: string) : Promise<Result<number[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("generate_embedding", { text }) };
@@ -2957,14 +2755,6 @@ async generateEmbeddingsBatch(texts: string[]) : Promise<Result<number[][], ApiE
 async getEmbeddingModelInfo() : Promise<Result<ModelInfo, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_embedding_model_info") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async initializeModels() : Promise<Result<string, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("initialize_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3987,14 +3777,6 @@ async listCustomCollections() : Promise<Result<CustomCollectionDto[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async importLegacyCustomCollections(collections: CustomCollectionDto[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("import_legacy_custom_collections", { collections }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async createCustomCollection(request: CreateCustomCollectionRequest) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_custom_collection", { request }) };
@@ -4687,8 +4469,6 @@ failedItems: number;
 createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
 export type CacheMetrics = { hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
-export type CacheOperation = { action: "clear" } | { action: "getStats" } | { action: "getMetrics" }
-export type CacheResponse = { type: "cleared" } | { type: "stats"; data: SearchCacheStats } | { type: "metrics"; data: CacheMetrics }
 /**
  * Request to cancel a batch job.
  */
@@ -4983,7 +4763,6 @@ export type CompatibilityLevelDto =
  * Model will run well
  */
 "Excellent"
-export type CompatibilityReport = { compatible: boolean; warnings: string[]; errors: string[] }
 /**
  * Compatibility score DTO for frontend.
  */
@@ -5533,8 +5312,6 @@ export type EmbeddingCompatibilityDto =
  * We couldn't tell from tags. Treated as not-yet-supported.
  */
 { kind: "unknown" }
-export type EmbeddingOperation = { action: "generateSingle"; text: string } | { action: "generateBatch"; texts: string[] } | { action: "getModelInfo" }
-export type EmbeddingResponse = { type: "single"; data: number[] } | { type: "batch"; data: number[][] } | { type: "modelInfo"; data: ModelInfo }
 /**
  * How chunk vectors are produced at index time.
  */
@@ -6805,7 +6582,6 @@ metadata: string | null;
  * Message status (pending/completed/failed)
  */
 status: string }
-export type MetadataUpdate = { tags: string[] | null; custom_fields: { [key in string]: string } | null }
 /**
  * Cache statistics.
  */

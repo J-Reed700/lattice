@@ -9,10 +9,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { invoke } from '@tauri-apps/api/core';
-
 import { ModelSetupModal } from './ModelSetupModal';
 import { useFirstRunDismissal } from './useFirstRunDismissal';
+import { VaultAPI } from '../../lib/api';
 
 interface FirstRunStatusResponse {
   needs_setup: boolean;
@@ -32,8 +31,12 @@ export function FirstRunGate() {
     void (async () => {
       try {
         // Returns a JSON string to keep the Future small (stack overflow fix).
-        const statusJson = await invoke<string>('plugin:model|check_first_run_status');
-        const status: FirstRunStatusResponse = JSON.parse(statusJson);
+        const result = await VaultAPI.checkFirstRunStatus();
+        if (!result.ok) {
+          console.error('Failed to check first-run status:', result.error);
+          return;
+        }
+        const status: FirstRunStatusResponse = JSON.parse(result.data);
         if (status.needs_setup) setOpen(true);
       } catch (error) {
         console.error('Failed to check first-run status:', error);

@@ -72,15 +72,6 @@ export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferen
   }
 };
 
-export const normalizeHexColor = (value: string | null | undefined): string | null => {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const candidate = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-  const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(candidate);
-  return isHex ? candidate.toLowerCase() : null;
-};
-
 export const RELATIVE_UNIT_SUFFIX: Record<string, string> = {
   second: 's',
   minute: 'm',

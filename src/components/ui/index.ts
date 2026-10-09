@@ -11,8 +11,6 @@ export { Switch } from './switch';
 export { Select } from './select';
 export { Checkbox } from './Checkbox';
 export { Dialog } from './dialog';
-export { Toast, ToastContainer, useToast } from './Toast';
-export type { ToastType, ToastVariant } from './Toast';
 export { Badge } from './badge';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
 export { ScrollArea } from './ScrollArea';

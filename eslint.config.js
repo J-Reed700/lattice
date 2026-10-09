@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import js from '@eslint/js';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
@@ -5,6 +8,145 @@ import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import importPlugin from 'eslint-plugin-import';
 import globals from 'globals';
+
+const RAW_INVOKE_MESSAGE =
+  'Only src/shared/ipc/transport.ts calls invoke(). Add a wrapper to the owning ' +
+  'feature client (src/features/<feature>/api/client.ts) and call that.';
+
+// The transport is the one way into the backend, so it is the one place that
+// wraps invoke(): routing, error normalization and diagnostics live there.
+const RAW_INVOKE_IMPORTS = [
+  { name: '@tauri-apps/api/core', importNames: ['invoke'], message: RAW_INVOKE_MESSAGE },
+  { name: '@tauri-apps/api', importNames: ['core'], message: RAW_INVOKE_MESSAGE },
+];
+
+const VIEW_BACKEND_IMPORTS = [
+  '@/lib/api', '**/lib/api',
+  '@/lib/bindings', '**/lib/bindings',
+  '@/shared/ipc/**', '**/shared/ipc/**',
+  '**/api/client', '**/files/api/documents',
+];
+
+const VIEW_NATIVE_MESSAGE =
+  'Views reach native plugins and asset URLs through a hook or shared helper, not @tauri-apps directly.';
+const VIEW_NATIVE_SELECTORS = [
+  { selector: 'ImportDeclaration[source.value=/^@tauri-apps\\u002Fplugin-/]', message: VIEW_NATIVE_MESSAGE },
+  { selector: 'ImportExpression[source.value=/^@tauri-apps\\u002Fplugin-/]', message: VIEW_NATIVE_MESSAGE },
+  {
+    selector: "ImportDeclaration[source.value='@tauri-apps/api/core'] ImportSpecifier[imported.name='convertFileSrc']",
+    message: VIEW_NATIVE_MESSAGE,
+  },
+];
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+
+/**
+ * Returns an allowlist once every entry still breaks the rule it is exempt
+ * from. Fixing, moving or deleting a listed file fails the lint run until its
+ * entry goes, so these lists can only shrink.
+ */
+function ratchet(name, files, breaksRule) {
+  const stale = files.filter((file) => {
+    const path = `${ROOT}${file}`;
+    return !existsSync(path) || !breaksRule(readFileSync(path, 'utf8'));
+  });
+  if (stale.length > 0) {
+    throw new Error(`eslint.config.js: remove these ${name} entries, the files no longer need them:\n  ${stale.join('\n  ')}`);
+  }
+  return files;
+}
+
+const valueImportSources = (text) =>
+  [...text.matchAll(/^\s*(?:import|export)\s+(?!type\s)[^;]*?\bfrom\s+['"]([^'"]+)['"]/gm)].map((match) => match[1]);
+const isBackendSource = (source) =>
+  /(^|\/)(lib\/api|lib\/bindings|api\/client|files\/api\/documents)$/.test(source) || /(^|\/)shared\/ipc(\/|$)/.test(source);
+
+// View files that imported VaultAPI, a feature client or the transport when
+// the rule arrived. Do not add to this list: move the file's backend calls
+// into a query or mutation hook, then delete its entry.
+const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
+  'src/components/CommandPalette/CommandPalette.tsx',
+  'src/components/Compare/ComparePage.tsx',
+  'src/components/ContentViewer/ContentViewer.tsx',
+  'src/components/ContentViewer/renderers/DocxViewer.tsx',
+  'src/components/ContentViewer/renderers/HTMLViewer.tsx',
+  'src/components/ContentViewer/renderers/PDFViewerImpl.tsx',
+  'src/components/ContentViewer/renderers/TextViewer.tsx',
+  'src/components/Dashboard/Dashboard.tsx',
+  'src/components/Explorer/ExplorerFileView.tsx',
+  'src/components/Explorer/ExplorerPage.tsx',
+  'src/components/Explorer/ExplorerSearch.tsx',
+  'src/components/Explorer/ExplorerTree.tsx',
+  'src/components/Explorer/FolderSettingsDialog.tsx',
+  'src/components/Explorer/useExplorerFolders.ts',
+  'src/components/Explorer/useExplorerThread.ts',
+  'src/components/FileBrowser/ContextMenu.tsx',
+  'src/components/FileBrowser/FileBrowser.tsx',
+  'src/components/FileBrowser/RenameDialog.tsx',
+  'src/components/FirstRun/FirstRunGate.tsx',
+  'src/components/FirstRun/ModelSetupModal.tsx',
+  'src/components/Ingest/BatchFileImport.tsx',
+  'src/components/Ingest/BatchUrlImport.tsx',
+  'src/components/Ingest/LibraryFilePicker.tsx',
+  'src/components/Ingest/UrlImport.tsx',
+  'src/components/IngestHub/IngestHub.tsx',
+  'src/components/Neighborhood/useNeighborhoodQuery.ts',
+  'src/components/QuickCapture/QuickCaptureDialog.tsx',
+  'src/components/SearchInterface/SearchInterface.tsx',
+  'src/components/Settings/AITab/ChatTab.tsx',
+  'src/components/Settings/AITab/LlamaCppConnection.tsx',
+  'src/components/Settings/AITab/ModelsTab.tsx',
+  'src/components/Settings/AITab/ToolsTab.tsx',
+  'src/components/Settings/BackupSection.tsx',
+  'src/components/Settings/IndexingTab.tsx',
+  'src/components/Settings/ModelCatalog/ModelVariantPicker.tsx',
+  'src/components/Settings/ModelCatalog/startModelDownload.ts',
+  'src/components/Settings/Settings.tsx',
+  'src/components/Settings/modelRoles/LocalModelRow.tsx',
+  'src/features/chat/components/ChatPanel.tsx',
+  'src/features/chat/components/ChatView.tsx',
+  'src/features/chat/components/ConversationLinkedDocumentsPanel.tsx',
+  'src/features/chat/components/ConversationMemoryPanel.tsx',
+  'src/features/chat/components/ConversationSpotlight.tsx',
+  'src/features/chat/components/JournalCapturePreview.tsx',
+  'src/features/chat/components/KnowledgePanel.tsx',
+  'src/features/chat/components/UtilityModelNotice.tsx',
+  'src/features/chat/components/actions/AnswerActionsMenu.tsx',
+  'src/features/chat/components/actions/ClaimActionsPopover.tsx',
+  'src/features/chat/components/composer/useSpaceDocuments.ts',
+  'src/features/chat/components/reader/SourceReaderBody.tsx',
+  'src/features/chat/components/sidebar/useConversationExport.ts',
+  'src/features/chat/components/sidebar/useForkLineage.ts',
+  'src/features/chat/components/sidebar/workspaceQueries.ts',
+  'src/features/chat/components/tangents/ConversationTangents.tsx',
+  'src/features/chat/components/tangents/TangentPanel.tsx',
+  'src/features/journal/components/EntryFromConversation.tsx',
+  'src/features/journal/components/JournalWorkspace.tsx',
+], (text) => valueImportSources(text).some(isBackendSource));
+
+// View files that imported a Tauri plugin or convertFileSrc when the rule
+// arrived. Do not add to this list: wrap the native call in a hook or shared
+// helper, then delete the file's entry.
+const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
+  'src/components/ContentViewer/renderers/HTMLViewer.tsx',
+  'src/components/Explorer/ExplorerPage.tsx',
+  'src/components/FileBrowser/FileBrowser.tsx',
+  'src/components/Ingest/ImportHistory.tsx',
+  'src/components/Settings/AITab/ModelsTab.tsx',
+  'src/components/Settings/AITab/ToolsTab.tsx',
+  'src/components/Settings/IndexingTab.tsx',
+  'src/components/Settings/LogsTab.tsx',
+  'src/components/Settings/Settings.tsx',
+  'src/components/Settings/VaultTab.tsx',
+  'src/features/chat/components/ChatPanel.tsx',
+  'src/features/chat/components/reader/SourceReaderBody.tsx',
+  'src/features/chat/components/viewers/AudioViewer.tsx',
+  'src/features/chat/components/viewers/ImageViewer.tsx',
+  'src/features/journal/components/JournalPickerMenu.tsx',
+  'src/features/journal/components/JournalWorkspace.tsx',
+], (text) =>
+  /\bfrom\s+['"]@tauri-apps\/plugin-|\bimport\(\s*['"]@tauri-apps\/plugin-/.test(text) ||
+  /import\s*\{[^}]*\bconvertFileSrc\b[^}]*\}\s*from\s*['"]@tauri-apps\/api\/core['"]/.test(text));
 
 export default [
   // Ignore patterns (migrated from .eslintignore)
@@ -148,31 +290,41 @@ export default [
       // ===================================
       // Import Rules
       // ===================================
-      // The UI has deliberate lowercase compatibility modules next to legacy
-      // PascalCase component directories (button.tsx/Button, etc.). Resolve
-      // exact imports without treating macOS case folding as a missing path.
-      'import/no-unresolved': ['error', { caseSensitive: false }],
+      // Case-sensitive, so an import that only resolves through macOS case
+      // folding fails here instead of on a case-sensitive filesystem.
+      'import/no-unresolved': 'error',
       'import/no-cycle': 'error',
+      // import/no-cycle sees file-level cycles only. These zones fix the
+      // direction between folders that used to import each other, so a
+      // folder-level cycle cannot come back one file at a time.
+      'import/no-restricted-paths': ['error', {
+        zones: [
+          {
+            target: './src/features',
+            from: './src/components/RootLayout.tsx',
+            message: 'Features cannot import the app shell. Put shared constants in src/shared.',
+          },
+          {
+            target: './src/features/spaces',
+            from: ['./src/features/chat', './src/features/journal', './src/components/Explorer'],
+            message: 'Spaces is the leaf that Chat, Journal and Explorer build on.',
+          },
+          {
+            target: './src/features/journal',
+            from: './src/features/chat',
+            message: 'Chat imports Journal, so Journal cannot import Chat. Move what both need to a shared module.',
+          },
+          {
+            target: './src/features/chat',
+            from: './src/components/Explorer',
+            message: 'Explorer embeds Chat, so Chat cannot import Explorer. Pass Explorer UI into ChatPanel from ExplorerChat.',
+          },
+        ],
+      }],
       'import/no-self-import': 'error',
       'import/no-duplicates': 'error',
       'import/first': 'error',
       'import/newline-after-import': 'error',
-
-      // Block direct invoke() imports - must use VaultAPI
-      // TODO: Re-enable after migrating all invoke() calls to VaultAPI
-      /*
-      'no-restricted-imports': ['error', {
-        patterns: [{
-          group: ['@tauri-apps/api/core'],
-          importNames: ['invoke'],
-          message: 'Direct invoke() calls are prohibited. Use VaultAPI from @/lib/api instead.\n\n' +
-            'Example:\n' +
-            '  ❌ import { invoke } from \'@tauri-apps/api/core\';\n' +
-            '  ✅ import { vaultApi } from \'@/lib/api\';\n\n' +
-            'See CONTRIBUTING.md for the IPC conventions.'
-        }]
-      }],
-      */
 
       'import/order': [
         'error',
@@ -208,7 +360,8 @@ export default [
       // ===================================
       // Design System Enforcement Rules
       // ===================================
-      // Temporarily disabled to get tests passing - should be re-enabled after design tokens are implemented
+      // Disabled. The design tokens are the CSS variables in src/index.css
+      // (exposed to Tailwind as --color-*); re-enable once views use only those.
       /*
       'no-restricted-syntax': [
         'error',
@@ -218,7 +371,7 @@ export default [
           message:
             'Hardcoded background color detected. Use CSS variables instead: bg-[var(--*)].\n' +
             'Example: bg-blue-600 → bg-[var(--accent-primary)]\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Text colors
         {
@@ -226,7 +379,7 @@ export default [
           message:
             'Hardcoded text color detected. Use CSS variables instead: text-[var(--*)].\n' +
             'Example: text-gray-900 → text-[var(--text-primary)]\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Border colors
         {
@@ -234,7 +387,7 @@ export default [
           message:
             'Hardcoded border color detected. Use CSS variables instead: border-[var(--*)].\n' +
             'Example: border-gray-200 → border-[var(--border-color)]\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Ring colors
         {
@@ -242,23 +395,23 @@ export default [
           message:
             'Hardcoded ring color detected. Use CSS variables instead: ring-[var(--*)].\n' +
             'Example: ring-blue-500 → ring-[var(--accent-primary)]\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Gradient from colors
         {
           selector: 'JSXAttribute[name.name="className"] Literal[value=/from-(blue|red|green|yellow|purple|pink|indigo|gray)-\\d+/]',
           message:
             'Hardcoded gradient color detected. Use CSS variable gradients or .gradient-* classes.\n' +
-            'Example: Use .gradient-brand class or define gradient in themes.css\n' +
-            'See DESIGN_TOKENS.md for available gradient classes.',
+            'Example: Use .gradient-brand class or define gradient in src/index.css\n' +
+            'See the tokens in src/index.css.',
         },
         // Gradient to colors
         {
           selector: 'JSXAttribute[name.name="className"] Literal[value=/to-(blue|red|green|yellow|purple|pink|indigo|gray)-\\d+/]',
           message:
             'Hardcoded gradient color detected. Use CSS variable gradients or .gradient-* classes.\n' +
-            'Example: Use .gradient-brand class or define gradient in themes.css\n' +
-            'See DESIGN_TOKENS.md for available gradient classes.',
+            'Example: Use .gradient-brand class or define gradient in src/index.css\n' +
+            'See the tokens in src/index.css.',
         },
         // Template literal background colors
         {
@@ -266,24 +419,62 @@ export default [
           message:
             'Hardcoded background color in template literal detected. Use CSS variables instead.\n' +
             'Example: `bg-${active ? "blue-600" : "gray-200"}` → `bg-[var(${active ? "--accent-primary" : "--bg-secondary"})]`\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Template literal text colors
         {
           selector: 'JSXAttribute[name.name="className"] TemplateLiteral > TemplateElement[value.raw=/text-(white|black|gray|slate|red|blue|green|yellow|purple|pink)-\\d+/]',
           message:
             'Hardcoded text color in template literal detected. Use CSS variables instead.\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
         // Template literal border colors
         {
           selector: 'JSXAttribute[name.name="className"] TemplateLiteral > TemplateElement[value.raw=/border-(white|black|gray|slate|red|blue|green|yellow|purple|pink)-\\d+/]',
           message:
             'Hardcoded border color in template literal detected. Use CSS variables instead.\n' +
-            'See DESIGN_TOKENS.md for the complete mapping.',
+            'See the tokens in src/index.css.',
         },
       ],
       */
+    },
+  },
+
+  // invoke() stays behind the transport. Tests are exempt: they import the
+  // mocked invoke() to drive it. Later blocks that set no-restricted-imports
+  // must keep RAW_INVOKE_IMPORTS (or ban @tauri-apps/** outright).
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/**/__tests__/**', 'src/tests/**'],
+    rules: {
+      'no-restricted-imports': ['error', { paths: RAW_INVOKE_IMPORTS }],
+    },
+  },
+
+  // Views reach the backend through hooks, which own caching and
+  // invalidation, never through VaultAPI, a feature client or the transport.
+  // Type-only imports are fine. VIEW_BACKEND_ALLOWLIST holds the files that
+  // predate the rule.
+  {
+    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...VIEW_BACKEND_ALLOWLIST],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': ['error', { patterns: [{
+        group: VIEW_BACKEND_IMPORTS,
+        allowTypeImports: true,
+        message: 'Views call the backend through a query or mutation hook, not VaultAPI, a feature client or the transport.',
+      }] }],
+    },
+  },
+
+  // Native plugins and asset URLs are backend access too; views get them
+  // through a hook or a shared helper. VIEW_NATIVE_ALLOWLIST holds the files
+  // that predate the rule.
+  {
+    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...VIEW_NATIVE_ALLOWLIST],
+    rules: {
+      'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS],
     },
   },
 
@@ -341,7 +532,7 @@ export default [
     files: ['src/utils/**/*.{ts,tsx}', 'src/features/*/model/**/*.{ts,tsx}'],
     ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}'],
     rules: {
-      'no-restricted-imports': ['error', { patterns: [{
+      'no-restricted-imports': ['error', { paths: RAW_INVOKE_IMPORTS, patterns: [{
         group: ['@/components/**', '**/components/**', '@/features/**/components/**'],
         message: 'State and model helpers cannot depend on views. Move the shared operation to its feature model or shared module.',
 

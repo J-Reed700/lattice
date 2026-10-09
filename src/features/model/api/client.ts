@@ -264,4 +264,20 @@ export const modelApi = {
    */
   clearActiveEmbeddingModel: async (): Promise<ApiResult<void>> =>
     apiCall<void>('clear_active_embedding_model'),
+
+  /**
+   * Asks whether this machine still needs the first-run model bundle.
+   *
+   * @returns The status as a JSON string (kept small for the backend future)
+   */
+  checkFirstRunStatus: async (): Promise<ApiResult<string>> =>
+    apiCall<string>('check_first_run_status'),
+
+  /**
+   * Starts the first-run download of the recommended embedding model.
+   *
+   * @returns The backend's start message
+   */
+  downloadDefaultEmbeddingModel: async (): Promise<ApiResult<string>> =>
+    apiCall<string>('download_default_embedding_model'),
 };

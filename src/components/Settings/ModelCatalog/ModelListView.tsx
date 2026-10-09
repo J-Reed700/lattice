@@ -19,7 +19,7 @@ import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { useDownloadState } from '../../../hooks/useDownloadState';
 import { useModelCatalog } from '../../../hooks/useModelCatalog';
 import { useToastStore } from '../../../stores/toastStore';
-import { Skeleton } from '../../ui/Skeleton/Skeleton';
+import { Skeleton } from '../../Skeleton';
 
 import type { CatalogResultsNavigation } from './ModelCatalogResults';
 import type { ModelRecommendation } from '../../../types/modelCatalog';
@@ -96,12 +96,12 @@ export function ModelListView({
       <div className="border-t border-border-subtle">
         {[1, 2, 3, 4, 5].map((index) => (
           <div key={index} className="border-b border-border-subtle py-3">
-            <Skeleton variant="text" width="34%" height="1rem" />
+            <Skeleton width="34%" height="1rem" />
             <div className="mt-1.5">
-              <Skeleton variant="text" width="22%" height="0.75rem" />
+              <Skeleton width="22%" height="0.75rem" />
             </div>
             <div className="mt-1.5">
-              <Skeleton variant="text" width="46%" height="0.75rem" />
+              <Skeleton width="46%" height="0.75rem" />
             </div>
           </div>
         ))}

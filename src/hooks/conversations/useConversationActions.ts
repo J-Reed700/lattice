@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 
 import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
 import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/stores/conversationsStore.types';
@@ -101,7 +102,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     const activeId = conversationUiStore.getState().activeConversationId;
     if (!activeId || !spaceId) return activeId;
     const detail = queryClient.getQueryData<Conversation | null>(conversationKeys.detail(activeId));
-    return (detail?.spaceId ?? 'space_general') === spaceId ? activeId : null;
+    return (detail?.spaceId ?? GENERAL_SPACE_ID) === spaceId ? activeId : null;
   }, [queryClient]);
 
   const setSelectedSpace = useCallback((spaceId: string | null) => {
@@ -196,7 +197,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     }
     const id = result.data.conversation.id;
     let created = result.data.conversation as Conversation;
-    if (state.selectedSpaceId && state.selectedSpaceId !== 'space_general' && selectedSpace) {
+    if (state.selectedSpaceId && state.selectedSpaceId !== GENERAL_SPACE_ID && selectedSpace) {
       const moveResult = await VaultAPI.moveConversationToSpace({
         conversationId: id,
         spaceId: state.selectedSpaceId,

@@ -76,10 +76,6 @@ export const COMMAND_DOMAIN_MAP: Record<
     domain: 'file',
     command: 'list_custom_collections',
   },
-  import_legacy_custom_collections: {
-    domain: 'file',
-    command: 'import_legacy_custom_collections',
-  },
   create_custom_collection: {
     domain: 'file',
     command: 'create_custom_collection',
@@ -829,6 +825,14 @@ export const COMMAND_DOMAIN_MAP: Record<
     command: 'clear_active_utility_model',
   },
   delete_model: { domain: 'model', command: 'delete_model' },
+  check_first_run_status: {
+    domain: 'model',
+    command: 'check_first_run_status',
+  },
+  download_default_embedding_model: {
+    domain: 'model',
+    command: 'download_default_embedding_model',
+  },
 
   // File operations - additional
   rename_document: { domain: 'file', command: 'rename_document' },
@@ -886,6 +890,7 @@ export const COMMAND_DOMAIN_MAP: Record<
   export_settings: { domain: 'settings', command: 'export_settings' },
   import_settings: { domain: 'settings', command: 'import_settings' },
   get_system_theme: { domain: 'settings', command: 'get_system_theme' },
+  set_cloud_api_key: { domain: 'settings', command: 'set_cloud_api_key' },
   validate_folder_path: { domain: 'settings', command: 'validate_folder_path' },
   test_ollama_connection: {
     domain: 'settings',

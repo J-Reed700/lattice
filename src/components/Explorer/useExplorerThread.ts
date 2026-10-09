@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { fetchConversationList } from '@/hooks/queries/conversationQueryData';
 import { VaultAPI } from '@/lib/api';
@@ -9,7 +10,6 @@ import { useConversationsStore } from '@/stores/conversationsStore';
 import { useExplorerStore } from '@/stores/explorerStore';
 import type { Conversation } from '@/types/conversation';
 
-import { GENERAL_SPACE_ID } from './useExplorerFolders';
 
 /** Under the list prefix, so every list invalidation refreshes it too. */
 const threadsKey = (root: string) => [...conversationKeys.lists, 'explorer', root] as const;

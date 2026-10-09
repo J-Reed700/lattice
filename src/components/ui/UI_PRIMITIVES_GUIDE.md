@@ -295,11 +295,11 @@ From the barrel, `@/components/ui`:
 | `SettingsSection`, `SettingsRow`, `settingsFieldClass`, `settingsTextareaClass` | `SettingsSection.tsx` | Settings layout |
 | `IconButton` | `IconButton.tsx` | Icon-only button with built-in tooltip |
 | `SidebarHeader`, `SidebarSearch`, `SidebarTabs` | `SidebarHeader.tsx` | Sidebar chrome |
-| `Toast`, `ToastContainer`, `useToast` | `Toast/` | Not the app's toasts: those are `src/components/Toast` with `@/hooks/useToast` |
 
 Imported by path, not from the barrel: `popover.tsx` (`Popover`,
-`PopoverTrigger`, `PopoverAnchor`, `PopoverContent`) and `skeleton.tsx` /
-`Skeleton/`.
+`PopoverTrigger`, `PopoverAnchor`, `PopoverContent`). Toasts live in
+`src/components/Toast` (with `@/hooks/useToast`) and loading placeholders in
+`src/components/Skeleton`.
 
 ---
 

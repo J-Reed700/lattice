@@ -4,15 +4,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, PanelLeft } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
-import { NEW_ITEM_EVENT } from '@/components/RootLayout';
 import { IconButton } from '@/components/ui';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
 import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { VaultAPI } from '@/lib/api';
+import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { conversationUiStore } from '@/stores/conversationUiStore';
 import { toast } from '@/stores/toastStore';
@@ -22,8 +23,6 @@ import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
 /** Longest quote we will carry through a URL into the composer. */
 const MAX_QUOTE_CHARS = 2000;
-
-const GENERAL_SPACE_ID = 'space_general';
 
 const decodeQuote = (raw: string): string => {
   try {

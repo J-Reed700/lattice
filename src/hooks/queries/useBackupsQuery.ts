@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { migrateLegacyCustomCollections } from '@/hooks/queries/useCustomCollectionsQuery';
 import VaultAPI from '@/lib/api';
 import type { BackupInfo, CreateBackupResult, ExportSummary } from '@/types/api/backup';
 
@@ -26,9 +25,6 @@ export function useCreateBackupMutation() {
 
   return useMutation<CreateBackupResult, Error, void>({
     mutationFn: async () => {
-      // A user may create a backup before ever opening the Library after an
-      // upgrade. Move legacy collections into SQLite before snapshotting it.
-      await migrateLegacyCustomCollections();
       const result = await VaultAPI.createBackup();
       if (!result.ok) {
         throw new Error(result.error);

@@ -18,7 +18,7 @@ import { X } from 'lucide-react';
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { type DocumentMetadata } from '../../types/fileBrowser';
-import Button from '../ui/Button/Button';
+import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 
 interface RenameDialogProps {
@@ -197,7 +197,6 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
               </Button>
               <Button
                 type="submit"
-                variant="primary"
                 disabled={isSaving || !!error}
               >
                 {isSaving ? 'Saving...' : 'Save'}

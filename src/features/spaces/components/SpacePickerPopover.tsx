@@ -3,7 +3,7 @@ import { type ReactNode, useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Check, Library } from 'lucide-react';
 
-import { normalizeHexColor } from '@/features/chat/components/sidebar/sidebarUtils';
+import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/stores/conversationsStore';
 
 /**
@@ -17,8 +17,6 @@ import { useConversationsStore } from '@/stores/conversationsStore';
  * anything else, so it is shown where the question is typed and chosen where
  * the chat is made.
  */
-
-export const GENERAL_SPACE_ID = 'space_general';
 
 export interface SpacePickerPopoverProps {
   /** The space to mark as current, when there is a current one. */

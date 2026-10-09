@@ -7,13 +7,11 @@
  */
 
 import { type QueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 
 import { embeddingBlockReason } from './catalogUtils';
-import { getErrorMessage } from '../../../lib/errorUtils';
+import { VaultAPI } from '../../../lib/api';
 import { useToastStore } from '../../../stores/toastStore';
 
-import type { DownloadModelResponse } from '../../../types/download';
 import type { ModelMetadata } from '../../../types/modelCatalog';
 
 type AddToast = ReturnType<typeof useToastStore.getState>['addToast'];
@@ -45,42 +43,9 @@ export async function startModelDownload({
     return { alreadyDownloaded: false };
   }
 
-  try {
-    const response = await invoke<DownloadModelResponse>('plugin:model|download_model', {
-      modelId: metadata.id,
-    });
-
-    if (response.status === 'started') {
-      addToast({
-        type: 'success',
-        title: 'Download started',
-        message: metadata.name,
-      });
-    } else if (response.status === 'already_downloaded') {
-      addToast({
-        type: 'info',
-        title: 'Already downloaded',
-        message: `${metadata.name} is on disk.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
-      return { alreadyDownloaded: true };
-    } else if (response.status === 'network_error') {
-      addToast({
-        type: 'error',
-        title: "Couldn't reach the model host",
-        message: 'Check your connection and try again.',
-      });
-    } else if (response.status === 'failed') {
-      addToast({
-        type: 'error',
-        title: "Couldn't start the download",
-        message: 'The download could not be started.',
-      });
-    }
-  } catch (error) {
-    const errorMessage = getErrorMessage(error);
-
-    if (errorMessage.includes('Rate limit')) {
+  const result = await VaultAPI.downloadModel(metadata.id);
+  if (!result.ok) {
+    if (result.error.includes('Rate limit')) {
       addToast({
         type: 'warning',
         title: 'Too many downloads at once',
@@ -90,9 +55,39 @@ export async function startModelDownload({
       addToast({
         type: 'error',
         title: "Couldn't start the download",
-        message: errorMessage,
+        message: result.error,
       });
     }
+    return { alreadyDownloaded: false };
+  }
+
+  const response = result.data;
+  if (response.status === 'started') {
+    addToast({
+      type: 'success',
+      title: 'Download started',
+      message: metadata.name,
+    });
+  } else if (response.status === 'already_downloaded') {
+    addToast({
+      type: 'info',
+      title: 'Already downloaded',
+      message: `${metadata.name} is on disk.`,
+    });
+    queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
+    return { alreadyDownloaded: true };
+  } else if (response.status === 'network_error') {
+    addToast({
+      type: 'error',
+      title: "Couldn't reach the model host",
+      message: 'Check your connection and try again.',
+    });
+  } else if (response.status === 'failed') {
+    addToast({
+      type: 'error',
+      title: "Couldn't start the download",
+      message: 'The download could not be started.',
+    });
   }
 
   return { alreadyDownloaded: false };

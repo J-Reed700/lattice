@@ -160,6 +160,12 @@ export function createVaultAPIMock() {
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
     warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    checkFirstRunStatus: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
+    downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
     getModelInfo: vi.fn().mockResolvedValue({
       name: 'test-model',
       size: 1000000,
@@ -173,6 +179,7 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
+    setCloudApiKey: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     // Default to the state a fresh install is really in: the reranker model is
     // downloaded on demand and is not there yet.
     getRerankerStatus: vi.fn().mockResolvedValue({

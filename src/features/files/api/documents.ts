@@ -215,11 +215,6 @@ export const documentApi = {
     ApiResult<Wire.CustomCollectionDto[]>
   > => apiCall<Wire.CustomCollectionDto[]>('list_custom_collections'),
 
-  importLegacyCustomCollections: async (
-    collections: Wire.CustomCollectionDto[],
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('import_legacy_custom_collections', { collections }),
-
   createCustomCollection: async (
     request: Wire.CreateCustomCollectionRequest,
   ): Promise<ApiResult<string>> =>

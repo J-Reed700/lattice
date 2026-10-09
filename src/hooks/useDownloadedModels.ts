@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { VaultAPI } from '../lib/api';
@@ -15,10 +14,8 @@ export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
 
 async function loadDownloadedModels(): Promise<DownloadedModel[]> {
   const result = await VaultAPI.getDownloadedModels();
-  if (result.ok) return result.data;
-  // Compatibility fallback for older backend routing. The returned data still
-  // enters the same React Query cache; it never becomes a second state owner.
-  return invoke<DownloadedModel[]>('plugin:model|list_downloaded_models');
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export const useDownloadedModels = () => {
@@ -74,6 +71,20 @@ export const useDownloadedModels = () => {
     },
     onSuccess: invalidateModels,
   });
+  const clearActiveChatMutation = useMutation({
+    mutationFn: async () => {
+      const result = await VaultAPI.clearActiveChatModel();
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
+  const clearActiveEmbeddingMutation = useMutation({
+    mutationFn: async () => {
+      const result = await VaultAPI.clearActiveEmbeddingModel();
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
   const clearActiveUtilityMutation = useMutation({
     mutationFn: async () => {
       const result = await VaultAPI.clearActiveUtilityModel();
@@ -84,14 +95,7 @@ export const useDownloadedModels = () => {
   const deleteModelMutation = useMutation({
     mutationFn: async ({ id, deleteFile }: { id: string; deleteFile: boolean }) => {
       const result = await VaultAPI.deleteDownloadedModel(id, deleteFile);
-      if (!result.ok) {
-        await invoke<void>('plugin:model|delete_model', {
-          modelId: id,
-
-          deleteFile,
-
-        });
-      }
+      if (!result.ok) throw new Error(result.error);
     },
     onSuccess: invalidateModels,
   });
@@ -99,14 +103,7 @@ export const useDownloadedModels = () => {
   const isModelDownloaded = useCallback(async (modelId: string): Promise<boolean> => {
     const result = await VaultAPI.isModelDownloaded(modelId);
     if (result.ok) return result.data;
-    try {
-      return await invoke<boolean>('plugin:model|is_model_already_downloaded', {
-        modelId,
-
-      });
-    } catch {
-      return downloadedModels.some((model) => model.model_id === modelId);
-    }
+    return downloadedModels.some((model) => model.model_id === modelId);
   }, [downloadedModels]);
 
   const warmUpActiveChatModel = useCallback(async () => {
@@ -132,6 +129,8 @@ export const useDownloadedModels = () => {
     warmUpActiveUtilityModel,
     setActiveEmbeddingModel: setActiveEmbeddingMutation.mutateAsync,
     setActiveUtilityModel: setActiveUtilityMutation.mutateAsync,
+    clearActiveChatModel: clearActiveChatMutation.mutateAsync,
+    clearActiveEmbeddingModel: clearActiveEmbeddingMutation.mutateAsync,
     clearActiveUtilityModel: clearActiveUtilityMutation.mutateAsync,
     deleteDownloadedModel: (id: string, deleteFile = true) =>
       deleteModelMutation.mutateAsync({ id, deleteFile }),

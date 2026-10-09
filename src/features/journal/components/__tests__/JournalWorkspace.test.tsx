@@ -14,8 +14,6 @@ const { listJournals, createJournal, deleteJournal } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/api', () => ({ default: { listJournals, createJournal, deleteJournal }, VaultAPI: { listJournals, createJournal, deleteJournal } }));
-vi.mock('@/features/chat/components/SpacePickerPopover', () => ({ GENERAL_SPACE_ID: 'space_general' }));
-vi.mock('@/components/RootLayout', () => ({ NEW_ITEM_EVENT: 'new-item' }));
 vi.mock('@/hooks/queries/useWeeklySynthesisCandidatesQuery', () => ({
   useWeeklySynthesisCandidatesQuery: () => ({ data: { total: 0 }, refetch: vi.fn() }),
 }));

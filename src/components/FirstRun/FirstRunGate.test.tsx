@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,7 +58,10 @@ describe('FirstRunGate', () => {
     vi.clearAllMocks();
     localStorage.clear();
     storedDismissal = false;
-    vi.mocked(invoke).mockResolvedValue(FIRST_RUN_STATUS);
+    vi.spyOn(VaultAPI, 'checkFirstRunStatus').mockResolvedValue({
+      ok: true,
+      data: FIRST_RUN_STATUS,
+    });
     vi.spyOn(VaultAPI, 'getSettings').mockImplementation(async () => ({
       ok: true,
       data: settingsWith(storedDismissal),
@@ -74,7 +76,7 @@ describe('FirstRunGate', () => {
     renderGate();
 
     expect(await screen.findByText('Set up AI')).toBeInTheDocument();
-    expect(invoke).toHaveBeenCalledWith('plugin:model|check_first_run_status');
+    expect(VaultAPI.checkFirstRunStatus).toHaveBeenCalled();
   });
 
   it('stays quiet when the setting says the user already dismissed it', async () => {
@@ -83,8 +85,27 @@ describe('FirstRunGate', () => {
     renderGate();
 
     await waitFor(() => expect(VaultAPI.getSettings).toHaveBeenCalled());
-    expect(invoke).not.toHaveBeenCalled();
+    expect(VaultAPI.checkFirstRunStatus).not.toHaveBeenCalled();
     expect(screen.queryByText('Set up AI')).not.toBeInTheDocument();
+  });
+
+  it('stays closed when the backend cannot answer the status check', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(VaultAPI.checkFirstRunStatus).mockResolvedValue({
+      ok: false,
+      error: 'model registry unavailable',
+    });
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        'Failed to check first-run status:',
+        'model registry unavailable',
+      );
+    });
+    expect(screen.queryByText('Set up AI')).not.toBeInTheDocument();
+    consoleError.mockRestore();
   });
 
   it('records "Not now" against the repository', async () => {

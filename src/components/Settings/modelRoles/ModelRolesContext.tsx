@@ -13,8 +13,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { invoke } from '@tauri-apps/api/core';
-
 import { useSettingsQuery, useUpdateSettingsMutation } from '../../../hooks/queries/useSettingsQuery';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { toast } from '../../../stores/toastStore';
@@ -60,6 +58,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     setActiveChatModel,
     setActiveEmbeddingModel,
     setActiveUtilityModel,
+    clearActiveChatModel,
+    clearActiveEmbeddingModel,
     clearActiveUtilityModel,
   } = useDownloadedModels();
 
@@ -93,7 +93,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
         if (role === 'chat') {
           if (!chatProvider) throw new Error('Chat settings have not loaded. Please try again.');
           if (modelId === null) {
-            await invoke('plugin:model|clear_active_chat_model');
+            await clearActiveChatModel();
             // An explicit Ollama provider keeps working even without a model
             // row assignment. Deselecting it must also stop that provider.
             if (chatProvider === 'ollama') {
@@ -112,7 +112,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
           }
         } else if (role === 'embedding') {
           if (modelId === null) {
-            await invoke('plugin:model|clear_active_embedding_model');
+            await clearActiveEmbeddingModel();
           } else {
             await setActiveEmbeddingModel(modelId);
             toast.info('Embedding model prepared. Restart Lattice to use its search index.');
@@ -138,6 +138,8 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       setActiveChatModel,
       setActiveEmbeddingModel,
       setActiveUtilityModel,
+      clearActiveChatModel,
+      clearActiveEmbeddingModel,
       clearActiveUtilityModel,
       refresh,
       chatProvider,

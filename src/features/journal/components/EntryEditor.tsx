@@ -4,7 +4,12 @@ import { PanelRight } from 'lucide-react';
 
 import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
 import { IconButton } from '@/components/ui/IconButton';
+// Follow-up (architecture audit 2026-10-09 §3.5): move the source reader
+// (FilePreviewModal, SourceReaderBody, SourceCitations) out of Chat into a
+// shared module so Journal stops importing Chat.
+// eslint-disable-next-line import/no-restricted-paths -- shared source reader, see above
 import { FilePreviewModal } from '@/features/chat/components/FilePreviewModal';
+// eslint-disable-next-line import/no-restricted-paths -- shared source reader, see above
 import { SourceCitations } from '@/features/chat/components/SourceCitations';
 import { EntryActionRail } from '@/features/journal/components/EntryActionRail';
 import { EntryFromConversation } from '@/features/journal/components/EntryFromConversation';

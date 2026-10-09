@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Bookmark, Loader2, MessageSquare, Search } from 'lucide-react';
 
+import { normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -20,14 +21,6 @@ interface ConversationSpotlightProps {
 type SpotlightItem =
   | { kind: 'conversation'; key: string; conversation: ConversationDto }
   | { kind: 'bookmark'; key: string; bookmark: ConversationMessageBookmarkDto };
-
-const normalizeHexColor = (value: string | null | undefined): string | null => {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const candidate = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(candidate) ? candidate.toLowerCase() : null;
-};
 
 export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlightProps) {
   const prefersReducedMotion = useReducedMotion();

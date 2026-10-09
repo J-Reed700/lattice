@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Search, X } from 'lucide-react';
 
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import VaultAPI from '@/lib/api';
 import { useConversationUiStore } from '@/stores/conversationUiStore';
@@ -16,7 +17,7 @@ export function LearningDocumentPicker({ selected, onChange, limit }: {
 }) {
   const id = useId();
   const initialSpace = useConversationUiStore((state) => state.selectedSpaceId);
-  const [spaceId, setSpaceId] = useState(initialSpace ?? 'space_general');
+  const [spaceId, setSpaceId] = useState(initialSpace ?? GENERAL_SPACE_ID);
   const [search, setSearch] = useState('');
   const spaces = useQuery({
     queryKey: conversationKeys.spaces,
@@ -36,14 +37,14 @@ export function LearningDocumentPicker({ selected, onChange, limit }: {
     // Never show results from the previous Space while the new one loads.
     retry: false,
   });
-  const spaceName = spaces.data?.find((space) => space.id === spaceId)?.name ?? (spaceId === 'space_general' ? 'General' : 'Selected Space');
+  const spaceName = spaces.data?.find((space) => space.id === spaceId)?.name ?? (spaceId === GENERAL_SPACE_ID ? 'General' : 'Selected Space');
   const choices = spaces.data ?? [];
   return <div className="space-y-3">
     <div className="grid gap-3 sm:grid-cols-[minmax(140px,1fr)_minmax(0,2fr)]">
       <label htmlFor={`${id}-space`} className="text-xs font-medium text-text-secondary">Document Space
         <select data-add-focus id={`${id}-space`} value={spaceId} onChange={(event) => { setSpaceId(event.target.value); setSearch(''); }} className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-background px-3 text-sm">
-          {!choices.some((space) => space.id === 'space_general') && <option value="space_general">General</option>}
-          {!choices.some((space) => space.id === spaceId) && spaceId !== 'space_general' && <option value={spaceId}>{spaceName}</option>}
+          {!choices.some((space) => space.id === GENERAL_SPACE_ID) && <option value={GENERAL_SPACE_ID}>General</option>}
+          {!choices.some((space) => space.id === spaceId) && spaceId !== GENERAL_SPACE_ID && <option value={spaceId}>{spaceName}</option>}
           {choices.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
         </select>
       </label>

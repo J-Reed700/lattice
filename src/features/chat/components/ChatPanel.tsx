@@ -5,7 +5,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowUp, ChevronDown, Cpu, FileText, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, ScrollText, Settings2, Square } from 'lucide-react';
 
+// Follow-up (architecture audit 2026-10-09 §3.5): ExplorerChat should pass
+// these into ChatPanel so Chat stops importing Explorer.
+// eslint-disable-next-line import/no-restricted-paths -- Explorer composer notice, see above
 import { ExplorerIndexNotice } from '@/components/Explorer/ExplorerIndexNotice';
+// eslint-disable-next-line import/no-restricted-paths -- Explorer composer chip, see above
 import { ExplorerSelectionChip } from '@/components/Explorer/ExplorerSelectionChip';
 import { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 import { ChatEmptyStateIngestDelta } from '@/features/chat/components/ChatEmptyStateIngestDelta';
@@ -31,12 +35,13 @@ import { ConversationNavigator } from '@/features/chat/components/ConversationNa
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 import { Message } from '@/features/chat/components/Message';
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
-import { GENERAL_SPACE_ID, SpacePickerPopover, useOpenSpaces } from '@/features/chat/components/SpacePickerPopover';
 import { ConversationTangents } from '@/features/chat/components/tangents/ConversationTangents';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
 import { VirtualizedMessageList, type VirtualizedMessageListHandle } from '@/features/chat/components/VirtualizedMessageList';
 import { useChatFileDrop } from '@/features/chat/hooks/useChatFileDrop';
 import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
+import { SpacePickerPopover, useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { useSettingsQuery } from '@/hooks/queries/useSettingsQuery';
 import { conversationKeys } from '@/hooks/useConversationsController';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';

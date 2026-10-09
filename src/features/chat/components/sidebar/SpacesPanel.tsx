@@ -14,8 +14,9 @@ import {
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-import { normalizeHexColor, SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
+import { SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
 import type { useSpaceEditor } from '@/features/chat/components/sidebar/useSpaceEditor';
+import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -430,7 +431,7 @@ export function SpacesPanel({ anchorRef, onClose, editor }: SpacesPanelProps) {
                     )}
                     Save
                   </button>
-                  {selectedSpace.id !== 'space_general' && (
+                  {selectedSpace.id !== GENERAL_SPACE_ID && (
                     <button
                       onClick={handleAsyncEvent(() => setSelectedSpaceArchived(!selectedSpace.isArchived))}
                       disabled={isArchivingSpace}

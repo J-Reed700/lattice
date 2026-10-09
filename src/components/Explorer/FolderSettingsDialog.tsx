@@ -3,10 +3,10 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationSpaceDto } from '@/types/api/conversation';
 
-import { GENERAL_SPACE_ID } from './useExplorerFolders';
 
 /** What the dialog edits: a row of "Your folders", or the folder open now. */
 export interface FolderSettingsTarget {

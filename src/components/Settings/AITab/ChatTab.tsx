@@ -5,8 +5,6 @@
 
 import { useEffect, useState } from "react";
 
-import { invoke } from "@tauri-apps/api/core";
-
 import { cn } from "@/lib/utils";
 
 import { LlamaCppConnection } from "./LlamaCppConnection";
@@ -298,16 +296,18 @@ export function ChatTab() {
                 onClick={async () => {
                   setSavingCloudKey(true);
                   try {
-                    await invoke("plugin:settings|set_cloud_api_key", {
+                    const result = await VaultAPI.setCloudApiKey(
                       provider,
-                      key: cloudKey.trim(),
-                    });
-                    setCloudKey("");
-                    toast.success("API key saved");
-                  } catch (error) {
-                    toast.error("Could not save API key", {
-                      message: String(error),
-                    });
+                      cloudKey.trim(),
+                    );
+                    if (result.ok) {
+                      setCloudKey("");
+                      toast.success("API key saved");
+                    } else {
+                      toast.error("Could not save API key", {
+                        message: result.error,
+                      });
+                    }
                   } finally {
                     setSavingCloudKey(false);
                   }

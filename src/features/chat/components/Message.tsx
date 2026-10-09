@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
+// Follow-up (architecture audit 2026-10-09 §3.5): ExplorerChat should hand
+// Message its streaming code-ref reveal so Chat stops importing Explorer.
+// eslint-disable-next-line import/no-restricted-paths -- Explorer reveal, see above
 import { useRevealStreamingRef } from '@/components/Explorer/useRevealStreamingRef';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';

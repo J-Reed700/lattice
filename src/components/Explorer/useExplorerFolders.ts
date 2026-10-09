@@ -10,9 +10,6 @@ import { toast } from '@/stores/toastStore';
 
 import { INDEX_STATUS_EVENT } from './indexProgress';
 
-/** The space a folder files its threads in until another is chosen. */
-export const GENERAL_SPACE_ID = 'space_general';
-
 /** What a folder's index holds, as the backend's `FolderIndexSummaryState`. */
 export type FolderIndexSummaryState = 'indexed' | 'partial' | 'indexing' | 'notIndexed' | 'tooLarge' | 'refused' | 'error';
 

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SpacePickerPopover } from '@/features/chat/components/SpacePickerPopover';
+import { SpacePickerPopover } from '@/features/spaces/components/SpacePickerPopover';
 
 const storeState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
