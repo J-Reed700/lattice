@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Explorer took Study's ⌘6 slot
 - Startup JavaScript is back under the 1,050,000-byte budget checked by `scripts/check-initial-js-budget.mjs`: icon, date and command-menu code now loads with the page that uses it
 - Learning Studio's library text read moved behind a repository so the repository-barrier and layer-boundary checks pass
+- **Studio's Sources list pages instead of running on forever**: the Library column of an active program shows 10 sources at a time, with first/previous/next/last controls and a 10/25/50/100 per-page choice above the list. The choice is remembered, a new filter or search starts again at page 1, and opening a search match turns to the page that holds it
 
 ### Fixed
 - **Explorer file links returned unrelated files**: abbreviated paths such as `crash/mod.rs:57` now open the unique matching path at the cited lines instead of listing every `mod.rs`. Matching keeps all named folders, supports omitted intermediate folders, and offers a choice only among equally strong matches.

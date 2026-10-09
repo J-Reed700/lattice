@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, renderHook, screen, waitFor } from '@testing-library/react';
+import { render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
-import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
+import { SOURCE_PAGE_SIZE_KEY, SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { learningSourcesKey, useAddLearningWebSource } from '@/features/learning/sources/useLearningSources';
 import { learningProgramKey, LEARNING_PROGRAMS_KEY } from '@/features/learning/workspace/useLearningStudio';
 import type { LearningSourceVersionDto, LearningSourceWorkspaceDto } from '@/lib/bindings';
@@ -55,9 +55,9 @@ const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePa
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 
-function renderSources(initial = workspace) {
+function renderSources(initial = workspace, openedVersion = version) {
   mocks.workspace.mockResolvedValue(ok(initial));
-  mocks.version.mockResolvedValue(ok(version));
+  mocks.version.mockResolvedValue(ok(openedVersion));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" /></QueryClientProvider>);
 }
@@ -78,6 +78,66 @@ describe('Learning Studio Sources workspace', () => {
     expect(screen.getByText('Update available · saved edition stays active')).toBeVisible();
     await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Source version history' }), 'version-2');
     await waitFor(() => expect(mocks.version).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-2' }));
+  });
+
+  it('renders legacy web snapshots as a formatted reader and keeps the exact capture available', async () => {
+    const saved = {
+      ...version,
+      version: { ...version.version, wordCount: 24, extractionVersion: 'web_reference_v1' },
+      fullText: '# Build cache\n\nCargo stores output in the target directory. By default,\nthis is inside the workspace.\n\n | Directory | Description\n\n | target/debug/ | Development output',
+    };
+    const { container } = renderSources(workspace, saved);
+
+    expect(await screen.findByRole('heading', { name: 'Build cache', level: 1 })).toBeVisible();
+    expect(screen.getByText('Cargo stores output in the target directory. By default, this is inside the workspace.')).toBeVisible();
+    expect(container.querySelector('table')).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Exact capture' }));
+    expect(screen.getByText(/immutable text used for evidence/)).toBeVisible();
+    expect(container.querySelector('pre')).toHaveTextContent('By default, this is inside the workspace.');
+  });
+
+  it('pages through a long library, remembers how many to show, and turns to a search match', async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem(SOURCE_PAGE_SIZE_KEY);
+    const many = Array.from({ length: 23 }, (_, index) => {
+      const saved = { ...activeText, id: `version-${index + 10}`, title: `Archive ${index + 1}` };
+      return { ...source, id: `source-${index + 10}`, activeVersionId: saved.id, activeVersion: saved, versions: [saved], pendingVersionId: index === 21 ? 'version-pending' : null, pendingVersion: null };
+    });
+    mocks.search.mockResolvedValue(ok(many.map((item, index) => ({ sourceId: item.id, versionId: item.activeVersionId, title: `Archive ${index + 1}`, excerpt: `match ${index + 1}` }))));
+    renderSources({ programId: 'program-1', sources: many });
+
+    const list = await screen.findByLabelText('Source list');
+    const titles = () => within(list).getAllByRole('button').map((row) => row.textContent?.replace(/(Update available|Stored for offline reading)$/, ''));
+    await waitFor(() => expect(titles()).toHaveLength(10));
+    expect(titles()[0]).toBe('Archive 1');
+    expect(screen.getByText('1–10 of 23')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(titles()[0]).toBe('Archive 11');
+    await user.click(screen.getByRole('button', { name: 'Last page' }));
+    expect(screen.getByText('21–23 of 23')).toBeVisible();
+    expect(titles()).toEqual(['Archive 21', 'Archive 22', 'Archive 23']);
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+
+    // A narrower filter starts again at the first page.
+    await user.click(screen.getByRole('button', { name: 'Updates' }));
+    expect(titles()).toEqual(['Archive 22']);
+    expect(screen.queryByRole('navigation', { name: 'Source pages' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'All' }));
+    expect(titles()[0]).toBe('Archive 1');
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sources per page' }), '25');
+    expect(titles()).toHaveLength(23);
+    expect(localStorage.getItem(SOURCE_PAGE_SIZE_KEY)).toBe('25');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sources per page' }), '10');
+
+    // Opening a match from the search results turns the list to the page that holds it.
+    await user.type(screen.getByRole('textbox', { name: 'Search saved source text' }), 'archive');
+    await user.click(await screen.findByRole('button', { name: /^Archive 22.*match 22$/ }));
+    expect(titles()).toEqual(['Archive 21', 'Archive 22', 'Archive 23']);
+    expect(within(list).getByRole('button', { name: /Archive 22/ })).toHaveAttribute('aria-current', 'true');
   });
 
   it('supports paste text and retries a lost response with the exact same operation and version ids', async () => {

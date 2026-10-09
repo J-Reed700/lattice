@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/workspace/useLearningStudio';
+import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import VaultAPI from '@/lib/api';
 import type {
   AddLearningDocumentSourceRequestDto,
@@ -67,10 +67,7 @@ function useSourceMutation<TRequest>(
     mutationFn: async (request: TRequest) => unwrap(await mutation(request)),
     onSuccess: async (workspace) => {
       client.setQueryData(learningSourcesKey(workspace.programId), workspace);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: learningProgramKey(workspace.programId) }),
-        client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }),
-      ]);
+      await invalidateLearningSourceDependents(client, workspace.programId);
     },
   });
 }
