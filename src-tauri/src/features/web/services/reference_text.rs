@@ -63,12 +63,16 @@ fn is_block(name: &str) -> bool {
 }
 
 fn escape_text(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
     let mut escaped = String::with_capacity(text.len());
-    for character in text.chars() {
+    for (index, &character) in characters.iter().enumerate() {
         match character {
             '&' => escaped.push_str("&amp;"),
             '<' => escaped.push_str("&lt;"),
             '>' => escaped.push_str("&gt;"),
+            // CommonMark never reads an underscore between two alphanumerics as
+            // emphasis, so `snake_case` identifiers stay quotable and searchable.
+            '_' if is_intraword(&characters, index) => escaped.push(character),
             '\\' | '`' | '*' | '_' | '[' | ']' | '|' => {
                 escaped.push('\\');
                 escaped.push(character);
@@ -77,6 +81,14 @@ fn escape_text(text: &str) -> String {
         }
     }
     escaped
+}
+
+fn is_intraword(characters: &[char], index: usize) -> bool {
+    let before = index
+        .checked_sub(1)
+        .and_then(|previous| characters.get(previous));
+    let after = characters.get(index + 1);
+    before.is_some_and(|c| c.is_alphanumeric()) && after.is_some_and(|c| c.is_alphanumeric())
 }
 
 fn append_collapsed(out: &mut String, text: &str) {
@@ -522,6 +534,18 @@ mod tests {
     fn deeply_nested_reference_html_is_rejected_without_partial_capture() {
         let html = format!("{}reference{}", "<div>".repeat(300), "</div>".repeat(300));
         assert!(super::extract(&html).is_err());
+    }
+
+    #[test]
+    fn identifiers_keep_their_underscores_while_emphasis_markers_stay_escaped() {
+        let (_, text) = super::extract(
+            "<html><body><article><p>Set MAX_PAGE_BYTES and snake_case_name, not _this_ or *that*.</p></article></body></html>",
+        )
+        .unwrap();
+        assert_eq!(
+            text,
+            "Set MAX_PAGE_BYTES and snake_case_name, not \\_this\\_ or \\*that\\*."
+        );
     }
 
     #[test]
