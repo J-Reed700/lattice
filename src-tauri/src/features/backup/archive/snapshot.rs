@@ -1,11 +1,12 @@
 //! Payload side of a `.lattice-backup` archive: the SQLite snapshot with
-//! derivable tables cleared, plus the files library, vault, and settings,
-//! packed as a zstd-compressed tar.
+//! derivable tables cleared, plus the files library, vault, saved web
+//! articles, and settings, packed as a zstd-compressed tar.
 //!
 //! Layout of the plaintext payload (see `format.rs` for the framing):
 //!
 //! ```text
-//! zstd( tar( manifest.json, db/lattice.db, files/**, vault/**, settings.json ) )
+//! zstd( tar( manifest.json, db/lattice.db, files/**, vault/**, web-archive/**,
+//!            settings.json ) )
 //! ```
 //!
 //! `manifest.json` is always the first tar entry so a reader can learn the
@@ -23,11 +24,14 @@ use walkdir::WalkDir;
 
 use super::format::{
     ArchiveError, Manifest, DB_ENTRY, FILES_ENTRY_PREFIX, FORMAT_VERSION, MANIFEST_ENTRY,
-    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX,
+    SETTINGS_ENTRY, VAULT_ENTRY_PREFIX, WEB_ARCHIVE_ENTRY_PREFIX,
 };
 
 /// Tables whose rows are cleared from the snapshot. All are re-derivable
-/// from documents, chunks, and conversations after a restore.
+/// from documents, chunks, conversations, and learning source versions after
+/// a restore. `learning_source_retrieval_index` is rebuilt lazily: the next
+/// lesson that loads a program's references re-embeds any source version
+/// whose cached rows are missing.
 pub const EXCLUDED_TABLES: &[&str] = &[
     "text_embeddings",
     "image_embeddings",
@@ -37,6 +41,7 @@ pub const EXCLUDED_TABLES: &[&str] = &[
     "clusters",
     "cluster_runs",
     "chat_starter_cache",
+    "learning_source_retrieval_index",
 ];
 
 /// zstd compression level for the payload. 3 is the zstd default: it keeps
@@ -265,8 +270,9 @@ pub async fn snapshot_database(
     // text_embeddings -> text_chunks, image_embeddings -> documents,
     // conversation_memory_vectors -> conversations, chunk_sparse_terms ->
     // text_chunks, cluster_members -> clusters/documents, clusters ->
-    // cluster_runs. The list above is already child-before-parent, so the
-    // order would be safe even with enforcement on.)
+    // cluster_runs, learning_source_retrieval_index -> learning_source_versions.
+    // The list above is already child-before-parent, so the order would be
+    // safe even with enforcement on.)
     let options = SqliteConnectOptions::new()
         .filename(dest)
         .create_if_missing(false)
@@ -446,6 +452,10 @@ pub struct ArchiveInputs {
     pub referenced_blob_hashes: Option<HashSet<String>>,
     /// Vault markdown folder, if the vault is enabled and the folder exists.
     pub vault_root: Option<PathBuf>,
+    /// Saved web articles (`~/.lattice/web-archive`), if the folder exists.
+    /// Web documents' `file_path` points into it, and the reader opens the
+    /// page snapshot from there.
+    pub web_archive_root: Option<PathBuf>,
     /// `settings.json`, if present.
     pub settings_file: Option<PathBuf>,
     /// Subtrees to skip while walking (for example the archive destination
@@ -842,7 +852,19 @@ pub fn write_payload<W: Write>(
         }
     }
 
-    // 4. settings.json.
+    // 4. Saved web articles.
+    let mut web_archive_file_count = 0u64;
+    if let Some(root) = inputs.web_archive_root.as_ref() {
+        if root.is_dir() {
+            let (count, bytes) = scan_tree(root, WEB_ARCHIVE_ENTRY_PREFIX, &excludes, &mut planned);
+            web_archive_file_count = count;
+            total_bytes = total_bytes.saturating_add(bytes);
+        } else {
+            warn!(path = %root.display(), "web archive folder is missing; not archived");
+        }
+    }
+
+    // 5. settings.json.
     let mut settings_included = false;
     if let Some(settings) = inputs.settings_file.as_ref() {
         match std::fs::metadata(settings) {
@@ -967,6 +989,7 @@ pub fn write_payload<W: Write>(
     info!(
         files = manifest.files_count,
         vault_files = manifest.vault_file_count,
+        web_archive_files = web_archive_file_count,
         bytes = manifest.total_plaintext_bytes,
         "packed backup payload"
     );
@@ -1003,6 +1026,7 @@ pub struct ExtractedPayload {
     pub db_path: PathBuf,
     pub files_dir: Option<PathBuf>,
     pub vault_dir: Option<PathBuf>,
+    pub web_archive_dir: Option<PathBuf>,
     pub settings_file: Option<PathBuf>,
 }
 
@@ -1046,16 +1070,18 @@ enum EntryGroup {
     Db,
     Files,
     Vault,
+    WebArchive,
     Settings,
 }
 
-/// Reject anything outside the four known prefixes. Directory entries arrive
+/// Reject anything outside the known prefixes. Directory entries arrive
 /// without their trailing slash once `Path` has parsed them, hence the bare
-/// `"db"`/`"files"`/`"vault"` cases.
+/// `"db"`/`"files"`/`"vault"`/`"web-archive"` cases.
 fn classify_entry(name: &str) -> Result<EntryGroup, ArchiveError> {
     let db_prefix = DB_ENTRY.split('/').next().unwrap_or("db");
     let files_dir = FILES_ENTRY_PREFIX.trim_end_matches('/');
     let vault_dir = VAULT_ENTRY_PREFIX.trim_end_matches('/');
+    let web_archive_dir = WEB_ARCHIVE_ENTRY_PREFIX.trim_end_matches('/');
 
     if name == MANIFEST_ENTRY {
         Ok(EntryGroup::Manifest)
@@ -1067,6 +1093,8 @@ fn classify_entry(name: &str) -> Result<EntryGroup, ArchiveError> {
         Ok(EntryGroup::Files)
     } else if name == vault_dir || name.starts_with(VAULT_ENTRY_PREFIX) {
         Ok(EntryGroup::Vault)
+    } else if name == web_archive_dir || name.starts_with(WEB_ARCHIVE_ENTRY_PREFIX) {
+        Ok(EntryGroup::WebArchive)
     } else {
         Err(ArchiveError::Corrupt(format!(
             "backup contains an unexpected entry: {name}"
@@ -1132,6 +1160,7 @@ pub fn extract_payload<R: Read>(
     let mut saw_db = false;
     let mut saw_files = false;
     let mut saw_vault = false;
+    let mut saw_web_archive = false;
     let mut saw_settings = false;
 
     for result in entries {
@@ -1165,6 +1194,7 @@ pub fn extract_payload<R: Read>(
             EntryGroup::Db => saw_db = true,
             EntryGroup::Files => saw_files = true,
             EntryGroup::Vault => saw_vault = true,
+            EntryGroup::WebArchive => saw_web_archive = true,
             EntryGroup::Settings => saw_settings = true,
             EntryGroup::Manifest => {}
         }
@@ -1192,6 +1222,7 @@ pub fn extract_payload<R: Read>(
         db_path: under(dest_dir, DB_ENTRY),
         files_dir: saw_files.then(|| under(dest_dir, FILES_ENTRY_PREFIX)),
         vault_dir: saw_vault.then(|| under(dest_dir, VAULT_ENTRY_PREFIX)),
+        web_archive_dir: saw_web_archive.then(|| under(dest_dir, WEB_ARCHIVE_ENTRY_PREFIX)),
         settings_file: saw_settings.then(|| under(dest_dir, SETTINGS_ENTRY)),
     })
 }
@@ -1448,6 +1479,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_drops_the_learning_reference_index_but_keeps_source_text() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("lattice.db");
+        let pool = migrated_pool(&live).await;
+
+        sqlx::query(
+            "INSERT INTO learning_programs \
+             (id, title, goal, status, revision, prior_knowledge, minutes_per_session, \
+              model_name, created_at) \
+             VALUES ('prog-1', 'Rust', 'Learn Rust', 'active', 1, '', 30, 'model', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO learning_source_library \
+             (id, program_id, kind, origin, freshness_policy, created_at, updated_at) \
+             VALUES ('src-1', 'prog-1', 'pasted', 'user', 'fixed', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO learning_source_versions \
+             (id, program_id, source_id, version_number, title, full_text, excerpt, \
+              content_sha256, word_count, truncated, extraction_version, acquired_at) \
+             VALUES ('ver-1', 'prog-1', 'src-1', 1, 'Ownership', 'Ownership rules.', \
+                     'Ownership rules.', 'sha', 2, 0, 'pasted_v1', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO learning_source_retrieval_index \
+             (program_id, source_version_id, chunk_ordinal, chunk_text, start_byte, end_byte, \
+              embedding_model, embedding_json, created_at) \
+             VALUES ('prog-1', 'ver-1', 0, 'Ownership rules.', 0, 16, 'v1:model', '[0.5]', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dest = dir.path().join("snapshot.db");
+        let report = snapshot_database(&pool, &dest).await.unwrap();
+        pool.close().await;
+
+        assert!(report
+            .excluded_tables
+            .iter()
+            .any(|t| t == "learning_source_retrieval_index"));
+        let snap = read_only_pool(&dest).await;
+        assert_eq!(
+            count(
+                &snap,
+                "SELECT COUNT(*) FROM learning_source_retrieval_index"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(&snap, "SELECT COUNT(*) FROM learning_source_versions").await,
+            1
+        );
+        snap.close().await;
+    }
+
+    #[tokio::test]
     async fn snapshot_refuses_an_existing_destination_and_unsafe_paths() {
         let dir = tempdir().unwrap();
         let live = dir.path().join("lattice.db");
@@ -1638,6 +1736,7 @@ mod tests {
             // `None` here keeps the base fixture packing what it always did.
             referenced_blob_hashes: None,
             vault_root: Some(vault_root.clone()),
+            web_archive_root: None,
             settings_file: Some(settings.clone()),
             exclude: vec![vault_root.join("excluded")],
             app_version: "1.2.3".to_string(),
@@ -1734,6 +1833,45 @@ mod tests {
         assert!(fx.vault_root.join("excluded").join("secret.md").exists());
     }
 
+    /// Web documents point their `file_path` into the web archive, and the
+    /// reader opens the page snapshot from there. A backup that left the
+    /// folder behind would restore documents whose originals are gone.
+    #[test]
+    fn payload_carries_saved_web_articles() {
+        let fx = fixture();
+        let web_archive_root = fx.root.join("web-archive");
+        let article_dir = web_archive_root
+            .join("example.com")
+            .join("an-article-abc123");
+        write_file(&article_dir.join("article.md"), b"# An article");
+        write_file(&article_dir.join("page.html"), b"<html>snapshot</html>");
+        let inputs = ArchiveInputs {
+            web_archive_root: Some(web_archive_root),
+            ..fx.inputs.clone()
+        };
+
+        let (manifest, bytes) = write_payload(Vec::new(), &inputs, &mut |_| {}).unwrap();
+        let (base_manifest, _) = write_payload(Vec::new(), &fx.inputs, &mut |_| {}).unwrap();
+        assert_eq!(
+            manifest.total_plaintext_bytes,
+            base_manifest.total_plaintext_bytes
+                + (b"# An article".len() + b"<html>snapshot</html>".len()) as u64
+        );
+
+        let dest = fx.root.join("extracted-web");
+        let extracted = extract_payload(Cursor::new(bytes), &dest, &mut |_| {}).unwrap();
+        let web_dir = extracted.web_archive_dir.clone().unwrap();
+        let restored_article = web_dir.join("example.com").join("an-article-abc123");
+        assert_eq!(
+            std::fs::read(restored_article.join("article.md")).unwrap(),
+            b"# An article"
+        );
+        assert_eq!(
+            std::fs::read(restored_article.join("page.html")).unwrap(),
+            b"<html>snapshot</html>"
+        );
+    }
+
     #[test]
     fn payload_without_optional_inputs_still_round_trips() {
         let fx = fixture();
@@ -1743,6 +1881,7 @@ mod tests {
             files_root: None,
             referenced_blob_hashes: None,
             vault_root: None,
+            web_archive_root: None,
             settings_file: None,
             exclude: Vec::new(),
             app_version: "1.2.3".to_string(),
@@ -1757,6 +1896,7 @@ mod tests {
         let extracted = extract_payload(Cursor::new(bytes), &dest, &mut |_| {}).unwrap();
         assert!(extracted.files_dir.is_none());
         assert!(extracted.vault_dir.is_none());
+        assert!(extracted.web_archive_dir.is_none());
         assert!(extracted.settings_file.is_none());
         assert_eq!(std::fs::read(&extracted.db_path).unwrap(), DB_BYTES);
     }
@@ -2084,6 +2224,8 @@ mod tests {
         assert!(classify_entry("db/lattice.db").is_ok());
         assert!(classify_entry("files/aa/b.pdf").is_ok());
         assert!(classify_entry("vault").is_ok());
+        assert!(classify_entry("web-archive").is_ok());
+        assert!(classify_entry("web-archive/example.com/a/page.html").is_ok());
         assert!(classify_entry("settings.json").is_ok());
         assert!(classify_entry("db/other.db").is_err());
         assert!(classify_entry("elsewhere/x").is_err());

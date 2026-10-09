@@ -682,6 +682,13 @@ mod tests {
         )
         .unwrap();
         std::fs::write(files_root.join("stray.txt"), b"not a blob").unwrap();
+        // A saved web article: web documents point their file_path here.
+        let web_archive_root = source.path().join("web-archive");
+        let article_dir = web_archive_root
+            .join("example.com")
+            .join("an-article-abc123");
+        std::fs::create_dir_all(&article_dir).unwrap();
+        std::fs::write(article_dir.join("page.html"), b"<html>snapshot</html>").unwrap();
 
         let db_path = app_data.join("lattice.db");
         let pool = seeded_pool(&db_path, 3).await;
@@ -698,6 +705,7 @@ mod tests {
                 settings.clone(),
                 key_store.clone(),
                 Some(files_root.clone()),
+                Some(web_archive_root.clone()),
             )),
             Arc::new(ArchiveRestorer::new(
                 pool.clone(),
@@ -706,6 +714,7 @@ mod tests {
                 settings.clone(),
                 key_store.clone(),
                 Some(files_root.clone()),
+                Some(web_archive_root.clone()),
             )),
             key_store,
             app_data.clone(),
@@ -769,6 +778,7 @@ mod tests {
         let target = tempfile::tempdir().unwrap();
         let target_app_data = target.path().join("app-data");
         let target_files_root = target.path().join("files-library");
+        let target_web_archive_root = target.path().join("web-archive");
         std::fs::create_dir_all(&target_app_data).unwrap();
 
         let target_db = target_app_data.join("lattice.db");
@@ -783,6 +793,7 @@ mod tests {
             target_settings,
             target_key_store.clone(),
             Some(target_files_root.clone()),
+            Some(target_web_archive_root.clone()),
         );
 
         // Without a secret there is nothing to unwrap the key with.
@@ -828,6 +839,17 @@ mod tests {
         assert!(
             !target_files_root.join("stray.txt").exists(),
             "a stray file was packed and restored"
+        );
+        assert_eq!(
+            std::fs::read(
+                target_web_archive_root
+                    .join("example.com")
+                    .join("an-article-abc123")
+                    .join("page.html")
+            )
+            .unwrap(),
+            b"<html>snapshot</html>",
+            "saved web articles must come back with the documents that point at them"
         );
         // The source library keeps everything: a backup is not a sweep.
         assert!(files_root.join(ORPHAN_BLOB).join("ghost.pdf").exists());
