@@ -130,6 +130,26 @@ pub trait LLMPort: Send + Sync {
         self.complete_with_progress(request, on_text).await
     }
 
+    /// Deliver public answer text and provider-supplied reasoning as they
+    /// arrive. The reasoning callback receives text deltas, never encrypted or
+    /// otherwise opaque provider state. Implementations without a reasoning
+    /// stream fall back to delivering the completed reasoning once.
+    async fn complete_with_reasoning_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        let response = self
+            .complete_with_retry_progress(request, on_text, on_retry)
+            .await?;
+        if let Some(reasoning) = response.reasoning.as_ref().filter(|text| !text.is_empty()) {
+            on_reasoning(reasoning.clone())?;
+        }
+        Ok(response)
+    }
+
     /// Generate a response to a prompt with optional context.
     ///
     /// Performs synchronous generation, waiting for the complete response
@@ -408,6 +428,11 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// Ask providers that support it for displayable reasoning. This controls
+    /// summaries or explicit thinking text only; opaque provider state used for
+    /// replay remains separate in `CompletionResponse::provider_output`.
+    #[serde(default)]
+    pub include_reasoning: bool,
     /// Sampling for this request. `None` keeps the provider's configuration.
     #[serde(default)]
     pub sampling: Option<SamplingOverride>,
@@ -470,6 +495,11 @@ impl CompletionRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionResponse {
     pub text: String,
+    /// Provider-supplied displayable reasoning, when available. This is a
+    /// summary for providers such as OpenAI and explicit thinking text for
+    /// local models that return it as part of their response.
+    #[serde(default)]
+    pub reasoning: Option<String>,
     pub tool_calls: Vec<CompletionInput>,
     pub input_tokens: u64,
     pub output_tokens: u64,

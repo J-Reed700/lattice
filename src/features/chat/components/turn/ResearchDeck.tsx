@@ -11,7 +11,12 @@ import {
   type DeckThinking,
 } from '@/features/chat/components/turn/research';
 import { roundSummary } from '@/features/chat/components/turn/rounds';
-import { StepRow, formatDuration, useElapsedSeconds } from '@/features/chat/components/turn/StepRow';
+import {
+  ReasoningDisclosure,
+  StepRow,
+  formatDuration,
+  useElapsedSeconds,
+} from '@/features/chat/components/turn/StepRow';
 import type { TurnStep } from '@/types/conversation';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
@@ -120,6 +125,7 @@ function Thinking({ item }: { item: DeckThinking }) {
           <span className="turn-record-time">
             {elapsed >= 1 ? formatDuration(elapsed * 1000) : ''}
           </span>
+          <ReasoningDisclosure reasoning={step.reasoning} />
         </li>
       ) : (
         <StepRow step={step} />

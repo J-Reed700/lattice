@@ -68,6 +68,7 @@ impl LlamaCppLlm {
         &self,
         request: &CompletionRequest,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
@@ -78,7 +79,10 @@ impl LlamaCppLlm {
         let generation = async {
             for attempt in 1..=MAX_ATTEMPTS {
                 let mut emitted = false;
-                match self.attempt(&body, on_text, &mut emitted).await {
+                match self
+                    .attempt(&body, on_text, on_reasoning, &mut emitted)
+                    .await
+                {
                     Ok(response) => return Ok(response),
                     Err(Failure::Permanent(error)) => return Err(error),
                     Err(Failure::Retry(error, retry_after)) => {
@@ -138,6 +142,7 @@ impl LlamaCppLlm {
         &self,
         body: &Value,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
         emitted: &mut bool,
     ) -> std::result::Result<CompletionResponse, Failure> {
         let response = self
@@ -203,6 +208,13 @@ impl LlamaCppLlm {
             for text in deltas {
                 *emitted = true;
                 on_text(text).map_err(Failure::Permanent)?;
+            }
+            let reasoning = decoder.take_reasoning_delta();
+            if !reasoning.is_empty() {
+                if let Some(deliver) = on_reasoning {
+                    *emitted = true;
+                    deliver(reasoning).map_err(Failure::Permanent)?;
+                }
             }
             if decoder.done() {
                 break;

@@ -634,12 +634,49 @@ impl SidecarLLMClient {
         Self::drain_typed_stream(response.bytes_stream(), prefill, on_text).await
     }
 
+    /// The chat surface can reveal explicit reasoning while it streams. The
+    /// text-only helper above suppresses only live reasoning callbacks; both
+    /// paths still return completed reasoning in `CompletionResponse`.
+    pub async fn complete_typed_streaming_with_reasoning(
+        &self,
+        messages: Vec<Value>,
+        tuning: RequestTuning<'_>,
+        on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+    ) -> AppResult<CompletionResponse> {
+        let (response, prefill) = self
+            .post_chat_completion(messages, true, tuning)
+            .await
+            .map_err(typed_error)?;
+        Self::drain_typed_stream_with_reasoning(
+            response.bytes_stream(),
+            prefill,
+            on_text,
+            on_reasoning,
+        )
+        .await
+    }
+
     /// Split from the request so the frame timing can be driven by a scripted
     /// stream on a paused clock.
     async fn drain_typed_stream<S, B, E>(
         bytes: S,
         prefill: Duration,
         on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+    ) -> AppResult<CompletionResponse>
+    where
+        S: Stream<Item = Result<B, E>> + Unpin,
+        B: AsRef<[u8]>,
+        E: std::fmt::Display,
+    {
+        Self::drain_typed_stream_with_reasoning(bytes, prefill, on_text, &|_| Ok(())).await
+    }
+
+    async fn drain_typed_stream_with_reasoning<S, B, E>(
+        bytes: S,
+        prefill: Duration,
+        on_text: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> AppResult<()> + Send + Sync),
     ) -> AppResult<CompletionResponse>
     where
         S: Stream<Item = Result<B, E>> + Unpin,
@@ -660,6 +697,10 @@ impl SidecarLLMClient {
             clock.saw(chunk);
             for text in decoder.push(chunk)? {
                 on_text(text)?;
+            }
+            let reasoning = decoder.take_reasoning_delta();
+            if !reasoning.is_empty() {
+                on_reasoning(reasoning)?;
             }
             if decoder.done() {
                 break;

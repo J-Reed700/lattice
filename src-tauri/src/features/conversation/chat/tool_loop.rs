@@ -212,6 +212,9 @@ pub(super) async fn run_agentic_tool_loop(
             ),
         },
         tools: tools_ref.unwrap_or(&[]).to_vec(),
+        // The turn record can reveal provider-supplied reasoning on demand.
+        // Providers that expose none simply leave the disclosure absent.
+        include_reasoning: true,
         // Reserving output room and then not enforcing it is only bookkeeping:
         // the model could generate past what the budget set aside and overrun
         // the window the prompt was measured against. Without a memory plan the
@@ -302,6 +305,7 @@ pub(super) async fn run_agentic_tool_loop(
         // on the budget and cancellation returns below.
         let generate_step =
             recorder.begin_guarded(TurnStepKind::Generate, thinking_label(iteration), None);
+        let reasoning_progress = std::sync::Mutex::new(ReasoningProgress::new());
         let remaining = remaining_budget()?;
         native_request.time_budget = Some(remaining);
         // Every provider that can take a typed request gets one, tools or not:
@@ -330,11 +334,25 @@ pub(super) async fn run_agentic_tool_loop(
                     }
                     emitter.content(&shown)
                 };
+                let on_reasoning = |delta: String| {
+                    let update = reasoning_progress
+                        .lock()
+                        .ok()
+                        .and_then(|mut progress| progress.push(&delta));
+                    if let Some(reasoning) = update.as_deref() {
+                        generate_step.set_reasoning(Some(reasoning));
+                    }
+                    Ok(())
+                };
                 // A provider-level retry is its own step. It used to overwrite
                 // the answer bubble's text, so a turn that recovered ended up
                 // showing "Model response failed. Retrying..." in place of the
                 // answer it went on to write.
                 let on_retry = |attempt: usize| {
+                    if let Ok(mut progress) = reasoning_progress.lock() {
+                        progress.reset();
+                    }
+                    generate_step.set_reasoning(None);
                     recorder.note(
                         TurnStepKind::Retry,
                         "Retrying the model",
@@ -345,7 +363,12 @@ pub(super) async fn run_agentic_tool_loop(
                 };
                 let completion = timeout(
                     remaining,
-                    llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
+                    llm.complete_with_reasoning_progress(
+                        &native_request,
+                        &on_text,
+                        &on_reasoning,
+                        &on_retry,
+                    ),
                 );
                 tokio::pin!(completion);
                 loop {
@@ -358,6 +381,18 @@ pub(super) async fn run_agentic_tool_loop(
                 }
             }?;
             let mut response = response;
+            if let Some(reasoning) = response
+                .reasoning
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            {
+                // Flush the last sub-threshold delta and make the persisted
+                // step agree exactly with the provider's completed value.
+                generate_step.set_reasoning(Some(reasoning));
+            } else if let Ok(progress) = reasoning_progress.lock() {
+                generate_step.set_reasoning(progress.text());
+            }
             if answer_was_cut_short(
                 &response.finish_reason,
                 &response.text,
@@ -1480,6 +1515,61 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
         (words, 0) => format!("{words} words"),
         (words, 1) => format!("{words} words and 1 tool call"),
         (words, calls) => format!("{words} words and {calls} tool calls"),
+    }
+}
+
+/// Live reasoning is a progress surface, not an unbounded transcript. Batch
+/// token-sized deltas before emitting a replacement step so React does not
+/// rerender once per token, then let the completed provider value replace this
+/// capture before the step is persisted.
+struct ReasoningProgress {
+    text: String,
+    chars: usize,
+    last_sent_chars: usize,
+    last_sent_at: Instant,
+}
+
+impl ReasoningProgress {
+    const MAX_CHARS: usize = 24_000;
+    const MIN_EMIT_CHARS: usize = 160;
+    const MAX_EMIT_DELAY: Duration = Duration::from_millis(120);
+
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            chars: 0,
+            last_sent_chars: 0,
+            last_sent_at: Instant::now(),
+        }
+    }
+
+    fn push(&mut self, delta: &str) -> Option<String> {
+        let remaining = Self::MAX_CHARS.saturating_sub(self.chars);
+        if remaining > 0 {
+            let kept = crate::shared::text::safe_truncate(delta, remaining);
+            self.chars = self.chars.saturating_add(kept.chars().count());
+            self.text.push_str(&kept);
+        }
+        let should_emit = self.last_sent_chars == 0
+            || self.chars.saturating_sub(self.last_sent_chars) >= Self::MIN_EMIT_CHARS
+            || self.last_sent_at.elapsed() >= Self::MAX_EMIT_DELAY;
+        if !should_emit || self.text.trim().is_empty() {
+            return None;
+        }
+        self.last_sent_chars = self.chars;
+        self.last_sent_at = Instant::now();
+        Some(self.text.clone())
+    }
+
+    fn reset(&mut self) {
+        self.text.clear();
+        self.chars = 0;
+        self.last_sent_chars = 0;
+        self.last_sent_at = Instant::now();
+    }
+
+    fn text(&self) -> Option<&str> {
+        (!self.text.trim().is_empty()).then_some(self.text.as_str())
     }
 }
 

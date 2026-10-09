@@ -24,6 +24,10 @@ const MAX_STEPS: usize = 200;
 /// arguments. Anything longer is cut.
 const MAX_DETAIL_CHARS: usize = 200;
 
+/// Enough to inspect a substantial local-model trace without letting one
+/// verbose generation turn the message metadata into an unbounded transcript.
+const MAX_REASONING_CHARS: usize = 24_000;
+
 /// Links one step may carry. A search hands the model about ten results; past
 /// that the list stops being "where it looked" and becomes a results page.
 const MAX_STEP_LINKS: usize = 12;
@@ -108,6 +112,11 @@ pub struct TurnStepDto {
     /// 3 files", "not enough support: low term coverage".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// Displayable reasoning supplied by the provider. OpenAI supplies a
+    /// summary; local reasoning models may supply explicit thinking text.
+    /// Opaque encrypted/signed provider state never belongs here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// For a search, what it found; for a page read, the page. Known at the
     /// start of a read and only at the end of a search, so either event may
     /// carry it. Always on the wire, empty or not, so the generated binding's
@@ -264,6 +273,7 @@ impl TurnRecorder {
             started_at_ms: self.elapsed_ms(),
             duration_ms: None,
             result: None,
+            reasoning: None,
             links: capped(links),
         };
         let Ok(mut steps) = self.steps.lock() else {
@@ -349,6 +359,35 @@ impl TurnRecorder {
         self.send(finished);
     }
 
+    /// Replace the displayable reasoning on a running step and emit the same
+    /// step id, so the live UI updates in place. Callers pass the accumulated
+    /// text; provider deltas are never persisted as separate timeline rows.
+    fn set_reasoning(&self, id: &StepId, reasoning: Option<&str>) {
+        let Some(step_id) = id.0.as_deref() else {
+            return;
+        };
+        let Ok(mut steps) = self.steps.lock() else {
+            return;
+        };
+        let Some(step) = steps
+            .iter_mut()
+            .find(|step| step.id == step_id && step.state == TurnStepState::Running)
+        else {
+            return;
+        };
+        let reasoning = reasoning
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(clip_reasoning);
+        if step.reasoning == reasoning {
+            return;
+        }
+        step.reasoning = reasoning;
+        let updated = step.clone();
+        drop(steps);
+        self.send(updated);
+    }
+
     /// Record something that is already over — no waiting, no duration worth
     /// naming. A router decision is the shape of this: by the time there is
     /// anything to say, it has happened.
@@ -388,6 +427,10 @@ pub struct StepGuard<'a> {
 }
 
 impl StepGuard<'_> {
+    pub fn set_reasoning(&self, reasoning: Option<&str>) {
+        self.recorder.set_reasoning(&self.id, reasoning);
+    }
+
     pub fn done(self, result: Option<String>) {
         self.recorder.end(&self.id, TurnStepState::Done, result);
     }
@@ -422,6 +465,10 @@ fn capped(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
 
 fn clip(text: &str) -> String {
     crate::shared::text::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
+}
+
+fn clip_reasoning(text: &str) -> String {
+    crate::shared::text::safe_truncate(text.trim(), MAX_REASONING_CHARS)
 }
 
 #[cfg(test)]
@@ -566,6 +613,31 @@ mod tests {
         assert_eq!(steps[0].result.as_deref(), Some("wrote 412 words"));
     }
 
+    #[test]
+    fn reasoning_updates_replace_the_running_step_and_survive_its_verdict() {
+        let (recorder, seen) = capturing();
+        let step = recorder.begin_guarded(TurnStepKind::Generate, "Thinking", None);
+
+        step.set_reasoning(Some("Comparing the retrieved evidence."));
+        step.done(Some("wrote 12 words".into()));
+
+        let recorded = recorder.steps();
+        assert_eq!(
+            recorded[0].reasoning.as_deref(),
+            Some("Comparing the retrieved evidence.")
+        );
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 3, "start, reasoning update, finish");
+        assert_eq!(
+            events[1].step.as_ref().unwrap().reasoning.as_deref(),
+            Some("Comparing the retrieved evidence.")
+        );
+        assert_eq!(
+            events[1].step.as_ref().unwrap().id,
+            events[0].step.as_ref().unwrap().id
+        );
+    }
+
     /// Kind and state reach the UI as the stable codes the design names, not as
     /// Rust's capitalization.
     #[test]
@@ -579,6 +651,7 @@ mod tests {
             started_at_ms: 0,
             duration_ms: None,
             result: None,
+            reasoning: None,
             links: Vec::new(),
         })
         .unwrap();
