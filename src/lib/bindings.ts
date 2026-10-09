@@ -386,6 +386,14 @@ async getLearningLessonEvidence(programId: string, lessonId: string) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningOutlineEvidence(programId: string) : Promise<Result<LearningOutlineEvidenceDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_outline_evidence", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async generateLearningProgram(request: GenerateLearningProgramRequestDto, requestId: string | null, onProgress: TAURI_CHANNEL<LearningOutlineProgressDto>) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("generate_learning_program", { request, requestId, onProgress }) };
@@ -6487,7 +6495,12 @@ export type LearningCardDraftActionRequestDto = { programId: string; draftId: st
 export type LearningCardDraftDto = { id: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[]; origin: LearningCardDraftOrigin; createdAt: number }
 export type LearningCardDraftOrigin = "generated" | "manual"
 export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: LearningCardDraftOrigin; sourceIds: string[]; acceptedAt: number }
-export type LearningClaimEvidenceDto = { sectionIndex: number; claim: string; reason: string; supportingQuote: string | null; passages: LearningEvidencePassageDto[] }
+export type LearningClaimEvidenceDto = { sectionIndex: number;
+/**
+ * Exact lesson text selected by the claim inventory. This anchors the
+ * evidence to the generated section without asking the UI to guess.
+ */
+contentQuote: string; claim: string; verdict: string; reason: string; supportingQuote: string | null; passages: LearningEvidencePassageDto[] }
 export type LearningContainerEngine = "docker" | "podman"
 export type LearningCourseDepth = "focused" | "course" | "deep_dive"
 export type LearningCurriculumChange = { kind: LearningCurriculumChangeKind; lessonId: string; fromModuleId: string | null; toModuleId: string | null;
@@ -6542,6 +6555,14 @@ export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number; schedulerVersion: string }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
+export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
+export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"
+export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewStatus; contentSha256: string; citations: LearningOutlineCitationDto[];
+/**
+ * Saved citations omitted because the visible plan changed or the exact
+ * frozen passage is no longer available. They are never shown as current.
+ */
+unavailableCount: number }
 export type LearningOutlineIssueDto = {
 /**
  * JSON pointer into the saved candidate. Empty means the entire curriculum.
@@ -8221,6 +8242,12 @@ startedAtMs: number; durationMs?: number | null;
  * 3 files", "not enough support: low term coverage".
  */
 result?: string | null;
+/**
+ * Displayable reasoning supplied by the provider. OpenAI supplies a
+ * summary; local reasoning models may supply explicit thinking text.
+ * Opaque encrypted/signed provider state never belongs here.
+ */
+reasoning?: string | null;
 /**
  * For a search, what it found; for a page read, the page. Known at the
  * start of a read and only at the end of a search, so either event may

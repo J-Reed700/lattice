@@ -132,6 +132,7 @@ fn main() {
             lattice::features::learning::plugin::list_learning_programs,
             lattice::features::learning::plugin::get_learning_program,
             lattice::features::learning::plugin::get_learning_lesson_evidence,
+            lattice::features::learning::plugin::get_learning_outline_evidence,
             lattice::features::learning::plugin::generate_learning_program,
             lattice::features::learning::plugin::cancel_learning_outline,
             lattice::features::learning::plugin::repair_learning_outline,

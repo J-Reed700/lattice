@@ -5037,6 +5037,12 @@
           "markdownDescription": "Enables the get_learning_memory command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_learning_outline_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-learning-outline-evidence",
+          "markdownDescription": "Enables the get_learning_outline_evidence command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_learning_plan command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-get-learning-plan",
@@ -5575,6 +5581,12 @@
           "type": "string",
           "const": "learning:deny-get-learning-memory",
           "markdownDescription": "Denies the get_learning_memory command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_learning_outline_evidence command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-learning-outline-evidence",
+          "markdownDescription": "Denies the get_learning_outline_evidence command without any pre-configured scope."
         },
         {
           "description": "Denies the get_learning_plan command without any pre-configured scope.",
