@@ -2,6 +2,39 @@
 
 These Playwright tests exercise the production renderer bundle through real routes and controls. A strict, stateful Tauri fixture supplies deterministic backend behavior. Unknown IPC commands fail the test so a new application dependency cannot silently pass through a permissive mock.
 
+## Test layers
+
+| Layer | Command | What it verifies |
+| --- | --- | --- |
+| Unit and component interactions | `npm run test:unit` | Vitest and Testing Library exercise logic, hooks, components, errors and asynchronous lifecycles. |
+| Component integration | `npm run test:integration` | Search, real QueryClient caching, debouncing, stale responses, result grouping and keyboard flows. |
+| Renderer coverage | `npm run test:coverage` | All renderer source is counted, including unimported files. Global and feature floors plus individual 100% gates fail the run on regressions. |
+| Native unit and integration | `npm run test:rust` | Every non-ignored Rust library, binary and integration test, including real SQLite, file extraction, HTTP fixtures and command contracts. Build the renderer first with `npx vite build`. |
+| Browser journeys | `npm run test:e2e` | Production renderer interactions in Chromium and WebKit, with deterministic native command responses. |
+| Packaged desktop | `npm run test:desktop:build` then `npm run test:desktop` | Actual Tauri webview, native IPC, filesystem boundaries, pending saves and process restart. See [native prerequisites](desktop/README.md). |
+
+`npm run test:check` runs renderer type checks, lint, IPC contracts and coverage.
+`npm run test:all` runs those checks, builds the renderer, runs all Rust and
+browser tests, then builds and exercises an isolated native desktop package.
+The complete command needs the normal Tauri/sidecar prerequisites and an
+unlocked desktop session; Linux needs Xvfb when no display is available. Live
+model evaluations and explicitly ignored environment-dependent Rust tests remain
+opt-in and are not counted as passed tests.
+
+The coverage report is `coverage/index.html`, with machine-readable results in
+`coverage/coverage-summary.json` and `coverage/lcov.info`. Complete coverage is
+enforced separately for pending-save barriers, file reads, debounce lifecycles,
+batch job wrappers/history, and download progress formatting. The rest of the
+app has measured coverage floors, not a claim of 100% coverage. Browser and
+native journeys verify different boundaries and do not increase Vitest's
+coverage percentage.
+
+Tests use controlled promises and fake clocks to reproduce out-of-order replies,
+unmounts, lost acknowledgements, cancellation, stale journal reloads, retained
+pins, import timeouts and failure recovery. Explorer history also runs 1,000
+repeatable model-based navigation actions. Failed browser runs retain traces,
+screenshots and videos, including local runs with retries disabled.
+
 ## Quality gates
 
 ```sh
@@ -44,8 +77,15 @@ flashcard decks inside Studio. It separately verifies that Studio opens through
 the production navigation, renders a complete active course, preserves an
 in-progress quick-check answer across check types and workspace tabs, and
 exposes saved attempt history. This keeps route and shell integration coverage
-independent from the larger strict Studio fixture. Explorer has no browser
-journey yet; its renderer tests live in `src/components/Explorer/__tests__/`.
+independent from the larger strict Studio fixture.
+
+The Explorer suite (`e2e/explorer.spec.ts`) covers keyboard tree navigation,
+back/forward history, exact-line search results, empty and failed searches,
+empty/binary/oversized/missing files, cancelled folder pickers, permission-error
+recovery, folder and thread isolation, persisted tree visibility and reopening.
+The navigation journey runs at 1440px and the app's 800px minimum window width
+in both engines. Fixture state survives renderer reloads, and every test rejects
+unimplemented commands and uncaught renderer exceptions.
 
 To retain full-page screenshots from a successful focused run:
 

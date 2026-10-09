@@ -25,16 +25,44 @@ export default defineConfig({
         'src/vite-env.d.ts',
         'src/lib/bindings.ts', // Exclude generated file
       ],
-      all: true,
       // Vitest 4 only enforces floors nested under `thresholds`. Keep a
       // realistic whole-renderer baseline while applying a substantially
       // stronger contract to Learning Studio, where failures can corrupt a
       // learner's durable workflow. Raise these values as coverage grows.
       thresholds: {
-        lines: 53,
-        functions: 47,
-        branches: 47,
-        statements: 52,
+        lines: 61,
+        functions: 55,
+        branches: 55.5,
+        statements: 60,
+        // These lifecycle, I/O and import boundaries must retain complete
+        // coverage individually; a well-covered sibling cannot hide a gap.
+        'src/{lib/pendingSaves,hooks/useFileContent,hooks/useDebounce,utils/batchHistory,utils/batchImport,components/Downloads/downloadFormat}.ts': {
+          perFile: true,
+          lines: 100,
+          functions: 100,
+          branches: 100,
+          statements: 100,
+        },
+        'src/components/Ingest/BatchUrlImport.tsx': {
+          lines: 92,
+          functions: 95,
+          branches: 75,
+          statements: 89,
+        },
+        'src/utils/{dateUtils,fileTypeDetector,toast}.ts': {
+          perFile: true,
+          lines: 100,
+          functions: 100,
+          branches: 100,
+          statements: 100,
+        },
+        'src/utils/{fileSources,promiseHandlers,sourcePreview}.ts': {
+          perFile: true,
+          lines: 96,
+          functions: 96,
+          branches: 80,
+          statements: 96,
+        },
         'src/features/learning/{workspace,curriculum,lessons,memory,sources,practice,assessment,recall,canvas,portability}/**': {
           lines: 87,
           functions: 75,
