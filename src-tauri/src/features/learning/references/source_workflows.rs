@@ -74,7 +74,8 @@ where
         resolved_url: Some(article.url),
         text: article.content,
         truncated: article.content_truncated,
-        extraction_version: "web_reference_v1".into(),
+        extraction_version: crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION
+            .into(),
     };
     repo.add(
         &request.operation_id,

@@ -114,7 +114,7 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
     let mut required = vec!["issues"];
     let mut properties = serde_json::Map::from_iter([(
         "issues".into(),
-        json!({"type":"array","maxItems":6,"items":{"type":"string","minLength":10,"maxLength":700}}),
+        json!({"type":"array","items":{"type":"string","minLength":10,"maxLength":700}}),
     )]);
     if !passages.is_empty() {
         required.push("blockChecks");
@@ -210,9 +210,6 @@ async fn review_sections(
         match generation::parse_json::<Review>(&raw) {
             Err(_) => problems.push("Return one complete review JSON object with issues and the requested blockChecks in the supplied schema.".into()),
             Ok(review) => {
-                if review.issues.len() > 6 {
-                    problems.push("The issues array must contain at most six actionable findings.".into());
-                }
                 for issue in review.issues {
                     if !(10..=700).contains(&issue.trim().chars().count()) {
                         problems.push("An issue must contain 10–700 characters.".into());
@@ -276,7 +273,7 @@ async fn review_sections(
     } else {
         "Retry the review."
     };
-    Err(AppError::Other(format!("The model could not return a complete teaching review after response correction: {} {recovery} Nothing was published.", problems.join(" "))))
+    Err(AppError::ServiceNotAvailable(format!("The model could not return a complete teaching review after response correction: {} {recovery} Nothing was published.", problems.join(" "))))
 }
 
 #[cfg(test)]
@@ -296,6 +293,32 @@ mod tests {
             outputs: std::sync::Mutex::new(replies.into_iter().map(|v| v.to_string()).collect()),
             prompts: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn retains_more_than_six_findings_without_rejecting_a_complete_review() -> Result<()> {
+        let findings: Vec<_> = (0..12)
+            .map(|i| format!("Finding {i}: this assessment has multiple valid answers."))
+            .collect();
+        let response = json!({"issues":findings,"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
+        let (_, passages) = review_candidate(&candidate());
+        assert!(
+            jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages))
+                .unwrap()
+                .is_valid(&response)
+        );
+        let model = model(vec![response]);
+        let actual = review(
+            &model,
+            "Review instructional quality.",
+            json!({}),
+            &candidate(),
+            None,
+        )
+        .await?;
+        assert_eq!(actual, findings);
+        assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        Ok(())
     }
 
     #[test]
@@ -391,7 +414,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert!(matches!(error, AppError::Other(_)));
+            assert!(matches!(error, AppError::ServiceNotAvailable(_)));
             assert!(error.to_string().contains("Nothing was published"));
             assert_eq!(model.prompts.lock().unwrap().len(), 2);
         }

@@ -303,3 +303,41 @@ async fn live_rust_book_is_captured_beyond_chat_limit() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn large_collection_keeps_evidence_after_the_former_twenty_million_character_boundary() -> Result<()>
+{
+    let suffix = "Unique nebular measurement equals forty seven units.";
+    let source = LearningSourceDto {
+        id: "large-reference".into(),
+        title: "Large reference".into(),
+        url: None,
+        excerpt: format!("{}\n{suffix}", "background ".repeat(1_820_000)),
+        acquired_at: 0,
+    };
+    assert!(source.excerpt.len() > 20_000_000);
+    let collection = ReferenceCollection::lexical(&[source])?;
+    let last = collection.chunks.last().unwrap();
+    assert!(collection.sources[0].excerpt[last.start..last.end].contains(suffix));
+    assert!(last.terms.contains_key("nebular"));
+    Ok(())
+}
+
+#[test]
+fn unicode_passage_offsets_remain_lossless_without_a_whole_document_offset_array() {
+    let text = "🧪é中sample\n".repeat(400);
+    let actual = spans(&text);
+    let mut boundaries: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
+    boundaries.push(text.len());
+    let mut expected = Vec::new();
+    let mut start = 0;
+    while start + 1 < boundaries.len() {
+        let end = (start + CHUNK_CHARS).min(boundaries.len() - 1);
+        expected.push((boundaries[start], boundaries[end]));
+        if end == boundaries.len() - 1 {
+            break;
+        }
+        start += STEP_CHARS;
+    }
+    assert_eq!(actual, expected);
+}

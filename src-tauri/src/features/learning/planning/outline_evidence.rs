@@ -2,7 +2,6 @@
 use crate::features::learning::reference_collection::ReferenceCollection;
 use crate::{application::ports::LLMPort, shared::error::Result};
 use serde_json::{json, Value};
-use std::collections::HashSet;
 
 pub(in crate::features::learning) fn lesson_queries(candidate: &Value) -> Vec<String> {
     let mut queries = Vec::new();
@@ -67,54 +66,53 @@ pub(in crate::features::learning) async fn select(
     collection: &ReferenceCollection<'_>,
     queries: &[String],
 ) -> Result<Vec<Value>> {
-    let mut excerpts = vec![Vec::<String>::new(); collection.sources.len()];
-    let mut seen = HashSet::new();
-    let mut remaining = llm.max_context_tokens() / 4;
-    // Reserve a small, exact passage for every selected source, including ones
-    // not retrieved for this goal. These are never mistaken for the full source.
-    for (source, excerpt) in collection.sources.iter().zip(&mut excerpts) {
-        let prefix: String = source.excerpt.chars().take(600).collect();
-        remaining = remaining.saturating_sub(llm.count_tokens(&prefix) + 96);
-        excerpt.push(prefix);
-    }
+    let mut excerpts = std::collections::BTreeMap::<usize, Vec<String>>::new();
+    let budget = llm.max_context_tokens() / 4;
+    let values = |excerpts: &std::collections::BTreeMap<usize, Vec<String>>| -> Vec<Value> {
+        excerpts.iter().filter_map(|(index, passages)| {
+            let source = collection.sources.get(*index)?;
+            Some(json!({"sourceIndex":index,"title":source.title,"url":source.url,"passages":passages,
+                "evidenceScope":"Selected exact passages from the full captured source. Cite only passages that support the assertion. Other saved sources remain searchable."}))
+        }).collect()
+    };
+    let mut include = |index: usize, text: String| {
+        let passages = excerpts.entry(index).or_default();
+        if passages.contains(&text) {
+            return;
+        }
+        passages.push(text);
+        if llm.count_tokens(&json!(values(&excerpts)).to_string()) > budget {
+            if let Some(passages) = excerpts.get_mut(&index) {
+                passages.pop();
+                if passages.is_empty() {
+                    excerpts.remove(&index);
+                }
+            }
+        }
+    };
     let mut ranked = Vec::new();
     for query in queries {
         ranked.push(collection.retrieve(query, 4).await?);
     }
-    // Round-robin prevents the first lesson's matches from consuming the
-    // evidence allowance before later lessons get a relevant passage.
+    // Give relevant passages the prompt budget before reference prefixes.
+    // Source indices still refer to the complete saved collection.
     for rank in 0..4 {
         for matches in &ranked {
-            let Some(passage) = matches.get(rank) else {
-                continue;
-            };
-            if !seen.insert((
-                passage.source_id.clone(),
-                passage.start_byte,
-                passage.end_byte,
-            )) {
-                continue;
+            if let Some(passage) = matches.get(rank) {
+                if let Some(index) = collection
+                    .sources
+                    .iter()
+                    .position(|s| s.id == passage.source_id)
+                {
+                    include(index, passage.text.clone());
+                }
             }
-            let Some((_, excerpt)) = collection
-                .sources
-                .iter()
-                .zip(&mut excerpts)
-                .find(|(s, _)| s.id == passage.source_id)
-            else {
-                continue;
-            };
-            let tokens = llm.count_tokens(&passage.text) + 16;
-            if tokens > remaining {
-                continue;
-            }
-            remaining -= tokens;
-            excerpt.push(passage.text.clone());
         }
     }
-    Ok(collection.sources.iter().zip(excerpts).enumerate().map(|(index, (source, passages))| {
-        json!({"sourceIndex":index,"title":source.title,"url":source.url,"passages":passages,
-            "evidenceScope":"Selected exact passages from the full captured source. Cite a passage only when it supports the attached statement; do not use an unrelated quote merely because it comes from the same book."})
-    }).collect())
+    for (index, source) in collection.sources.iter().enumerate() {
+        include(index, source.excerpt.chars().take(600).collect());
+    }
+    Ok(values(&excerpts))
 }
 
 #[cfg(test)]
@@ -124,7 +122,7 @@ mod tests {
     use async_trait::async_trait;
     use futures::Stream;
 
-    struct TokenCounter;
+    struct TokenCounter(usize);
     #[async_trait]
     impl LLMPort for TokenCounter {
         async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
@@ -142,7 +140,7 @@ mod tests {
             "test"
         }
         fn max_context_tokens(&self) -> usize {
-            128_000
+            self.0
         }
         fn count_tokens(&self, text: &str) -> usize {
             text.len().div_ceil(4)
@@ -150,6 +148,46 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    #[tokio::test]
+    async fn large_libraries_fit_prompt_budgets_without_losing_original_source_indices() {
+        let sources: Vec<_> = (0..300)
+            .map(|index| LearningSourceDto {
+                id: format!("source-{index}"),
+                title: format!("Reference {index}"),
+                url: None,
+                excerpt: if index == 299 {
+                    "Unique nebular spectroscopy calibration establishes the observed wavelength."
+                        .repeat(10)
+                } else {
+                    "General background material about unrelated measurement.".repeat(20)
+                },
+                acquired_at: 0,
+            })
+            .collect();
+        let collection = ReferenceCollection::lexical(&sources).unwrap();
+        let model = TokenCounter(8192);
+        let selected = select(
+            &model,
+            &collection,
+            &["nebular spectroscopy wavelength".into()],
+        )
+        .await
+        .unwrap();
+        assert!(model.count_tokens(&json!(selected).to_string()) <= model.max_context_tokens() / 4);
+        assert!(selected.iter().any(|entry| entry["sourceIndex"] == 299));
+        for entry in &selected {
+            let source = &sources[entry["sourceIndex"].as_u64().unwrap() as usize];
+            for passage in entry["passages"].as_array().unwrap() {
+                assert!(source.excerpt.contains(passage.as_str().unwrap()));
+            }
+        }
+        let catalog = collection.catalog(&model);
+        assert_eq!(catalog["totalSources"], 300);
+        assert!(catalog["omittedFromThisPrompt"].as_u64().unwrap() > 0);
+        assert!(model.count_tokens(&catalog.to_string()) <= model.max_context_tokens() / 16);
+        assert_eq!(collection.sources.len(), 300);
     }
 
     #[tokio::test]
@@ -185,7 +223,7 @@ mod tests {
             .collect();
         let collection = ReferenceCollection::lexical(&sources).unwrap();
         let selected = select(
-            &TokenCounter,
+            &TokenCounter(128_000),
             &collection,
             &cases
                 .iter()

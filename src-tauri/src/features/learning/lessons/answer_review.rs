@@ -131,7 +131,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Strin
             accepted.clear();
         }
     }
-    Err(AppError::Other(format!("The model could not complete the answer-key check after response correction: {} The lesson draft is saved; no material was published.", problems.join(" "))))
+    Err(AppError::ServiceNotAvailable(format!("The model could not complete the answer-key check after response correction: {} The lesson draft is saved; no material was published.", problems.join(" "))))
 }
 
 #[cfg(test)]

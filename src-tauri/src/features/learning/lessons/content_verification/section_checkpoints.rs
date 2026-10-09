@@ -34,7 +34,6 @@ impl SectionCheckpoint {
             && self.coverage.index == index
             && self.coverage.complete
             && self.coverage.unresolved_passages.is_empty()
-            && unit.claims.len() <= 24
             && unit.non_factual_reason.chars().count() <= 500
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {
@@ -94,4 +93,33 @@ pub(super) async fn save(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    #[test]
+    fn dense_section_receipt_remains_reusable() {
+        let content = json!({"body":"A saved section with many measurements."});
+        let checkpoint = SectionCheckpoint {
+            inventory: UnitClaims {
+                index: 0,
+                claims: (0..64)
+                    .map(|i| Claim {
+                        quote: "A saved section with many measurements.".into(),
+                        statement: format!("Measurement {i} has value {i}."),
+                    })
+                    .collect(),
+                non_factual_reason: String::new(),
+            },
+            coverage: CoverageUnit {
+                index: 0,
+                complete: true,
+                reason: "All assertions are represented.".into(),
+                unresolved_passages: vec![],
+            },
+        };
+        assert!(checkpoint.valid(&content, 0));
+        assert!(!checkpoint.valid(&json!({"body":"Changed section"}), 0));
+    }
 }

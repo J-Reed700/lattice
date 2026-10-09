@@ -9,9 +9,6 @@ use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::collections::HashSet;
 
-const MAX_URLS: usize = 8;
-const MAX_DOCUMENT_IDS: usize = 8;
-const MAX_SOURCES: usize = 12;
 // Keep this in sync with the repository's 2,400-character document excerpt
 // and generation's source snapshot limit.
 const MAX_EXCERPT_CHARS: usize = 2400;
@@ -34,10 +31,8 @@ pub(in crate::features::learning) fn validate_capture(
             "The reference contains no readable text.".into(),
         ));
     }
-    if captured.truncated
-        || captured.text.chars().count() > crate::features::learning::source_library::MAX_TEXT_CHARS
-    {
-        return Err(AppError::InvalidInput("The reference could not be captured in full. The MVP supports up to two million characters per source. Supply individual chapters or a smaller document.".into()));
+    if captured.truncated {
+        return Err(AppError::InvalidInput("The reference could not be captured in full. Use a complete document or a readable chapter URL.".into()));
     }
     Ok(())
 }
@@ -89,8 +84,7 @@ pub(in crate::features::learning) async fn capture_document(
         publisher: None,
         requested_url: None,
         resolved_url: None,
-        truncated: chunks.len()
-            >= crate::features::learning::source_library::LIBRARY_CAPTURE_CHUNKS,
+        truncated: false,
         text: chunks.join("\n\n"),
         extraction_version: "document_chunks_v2".into(),
     };
@@ -106,21 +100,6 @@ pub async fn acquire(
     container: &Container,
     request: &GenerateLearningProgramRequestDto,
 ) -> Result<AcquiredSources> {
-    if request.document_ids.len() + request.source_urls.len() > MAX_SOURCES {
-        return Err(AppError::InvalidInput(
-            "Select at most twelve references.".into(),
-        ));
-    }
-    if request.document_ids.len() > MAX_DOCUMENT_IDS {
-        return Err(AppError::InvalidInput(format!(
-            "Select no more than {MAX_DOCUMENT_IDS} documents for one learning program."
-        )));
-    }
-    if request.source_urls.len() > MAX_URLS {
-        return Err(AppError::InvalidInput(format!(
-            "Add no more than {MAX_URLS} online sources for one learning program."
-        )));
-    }
     let mut unique_documents = HashSet::new();
     if request
         .document_ids
@@ -183,7 +162,8 @@ pub async fn acquire(
             resolved_url: Some(article.url),
             text: article.content,
             truncated: article.content_truncated,
-            extraction_version: "web_reference_v1".into(),
+            extraction_version: crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION
+                .into(),
         };
         validate_capture(&captured)?;
         let id = uuid::Uuid::new_v4().to_string();
@@ -251,7 +231,8 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
                     resolved_url: Some(article.url),
                     text: article.content,
                     truncated: article.content_truncated,
-                    extraction_version: "web_reference_v1".into(),
+                    extraction_version:
+                        crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
                 },
             )
         }

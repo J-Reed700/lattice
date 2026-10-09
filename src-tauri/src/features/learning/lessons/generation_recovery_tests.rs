@@ -224,3 +224,141 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
     .await;
     assert!(matches!(result, Err(AppError::Network(_))));
 }
+
+#[tokio::test]
+async fn source_limit_failure_retries_after_restart_without_losing_saved_checks() -> Result<()> {
+    use crate::features::learning::{dto::*, source_library::*};
+    let directory = tempfile::tempdir()?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("source-recovery.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let (repo, job) = repository_tests::queued_job(&pool).await;
+    let program = LearningRepository::new(pool.clone())
+        .get(&job.program_id)
+        .await?;
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    for index in 1..100 {
+        library
+            .add(
+                &uuid::Uuid::new_v4().to_string(),
+                &uuid::Uuid::new_v4().to_string(),
+                &uuid::Uuid::new_v4().to_string(),
+                &job.program_id,
+                LearningSourceKind::Pasted,
+                "add_text",
+                "Fixture reference",
+                None,
+                LearningSourcePolicy::Fixed,
+                CapturedLearningSource {
+                    title: format!("Reference {index}"),
+                    publisher: None,
+                    requested_url: None,
+                    resolved_url: None,
+                    text: format!("Saved reference {index} with complete text."),
+                    truncated: false,
+                    extraction_version: "fixture".into(),
+                },
+                format!("capture-{index}"),
+            )
+            .await?;
+    }
+    assert!(repo.begin_job(&job.id).await?);
+    lesson_drafts::run(&repo, &job.id, &lesson_id, async {
+        lesson_drafts::resume("unchanged-inputs".into()).await?;
+        lesson_drafts::save("Saved exact candidate").await?;
+        lesson_drafts::record_checkpoint(
+            "completed-claim",
+            json!({"claim":"unchanged","result":"supported","evidence":"saved exact passage"}),
+        )
+        .await
+    })
+    .await?;
+    repo.fail_job(
+        &job.id,
+        "A learning program can contain at most 100 sources.",
+    )
+    .await?;
+    drop(library);
+    drop(repo);
+    pool.close().await;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let retry = repo
+        .retry_job(&LearningGenerationJobActionRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: job.program_id.clone(),
+            job_id: job.id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(retry.status, Status::Pending);
+    assert!(retry.error.is_none());
+    assert_eq!(
+        repo.lesson_draft(&retry.id, &lesson_id)
+            .await?
+            .unwrap()
+            .candidate,
+        "Saved exact candidate"
+    );
+    assert_eq!(
+        repo.lesson_checkpoint(&retry.id, &lesson_id, "completed-claim")
+            .await?,
+        repo.lesson_checkpoint(&job.id, &lesson_id, "completed-claim")
+            .await?
+    );
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let source = uuid::Uuid::new_v4().to_string();
+    let version = uuid::Uuid::new_v4().to_string();
+    library
+        .preflight_new_source(&job.program_id, &source, &version)
+        .await?;
+    library
+        .add(
+            &uuid::Uuid::new_v4().to_string(),
+            &source,
+            &version,
+            &job.program_id,
+            LearningSourceKind::Pasted,
+            "add_text",
+            "New evidence",
+            None,
+            LearningSourcePolicy::Fixed,
+            CapturedLearningSource {
+                title: "New evidence".into(),
+                publisher: None,
+                requested_url: None,
+                resolved_url: None,
+                text: "The next needed source can be saved after recovery.".into(),
+                truncated: false,
+                extraction_version: "fixture".into(),
+            },
+            "new-evidence".into(),
+        )
+        .await?;
+    assert_eq!(
+        LearningRepository::new(pool.clone())
+            .verification_sources(&job.program_id)
+            .await?
+            .len(),
+        101
+    );
+    assert!(repo.begin_job(&retry.id).await?);
+    assert!(repo.job_content_is_current(&retry.id).await?);
+    pool.close().await;
+    Ok(())
+}

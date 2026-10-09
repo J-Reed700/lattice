@@ -85,6 +85,28 @@ fn selection(indices: &[usize]) -> String {
 }
 
 #[tokio::test]
+async fn reference_selection_accepts_all_valid_selected_results_past_four() -> Result<()> {
+    let results: Vec<_> = (0..8)
+        .map(|i| WebSearchResult {
+            title: format!("Relevant reference {i}"),
+            url: format!("https://example.org/reference-{i}"),
+            snippet: "Discovery metadata only".into(),
+            published_date: None,
+            source: None,
+        })
+        .collect();
+    let llm = ScriptedModel {
+        outputs: Mutex::new([selection(&(0..8).collect::<Vec<_>>())].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let selected =
+        select_references(&llm, "Research methods", "random assignment", &[], results).await?;
+    assert_eq!(selected.len(), 8);
+    assert_eq!(selected[7].url, "https://example.org/reference-7");
+    Ok(())
+}
+
+#[tokio::test]
 async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages() -> Result<()> {
     let results = [
         ("Cargo definition", "https://dictionary.example/cargo"),
@@ -247,7 +269,7 @@ async fn research_ignores_out_of_scope_results_and_redirects() -> Result<()> {
         program.summary.goal.clone(),
         Some(web),
         async {
-            let expanded = expand(&llm, &references, &[gap()])
+            let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
                 .await?
                 .expect("relevant capture");
             assert_eq!(expanded.sources.len(), sources.len() + 1);
@@ -297,7 +319,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         program.summary.goal.clone(),
         Some(web(false)),
         async {
-            let expanded = expand(&llm, &references, &[gap()])
+            let expanded = expand(&llm, &references, &[gap()], &ClaimChecks::default())
                 .await?
                 .expect("new evidence saved");
             assert_eq!(expanded.sources.len(), 101);
@@ -332,7 +354,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
         program.summary.goal.clone(),
         Some(web(false)),
         async {
-            let expanded = expand(&llm, &original, &findings)
+            let expanded = expand(&llm, &original, &findings, &ClaimChecks::default())
                 .await?
                 .expect("full capture added");
             assert_eq!(expanded.sources.len(), sources.len() + 1);
@@ -349,7 +371,11 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
                 .iter()
                 .all(|s| !s.excerpt.contains("SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE")));
             assert_eq!(findings[0].verdict, ClaimVerdict::Unsupported);
-            assert!(expand(&model(), &expanded, &findings).await?.is_none());
+            assert!(
+                expand(&model(), &expanded, &findings, &ClaimChecks::default())
+                    .await?
+                    .is_none()
+            );
             Ok(())
         },
     )
@@ -374,9 +400,15 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
             let llm = model();
             let mut failed = gap();
             failed.verdict = ClaimVerdict::Unverified;
-            assert!(expand(&llm, &references, &[failed]).await?.is_none());
+            assert!(
+                expand(&llm, &references, &[failed], &ClaimChecks::default())
+                    .await?
+                    .is_none()
+            );
             assert!(llm.prompts.lock().unwrap().is_empty());
-            assert!(expand(&llm, &references, &[gap()]).await?.is_none());
+            assert!(expand(&llm, &references, &[gap()], &ClaimChecks::default())
+                .await?
+                .is_none());
             assert_eq!(
                 repo.verification_sources(&program.summary.id).await?.len(),
                 sources.len()
@@ -419,7 +451,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
         }
     }
     struct Model {
-        claims: Mutex<Vec<String>>,
+        claims: Mutex<Vec<(usize, String)>>,
         plans: Mutex<usize>,
     }
     #[async_trait::async_trait]
@@ -455,7 +487,11 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             if prompt.starts_with("Source passages:") {
                 let (passages, tail) = prompt.split_once("\n\nClaim: ").expect("claim request");
                 let claim = tail.split("\n\n").next().unwrap();
-                self.claims.lock().unwrap().push(claim.into());
+                let research_round = *self.plans.lock().unwrap();
+                self.claims
+                    .lock()
+                    .unwrap()
+                    .push((research_round, claim.into()));
                 let quote = claim;
                 return Ok(if passages.contains(quote) {
                     format!("supported\nReason: The complete capture directly states the claim.\nSource quote: {quote}\nSource passage: passage-0")
@@ -521,17 +557,23 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     assert_eq!(report.sources.len(), 3);
     assert_eq!(*llm.plans.lock().unwrap(), 2);
     let checks = llm.claims.lock().unwrap();
-    assert_eq!(checks.iter().filter(|claim| *claim == &original).count(), 1);
-    // The missing claim had no retrieval hits on the first pass, so its first
-    // model judgment happens only after research supplies a complete capture;
-    // the second capture also matches treatment-assignment terms, so this
-    // previously supported claim must receive a fresh comparison.
-    assert!(
+    assert_eq!(
         checks
             .iter()
-            .filter(|claim| claim.as_str() == CAPTURE)
-            .count()
-            >= 2
+            .filter(|(_, claim)| claim == &original)
+            .count(),
+        1
+    );
+    // The missing claim had no retrieval hits on the first pass, so its first
+    // model judgment happens only after research supplies a complete capture;
+    // Later automatic research is scoped to the remaining failed claim. Even
+    // when its page shares terminology with an already supported claim, that
+    // completed comparison stays reusable.
+    assert!(
+        !checks
+            .iter()
+            .any(|(round, claim)| *round == 2 && claim == CAPTURE),
+        "The second research round must not reopen a claim resolved by the first round: {checks:?}"
     );
     for finding in &report.findings {
         assert_eq!(finding.verdict, ClaimVerdict::Supported);

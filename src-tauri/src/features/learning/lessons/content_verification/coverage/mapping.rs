@@ -162,7 +162,7 @@ pub(super) async fn review(
             return Ok(complete);
         }
     }
-    Err(AppError::Other(format!("The coverage reviewer left unfinished passage decisions: {} The draft and valid decisions are saved; retry continues the missing decisions. Nothing was published.", errors.join(" "))))
+    Err(AppError::ServiceNotAvailable(format!("The coverage reviewer left unfinished passage decisions: {} The draft and valid decisions are saved; retry continues the missing decisions. Nothing was published.", errors.join(" "))))
 }
 
 #[cfg(test)]

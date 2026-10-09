@@ -80,6 +80,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             list_learning_programs,
             get_learning_program,
             get_learning_lesson_evidence,
+            get_learning_outline_evidence,
             generate_learning_program,
             cancel_learning_outline,
             repair_learning_outline,

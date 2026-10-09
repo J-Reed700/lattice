@@ -36,6 +36,20 @@ pub async fn get_learning_lesson_evidence(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn get_learning_outline_evidence(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<
+    Option<crate::features::learning::outline_evidence_view::LearningOutlineEvidenceDto>,
+    ApiError,
+> {
+    crate::features::learning::outline_evidence_view::get(container.db_pool(), &program_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn generate_learning_program(
     request: GenerateLearningProgramRequestDto,
     request_id: Option<String>,

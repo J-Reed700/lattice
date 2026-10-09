@@ -1,5 +1,7 @@
 //! Managed file and database lifecycle for portable Learning Studio packs.
 mod export;
+mod provenance;
+mod replacement;
 use crate::features::learning::{
     dto::{LearningPreparation, LearningProgramDto, LearningProgramStatus},
     pack::{decode_learning_pack, encode_learning_pack, DecodedLearningPack, LearningPackManifest},
@@ -676,25 +678,8 @@ impl LearningPackRepository {
     }
 
     async fn require_replace_is_recoverable(&self, program_id: &str) -> Result<()> {
-        // Until every optional Learning Studio aggregate has a pack importer,
-        // replacement must not cascade-delete any state outside the portable
-        // snapshot. Derived retrieval chunks are intentionally rebuildable.
-        const OMITTED: &[(&str, &str)] = &[
-            ("notebook links", "SELECT COUNT(*) FROM learning_lesson_note_links WHERE program_id=?"),
-            ("runtime profiles", "SELECT COUNT(DISTINCT runtime_profile_id) FROM learning_practical_activities WHERE program_id=? AND runtime_profile_id IS NOT NULL"),
-            ("hidden practical evaluators", "SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')"),
-        ];
-        for (label, sql) in OMITTED {
-            let mut query = sqlx::query_scalar::<_, i64>(sql);
-            let placeholders = sql.matches('?').count();
-            for _ in 0..placeholders {
-                query = query.bind(program_id);
-            }
-            if query.fetch_one(&self.pool).await.map_err(db)? > 0 {
-                return Err(invalid(format!("Replace was blocked because the target has {label} that this pack version cannot restore. The existing program was left unchanged.")));
-            }
-        }
-        Ok(())
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        replacement::require_recoverable_on(&mut connection, program_id).await
     }
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningPortabilityWorkspaceDto> {
@@ -793,6 +778,9 @@ impl LearningPackRepository {
         )?;
         validate_program(&program)?;
         let mut warnings = Vec::<String>::new();
+        if provenance::decode(&decoded, &program)?.is_none() {
+            warnings.push("This older pack contains no saved outline citations or lesson verification reports. Imported lessons will have no verification history.".into());
+        }
         if let Some(bytes) = decoded.entries.get(PRACTICAL_ENTRY) {
             let snapshot: PracticalPackSnapshot = parse(bytes)?;
             if snapshot.activities.iter().any(|activity| {
@@ -893,17 +881,15 @@ impl LearningPackRepository {
             candidates.push(("attempt", &attempt.id, "Submitted assessment"));
         }
         for (kind, id, title) in candidates {
-            let table = match kind {
-                "module" => "learning_modules",
-                "lesson" => "learning_lessons",
-                "question" => "learning_questions",
-                _ => "learning_attempts",
+            let sql = match kind {
+                "module" => "SELECT program_id,title FROM learning_modules WHERE id=?",
+                "lesson" => "SELECT program_id,title FROM learning_lessons WHERE id=?",
+                // Questions belong to a program through their lesson; they
+                // have a prompt, not their own program_id/title columns.
+                "question" => "SELECT l.program_id,q.prompt AS title FROM learning_questions q JOIN learning_lessons l ON l.id=q.lesson_id WHERE q.id=?",
+                _ => "SELECT program_id,kind AS title FROM learning_attempts WHERE id=?",
             };
-            let sql = format!(
-                "SELECT program_id,{} AS title FROM {table} WHERE id=?",
-                if kind == "attempt" { "kind" } else { "title" }
-            );
-            if let Some(row) = sqlx::query(&sql)
+            if let Some(row) = sqlx::query(sql)
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await
@@ -1372,6 +1358,7 @@ impl LearningPackRepository {
             Some(bytes) => parse(bytes)?,
             None => return Err(invalid("Pack is missing assessment answer data.")),
         };
+        let provenance = provenance::decode(&decoded, &program)?;
         validate_program(&program)?;
         validate_answer_keys(&program, &imported_keys)?;
         let target_id: String = preview.get("program_id");
@@ -1382,49 +1369,6 @@ impl LearningPackRepository {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(db)?;
-        let backup_record = if policy == LearningPackConflictPolicy::ReplaceAfterBackup
-            && existing.is_some()
-        {
-            self.require_replace_is_recoverable(&target_id).await?;
-            // Use the same full snapshot exporter as user backups so replacement
-            // can be recovered with its assessment keys and immutable sources.
-            let backup_id = uuid::Uuid::new_v4().to_string();
-            let backup_operation_id = uuid::Uuid::new_v4().to_string();
-            let backup_name = format!("backup-{backup_id}.lattice-learning");
-            self.export(
-                container,
-                &ExportLearningPackRequestDto {
-                    operation_id: backup_operation_id.clone(),
-                    program_id: target_id.clone(),
-                    file_name: backup_name,
-                    include_evidence: true,
-                    include_practical_artifacts: true,
-                    include_source_bodies: true,
-                    source_body_redistribution_confirmed: true,
-                },
-            )
-            .await?;
-            let row=sqlx::query("SELECT program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at FROM learning_pack_exports WHERE operation_id=? AND program_id=?")
-                    .bind(&backup_operation_id).bind(&target_id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::Database("Replacement backup export was not recorded.".into()))?;
-            Some(BackupExportRecord {
-                // The recovery ID is also embedded in the managed filename, so
-                // the restored export row remains directly discoverable after
-                // the original row is removed by the replacement cascade.
-                id: backup_id,
-                program_id: row.get("program_id"),
-                operation_id: row.get("operation_id"),
-                payload_hash: row.get("payload_hash"),
-                format_version: row.get("format_version"),
-                root_sha256: row.get("root_sha256"),
-                destination_path: row.get("destination_path"),
-                privacy_manifest_json: row.get("privacy_manifest_json"),
-                entry_manifest_json: row.get("entry_manifest_json"),
-                manifest_json: row.get("manifest_json"),
-                created_at: row.get("created_at"),
-            })
-        } else {
-            None
-        };
         if policy == LearningPackConflictPolicy::MergeSafe && existing.is_some() {
             return Err(invalid(
                 "Merge-safe import is blocked because the incoming program ID already exists.",
@@ -1590,22 +1534,16 @@ impl LearningPackRepository {
         } else {
             program.summary.id = target_id.clone();
         }
-        // Replacing is one SQLite transaction: a failed insert rolls the old program back.
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        sqlx::query("PRAGMA defer_foreign_keys=ON")
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        let fresh: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM learning_pack_import_previews WHERE id=? AND status='pending'",
+        // Lock before capturing the backup, not merely before deleting rows.
+        // Background saves either precede that snapshot or wait for completion.
+        let (mut tx, backup_record) = replacement::begin_apply(
+            &self.pool,
+            container,
+            &req.preview_id,
+            &target_id,
+            policy == LearningPackConflictPolicy::ReplaceAfterBackup,
         )
-        .bind(&req.preview_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-        if fresh.is_none() {
-            return Err(invalid("Pack preview changed while it was being applied."));
-        }
+        .await?;
         if policy == LearningPackConflictPolicy::ReplaceAfterBackup {
             sqlx::query("DELETE FROM study_decks WHERE id=(SELECT deck_id FROM learning_memory WHERE program_id=? AND deck_id IS NOT NULL)")
                 .bind(&target_id).execute(&mut *tx).await.map_err(db)?;
@@ -1617,8 +1555,9 @@ impl LearningPackRepository {
         }
         insert_program(&mut tx, &program, &id_map).await?;
         if let Some(backup) = &backup_record {
-            // The export row normally cascades with the target program. Reattach
-            // its recovery metadata to the replacement row in this transaction.
+            // Record recovery metadata on the replacement in the same commit.
+            // If restoration fails, the old program rolls back and the durable
+            // backup file remains as an additional recovery copy.
             sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&backup.id).bind(&backup.program_id).bind(&backup.operation_id).bind(&backup.payload_hash).bind(backup.format_version).bind(&backup.root_sha256).bind(&backup.destination_path).bind(&backup.privacy_manifest_json).bind(&backup.entry_manifest_json).bind(&backup.manifest_json).bind(backup.created_at).execute(&mut *tx).await.map_err(db)?;
         }
@@ -1823,6 +1762,9 @@ impl LearningPackRepository {
             }
         }
         let result_id = uuid::Uuid::new_v4().to_string();
+        if let Some(snapshot) = provenance {
+            provenance::restore(&mut tx, &program.summary.id, snapshot, &id_map).await?;
+        }
         let timestamp = now();
         let changes: Vec<LearningPackChangeDto> =
             parse(preview.get::<String, _>("changes_json").as_bytes())?;

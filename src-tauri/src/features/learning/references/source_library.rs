@@ -8,14 +8,9 @@ use futures::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
-pub(in crate::features::learning) const MAX_TEXT_CHARS: usize = 2_000_000;
 const MAX_EXCERPT_CHARS: usize = 2_400;
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
-const MAX_VERSION_COUNT: i64 = 100;
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
-/// Chunks read when a library document is captured as a source; reaching it
-/// means the capture may be missing the document's tail.
-pub(in crate::features::learning) const LIBRARY_CAPTURE_CHUNKS: usize = 8192;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -31,11 +26,6 @@ fn normalized(text: &str) -> String {
         .replace('\r', "\n")
         .trim()
         .to_owned()
-}
-fn bounded_text(text: &str) -> (String, bool) {
-    let normalized = normalized(text);
-    let truncated = normalized.chars().count() > MAX_TEXT_CHARS;
-    (normalized.chars().take(MAX_TEXT_CHARS).collect(), truncated)
 }
 fn excerpt(text: &str) -> String {
     text.chars().take(MAX_EXCERPT_CHARS).collect()
@@ -161,14 +151,12 @@ impl LearningSourceLibraryRepository {
         ))
     }
 
-    /// Capture every indexed chunk in order under a bounded read snapshot.
-    /// Oversized or still-indexing documents fail before any text is captured.
+    /// Capture every indexed chunk in order, under one consistent snapshot.
     pub async fn library_document_text(
         &self,
         document_id: &str,
     ) -> Result<Option<(String, Vec<String>)>> {
-        // Reject oversized captures before allocating their text. Read the
-        // size and chunks under one snapshot if an import updates concurrently.
+        // Do not silently capture a prefix if an import updates concurrently.
         let mut tx = self.pool.begin().await.map_err(db)?;
         let status: Option<String> = sqlx::query_scalar("SELECT status FROM documents WHERE id=?")
             .bind(document_id)
@@ -181,22 +169,12 @@ impl LearningSourceLibraryRepository {
         if status.as_deref() != Some("indexed") {
             return Err(invalid("The document is not fully indexed. Let its import finish before adding it as a reference."));
         }
-        let size = sqlx::query("SELECT count(*) chunks, coalesce(sum(length(content)),0) characters FROM text_chunks WHERE document_id=?").bind(document_id).fetch_one(&mut *tx).await.map_err(db)?;
-        let count: i64 = size.get("chunks");
-        let characters: i64 = size.get("characters");
-        if count >= LIBRARY_CAPTURE_CHUNKS as i64
-            || characters + count.saturating_sub(1) * 2 > MAX_TEXT_CHARS as i64
-        {
-            return Err(invalid("This document exceeds the MVP capture limit. Import individual chapters, each under two million characters."));
-        }
         let rows = sqlx::query(
-            "SELECT d.file_name, substr(c.content, 1, ?) content FROM documents d
+            "SELECT d.file_name, c.content FROM documents d
              JOIN text_chunks c ON c.document_id = d.id
-             WHERE d.id = ? ORDER BY c.chunk_index LIMIT ?",
+             WHERE d.id = ? ORDER BY c.chunk_index",
         )
-        .bind((MAX_TEXT_CHARS + 1) as i64)
         .bind(document_id)
-        .bind(LIBRARY_CAPTURE_CHUNKS as i64)
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
@@ -520,7 +498,7 @@ impl LearningSourceLibraryRepository {
         ] {
             uuid(v, label)?;
         }
-        let (full_text, was_truncated) = bounded_text(&captured.text);
+        let full_text = normalized(&captured.text);
         if full_text.trim().is_empty() {
             return Err(invalid("Source text must not be empty"));
         }
@@ -591,7 +569,7 @@ impl LearningSourceLibraryRepository {
                 "The requested source or version ID is already in use.",
             ));
         }
-        let (text, truncated) = (full_text, was_truncated || captured.truncated);
+        let (text, truncated) = (full_text, captured.truncated);
         let text_digest = digest(&text);
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,0,?,?)")
             .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).execute(&mut *tx).await.map_err(db)?;
@@ -740,7 +718,7 @@ impl LearningSourceLibraryRepository {
             )
         } else {
             let captured = captured.ok_or_else(|| invalid("Refresh result is missing"))?;
-            let (text, was_truncated) = bounded_text(&captured.text);
+            let text = normalized(&captured.text);
             if text.trim().is_empty()
                 || captured.title.trim().is_empty()
                 || captured.title.chars().count() > 180
@@ -768,12 +746,6 @@ impl LearningSourceLibraryRepository {
                     let version_id = if let Some(id) = existing {
                         id
                     } else {
-                        let version_count:i64=sqlx::query_scalar("SELECT count(*) FROM learning_source_versions WHERE program_id=? AND source_id=?").bind(&req.program_id).bind(&req.source_id).fetch_one(&mut *tx).await.map_err(db)?;
-                        if version_count >= MAX_VERSION_COUNT {
-                            return Err(invalid(
-                                "A source can contain at most 100 captured versions.",
-                            ));
-                        }
                         let next:i64=sqlx::query_scalar("SELECT COALESCE(MAX(version_number),0)+1 FROM learning_source_versions WHERE program_id=? AND source_id=?")
                             .bind(&req.program_id).bind(&req.source_id).fetch_one(&mut *tx).await.map_err(db)?;
                         let version_id = uuid::Uuid::new_v4().to_string();
@@ -789,7 +761,7 @@ impl LearningSourceLibraryRepository {
                             requested_url.as_deref(),
                             captured.resolved_url.as_deref(),
                             &text,
-                            was_truncated || captured.truncated,
+                            captured.truncated,
                             &captured.extraction_version,
                             checked,
                             &new_digest,
@@ -1072,11 +1044,9 @@ impl LearningSourceLibraryRepository {
         if req
             .replacement_text
             .as_ref()
-            .is_some_and(|text| text.trim().is_empty() || text.chars().count() > MAX_TEXT_CHARS)
+            .is_some_and(|text| text.trim().is_empty())
         {
-            return Err(invalid(
-                "Replacement source text must contain 1–2,000,000 characters.",
-            ));
+            return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = json_hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
@@ -1127,7 +1097,7 @@ impl LearningSourceLibraryRepository {
         })?;
         let prior_text: String = prior.get("full_text");
         let text_input = req.replacement_text.as_deref().unwrap_or(&prior_text);
-        let (text, was_truncated) = bounded_text(text_input);
+        let text = normalized(text_input);
         if text.trim().is_empty() {
             return Err(invalid("Re-imported source text must not be empty."));
         }
@@ -1157,19 +1127,6 @@ impl LearningSourceLibraryRepository {
                     "The requested source version ID is already in use.",
                 ));
             }
-            let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM learning_source_versions WHERE program_id=? AND source_id=?",
-            )
-            .bind(&req.program_id)
-            .bind(&req.source_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-            if count >= MAX_VERSION_COUNT {
-                return Err(invalid(
-                    "A source can contain at most 100 captured versions.",
-                ));
-            }
             let next: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(version_number),0)+1 FROM learning_source_versions WHERE program_id=? AND source_id=?",
             )
@@ -1182,7 +1139,7 @@ impl LearningSourceLibraryRepository {
             let publisher: Option<String> = prior.get("publisher");
             let resolved_url: Option<String> = prior.get("resolved_url");
             let extraction: String = prior.get("extraction_version");
-            let truncated = was_truncated || prior.get::<i64, _>("truncated") != 0;
+            let truncated = prior.get::<i64, _>("truncated") != 0;
             let timestamp = now();
             insert_version(
                 &mut tx,

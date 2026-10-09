@@ -119,27 +119,6 @@ fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     prepared
 }
 
-#[test]
-fn request_validation_keeps_every_selected_source_within_the_snapshot_budget() {
-    let request = GenerateLearningProgramRequestDto {
-        goal: "Understand the selected material".into(),
-        prior_knowledge: String::new(),
-        minutes_per_session: 30,
-        document_ids: (0..8).map(|_| id()).collect(),
-        course_depth: None,
-        source_urls: (0..5)
-            .map(|index| format!("https://example.com/source-{index}"))
-            .collect(),
-    };
-    assert!(super::service::validate_request(&request).is_err());
-
-    let within_budget = GenerateLearningProgramRequestDto {
-        source_urls: request.source_urls[..4].to_vec(),
-        ..request
-    };
-    assert!(super::service::validate_request(&within_budget).is_ok());
-}
-
 async fn ready_program(repo: &LearningRepository) -> Result<LearningProgramDto> {
     let mut p = fixture();
     repo.create(&p).await?;
@@ -1274,7 +1253,7 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
 #[tokio::test]
 async fn library_document_capture_keeps_full_ordered_text_and_rejects_incomplete_documents(
 ) -> Result<()> {
-    use super::source_library::{LearningSourceLibraryRepository, MAX_TEXT_CHARS};
+    use super::source_library::LearningSourceLibraryRepository;
     let pool = pool().await?;
     let db = |e: sqlx::Error| crate::shared::error::AppError::Database(e.to_string());
     let document_id = id();
@@ -1307,17 +1286,111 @@ async fn library_document_capture_keeps_full_ordered_text_and_rejects_incomplete
     assert_eq!(text[2].chars().count(), 70_000);
     assert!(library.library_document_text(&id()).await?.is_none());
     sqlx::query("UPDATE text_chunks SET content=? WHERE document_id=? AND chunk_index=2")
-        .bind("x".repeat(MAX_TEXT_CHARS + 1))
+        .bind("x".repeat(2_000_001))
         .bind(&document_id)
         .execute(&pool)
         .await
         .map_err(db)?;
-    assert!(library.library_document_text(&document_id).await.is_err());
+    let (_, captured) = library
+        .library_document_text(&document_id)
+        .await?
+        .expect("complete large document");
+    assert_eq!(captured[2].len(), 2_000_001);
+
     sqlx::query("UPDATE documents SET status='processing' WHERE id=?")
         .bind(&document_id)
         .execute(&pool)
         .await
         .map_err(db)?;
     assert!(library.library_document_text(&document_id).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let library = super::source_library::LearningSourceLibraryRepository::new(pool);
+    let source_id = id();
+    library
+        .add(
+            &id(),
+            &source_id,
+            &id(),
+            &program.summary.id,
+            LearningSourceKind::Web,
+            "add_web",
+            "https://example.org/versioned",
+            Some("https://example.org/versioned"),
+            LearningSourcePolicy::Manual,
+            source_capture("Versioned source", "Initial captured reference."),
+            "initial".into(),
+        )
+        .await?;
+    for revision in 0..101 {
+        library
+            .refresh(
+                &RefreshLearningSourceRequestDto {
+                    operation_id: id(),
+                    program_id: program.summary.id.clone(),
+                    source_id: source_id.clone(),
+                    expected_revision: revision,
+                },
+                Some(source_capture(
+                    "Versioned source",
+                    &format!("Captured reference revision {revision}."),
+                )),
+                None,
+            )
+            .await?;
+    }
+    let text = format!(
+        "{}COMPLETE_SOURCE_TAIL",
+        "large captured text ".repeat(110_000)
+    );
+    assert!(text.len() > 2_000_000);
+    library
+        .delete_source(&super::portability_dto::DeleteLearningSourceRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            expected_revision: 101,
+            reason: "Exercise re-import after many saved versions".into(),
+        })
+        .await?;
+    let version_id = id();
+    let request = super::portability_dto::ReimportLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: source_id.clone(),
+        version_id: version_id.clone(),
+        expected_revision: 102,
+        replacement_text: Some(text.clone()),
+    };
+    library.reimport_source(&request).await?;
+    library.reimport_source(&request).await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let source = workspace
+        .sources
+        .iter()
+        .find(|source| source.id == source_id)
+        .expect("source");
+    assert_eq!(source.versions.len(), 103);
+    assert!(
+        !source
+            .active_version
+            .as_ref()
+            .expect("active version")
+            .truncated
+    );
+    let saved = library
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id,
+            source_id,
+            version_id,
+        })
+        .await?;
+    assert_eq!(saved.full_text, text);
     Ok(())
 }
