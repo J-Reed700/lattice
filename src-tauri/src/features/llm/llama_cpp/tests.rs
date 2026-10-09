@@ -496,6 +496,7 @@ fn streamed_tool_arguments_reasoning_and_usage_survive_fragmentation() {
     assert_eq!(response.input_tokens, 20);
     assert_eq!(response.output_tokens, 30);
     assert_eq!(response.provider_output["reasoning_content"], "Look here");
+    assert_eq!(response.reasoning.as_deref(), Some("Look here"));
     assert!(matches!(&response.tool_calls[0], CompletionInput::ToolCall {id, ..} if id == "first"));
     assert!(
         matches!(&response.tool_calls[1], CompletionInput::ToolCall {id, arguments, ..} if id == "second" && *arguments == json!({"q":"专利"}))
@@ -811,6 +812,36 @@ async fn typed_completion_delivers_answer_progress_and_preserves_tool_response()
     assert_eq!(*deltas.lock().unwrap(), vec!["First ", "answer"]);
     assert_eq!(response.text, "First answer");
     assert_eq!(response.finish_reason, "stop");
+}
+
+#[tokio::test]
+async fn typed_completion_delivers_reasoning_on_its_own_progress_channel() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Compare \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"reasoning_content\":\"sources\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"Answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+    let llm = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let reasoning = std::sync::Mutex::new(String::new());
+    let response = llm
+        .complete_with_reasoning_progress(
+            &CompletionRequest::default(),
+            &|_| Ok(()),
+            &|delta| {
+                reasoning.lock().unwrap().push_str(&delta);
+                Ok(())
+            },
+            &|_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*reasoning.lock().unwrap(), "Compare sources");
+    assert_eq!(response.reasoning.as_deref(), Some("Compare sources"));
+    assert_eq!(response.text, "Answer");
 }
 
 async fn sequence_server(responses: Vec<ResponseTemplate>) -> MockServer {

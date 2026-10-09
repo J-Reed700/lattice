@@ -264,6 +264,7 @@ mod tests {
             started_at_ms: 1,
             duration_ms: None,
             result: None,
+            reasoning: None,
             links: vec![],
         });
         let verification = BackgroundVerification {

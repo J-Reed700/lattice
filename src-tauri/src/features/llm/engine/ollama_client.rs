@@ -165,6 +165,7 @@ impl OllamaClient {
                 CompletionInput::Message { role, content } => OllamaChatMessage {
                     role: role.clone(),
                     content: content.clone(),
+                    thinking: None,
                     images: None,
                     tool_calls: None,
                     tool_name: None,
@@ -195,6 +196,7 @@ impl OllamaClient {
                     OllamaChatMessage {
                         role: "assistant".into(),
                         content: String::new(),
+                        thinking: None,
                         images: None,
                         tool_calls: Some(vec![OllamaToolCall {
                             call_type: "function".into(),
@@ -216,6 +218,7 @@ impl OllamaClient {
                     OllamaChatMessage {
                         role: "tool".into(),
                         content: output.clone(),
+                        thinking: None,
                         images: None,
                         tool_calls: None,
                         tool_name: Some(tool_name),
@@ -257,6 +260,9 @@ impl OllamaClient {
         );
 
         let think = match request.reasoning_effort.as_deref() {
+            // Capturing a supplied reasoning channel must not force thinking
+            // on models that reject it. Keep Ollama's model default unless an
+            // effort was explicitly requested.
             None | Some("none") => None,
             Some(effort @ ("low" | "medium" | "high")) => {
                 Some(serde_json::Value::String(effort.to_string()))
@@ -356,6 +362,11 @@ impl OllamaClient {
             .collect();
         Ok(CompletionResponse {
             text: response.message.content.clone(),
+            reasoning: response
+                .message
+                .thinking
+                .clone()
+                .filter(|text| !text.trim().is_empty()),
             tool_calls,
             input_tokens: u64::from(response.prompt_eval_count.unwrap_or(0)),
             output_tokens: u64::from(response.eval_count.unwrap_or(0)),
@@ -372,6 +383,17 @@ impl OllamaClient {
         &self,
         request: &crate::application::ports::llm_port::CompletionRequest,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        let ignore_reasoning = |_text: String| Ok(());
+        self.complete_typed_with_reasoning_progress(request, on_text, &ignore_reasoning)
+            .await
+    }
+
+    async fn complete_typed_with_reasoning_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
     ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
         use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
         use crate::features::llm::engine::circuit_breaker::CircuitBreakerError;
@@ -416,6 +438,7 @@ impl OllamaClient {
             let mut chunks = response.bytes_stream();
             let mut buffer = Vec::new();
             let mut content = String::new();
+            let mut reasoning = String::new();
             let mut model = String::new();
             let mut created_at = String::new();
             let mut tool_calls = std::collections::BTreeMap::<usize, OllamaToolCall>::new();
@@ -462,6 +485,11 @@ impl OllamaClient {
                         content.push_str(&parsed.message.content);
                         on_text(parsed.message.content)?;
                     }
+                    if let Some(thinking) = parsed.message.thinking.filter(|text| !text.is_empty())
+                    {
+                        reasoning.push_str(&thinking);
+                        on_reasoning(thinking)?;
+                    }
                     if let Some(calls) = parsed.message.tool_calls {
                         for (position, call) in calls.into_iter().enumerate() {
                             let index = call.function.index.unwrap_or(position);
@@ -498,6 +526,10 @@ impl OllamaClient {
                     content.push_str(&parsed.message.content);
                     on_text(parsed.message.content)?;
                 }
+                if let Some(thinking) = parsed.message.thinking.filter(|text| !text.is_empty()) {
+                    reasoning.push_str(&thinking);
+                    on_reasoning(thinking)?;
+                }
                 if let Some(calls) = parsed.message.tool_calls {
                     for (position, call) in calls.into_iter().enumerate() {
                         let index = call.function.index.unwrap_or(position);
@@ -531,6 +563,7 @@ impl OllamaClient {
                 message: OllamaChatMessage {
                     role: "assistant".into(),
                     content: content.clone(),
+                    thinking: (!reasoning.is_empty()).then(|| reasoning.clone()),
                     images: None,
                     tool_calls: if tool_calls.is_empty() {
                         None
@@ -551,6 +584,7 @@ impl OllamaClient {
             .unwrap_or_default();
             Ok(CompletionResponse {
                 text: content,
+                reasoning: (!reasoning.is_empty()).then_some(reasoning),
                 tool_calls: completion_tool_calls,
                 input_tokens: u64::from(prompt_eval_count.unwrap_or(0)),
                 output_tokens: u64::from(eval_count.unwrap_or(0)),
@@ -1239,6 +1273,7 @@ impl OllamaClient {
             .map(|m| OllamaChatMessage {
                 role: m.role,
                 content: m.content,
+                thinking: None,
                 images: None,
                 tool_calls: None,
                 tool_name: None,
@@ -1385,6 +1420,7 @@ impl OllamaClient {
             .map(|m| OllamaChatMessage {
                 role: m.role,
                 content: m.content,
+                thinking: None,
                 images: None,
                 tool_calls: None,
                 tool_name: None,
@@ -1658,6 +1694,17 @@ impl LLMPort for OllamaClient {
         self.complete_typed_with_progress(request, on_text).await
     }
 
+    async fn complete_with_reasoning_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
+        _on_retry: &(dyn Fn(usize) -> crate::shared::error::Result<()> + Send + Sync),
+    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
+        self.complete_typed_with_reasoning_progress(request, on_text, on_reasoning)
+            .await
+    }
+
     async fn generate(
         &self,
         prompt: &str,
@@ -1846,6 +1893,7 @@ impl LLMPort for OllamaClient {
             .map(|m| OllamaChatMessage {
                 role: m.role,
                 content: m.content,
+                thinking: None,
                 images: None,
                 tool_calls: None,
                 tool_name: None,
@@ -1855,6 +1903,7 @@ impl LLMPort for OllamaClient {
         ollama_messages.push(OllamaChatMessage {
             role: "user".to_string(),
             content: prompt.to_string(),
+            thinking: None,
             images: images.clone(),
             tool_calls: None,
             tool_name: None,
@@ -2349,11 +2398,11 @@ mod tests {
         let chunks = [
             serde_json::json!({
                 "model":"utility","created_at":"2026-09-28T00:00:00Z",
-                "message":{"role":"assistant","content":"Hi "},"done":false
+                "message":{"role":"assistant","content":"Hi ","thinking":"Compare "},"done":false
             }),
             serde_json::json!({
                 "model":"utility","created_at":"2026-09-28T00:00:00Z",
-                "message":{"role":"assistant","content":"世界","tool_calls":[{
+                "message":{"role":"assistant","content":"世界","thinking":"sources","tool_calls":[{
                     "function":{"name":"search_saved_knowledge","arguments":{"query":"trip"},"index":0}
                 }]},"done":true,"done_reason":"stop","prompt_eval_count":20,"eval_count":5
             }),
@@ -2380,6 +2429,7 @@ mod tests {
                 role: "user".into(),
                 content: "When is the trip?".into(),
             }],
+            include_reasoning: true,
             tools: vec![ToolDefinition {
                 name: "search_saved_knowledge".into(),
                 description: "Search saved notes".into(),
@@ -2393,12 +2443,29 @@ mod tests {
             received_by_callback.lock().unwrap().push(text);
             Ok(())
         };
-        let response = LLMPort::complete_with_progress(&client, &request, &on_text)
-            .await
-            .unwrap();
+        let received_reasoning = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reasoning_by_callback = received_reasoning.clone();
+        let on_reasoning = move |text: String| {
+            reasoning_by_callback.lock().unwrap().push(text);
+            Ok(())
+        };
+        let response = LLMPort::complete_with_reasoning_progress(
+            &client,
+            &request,
+            &on_text,
+            &on_reasoning,
+            &|_| Ok(()),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(response.text, "Hi 世界");
+        assert_eq!(response.reasoning.as_deref(), Some("Compare sources"));
         assert_eq!(*received.lock().unwrap(), vec!["Hi ", "世界"]);
+        assert_eq!(
+            *received_reasoning.lock().unwrap(),
+            vec!["Compare ", "sources"]
+        );
         assert_eq!(response.tool_calls.len(), 1);
         assert!(matches!(
             response.tool_calls.first(),
@@ -2409,6 +2476,7 @@ mod tests {
         let sent: serde_json::Value =
             serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
         assert_eq!(sent["stream"], true);
+        assert!(sent.get("think").is_none());
         assert_eq!(
             sent["tools"][0]["function"]["name"],
             "search_saved_knowledge"

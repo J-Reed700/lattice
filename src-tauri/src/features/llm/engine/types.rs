@@ -271,6 +271,10 @@ pub struct OllamaChatMessage {
     /// Message content
     #[serde(default)]
     pub content: String,
+    /// Explicit reasoning returned by thinking-capable Ollama models. Kept
+    /// separate from public answer content, matching Ollama's wire format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     /// Base64-encoded images (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,

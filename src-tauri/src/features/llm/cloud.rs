@@ -10,6 +10,8 @@ use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+mod streaming;
+
 pub struct CloudLlm {
     provider: LLMProvider,
     model: String,
@@ -79,10 +81,20 @@ impl CloudLlm {
                     json!({"format":{"type":"json_schema","name":"response","schema":schema,"strict":true}}),
                 )?;
             }
-            if let Some(effort) =
-                openai_reasoning_effort(&self.model, request.reasoning_effort.as_deref())
+            let effort = openai_reasoning_effort(&self.model, request.reasoning_effort.as_deref());
+            if is_openai_reasoning_model(&self.model)
+                && (effort.is_some() || request.include_reasoning)
             {
-                set_field(&mut body, "reasoning", json!({"effort":effort}))?;
+                let mut reasoning = json!({});
+                if let Some(effort) = effort {
+                    set_field(&mut reasoning, "effort", json!(effort))?;
+                }
+                if request.include_reasoning {
+                    // Raw reasoning tokens are not exposed by the Responses
+                    // API. `auto` asks for the most detailed supported summary.
+                    set_field(&mut reasoning, "summary", json!("auto"))?;
+                }
+                set_field(&mut body, "reasoning", reasoning)?;
             }
             // Reasoning models reject both knobs outright, so an override that
             // would 400 the request is dropped rather than sent: the caller
@@ -299,6 +311,41 @@ impl LLMPort for CloudLlm {
             .map_err(|e| AppError::Network(format!("Invalid cloud response: {e}")))?;
         parse_completion(self.provider, value)
     }
+    async fn complete_with_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        self.complete_with_reasoning_progress(request, on_text, &|_| Ok(()), &|_| Ok(()))
+            .await
+    }
+    async fn complete_with_reasoning_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        let deadline = request
+            .wall_clock_budget()
+            .map(|budget| Instant::now() + budget);
+        request
+            .within_time_budget(async {
+                let response = self
+                    .send(&self.body(request, true)?, deadline, false)
+                    .await?;
+                streaming::drain(
+                    self.provider,
+                    response.bytes_stream(),
+                    self.stall_timeout,
+                    on_text,
+                    on_reasoning,
+                )
+                .await
+            })
+            .await
+            .map_err(|_| self.budget_error())?
+    }
     async fn generate(
         &self,
         prompt: &str,
@@ -446,6 +493,7 @@ impl LLMPort for CloudLlm {
 
 fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionResponse> {
     let mut response = CompletionResponse::default();
+    let mut reasoning_parts = Vec::new();
     let key = if provider == LLMProvider::Openai {
         "output"
     } else {
@@ -471,6 +519,26 @@ fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionRes
             "text" => {
                 if let Some(text) = field(block, "text").as_str() {
                     response.text.push_str(text);
+                }
+            }
+            "reasoning" if provider == LLMProvider::Openai => {
+                if let Some(summary) = field(block, "summary").as_array() {
+                    reasoning_parts.extend(summary.iter().filter_map(|part| {
+                        field(part, "text")
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .map(str::to_owned)
+                    }));
+                }
+            }
+            "thinking" if provider == LLMProvider::Anthropic => {
+                if let Some(thinking) = field(block, "thinking")
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                {
+                    reasoning_parts.push(thinking.to_owned());
                 }
             }
             "function_call" | "tool_use" => {
@@ -519,6 +587,9 @@ fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionRes
     .as_str()
     .unwrap_or("unknown")
     .into();
+    if !reasoning_parts.is_empty() {
+        response.reasoning = Some(reasoning_parts.join("\n\n"));
+    }
     response.provider_output = field(&value, key).clone();
     Ok(response)
 }
@@ -550,12 +621,12 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 /// Whether this OpenAI model is a reasoning model, which takes an effort
 /// setting in place of sampling knobs and rejects `temperature`/`top_p`.
 fn is_openai_reasoning_model(model: &str) -> bool {
-    model.starts_with("gpt-5") || model.starts_with('o')
+    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
 }
 
 fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
-    let floor = if model.starts_with("gpt-5") {
+    let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
         "minimal"
     } else if model.starts_with('o') {
         "low"
@@ -575,6 +646,26 @@ mod tests {
             matches!(&result.tool_calls[0], CompletionInput::ToolCall { id, .. } if id == "call_123")
         );
         assert_eq!(result.input_tokens, 12);
+    }
+
+    #[test]
+    fn openai_reasoning_summary_is_kept_separate_from_answer_text() {
+        let result = parse_completion(
+            LLMProvider::Openai,
+            json!({
+                "status":"completed",
+                "output":[
+                    {"type":"reasoning","summary":[{"type":"summary_text","text":"Compared the available evidence."}]},
+                    {"type":"message","content":[{"type":"output_text","text":"The answer."}]}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(result.text, "The answer.");
+        assert_eq!(
+            result.reasoning.as_deref(),
+            Some("Compared the available evidence.")
+        );
     }
     #[test]
     fn provider_wire_formats_preserve_tool_results() {
@@ -680,6 +771,30 @@ mod tests {
         );
         assert!(openai_body("gpt-5.1", None).get("reasoning").is_none());
     }
+
+    #[test]
+    fn openai_requests_a_displayable_summary_only_for_reasoning_models() {
+        let body = |model: &str| {
+            let settings = LLMSettingsDto {
+                provider: LLMProvider::Openai,
+                model: model.into(),
+                ..Default::default()
+            };
+            CloudLlm::new(&settings, "test".into())
+                .unwrap()
+                .body(
+                    &CompletionRequest {
+                        include_reasoning: true,
+                        ..Default::default()
+                    },
+                    false,
+                )
+                .unwrap()
+        };
+        assert_eq!(body("gpt-5.1")["reasoning"]["summary"], "auto");
+        assert_eq!(body("gpt-6-sol")["reasoning"]["summary"], "auto");
+        assert!(body("gpt-4o-mini").get("reasoning").is_none());
+    }
 }
 
 #[cfg(test)]
@@ -742,6 +857,47 @@ mod transport_tests {
         let mut stream = client.generate_streaming("hello", &[], None).await.unwrap();
         assert_eq!(stream.next().await.unwrap().unwrap(), "partial");
         assert!(stream.next().await.unwrap().is_err());
+    }
+    #[tokio::test]
+    async fn typed_reasoning_completion_requests_a_stream_and_keeps_its_native_result() {
+        let server = MockServer::start().await;
+        let final_response = json!({"status":"completed","output":[
+            {"type":"reasoning","summary":[{"type":"summary_text","text":"Checked evidence."}],"encrypted_content":"opaque"},
+            {"type":"message","content":[{"type":"output_text","text":"Answer"}]}
+        ],"usage":{"input_tokens":5,"output_tokens":8}});
+        let body = [
+            json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":0,"delta":"Checked evidence."}),
+            json!({"type":"response.output_text.delta","delta":"Answer"}),
+            json!({"type":"response.completed","response":final_response}),
+        ].iter().map(|event| format!("data: {event}\n\n")).collect::<String>();
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        let client = client(&server).await;
+        let reasoning = std::sync::Mutex::new(String::new());
+        let response = client
+            .complete_with_reasoning_progress(
+                &CompletionRequest {
+                    include_reasoning: true,
+                    ..Default::default()
+                },
+                &|_| Ok(()),
+                &|delta| {
+                    reasoning.lock().unwrap().push_str(&delta);
+                    Ok(())
+                },
+                &|_| Ok(()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(*reasoning.lock().unwrap(), "Checked evidence.");
+        assert_eq!(response.provider_output, final_response["output"]);
+        assert_eq!(response.text, "Answer");
+        let requests = server.received_requests().await.unwrap();
+        let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["stream"], true);
     }
     #[tokio::test]
     async fn streaming_tool_interface_preserves_native_call_ids() {
