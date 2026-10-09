@@ -85,8 +85,10 @@ it('waits for pending saves and refuses to import when a save fails', async () =
     let importing!: Promise<unknown>;
     await act(async () => { importing = result.current.mutateAsync(request).catch(error => error); });
     expect(api.apply).not.toHaveBeenCalled();
-    await act(async () => { save.resolve(false); await importing; });
-    expect(result.current.error?.message).toContain('could not be saved before importing');
+    let failure: unknown;
+    await act(async () => { save.resolve(false); failure = await importing; });
+    expect((failure as Error).message).toContain('could not be saved before importing');
+    await waitFor(() => expect(result.current.error?.message).toContain('could not be saved before importing'));
     expect(api.apply).not.toHaveBeenCalled();
   } finally {
     unregister(); unmount(); client.clear();

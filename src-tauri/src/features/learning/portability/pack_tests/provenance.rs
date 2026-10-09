@@ -419,8 +419,7 @@ async fn failed_provenance_backup_leaves_the_replacement_target_untouched() -> R
         LearningPackConflictPolicy::ReplaceAfterBackup,
     )
     .await
-    .err()
-    .expect("an incomplete backup must block replacement");
+    .expect_err("an incomplete backup must block replacement");
     assert!(
         error
             .to_string()
