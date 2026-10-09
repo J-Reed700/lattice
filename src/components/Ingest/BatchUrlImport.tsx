@@ -5,7 +5,7 @@
  * textarea, one primary action, and hairline rows for per-URL state.
  */
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 
 import { X } from 'lucide-react';
 
@@ -14,7 +14,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { settingsTextareaClass } from '@/components/ui/SettingsSection';
 import { VaultAPI } from '@/lib/api';
 import type { UrlPreview } from '@/types/api/web';
-import { startBatchUrlImport, getBatchJobStatus } from '@/utils/batchImport';
+import { startBatchUrlImport, getBatchJobStatus, cancelBatchJob } from '@/utils/batchImport';
 
 type ItemStatus = 'idle' | 'fetching' | 'ready' | 'importing' | 'success' | 'error';
 
@@ -65,7 +65,8 @@ function normalizeUrl(text: string): string | null {
   if (!trimmed) return null;
   if (isValidUrl(trimmed)) return trimmed;
   if (/^[a-z0-9.-]+\.[a-z]{2,}/i.test(trimmed)) {
-    return `https://${trimmed}`;
+    const candidate = `https://${trimmed}`;
+    return isValidUrl(candidate) ? candidate : null;
   }
   return null;
 }
@@ -87,12 +88,13 @@ function extractUrls(text: string): string[] {
 function debounce<T extends (...args: never[]) => unknown>(
   func: T,
   delay: number
-): (...args: Parameters<T>) => void {
+): ((...args: Parameters<T>) => void) & { cancel: () => void } {
   let timeoutId: ReturnType<typeof setTimeout>;
-  return (...args: Parameters<T>) => {
+  const debounced = (...args: Parameters<T>) => {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => func(...args), delay);
   };
+  return Object.assign(debounced, { cancel: () => clearTimeout(timeoutId) });
 }
 
 /** Status as plain muted text. No badges, no colored dots. */
@@ -131,6 +133,15 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     extractArticle: true,
   });
   const [isImporting, setIsImporting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const runRef = useRef(0);
+  const busyRef = useRef(false);
+  const cancellingRef = useRef(false);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const retryPollRef = useRef<(() => Promise<void>) | null>(null);
   const [progress, setProgress] = useState(0);
   const [importStats, setImportStats] = useState({ success: 0, error: 0 });
   // Kept as state, not rendered: the hub's toast is the one place a run's
@@ -164,6 +175,17 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     [parseUrls]
   );
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      runRef.current += 1;
+      debouncedParseUrls.cancel();
+      clearTimeout(pollTimerRef.current);
+      retryPollRef.current = null;
+    };
+  }, [debouncedParseUrls]);
+
   const fetchPreview = async (itemId: string, url: string) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -173,6 +195,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
 
     try {
       const result = await VaultAPI.fetchUrlPreview(url);
+      if (!mountedRef.current) return;
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -185,6 +208,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
         )
       );
     } catch (err) {
+      if (!mountedRef.current) return;
       console.error('Preview failed:', err);
       const errorMessage = formatInvokeError(err);
       setItems((prev) =>
@@ -232,7 +256,12 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
   };
 
   const handleBatchImport = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const run = ++runRef.current;
+    const isCurrent = () => mountedRef.current && runRef.current === run;
     setIsImporting(true);
+    setRunError(null);
     setProgress(0);
     setImportStats({ success: 0, error: 0 });
     setLastRunResult(null);
@@ -241,6 +270,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
     );
 
     if (selected.length === 0) {
+      busyRef.current = false;
       setIsImporting(false);
       return;
     }
@@ -250,13 +280,17 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
         selected.map(item => item.url),
         { extractArticle: options.extractArticle },
       );
-      const startedAt = Date.now();
+      if (!isCurrent()) return;
+      setActiveJobId(jobId);
+      let startedAt = Date.now();
       const selectedCount = selected.length;
       const itemIdsByTarget = new Map(selected.map((item) => [item.url, item.id]));
 
       const pollJobStatus = async () => {
+        if (!isCurrent()) return;
         try {
           const status = await getBatchJobStatus(jobId);
+          if (!isCurrent()) return;
           const normalizedStatus = status.status?.toLowerCase?.() ?? '';
           const completedCount = status.completedItems ?? status.completed_items ?? 0;
           const failedCount = status.failedItems ?? status.failed_items ?? 0;
@@ -286,6 +320,8 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
                   status: 'error',
                   error: batchItem.errorMessage ?? 'Import failed',
                 });
+              } else if (itemStatus === 'cancelled' || itemStatus === 'canceled') {
+                updateItem(targetId, { status: 'error', error: 'Import cancelled' });
               } else if (itemStatus === 'processing' || itemStatus === 'running' || itemStatus === 'pending') {
                 updateItem(targetId, { status: 'importing' });
               }
@@ -304,20 +340,21 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
 
           const reachedTerminalStatus = ['completed', 'failed', 'cancelled', 'canceled'].includes(normalizedStatus);
           const reachedExpectedCount = processedCount >= totalCount || processedCount >= selectedCount;
-          const timedOut = Date.now() - startedAt > BATCH_POLL_TIMEOUT_MS;
+          const timedOut = Date.now() - startedAt >= BATCH_POLL_TIMEOUT_MS;
 
-          if (timedOut) {
+          if (timedOut && !reachedTerminalStatus && !reachedExpectedCount) {
             console.warn('[BatchImport] Polling timed out', { jobId, status });
             setIsImporting(false);
-            selected.forEach((item) => {
-              if (item.status === 'importing' || item.status === 'ready') {
-                updateItem(item.id, { status: 'error', error: 'Import status timed out' });
-              }
-            });
+            setRunError('Import status timed out');
+            setItems(current => current.map(item => itemIdsByTarget.has(item.url) && item.status !== 'success'
+              ? { ...item, status: 'error', error: 'Import status timed out' } : item));
             return;
           }
 
           if (reachedTerminalStatus || reachedExpectedCount) {
+            busyRef.current = false;
+            setActiveJobId(null);
+            retryPollRef.current = null;
             setProgress(100);
             setIsImporting(false);
             setLastRunResult({
@@ -331,25 +368,59 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
             return;
           }
 
-          setTimeout(pollJobStatus, BATCH_POLL_INTERVAL_MS);
+          pollTimerRef.current = setTimeout(pollJobStatus, BATCH_POLL_INTERVAL_MS);
         } catch (error) {
+          if (!isCurrent()) return;
           console.error('[BatchImport] Polling error:', error);
           setIsImporting(false);
+          setRunError(formatInvokeError(error));
         }
       };
 
+      retryPollRef.current = async () => {
+        startedAt = Date.now();
+        setRunError(null);
+        setIsImporting(true);
+        await pollJobStatus();
+      };
       void pollJobStatus();
 
     } catch (error) {
+      if (!isCurrent()) return;
       console.error('[BatchImport] Start error:', error);
       setIsImporting(false);
+      busyRef.current = false;
+      setRunError(formatInvokeError(error));
     }
   };
 
-  const cancelImport = () => {
-    setIsImporting(false);
-    setProgress(0);
+  const cancelImport = async () => {
+    if (!activeJobId || cancellingRef.current) return;
+    const run = runRef.current;
+    cancellingRef.current = true;
+    setIsCancelling(true);
+    try {
+      await cancelBatchJob(activeJobId);
+      if (!mountedRef.current || runRef.current !== run) return;
+      runRef.current += 1;
+      clearTimeout(pollTimerRef.current);
+      retryPollRef.current = null;
+      busyRef.current = false;
+      setActiveJobId(null);
+      setIsImporting(false);
+      setRunError(null);
+      setProgress(0);
+      setItems(current => current.map(item => item.selected && item.status !== 'success'
+        ? { ...item, status: 'error', error: 'Import cancelled' } : item));
+    } catch (error) {
+      if (mountedRef.current && runRef.current === run) setRunError(formatInvokeError(error));
+    } finally {
+      cancellingRef.current = false;
+      if (mountedRef.current) setIsCancelling(false);
+    }
   };
+
+  const hasActiveJob = isImporting || activeJobId !== null;
 
   const allSelected = items.length > 0 && items.every((item) => item.selected);
   const readyCount = selectedItems.filter(
@@ -366,6 +437,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
         id="url-textarea"
         rows={8}
         value={urlText}
+        disabled={hasActiveJob}
         onChange={(e) => handleUrlTextChange(e.target.value)}
         placeholder="One URL per line"
         className={settingsTextareaClass}
@@ -376,6 +448,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
           <input
             type="checkbox"
             checked={options.extractArticle}
+            disabled={hasActiveJob}
             onChange={(e) =>
               setOptions({ ...options, extractArticle: e.target.checked })
             }
@@ -386,7 +459,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
 
         <Button
           onClick={handleBatchImport}
-          disabled={readyCount === 0 || isImporting}
+          disabled={readyCount === 0 || hasActiveJob}
           className="h-9 shrink-0"
         >
           {readyCount > 0
@@ -395,7 +468,16 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
         </Button>
       </div>
 
-      {isImporting && (
+      {runError && (
+        <div className="mt-4 text-sm text-danger-fg">
+          <p role="alert">{runError}</p>
+          {activeJobId && !isImporting && (
+            <button type="button" disabled={isCancelling} onClick={() => void retryPollRef.current?.()} className="mt-2 underline">Retry status</button>
+          )}
+        </div>
+      )}
+
+      {hasActiveJob && (
         <div className="mt-4 flex items-center justify-between text-sm text-text-muted">
           <span className="tabular-nums">
             Importing… {importStats.success + importStats.error} of {selectedItems.length} ·{' '}
@@ -404,9 +486,10 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
           <button
             type="button"
             onClick={cancelImport}
+            disabled={!activeJobId || isCancelling}
             className="text-text-tertiary transition-colors duration-fast hover:text-text-primary"
           >
-            Cancel
+            {isCancelling ? 'Cancelling…' : 'Cancel'}
           </button>
         </div>
       )}
@@ -420,6 +503,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
             <button
               type="button"
               onClick={toggleAll}
+              disabled={hasActiveJob}
               className="text-xs text-text-tertiary transition-colors duration-fast hover:text-text-primary"
             >
               {allSelected ? 'Deselect all' : 'Select all'}
@@ -437,6 +521,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
                   <input
                     type="checkbox"
                     checked={item.selected}
+                    disabled={hasActiveJob}
                     onChange={() => toggleItem(item.id)}
                     aria-label={`Include ${item.url}`}
                     className="mt-1 h-3.5 w-3.5 shrink-0 rounded-sm border-border-default accent-[hsl(var(--text-tertiary))]"
@@ -457,6 +542,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
                   </span>
                   <IconButton
                     label="Remove URL"
+                    disabled={hasActiveJob}
                     onClick={() => removeItem(item.id)}
                     className="-mt-0.5 shrink-0 opacity-0 transition-opacity duration-fast focus-visible:opacity-100 group-hover:opacity-100"
                   >
