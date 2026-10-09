@@ -10,6 +10,7 @@ import {
   READER_MIN_WIDTH,
   useChatReaderStore,
 } from '@/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 import { useConversationsStore } from '@/stores/conversationsStore';
 
 
@@ -47,6 +48,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
   const close = useChatReaderStore((state) => state.close);
   const rememberResolvedLocation = useChatReaderStore((state) => state.rememberResolvedLocation);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const showCitations = useCitationDisplayStore((state) => state.visible);
 
   const [isFocused, setIsFocused] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -66,6 +68,12 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
   // Leaving chat closes it too: the pane is the only thing that draws it, and
   // a session that outlives its pane comes back unannounced.
   useEffect(() => close, [close]);
+
+  // The reader owns its response to reading mode; the shared toggle must not
+  // know about Chat's state. This also handles changes from another surface.
+  useEffect(() => {
+    if (!showCitations && session) close();
+  }, [showCitations, session, close]);
 
   useEffect(() => {
     if (!isOpen) setIsFocused(false);
@@ -185,7 +193,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
     [source]
   );
 
-  if (!session || !source) return null;
+  if (!showCitations || !session || !source) return null;
 
   if (!canDock) {
     return (

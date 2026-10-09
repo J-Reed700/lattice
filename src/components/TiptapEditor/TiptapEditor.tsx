@@ -29,8 +29,6 @@ export interface TiptapEditorProps {
   onCitationClick?: (number: number, occurrence: number) => void;
 }
 
-const SKIP_SYNC_META = 'externalSync';
-
 /**
  * Editable Tiptap editor with markdown I/O.
  * Maintains the same value/onChange contract as the old textarea-based MarkdownEditor.
@@ -63,13 +61,9 @@ export function TiptapEditor({
     onKeyDown: () => false,
   });
 
-  const handleUpdate = useCallback(
-    ({ editor, transaction }: { editor: Editor; transaction: { getMeta: (key: string) => unknown } }) => {
-      if (transaction.getMeta(SKIP_SYNC_META)) return;
-      onChangeRef.current(getMarkdownFromEditor(editor));
-    },
-    [],
-  );
+  const handleUpdate = useCallback(({ editor }: { editor: Editor }) => {
+    onChangeRef.current(getMarkdownFromEditor(editor));
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -105,16 +99,14 @@ export function TiptapEditor({
     },
   });
 
-  // Sync external value changes into the editor using transaction metadata
-  // to prevent the onUpdate handler from firing back.
   useEffect(() => {
-    if (!editor) return;
+    // useEditor can replace an instance after this render captured it. Wait
+    // for the replacement render before syncing the latest external value.
+    if (!editor || editor.isDestroyed) return;
     const currentMd = getMarkdownFromEditor(editor);
     if (currentMd !== value) {
-      const { tr } = editor.state;
-      tr.setMeta(SKIP_SYNC_META, true);
-      editor.view.dispatch(tr);
-      editor.commands.setContent(value);
+      // Loading content is not an edit; suppress updates on this transaction.
+      editor.commands.setContent(value, { emitUpdate: false });
     }
   }, [editor, value]);
 

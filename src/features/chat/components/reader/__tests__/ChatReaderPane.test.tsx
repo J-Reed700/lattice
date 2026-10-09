@@ -7,6 +7,7 @@ import {
   READER_MIN_WIDTH,
   useChatReaderStore,
 } from '@/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
@@ -52,6 +53,7 @@ const openReader = () =>
 beforeEach(() => {
   activeConversationId = 'conversation-1';
   localStorage.clear();
+  useCitationDisplayStore.setState({ visible: true });
   useChatReaderStore.setState({
     session: null,
     width: READER_DEFAULT_WIDTH,
@@ -119,6 +121,17 @@ describe('resizing the docked reader', () => {
 });
 
 describe('closing the reader', () => {
+  it('closes when clean reading is enabled outside the chat toggle', () => {
+    render(<ChatReaderPane {...WIDE} />);
+    openReader();
+    expect(screen.getByTestId('reader-body')).toBeInTheDocument();
+    act(() => useCitationDisplayStore.getState().setVisible(false));
+    expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
+    expect(useChatReaderStore.getState().session).toBeNull();
+    act(() => useCitationDisplayStore.getState().setVisible(true));
+    expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
+  });
+
   it('closes on Escape and hands focus back to what opened it', () => {
     render(
       <>

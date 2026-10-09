@@ -1,11 +1,13 @@
 import { Bookmark } from 'lucide-react';
 
+import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { SourceCitations } from '@/features/chat/components/SourceCitations';
 import { ReferenceActionRail } from '@/features/references/components/ReferenceActionRail';
 import { ReferenceAnnotationStrip } from '@/features/references/components/ReferenceAnnotationStrip';
 import { ReferenceBody } from '@/features/references/components/ReferenceBody';
 import { ReferenceHeader } from '@/features/references/components/ReferenceHeader';
 import type { CaptureDestination } from '@/features/references/hooks/useReferenceInbox';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { ConversationSpaceDto } from '@/types/api/conversation';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -53,6 +55,7 @@ export function ReferenceReader({
   onDelete,
   onViewSource,
 }: ReferenceReaderProps) {
+  const showCitations = useCitationDisplayStore((state) => state.visible);
   if (!bookmark) {
     return (
       <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
@@ -86,12 +89,16 @@ export function ReferenceReader({
           onOpenConversation={onOpenConversation}
           onOpenCapturedNote={onOpenCapturedNote}
         />
+        <div className="mb-4 flex justify-end">
+          <CitationVisibilityToggle />
+        </div>
         <ReferenceBody
           bookmark={bookmark}
           payload={payload}
           resolutionFailed={resolutionFailed}
+          onViewSource={onViewSource}
         />
-        {sources.length > 0 && (
+        {showCitations && sources.length > 0 && (
           <div className="mt-6">
             <SourceCitations sources={sources} onViewSource={onViewSource} />
           </div>

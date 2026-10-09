@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
 import { useChatReaderStore } from '@/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
+import { useExplorerStore } from '@/stores/explorerStore';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -15,6 +17,7 @@ const DEFAULT_SUMMARY: MessageVerificationSummary = {
 };
 
 let verificationSummary: MessageVerificationSummary = DEFAULT_SUMMARY;
+let explorerRoot: string | null = null;
 const regenerateResponse = vi.fn().mockResolvedValue('answered');
 const sendMessage = vi.fn().mockResolvedValue(undefined);
 const retryFailedMessage = vi.fn().mockResolvedValue(undefined);
@@ -24,7 +27,7 @@ vi.mock('@/stores/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
     messageVerification: new Map([['answer', verificationSummary]]),
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
-    liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [],
+    liveRetrieval: new Map(), liveSteps: new Map(), messageTurn: new Map(), inFlightGenerations: new Map(), conversations: [{ id: 'conversation', explorerRoot }],
     regenerateResponse,
     sendMessage,
     retryFailedMessage,
@@ -40,16 +43,17 @@ vi.mock('@/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ ac
 // The chips the answer body draws are what the reader is opened from, so the
 // viewer stands in for tiptap by drawing them.
 vi.mock('@/components/TiptapEditor', () => ({
-  TiptapViewer: ({ citationNumbers, claims }: { citationNumbers?: number[]; claims?: { sentence: string }[] }) => (
+  TiptapViewer: ({ citationNumbers, claims, showEvidence = true, codeRefs }: { citationNumbers?: number[]; claims?: { sentence: string }[]; showEvidence?: boolean; codeRefs?: boolean }) => (
     <div>
       Answer body
+      {codeRefs && <span data-code-ref="src/example.ts" data-code-ref-start="12" data-code-ref-end="14">src/example.ts:12-14</span>}
       {/* Each source is cited twice, as a long answer cites it: two marks, two sentences. */}
-      {(citationNumbers ?? []).flatMap((number) =>
+      {showEvidence && (citationNumbers ?? []).flatMap((number) =>
         [0, 1].map((at) => (
           <span key={`${number}-${at}`} className="cite-chip" data-cite={number} data-cite-at={at}>{number}</span>
         ))
       )}
-      {(claims ?? []).map((claim, index) => (
+      {showEvidence && (claims ?? []).map((claim, index) => (
         // Marked, not repeated: the real viewer decorates text already in the answer.
         <span key={claim.sentence} className="claim" data-claim={index}>checked sentence</span>
       ))}
@@ -88,7 +92,47 @@ function renderAnswer(sources?: SourceWithMetadata[]) {
 
 beforeEach(() => {
   verificationSummary = DEFAULT_SUMMARY;
+  explorerRoot = null;
   useChatReaderStore.setState({ session: null, resolvedLocations: new Map() });
+  useCitationDisplayStore.setState({ visible: true });
+});
+
+describe('clean reading', () => {
+  it('keeps Explorer file navigation working when citations are hidden', () => {
+    explorerRoot = '/project';
+    const reveal = vi.fn();
+    const originalReveal = useExplorerStore.getState().reveal;
+    useExplorerStore.setState({ reveal });
+    try {
+      useCitationDisplayStore.setState({ visible: false });
+      renderAnswer();
+      fireEvent.click(screen.getByText('src/example.ts:12-14'));
+      expect(reveal).toHaveBeenCalledWith('src/example.ts', { startLine: 12, endLine: 14 });
+    } finally {
+      useExplorerStore.setState({ reveal: originalReveal });
+    }
+  });
+
+  it('hides citation marks, verification highlights and evidence controls without changing the answer', () => {
+    verificationSummary = {
+      ...DEFAULT_SUMMARY,
+      claimVerdicts: [
+        { sentence: 'A checked sentence.', citationIds: [1], verdict: 'supported', method: 'judge' },
+      ],
+    };
+    renderAnswer([source(1)]);
+    expect(document.querySelector('[data-cite="1"]')).not.toBeNull();
+    expect(document.querySelector('[data-claim="0"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Partially verified/ })).toBeVisible();
+
+    act(() => useCitationDisplayStore.getState().setVisible(false));
+
+    expect(screen.getByText('Answer body')).toBeVisible();
+    expect(document.querySelector('[data-cite]')).toBeNull();
+    expect(document.querySelector('[data-claim]')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Partially verified/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Sources')).not.toBeInTheDocument();
+  });
 });
 
 describe('message verification disclosure', () => {
