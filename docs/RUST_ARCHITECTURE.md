@@ -109,16 +109,30 @@ belong to their respective adapters, not the sync contracts.
 
 ## Background work and error contracts
 
-Conversation vector indexing, maintenance compaction, lesson generation, and
-practical runs use `shared/runtime/background`. Shutdown closes admission,
-cancels expensive work, and joins final writes before closing SQLite. Queued
-lesson jobs remain pending for startup recovery; interrupted running jobs retain
-a terminal record and can be retried. Cancellation of a lesson job commits its
-status before signalling its registered token. A shared generation slot bounds
-concurrent lesson inference.
+Conversation vector indexing, maintenance compaction and practical runs use
+`shared/runtime/background`. Shutdown closes admission, cancels expensive work,
+and joins final writes before closing SQLite.
 
-`features/learning/lessons/generation_jobs.rs` receives a pool, model loader, and source
-refresh callback instead of the application container. `practical_runs.rs` owns
+Durable jobs use `shared/runtime/jobs`. Its `JobStore` is the only code that
+reads or writes the `jobs`, `job_events` and `job_checkpoints` tables; a feature
+keeps its own facts about a job in a side table keyed by `job_id` (Learning's is
+`learning_jobs`). The `JobRuntime` is owned by the container: a feature
+registers a handler per kind during plugin setup, which first settles that
+kind's jobs left running by the last process (requeue or mark interrupted, per
+kind), then delivers saved pending work. Submission is idempotent on the
+operation ID; a reused ID with a different payload hash is rejected. A kind may
+bound its concurrency and run one job per subject at a time (Learning: one
+preparation per course). Cancellation commits the status before signalling the
+worker's token, and every worker transition is conditional on the job still
+running, so a late result never overwrites it. Temporary outages defer a job
+with a growing retry delay instead of failing it; a retry is a new attempt
+linked by `retry_of_job_id` that inherits the staged result, activity and
+checkpoints. Each transition is published to the renderer as `jobs://status`.
+Shutdown closes the runtime and drains it before the database closes.
+
+`features/learning/lessons/generation_jobs.rs` is Learning's lesson-preparation
+handler; it receives a pool, model loader, and source refresh callback instead
+of the application container. `practical_runs.rs` owns
 runtime execution, cancellation tokens, and workspace cleanup; its repository
 owns transactions. Practical workspace reads return a saved-data snapshot.
 `practical_workspace.rs` probes runtimes and resolves availability from that

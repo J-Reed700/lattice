@@ -112,6 +112,10 @@ pub struct Container {
     /// did manually before.
     pub(crate) settings_side_effects: Arc<dyn SettingsSideEffectsPort>,
 
+    /// Durable background jobs. Features register a handler per kind during
+    /// plugin setup; shutdown closes and drains it before the database closes.
+    pub(crate) jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
     /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
@@ -282,6 +286,8 @@ impl Container {
                 vault_writer: vault_writer.clone(),
             });
 
+        let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+
         Ok(Self {
             core,
             system,
@@ -300,6 +306,7 @@ impl Container {
             vault_writer,
             vault_write_suppression,
             settings_side_effects,
+            jobs,
             app_handle: None,
         })
     }
@@ -316,12 +323,24 @@ impl Container {
             self.vault_write_suppression.clone(),
         );
 
+        let events = handle.clone();
+        self.jobs.observe(move |job| {
+            use tauri::Emitter;
+            if let Err(error) = events.emit(crate::shared::runtime::jobs::STATUS_EVENT, job) {
+                tracing::debug!(%error, "Could not publish a job status to the window");
+            }
+        });
+
         self.app_handle = Some(handle);
         self
     }
 
     pub fn db_pool(&self) -> &SqlitePool {
         self.core.db_pool()
+    }
+
+    pub fn jobs(&self) -> &Arc<crate::shared::runtime::jobs::JobRuntime> {
+        &self.jobs
     }
 
     pub fn db_conn(

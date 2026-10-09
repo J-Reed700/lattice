@@ -1,9 +1,12 @@
 //! Exercise the real authoring, validation and persistence boundaries without a live model.
+use crate::features::learning::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::features::learning::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
+use crate::shared::runtime::jobs::{JobContext, JobStore};
 use crate::{
+    application::ports::llm_port::{CompletionRequest, CompletionResponse},
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
@@ -12,7 +15,28 @@ use serde_json::json;
 struct Model(String);
 #[async_trait::async_trait]
 impl LLMPort for Model {
-    async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            replies.push(self.respond(&prompt).await?);
+        }
+        Ok(fixture_completion(request, replies))
+    }
+    fn model_name(&self) -> &str {
+        "course-fixture"
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+impl Model {
+    async fn respond(&self, prompt: &str) -> Result<String> {
         if let Some(reply) =
             crate::features::learning::content_verification::tests::fixture_response(prompt)
         {
@@ -35,27 +59,8 @@ impl LLMPort for Model {
         }
         Ok(self.0.clone())
     }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(futures::stream::iter(vec![Ok(self.0.clone())])))
-    }
-    fn model_name(&self) -> &str {
-        "course-fixture"
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
 }
+
 fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
     GenerateLearningProgramRequestDto {
         goal: "Design experiments and interpret their results".into(),
@@ -304,31 +309,12 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     }
     #[async_trait::async_trait]
     impl LLMPort for InterruptedReviewer {
-        async fn generate(
-            &self,
-            prompt: &str,
-            context: &[String],
-            history: Option<Vec<String>>,
-        ) -> Result<String> {
-            if prompt.starts_with("Teach one rigorous, accessible lesson") {
-                self.authored.fetch_add(1, Ordering::Relaxed);
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
             }
-            if prompt.starts_with("Review instructional quality.")
-                && self.fail_review.load(Ordering::Relaxed)
-            {
-                return Ok(json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}).to_string());
-            }
-            self.inner.generate(prompt, context, history).await
-        }
-        async fn generate_streaming(
-            &self,
-            prompt: &str,
-            context: &[String],
-            history: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            self.inner
-                .generate_streaming(prompt, context, history)
-                .await
+            Ok(fixture_completion(request, replies))
         }
         fn model_name(&self) -> &str {
             self.inner.model_name()
@@ -343,6 +329,20 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             Ok(true)
         }
     }
+    impl InterruptedReviewer {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            if prompt.starts_with("Teach one rigorous, accessible lesson") {
+                self.authored.fetch_add(1, Ordering::Relaxed);
+            }
+            if prompt.starts_with("Review instructional quality.")
+                && self.fail_review.load(Ordering::Relaxed)
+            {
+                return Ok(json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}).to_string());
+            }
+            self.inner.respond(prompt).await
+        }
+    }
+
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let draft = service::generate(
@@ -395,10 +395,9 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             progress_total: 1,
         })
         .await?;
-    jobs.begin_job(&job.id).await?;
+    JobStore::new(pool.clone()).claim(&job.id).await?;
     let first = crate::features::learning::lesson_progress::run(
-        &jobs,
-        &job.id,
+        &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::features::learning::lesson_drafts::run(
             &jobs,
             &job.id,
@@ -410,7 +409,9 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let error = first.expect_err("missing section reviews must fail");
     assert!(error.to_string().contains("lesson draft is saved"));
     assert_eq!(llm.authored.load(Ordering::Relaxed), 1);
-    jobs.fail_job(&job.id, &error.to_string()).await?;
+    JobStore::new(pool.clone())
+        .fail(&job.id, "generation_failed", &error.to_string())
+        .await?;
     assert!(repo.get(&program.summary.id).await?.modules[0].lessons[0]
         .blocks
         .is_empty());
@@ -423,11 +424,10 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             job_id: job.id,
         })
         .await?;
-    jobs.begin_job(&retry.id).await?;
+    JobStore::new(pool.clone()).claim(&retry.id).await?;
     llm.fail_review.store(false, Ordering::Relaxed);
     let prepared = crate::features::learning::lesson_progress::run(
-        &jobs,
-        &retry.id,
+        &JobContext::detached(&JobStore::new(pool.clone()), &retry.id).await?,
         crate::features::learning::lesson_drafts::run(
             &jobs,
             &retry.id,
@@ -462,24 +462,12 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
 }
 #[async_trait::async_trait]
 impl LLMPort for ScriptedModel {
-    async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        self.prompts
-            .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .push(prompt.into());
-        self.outputs
-            .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .pop_front()
-            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(AppError::InvalidInput("fixture".into()))
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            replies.push(self.respond(&prompt).await?);
+        }
+        Ok(fixture_completion(request, replies))
     }
     fn model_name(&self) -> &str {
         "scripted-review"
@@ -492,6 +480,19 @@ impl LLMPort for ScriptedModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+impl ScriptedModel {
+    async fn respond(&self, prompt: &str) -> Result<String> {
+        self.prompts
+            .lock()
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?
+            .push(prompt.into());
+        self.outputs
+            .lock()
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?
+            .pop_front()
+            .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))
     }
 }
 
@@ -951,9 +952,6 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
     struct StreamingModel;
     #[async_trait::async_trait]
     impl LLMPort for StreamingModel {
-        fn supports_typed_completions(&self) -> bool {
-            true
-        }
         async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
             panic!("Outline progress must use the streaming port");
         }
@@ -978,17 +976,7 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
                 ..Default::default()
             })
         }
-        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-            unreachable!()
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
+
         fn model_name(&self) -> &str {
             "stream-fixture"
         }
@@ -1025,9 +1013,6 @@ struct DelayedOutlineModel {
 }
 #[async_trait::async_trait]
 impl LLMPort for DelayedOutlineModel {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     async fn complete(
         &self,
         request: &crate::application::ports::llm_port::CompletionRequest,
@@ -1059,32 +1044,13 @@ impl LLMPort for DelayedOutlineModel {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        Ok(CompletionResponse {
-            text: self.generate(&prompt, &[], None).await?,
-            finish_reason: "stop".into(),
-            ..Default::default()
-        })
-    }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
         let seconds = self.delays.lock().unwrap().pop_front().unwrap();
         tokio::time::pause();
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
         tokio::time::resume();
-        self.inner.generate(prompt, context, images).await
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(AppError::InvalidInput("unused fixture stream".into()))
+        Ok(CompletionResponse::from_text(
+            self.inner.respond(&prompt).await?,
+        ))
     }
     fn model_name(&self) -> &str {
         "delayed-outline-fixture"
@@ -1431,26 +1397,12 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
     }
     #[async_trait::async_trait]
     impl LLMPort for WaitingModel {
-        async fn generate(
-            &self,
-            prompt: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<String> {
-            if prompt.starts_with("Review instructional quality.") {
-                self.entered.notify_one();
-                std::future::pending().await
-            } else {
-                Ok(self.draft.clone())
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
             }
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
+            Ok(fixture_completion(request, replies))
         }
         fn model_name(&self) -> &str {
             "waiting-fixture"
@@ -1465,6 +1417,17 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
             Ok(true)
         }
     }
+    impl WaitingModel {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            if prompt.starts_with("Review instructional quality.") {
+                self.entered.notify_one();
+                std::future::pending().await
+            } else {
+                Ok(self.draft.clone())
+            }
+        }
+    }
+
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let entered = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -1682,9 +1645,13 @@ async fn live_outline_generation_and_save() -> Result<()> {
     }
     #[async_trait::async_trait]
     impl LLMPort for ObservedModel {
-        fn supports_typed_completions(&self) -> bool {
-            true
+        async fn complete(
+            &self,
+            request: &crate::application::ports::llm_port::CompletionRequest,
+        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            self.inner.complete(request).await
         }
+
         async fn complete_with_progress(
             &self,
             request: &crate::application::ports::llm_port::CompletionRequest,
@@ -1724,17 +1691,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
             }
             Ok(response)
         }
-        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-            unreachable!()
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
+
         fn model_name(&self) -> &str {
             self.inner.model_name()
         }

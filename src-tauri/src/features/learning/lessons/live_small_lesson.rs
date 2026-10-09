@@ -368,26 +368,25 @@ async fn run_and_confirm(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
     };
-    loop {
-        worker.clone().run(&job.id, CancellationToken::new()).await;
-        if repo.job(&job.id).await?.status != LearningGenerationJobStatus::Pending {
-            break;
-        }
-        // Match the native outbox dispatcher: transient network/model failures
-        // stay queued, and only the repository decides when they are due again.
-        println!("Live lesson deferred; waiting for its saved retry schedule");
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            if repo
-                .pending_jobs()
-                .await?
-                .iter()
-                .any(|pending| pending.id == job.id)
-            {
-                break;
-            }
-        }
+    // Run through the native job runtime: transient network/model failures
+    // stay queued, and the runtime redelivers them when their retry is due.
+    let runtime = crate::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    runtime
+        .register(
+            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
+            Arc::new(worker),
+            crate::features::learning::curriculum_repository::lesson_job_config(),
+        )
+        .await?;
+    runtime.dispatch(&job.id);
+    while matches!(
+        repo.job(&job.id).await?.status,
+        LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
+    ) {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
+    runtime.close();
+    runtime.drain().await;
     let result = repo.job(&job.id).await?;
     std::fs::write(
         directory.join("result.json"),
@@ -416,13 +415,13 @@ async fn run_and_confirm(
         directory.join("program.json"),
         serde_json::to_vec_pretty(&published)?,
     )?;
-    let first_started = sqlx::query_scalar::<_, i64>(
-        "SELECT MIN(created_at) FROM learning_generation_jobs WHERE program_id=?",
-    )
-    .bind(&job.program_id)
-    .fetch_one(&reopened)
-    .await
-    .map_err(|e| AppError::Database(e.to_string()))?;
+    let first_started = LearningCurriculumRepository::new(reopened.clone())
+        .jobs(&job.program_id)
+        .await?
+        .iter()
+        .map(|job| job.created_at)
+        .min()
+        .unwrap_or_default();
     let completed_calls = std::fs::read_dir(directory)?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
@@ -520,8 +519,13 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         directory: directory.clone(),
         call: std::sync::atomic::AtomicUsize::new(next_call),
     });
-    // Exercise the same repository recovery used during native startup.
-    repo.recover_running_jobs().await?;
+    // Exercise the same recovery the job runtime runs at native startup.
+    crate::shared::runtime::jobs::JobStore::new(pool.clone())
+        .recover(
+            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
+            crate::shared::runtime::jobs::RecoveryPolicy::Requeue,
+        )
+        .await?;
     assert_eq!(
         repo.job(&job_id).await?.status,
         LearningGenerationJobStatus::Pending

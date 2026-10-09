@@ -211,9 +211,6 @@ impl ObservedModel {
 }
 #[async_trait::async_trait]
 impl LLMPort for ObservedModel {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let response = self.inner.complete(request).await?;
@@ -230,9 +227,7 @@ impl LLMPort for ObservedModel {
         self.record(call, request, &response)?;
         Ok(response)
     }
-    async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        unreachable!()
-    }
+
     async fn complete_with_retry_progress(
         &self,
         request: &CompletionRequest,
@@ -247,14 +242,7 @@ impl LLMPort for ObservedModel {
         self.record(call, request, &response)?;
         Ok(response)
     }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        unreachable!()
-    }
+
     fn model_name(&self) -> &str {
         self.inner.model_name()
     }
@@ -832,7 +820,9 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     // Never run this option while its original worker is still alive.
     if std::env::var("LATTICE_LESSON_RECOVER_ORPHAN").as_deref() == Ok("1") {
         assert_eq!(old.status, LearningGenerationJobStatus::Running);
-        repo.interrupt_job(&old.id).await?;
+        crate::shared::runtime::jobs::JobStore::new(pool.clone())
+            .interrupt(&old.id)
+            .await?;
     }
     let program = LearningRepository::new(pool.clone())
         .get(&old.program_id)
@@ -919,7 +909,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         .await?;
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     println!("Live lesson job {} started", job.id);
-    worker.run(&job.id, CancellationToken::new()).await;
+    super::run_attempt(worker, &job.id).await?;
     let result = repo.job(&job.id).await?;
     std::fs::write(
         directory.join("result.json"),

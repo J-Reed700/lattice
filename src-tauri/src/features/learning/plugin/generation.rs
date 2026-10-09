@@ -10,7 +10,7 @@ pub async fn start_learning_generation_job(
         container.db_pool().clone(),
     );
     let job = repo.start_job(&request).await.map_err(ApiError::from)?;
-    generation_worker(&container).spawn(job.id.clone());
+    container.jobs().submitted(&job.id).await;
     Ok(job)
 }
 
@@ -26,7 +26,7 @@ pub async fn cancel_learning_generation_job(
     .cancel_job(&request)
     .await
     .map_err(ApiError::from)?;
-    crate::features::learning::generation_jobs::cancel(&job.id);
+    container.jobs().cancelled(&job.id).await;
     Ok(job)
 }
 
@@ -40,7 +40,7 @@ pub async fn retry_learning_generation_job(
         container.db_pool().clone(),
     );
     let job = repo.retry_job(&request).await.map_err(ApiError::from)?;
-    generation_worker(&container).spawn(job.id.clone());
+    container.jobs().submitted(&job.id).await;
     Ok(job)
 }
 

@@ -564,6 +564,9 @@ struct AggregateTableSpec {
 
 // Only these explicit program-scoped tables can be included in a pack. The
 // SQL identifiers and joins are constants, never read from archive input.
+// Lesson jobs are runtime work, not learning evidence: a pack carries their
+// published lessons and curriculum revisions, and importing a queued job would
+// start it in the receiving app.
 const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_assessment_blueprints", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_assessment_blueprint_slots", filter: "blueprint_id IN (SELECT id FROM learning_assessment_blueprints WHERE program_id=?)" },
@@ -581,8 +584,6 @@ const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_curriculum_revisions", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_curriculum_changes", filter: "revision_id IN (SELECT id FROM learning_curriculum_revisions WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_curriculum_operations", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_generation_jobs", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_generation_job_events", filter: "job_id IN (SELECT id FROM learning_generation_jobs WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_diagnostic_attempts", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_diagnostic_operations", filter: "diagnostic_id IN (SELECT id FROM learning_diagnostic_attempts WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_practice_sessions", filter: "program_id=?" },

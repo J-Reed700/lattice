@@ -5,8 +5,8 @@ pub(in crate::features::learning) use crate::features::learning::curriculum::Lea
 use crate::features::learning::curriculum::{
     LearningGenerationActivity, LearningGenerationPhase, LearningGenerationStep,
 };
-use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
 use crate::shared::error::{AppError, Result};
+use crate::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -241,21 +241,27 @@ impl Progress {
     }
 }
 
+fn activity_value(activity: &LearningGenerationActivity) -> Result<serde_json::Value> {
+    serde_json::to_value(activity).map_err(|e| AppError::Serialization(e.to_string()))
+}
+
 pub(in crate::features::learning) async fn run<T>(
-    repo: &LearningCurriculumRepository,
-    job_id: &str,
+    context: &JobContext,
     future: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     let progress = Progress::default();
     // Restarted jobs retain their completed lesson count. Heartbeats must not
     // attempt to reset it to zero while references/models are being loaded.
-    let job = repo.job(job_id).await?;
-    let completed = job.progress_completed;
+    let job = context.job();
     {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.completed = completed;
-        state.activity = job.activity.unwrap_or_default();
-        state.program_id = Some(job.program_id.clone());
+        state.completed = job.progress_current;
+        state.activity = job
+            .activity
+            .clone()
+            .and_then(|activity| serde_json::from_value(activity).ok())
+            .unwrap_or_default();
+        state.program_id = job.subject_id.clone();
         // A new run starts by reopening references, even when the prior run
         // stopped in that same phase. Do not count time with the app closed.
         state.activity.phase_started_at = 0;
@@ -271,8 +277,8 @@ pub(in crate::features::learning) async fn run<T>(
                     interval.tick().await;
                     let snapshot = progress.snapshot();
                     if previous.as_ref() != Some(&snapshot) {
-                        if !repo
-                            .advance_job_activity(job_id, snapshot.0, &snapshot.1, &snapshot.2)
+                        if !context
+                            .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
                             .await?
                         {
                             return Err(AppError::InvalidState(
@@ -292,8 +298,8 @@ pub(in crate::features::learning) async fn run<T>(
             };
             if result.is_ok() {
                 let snapshot = progress.snapshot();
-                if !repo
-                    .advance_job_activity(job_id, snapshot.0, &snapshot.1, &snapshot.2)
+                if !context
+                    .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
                     .await?
                 {
                     return Err(AppError::InvalidState(
@@ -377,9 +383,6 @@ mod tests {
         struct SlowModel;
         #[async_trait::async_trait]
         impl LLMPort for SlowModel {
-            fn supports_typed_completions(&self) -> bool {
-                true
-            }
             async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
                 assert!(request.no_time_limit);
                 assert!(request.wall_clock_budget().is_none());
@@ -395,23 +398,7 @@ mod tests {
                 on_text(response.text.clone())?;
                 Ok(response)
             }
-            async fn generate(
-                &self,
-                _: &str,
-                _: &[String],
-                _: Option<Vec<String>>,
-            ) -> Result<String> {
-                unreachable!()
-            }
-            async fn generate_streaming(
-                &self,
-                _: &str,
-                _: &[String],
-                _: Option<Vec<String>>,
-            ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>>
-            {
-                unreachable!()
-            }
+
             fn model_name(&self) -> &str {
                 "slow-lesson-fixture"
             }

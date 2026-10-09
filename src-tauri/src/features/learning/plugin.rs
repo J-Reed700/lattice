@@ -45,19 +45,19 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
             let container = app.state::<Container>().inner().clone();
-            let repo = super::curriculum_repository::LearningCurriculumRepository::new(
-                container.db_pool().clone(),
-            );
-            tauri::async_runtime::block_on(repo.recover_running_jobs())?;
+            // Registration settles lesson jobs the last process left running,
+            // then starts delivering saved work.
+            tauri::async_runtime::block_on(container.jobs().register(
+                super::curriculum_repository::LESSON_PREPARATION,
+                std::sync::Arc::new(generation_worker(&container)),
+                super::curriculum_repository::lesson_job_config(),
+            ))?;
             let practical = super::practical_repository::LearningPracticalRepository::new(
                 container.db_pool().clone(),
             );
             tauri::async_runtime::block_on(super::practical_runs::recover_running_runs(
                 &practical,
             ))?;
-            tauri::async_runtime::block_on(async {
-                generation_worker(&container).dispatch();
-            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

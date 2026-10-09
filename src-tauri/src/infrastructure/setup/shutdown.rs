@@ -20,6 +20,9 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     {
         tasks.close();
     }
+    if let Some(container) = app_handle.try_state::<Container>() {
+        container.jobs().close();
+    }
 
     // Kill llama-server sidecars first, synchronously,
     // before any async cleanup runs. This is the load-bearing
@@ -49,6 +52,11 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
                 // Critical writes finish or remain durably queued. The outer
                 // process deadline handles a stuck worker without closing its DB.
                 tasks.wait().await;
+            }
+            if let Some(container) = app_handle.try_state::<Container>() {
+                // Running jobs reach their cancellation points and are saved as
+                // pending or interrupted before the database closes.
+                container.jobs().drain().await;
             }
 
             if let Some(cancel) = app_handle.try_state::<CancellationToken>() {
