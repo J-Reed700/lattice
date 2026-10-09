@@ -106,6 +106,12 @@ whole note in the renderer. A conflict must retain the draft and surface an erro
 Run the checks relevant to your change. The CI workflow is the authoritative
 list; the common local checks are:
 
+For all test layers, use `npm run test:all` after installing the desktop test
+prerequisites. It includes renderer coverage, all non-ignored Rust tests,
+Chromium/WebKit journeys and the isolated packaged desktop suite. See the
+[testing guide](e2e/README.md) for individual commands, coverage boundaries and
+failure artifacts. Use `npm run test:unit` for a non-interactive Vitest run.
+
 ```bash
 npm run type-check
 npm run lint
