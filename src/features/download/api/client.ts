@@ -67,7 +67,7 @@ export const downloadApi = {
    * @returns Void on success
    */
   cancelDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('cancel_download', { id: downloadId }),
+    apiCall<void>('download_cancel', { id: downloadId }),
 
   /**
    * Retries a failed download.
@@ -108,7 +108,7 @@ export const downloadApi = {
   getDownloadStatus: async (
     downloadId: string,
   ): Promise<ApiResult<DownloadStatus | null>> =>
-    apiCall<Wire.DownloadStatusResponse | null>('get_download_status', {
+    apiCall<Wire.DownloadStatusResponse | null>('download_get_status', {
       id: downloadId,
     }).then((result) =>
       result.ok

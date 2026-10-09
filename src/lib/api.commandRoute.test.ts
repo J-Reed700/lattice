@@ -3,14 +3,14 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { diagnostics } from '../utils/diagnostics';
 
-const { VaultAPI, isUnknownCommandError } = await vi.importActual<typeof import('./api')>('./api');
+const { VaultAPI } = await vi.importActual<typeof import('./api')>('./api');
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
   diagnostics.clear();
 });
 
-it('returns a backend "not found" error from the canonical route without trying fallbacks', async () => {
+it('returns a backend "not found" error as the answer', async () => {
   vi.mocked(invoke).mockRejectedValueOnce('Space not found: x');
   const result = await VaultAPI.searchSemantic('q');
   expect(result).toMatchObject({ ok: false, error: 'Space not found: x' });
@@ -18,22 +18,18 @@ it('returns a backend "not found" error from the canonical route without trying 
   expect(diagnostics.getSnapshot()).toHaveLength(1);
 });
 
-it('retries on Tauri unknown-command text and reports the first error when every route is unknown', async () => {
-  vi.mocked(invoke)
-    .mockRejectedValueOnce('plugin search not found')
-    .mockRejectedValueOnce('Command search.search_semantic not found')
-    .mockRejectedValueOnce('Command search_semantic not found');
-  const result = await VaultAPI.searchSemantic('q');
-  expect(invoke).toHaveBeenCalledTimes(3);
-  expect(result).toMatchObject({ ok: false, error: 'plugin search not found' });
-  expect(diagnostics.getSnapshot()).toHaveLength(1);
+it('invokes each command through the plugin the generator says registers it', async () => {
+  vi.mocked(invoke).mockResolvedValueOnce([]);
+  await VaultAPI.listDownloads();
+  expect(invoke).toHaveBeenCalledWith('plugin:download|list_downloads', {});
 });
 
-it('recognises only the exact unknown-command shapes', () => {
-  expect(isUnknownCommandError('Command index_file not found')).toBe(true);
-  expect(isUnknownCommandError('myplugin.cmd not allowed. Command not found')).toBe(true);
-  expect(isUnknownCommandError('Space not found: x')).toBe(false);
-  expect(isUnknownCommandError('Conversation not found')).toBe(false);
+it('reports a Tauri unknown-command rejection as the failure, with no second route', async () => {
+  vi.mocked(invoke).mockRejectedValueOnce('plugin search not found');
+  const result = await VaultAPI.searchSemantic('q');
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({ ok: false, error: 'plugin search not found', details: { code: 'UNKNOWN' } });
+  expect(diagnostics.getSnapshot()).toHaveLength(1);
 });
 
 it('sends source snapshots and conversation links with a journal capture', async () => {
@@ -47,4 +43,13 @@ it('sends source snapshots and conversation links with a journal capture', async
   expect(invoke).toHaveBeenCalledWith('plugin:dailynotes|quick_capture', {
     content: 'Claim [3]', sources, conversationIds: ['conversation-1'],
   });
+});
+
+it('keeps one function per facade member, so members are stable as hook dependencies', () => {
+  expect(VaultAPI.listDownloads).toBe(VaultAPI.listDownloads);
+});
+
+it('is not mistaken for a promise when returned from an async function', async () => {
+  const facade = await Promise.resolve(VaultAPI);
+  expect(facade).toBe(VaultAPI);
 });

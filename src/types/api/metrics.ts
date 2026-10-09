@@ -22,9 +22,4 @@ export interface MetricsSnapshot {
  * Type definition for DDD system statistics.
  * Matches SystemStatsDto from application/dtos/modules/health_dto.rs
  */
-export interface SystemStats {
-  total_documents: number;
-  total_chunks: number;
-  total_tags: number;
-  storage_size_bytes: number;
-}
+export type SystemStats = import('../../lib/bindings').SystemStats;

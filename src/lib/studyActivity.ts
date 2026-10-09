@@ -1,3 +1,6 @@
+import { apiCall, type CommandName } from '@/shared/ipc/transport';
+import type { ApiResult } from '@/types';
+
 import { queryClient } from './queryClient';
 
 export type StudyTab = 'starting_point' | 'lessons' | 'sources' | 'quick-checks' | 'assess-evidence' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas';
@@ -131,4 +134,17 @@ export function beginStudyActivity(domain: string, command: string, args?: Recor
       publish({ ...activity, status: error === undefined ? 'completed' : 'failed', error, finishedAt: Date.now(), destination: deckId ? { ...activity.destination, deckId } : activity.destination });
     },
   };
+}
+
+/** apiCall for a Learning or Study command that publishes a receipt when the request is slow. */
+export async function studyActivityCall<T>(
+  domain: 'learning' | 'study',
+  command: CommandName,
+  args?: Record<string, unknown>,
+): Promise<ApiResult<T>> {
+  const activity = beginStudyActivity(domain, command, args);
+  const result = await apiCall<T>(command, args);
+  if (result.ok) activity?.finish(undefined, result.data);
+  else activity?.finish(result.error);
+  return result;
 }

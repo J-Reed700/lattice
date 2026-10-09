@@ -12,7 +12,7 @@
 export const commands = {
 async explorerResolveRoot(path: string) : Promise<Result<ExplorerRootDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_resolve_root", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_resolve_root", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -20,7 +20,7 @@ async explorerResolveRoot(path: string) : Promise<Result<ExplorerRootDto, ApiErr
 },
 async explorerListDir(root: string, path: string) : Promise<Result<ExplorerListingDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_list_dir", { root, path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_list_dir", { root, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -28,7 +28,7 @@ async explorerListDir(root: string, path: string) : Promise<Result<ExplorerListi
 },
 async explorerReadFile(root: string, path: string) : Promise<Result<ExplorerFileDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_read_file", { root, path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_read_file", { root, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -41,7 +41,7 @@ async explorerReadFile(root: string, path: string) : Promise<Result<ExplorerFile
  */
 async explorerLocateFile(root: string, path: string) : Promise<Result<string[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_locate_file", { root, path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_locate_file", { root, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -49,7 +49,7 @@ async explorerLocateFile(root: string, path: string) : Promise<Result<string[], 
 },
 async explorerSearch(root: string, query: string, regex: boolean, pathPrefix: string | null, maxResults: number | null) : Promise<Result<ExplorerSearchResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_search", { root, query, regex, pathPrefix, maxResults }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_search", { root, query, regex, pathPrefix, maxResults }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -61,7 +61,7 @@ async explorerSearch(root: string, query: string, regex: boolean, pathPrefix: st
  */
 async setConversationExplorerRoot(conversationId: string, root: string | null) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_conversation_explorer_root", { conversationId, root }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|set_conversation_explorer_root", { conversationId, root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -74,7 +74,7 @@ async setConversationExplorerRoot(conversationId: string, root: string | null) :
  */
 async explorerIndexOpen(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_index_open", { root }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_index_open", { root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -85,7 +85,7 @@ async explorerIndexOpen(root: string) : Promise<Result<FolderIndexStatusDto, Api
  */
 async explorerIndexClose() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_index_close") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_index_close") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -93,7 +93,7 @@ async explorerIndexClose() : Promise<Result<null, ApiError>> {
 },
 async explorerIndexStatus(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_index_status", { root }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_index_status", { root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -104,7 +104,7 @@ async explorerIndexStatus(root: string) : Promise<Result<FolderIndexStatusDto, A
  */
 async explorerIndexRebuild(root: string) : Promise<Result<FolderIndexStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_index_rebuild", { root }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_index_rebuild", { root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -116,7 +116,7 @@ async explorerIndexRebuild(root: string) : Promise<Result<FolderIndexStatusDto, 
  */
 async explorerFoldersList() : Promise<Result<ExplorerFolderListDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folders_list") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folders_list") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -127,7 +127,7 @@ async explorerFoldersList() : Promise<Result<ExplorerFolderListDto, ApiError>> {
  */
 async explorerFolderRename(root: string, name: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_rename", { root, name }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_rename", { root, name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -135,7 +135,7 @@ async explorerFolderRename(root: string, name: string) : Promise<Result<null, Ap
 },
 async explorerFolderSetPinned(root: string, pinned: boolean) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_pinned", { root, pinned }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_set_pinned", { root, pinned }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -147,7 +147,7 @@ async explorerFolderSetPinned(root: string, pinned: boolean) : Promise<Result<nu
  */
 async explorerFolderSetLastThread(root: string, conversationId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_last_thread", { root, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_set_last_thread", { root, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -160,7 +160,7 @@ async explorerFolderSetLastThread(root: string, conversationId: string) : Promis
  */
 async explorerFolderSetSettings(root: string, instructions: string, spaceId: string) : Promise<Result<number, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_set_settings", { root, instructions, spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_set_settings", { root, instructions, spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -172,7 +172,7 @@ async explorerFolderSetSettings(root: string, instructions: string, spaceId: str
  */
 async explorerFolderDeleteIndex(root: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_delete_index", { root }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_delete_index", { root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -184,7 +184,7 @@ async explorerFolderDeleteIndex(root: string) : Promise<Result<null, ApiError>> 
  */
 async explorerFolderRemove(root: string, deleteThreads: boolean) : Promise<Result<number, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("explorer_folder_remove", { root, deleteThreads }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:explorer|explorer_folder_remove", { root, deleteThreads }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -192,7 +192,7 @@ async explorerFolderRemove(root: string, deleteThreads: boolean) : Promise<Resul
 },
 async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_study_decks") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|list_study_decks") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -200,7 +200,7 @@ async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
 },
 async getStudyDeck(id: string) : Promise<Result<StudyDeckDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_study_deck", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|get_study_deck", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -208,7 +208,7 @@ async getStudyDeck(id: string) : Promise<Result<StudyDeckDto, ApiError>> {
 },
 async generateStudyDeck(request: GenerateStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_study_deck", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|generate_study_deck", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -216,7 +216,7 @@ async generateStudyDeck(request: GenerateStudyDeckRequestDto) : Promise<Result<S
 },
 async generateConversationStudyDeck(request: GenerateConversationStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_conversation_study_deck", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|generate_conversation_study_deck", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -224,7 +224,7 @@ async generateConversationStudyDeck(request: GenerateConversationStudyDeckReques
 },
 async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<StudyCardDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("review_study_card", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|review_study_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -232,7 +232,7 @@ async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<Study
 },
 async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_study_card", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|update_study_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -240,7 +240,7 @@ async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null,
 },
 async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_study_deck", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:study|delete_study_deck", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -248,7 +248,7 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
 },
 async getLearningPlan(id: string) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_plan", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_plan", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -256,7 +256,7 @@ async getLearningPlan(id: string) : Promise<Result<LearningPlanDto, ApiError>> {
 },
 async getLearningPortabilityWorkspace(programId: string) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_portability_workspace", { programId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_portability_workspace", { programId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -264,7 +264,7 @@ async getLearningPortabilityWorkspace(programId: string) : Promise<Result<Learni
 },
 async exportLearningPack(request: ExportLearningPackRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("export_learning_pack", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|export_learning_pack", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -272,7 +272,7 @@ async exportLearningPack(request: ExportLearningPackRequestDto) : Promise<Result
 },
 async previewLearningPackImport(request: PreviewLearningPackImportRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("preview_learning_pack_import", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|preview_learning_pack_import", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -280,7 +280,7 @@ async previewLearningPackImport(request: PreviewLearningPackImportRequestDto) : 
 },
 async applyLearningPackImport(request: ApplyLearningPackImportRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("apply_learning_pack_import", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|apply_learning_pack_import", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -288,7 +288,7 @@ async applyLearningPackImport(request: ApplyLearningPackImportRequestDto) : Prom
 },
 async cancelLearningPackImportPreview(request: CancelLearningPackImportPreviewRequestDto) : Promise<Result<LearningPortabilityWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_pack_import_preview", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_learning_pack_import_preview", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -296,7 +296,7 @@ async cancelLearningPackImportPreview(request: CancelLearningPackImportPreviewRe
 },
 async previewLearningCurriculumRevision(request: PreviewLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("preview_learning_curriculum_revision", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|preview_learning_curriculum_revision", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -304,7 +304,7 @@ async previewLearningCurriculumRevision(request: PreviewLearningCurriculumRevisi
 },
 async acceptLearningCurriculumRevision(request: LearningCurriculumRevisionActionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("accept_learning_curriculum_revision", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_curriculum_revision", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -312,7 +312,7 @@ async acceptLearningCurriculumRevision(request: LearningCurriculumRevisionAction
 },
 async discardLearningCurriculumRevision(request: DiscardLearningCurriculumRevisionRequestDto) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discard_learning_curriculum_revision", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|discard_learning_curriculum_revision", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -320,7 +320,7 @@ async discardLearningCurriculumRevision(request: DiscardLearningCurriculumRevisi
 },
 async startLearningDiagnostic(request: StartLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_diagnostic", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_diagnostic", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -328,7 +328,7 @@ async startLearningDiagnostic(request: StartLearningDiagnosticRequestDto) : Prom
 },
 async submitLearningDiagnostic(request: SubmitLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("submit_learning_diagnostic", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_diagnostic", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -336,7 +336,7 @@ async submitLearningDiagnostic(request: SubmitLearningDiagnosticRequestDto) : Pr
 },
 async skipLearningDiagnostic(request: SkipLearningDiagnosticRequestDto) : Promise<Result<LearningDiagnosticAttemptDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("skip_learning_diagnostic", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|skip_learning_diagnostic", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -344,7 +344,7 @@ async skipLearningDiagnostic(request: SkipLearningDiagnosticRequestDto) : Promis
 },
 async startLearningGenerationJob(request: StartLearningGenerationJobRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_generation_job", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_generation_job", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -352,7 +352,7 @@ async startLearningGenerationJob(request: StartLearningGenerationJobRequestDto) 
 },
 async cancelLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_generation_job", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_learning_generation_job", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -360,7 +360,7 @@ async cancelLearningGenerationJob(request: LearningGenerationJobActionRequestDto
 },
 async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_learning_generation_job", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|retry_learning_generation_job", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -368,7 +368,7 @@ async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto)
 },
 async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_generation_job", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_generation_job", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -376,7 +376,7 @@ async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJo
 },
 async listLearningPrograms() : Promise<Result<LearningProgramSummaryDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_learning_programs") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_learning_programs") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -384,7 +384,7 @@ async listLearningPrograms() : Promise<Result<LearningProgramSummaryDto[], ApiEr
 },
 async getLearningProgram(id: string) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_program", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_program", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -392,7 +392,7 @@ async getLearningProgram(id: string) : Promise<Result<LearningProgramDto, ApiErr
 },
 async getLearningLessonEvidence(programId: string, lessonId: string) : Promise<Result<LearningLessonEvidenceDto | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_lesson_evidence", { programId, lessonId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_evidence", { programId, lessonId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -400,7 +400,7 @@ async getLearningLessonEvidence(programId: string, lessonId: string) : Promise<R
 },
 async getLearningOutlineEvidence(programId: string) : Promise<Result<LearningOutlineEvidenceDto | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_outline_evidence", { programId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_outline_evidence", { programId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -408,7 +408,7 @@ async getLearningOutlineEvidence(programId: string) : Promise<Result<LearningOut
 },
 async generateLearningProgram(request: GenerateLearningProgramRequestDto, requestId: string | null, onProgress: TAURI_CHANNEL<LearningOutlineProgressDto>) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_learning_program", { request, requestId, onProgress }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|generate_learning_program", { request, requestId, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -416,7 +416,7 @@ async generateLearningProgram(request: GenerateLearningProgramRequestDto, reques
 },
 async cancelLearningOutline(requestId: string) : Promise<Result<boolean, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_outline", { requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_learning_outline", { requestId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -424,7 +424,7 @@ async cancelLearningOutline(requestId: string) : Promise<Result<boolean, ApiErro
 },
 async repairLearningOutline(request: RepairLearningOutlineRequestDto, requestId: string | null, onProgress: TAURI_CHANNEL<LearningOutlineProgressDto>) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repair_learning_outline", { request, requestId, onProgress }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|repair_learning_outline", { request, requestId, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -432,7 +432,7 @@ async repairLearningOutline(request: RepairLearningOutlineRequestDto, requestId:
 },
 async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("accept_learning_program", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_program", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -440,7 +440,7 @@ async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<
 },
 async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("prepare_learning_lesson", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_lesson", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -448,7 +448,7 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
 },
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("complete_learning_lesson", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -456,7 +456,7 @@ async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promis
 },
 async submitLearningAttempt(request: SubmitLearningAttemptRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("submit_learning_attempt", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_attempt", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -464,7 +464,7 @@ async submitLearningAttempt(request: SubmitLearningAttemptRequestDto) : Promise<
 },
 async deleteLearningProgram(id: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_learning_program", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|delete_learning_program", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -472,7 +472,7 @@ async deleteLearningProgram(id: string) : Promise<Result<null, ApiError>> {
 },
 async getLearningMemory(id: string) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_memory", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_memory", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -480,7 +480,7 @@ async getLearningMemory(id: string) : Promise<Result<LearningMemoryDto, ApiError
 },
 async ensureLearningLessonNote(request: EnsureLearningLessonNoteRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("ensure_learning_lesson_note", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ensure_learning_lesson_note", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -488,7 +488,7 @@ async ensureLearningLessonNote(request: EnsureLearningLessonNoteRequestDto) : Pr
 },
 async generateLearningCardDrafts(request: GenerateLearningCardDraftsRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_learning_card_drafts", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|generate_learning_card_drafts", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -496,7 +496,7 @@ async generateLearningCardDrafts(request: GenerateLearningCardDraftsRequestDto) 
 },
 async saveLearningCardDraft(request: SaveLearningCardDraftRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_card_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_card_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -504,7 +504,7 @@ async saveLearningCardDraft(request: SaveLearningCardDraftRequestDto) : Promise<
 },
 async acceptLearningCardDraft(request: LearningCardDraftActionRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("accept_learning_card_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_card_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -512,7 +512,7 @@ async acceptLearningCardDraft(request: LearningCardDraftActionRequestDto) : Prom
 },
 async discardLearningCardDraft(request: LearningCardDraftActionRequestDto) : Promise<Result<LearningMemoryDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discard_learning_card_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|discard_learning_card_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -520,7 +520,7 @@ async discardLearningCardDraft(request: LearningCardDraftActionRequestDto) : Pro
 },
 async getLearningCanvasWorkspace(id: string) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_canvas_workspace", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_canvas_workspace", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -528,7 +528,7 @@ async getLearningCanvasWorkspace(id: string) : Promise<Result<LearningCanvasWork
 },
 async createLearningCanvas(request: CreateLearningCanvasRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_learning_canvas", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_canvas", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -536,7 +536,7 @@ async createLearningCanvas(request: CreateLearningCanvasRequestDto) : Promise<Re
 },
 async saveLearningCanvas(request: SaveLearningCanvasRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_canvas", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_canvas", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -544,7 +544,7 @@ async saveLearningCanvas(request: SaveLearningCanvasRequestDto) : Promise<Result
 },
 async createLearningCanvasSnapshot(request: CreateLearningCanvasSnapshotRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_learning_canvas_snapshot", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_canvas_snapshot", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -552,7 +552,7 @@ async createLearningCanvasSnapshot(request: CreateLearningCanvasSnapshotRequestD
 },
 async restoreLearningCanvasSnapshot(request: RestoreLearningCanvasSnapshotRequestDto) : Promise<Result<LearningCanvasWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("restore_learning_canvas_snapshot", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|restore_learning_canvas_snapshot", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -560,7 +560,7 @@ async restoreLearningCanvasSnapshot(request: RestoreLearningCanvasSnapshotReques
 },
 async getLearningSourceWorkspace(id: string) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_workspace", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_source_workspace", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -568,7 +568,7 @@ async getLearningSourceWorkspace(id: string) : Promise<Result<LearningSourceWork
 },
 async getLearningSourceVersion(request: GetLearningSourceVersionRequestDto) : Promise<Result<LearningSourceVersionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_version", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_source_version", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -576,7 +576,7 @@ async getLearningSourceVersion(request: GetLearningSourceVersionRequestDto) : Pr
 },
 async searchLearningSources(request: SearchLearningSourcesRequestDto) : Promise<Result<LearningSourceSearchResultDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_learning_sources", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|search_learning_sources", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -584,7 +584,7 @@ async searchLearningSources(request: SearchLearningSourcesRequestDto) : Promise<
 },
 async addLearningWebSource(request: AddLearningWebSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_learning_web_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_web_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -592,7 +592,7 @@ async addLearningWebSource(request: AddLearningWebSourceRequestDto) : Promise<Re
 },
 async addLearningDocumentSource(request: AddLearningDocumentSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_learning_document_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_document_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -600,7 +600,7 @@ async addLearningDocumentSource(request: AddLearningDocumentSourceRequestDto) : 
 },
 async addLearningTextSource(request: AddLearningTextSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_learning_text_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|add_learning_text_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -608,7 +608,7 @@ async addLearningTextSource(request: AddLearningTextSourceRequestDto) : Promise<
 },
 async refreshLearningSource(request: RefreshLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("refresh_learning_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|refresh_learning_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -616,7 +616,7 @@ async refreshLearningSource(request: RefreshLearningSourceRequestDto) : Promise<
 },
 async adoptLearningSourceVersion(request: AdoptLearningSourceVersionRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("adopt_learning_source_version", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|adopt_learning_source_version", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -624,7 +624,7 @@ async adoptLearningSourceVersion(request: AdoptLearningSourceVersionRequestDto) 
 },
 async updateLearningSourcePolicy(request: UpdateLearningSourcePolicyRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_learning_source_policy", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_learning_source_policy", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -632,7 +632,7 @@ async updateLearningSourcePolicy(request: UpdateLearningSourcePolicyRequestDto) 
 },
 async deleteLearningSource(request: DeleteLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_learning_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|delete_learning_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -640,7 +640,7 @@ async deleteLearningSource(request: DeleteLearningSourceRequestDto) : Promise<Re
 },
 async reimportLearningSource(request: ReimportLearningSourceRequestDto) : Promise<Result<LearningSourceWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reimport_learning_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reimport_learning_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -648,7 +648,7 @@ async reimportLearningSource(request: ReimportLearningSourceRequestDto) : Promis
 },
 async createLearningSourceSelector(request: CreateLearningSourceSelectorRequestDto) : Promise<Result<LearningSourceSelectorDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_learning_source_selector", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_source_selector", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -656,7 +656,7 @@ async createLearningSourceSelector(request: CreateLearningSourceSelectorRequestD
 },
 async getLearningSourceSelector(programId: string, selectorId: string) : Promise<Result<LearningSourceSelectorDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_source_selector", { programId, selectorId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_source_selector", { programId, selectorId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -664,7 +664,7 @@ async getLearningSourceSelector(programId: string, selectorId: string) : Promise
 },
 async matchLearningSourceSelector(request: MatchLearningSourceSelectorRequestDto) : Promise<Result<LearningQuoteMatch, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("match_learning_source_selector", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|match_learning_source_selector", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -672,7 +672,7 @@ async matchLearningSourceSelector(request: MatchLearningSourceSelectorRequestDto
 },
 async searchLearningSourcesSemantically(request: SearchLearningSourcesSemanticallyRequestDto) : Promise<Result<LearningSourceSemanticSearchResultDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_learning_sources_semantically", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|search_learning_sources_semantically", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -680,7 +680,7 @@ async searchLearningSourcesSemantically(request: SearchLearningSourcesSemantical
 },
 async getLearningRecallWorkspace(programId: string) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_recall_workspace", { programId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_recall_workspace", { programId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -688,7 +688,7 @@ async getLearningRecallWorkspace(programId: string) : Promise<Result<LearningRec
 },
 async saveLearningRecallCard(request: SaveLearningRecallCardRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_recall_card", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_recall_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -696,7 +696,7 @@ async saveLearningRecallCard(request: SaveLearningRecallCardRequestDto) : Promis
 },
 async decideLearningRecallDuplicate(request: DecideLearningRecallDuplicateRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("decide_learning_recall_duplicate", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|decide_learning_recall_duplicate", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -704,7 +704,7 @@ async decideLearningRecallDuplicate(request: DecideLearningRecallDuplicateReques
 },
 async changeLearningRecallScheduler(request: ChangeLearningRecallSchedulerRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_learning_recall_scheduler", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_recall_scheduler", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -712,7 +712,7 @@ async changeLearningRecallScheduler(request: ChangeLearningRecallSchedulerReques
 },
 async reviewLearningRecallCard(request: ReviewLearningRecallCardRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("review_learning_recall_card", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_learning_recall_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -720,7 +720,7 @@ async reviewLearningRecallCard(request: ReviewLearningRecallCardRequestDto) : Pr
 },
 async getLearningPracticeWorkspace(id: string) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_practice_workspace", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_workspace", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -728,7 +728,7 @@ async getLearningPracticeWorkspace(id: string) : Promise<Result<LearningPractice
 },
 async getLearningPracticeSession(id: string) : Promise<Result<LearningPracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_practice_session", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_session", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -736,7 +736,7 @@ async getLearningPracticeSession(id: string) : Promise<Result<LearningPracticeSe
 },
 async startLearningPracticeSession(request: StartLearningPracticeSessionRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_practice_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_practice_session", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -744,7 +744,7 @@ async startLearningPracticeSession(request: StartLearningPracticeSessionRequestD
 },
 async saveLearningPracticeArtifact(request: SaveLearningPracticeArtifactRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_practice_artifact", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practice_artifact", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -752,7 +752,7 @@ async saveLearningPracticeArtifact(request: SaveLearningPracticeArtifactRequestD
 },
 async changeLearningPracticeMode(request: ChangeLearningPracticeModeRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_learning_practice_mode", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_practice_mode", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -760,7 +760,7 @@ async changeLearningPracticeMode(request: ChangeLearningPracticeModeRequestDto) 
 },
 async openLearningPracticeSource(request: OpenLearningPracticeSourceRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_learning_practice_source", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|open_learning_practice_source", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -768,7 +768,7 @@ async openLearningPracticeSource(request: OpenLearningPracticeSourceRequestDto) 
 },
 async requestLearningTutorResponse(request: RequestLearningTutorResponseRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("request_learning_tutor_response", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|request_learning_tutor_response", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -776,7 +776,7 @@ async requestLearningTutorResponse(request: RequestLearningTutorResponseRequestD
 },
 async revealLearningPracticeSolution(request: RevealLearningPracticeSolutionRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reveal_learning_practice_solution", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reveal_learning_practice_solution", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -784,7 +784,7 @@ async revealLearningPracticeSolution(request: RevealLearningPracticeSolutionRequ
 },
 async submitLearningPracticeAttempt(request: SubmitLearningPracticeAttemptRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("submit_learning_practice_attempt", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_practice_attempt", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -792,7 +792,7 @@ async submitLearningPracticeAttempt(request: SubmitLearningPracticeAttemptReques
 },
 async acceptLearningPracticeProposal(request: DecideLearningPracticeProposalRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("accept_learning_practice_proposal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_practice_proposal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -800,7 +800,7 @@ async acceptLearningPracticeProposal(request: DecideLearningPracticeProposalRequ
 },
 async rejectLearningPracticeProposal(request: DecideLearningPracticeProposalRequestDto) : Promise<Result<LearningPracticeWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reject_learning_practice_proposal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reject_learning_practice_proposal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -808,7 +808,7 @@ async rejectLearningPracticeProposal(request: DecideLearningPracticeProposalRequ
 },
 async getLearningAssessmentWorkspace(id: string) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_assessment_workspace", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_workspace", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -816,7 +816,7 @@ async getLearningAssessmentWorkspace(id: string) : Promise<Result<LearningAssess
 },
 async createLearningAssessmentBlueprint(request: CreateLearningAssessmentBlueprintRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_learning_assessment_blueprint", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|create_learning_assessment_blueprint", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -824,7 +824,7 @@ async createLearningAssessmentBlueprint(request: CreateLearningAssessmentBluepri
 },
 async startLearningAssessmentForm(request: StartLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_assessment_form", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_assessment_form", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -832,7 +832,7 @@ async startLearningAssessmentForm(request: StartLearningAssessmentFormRequestDto
 },
 async getLearningAssessmentForm(id: string) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_assessment_form", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_assessment_form", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -840,7 +840,7 @@ async getLearningAssessmentForm(id: string) : Promise<Result<LearningAssessmentF
 },
 async saveLearningAssessmentResponse(request: SaveLearningAssessmentResponseRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_assessment_response", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_assessment_response", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -848,7 +848,7 @@ async saveLearningAssessmentResponse(request: SaveLearningAssessmentResponseRequ
 },
 async interruptLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("interrupt_learning_assessment_form", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|interrupt_learning_assessment_form", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -856,7 +856,7 @@ async interruptLearningAssessmentForm(request: MutateLearningAssessmentFormReque
 },
 async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestDto) : Promise<Result<LearningAssessmentFormDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("submit_learning_assessment_form", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_learning_assessment_form", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -864,7 +864,7 @@ async submitLearningAssessmentForm(request: MutateLearningAssessmentFormRequestD
 },
 async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("accept_learning_follow_up", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_follow_up", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -872,7 +872,7 @@ async acceptLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promis
 },
 async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promise<Result<LearningAssessmentWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("dismiss_learning_follow_up", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|dismiss_learning_follow_up", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -880,7 +880,7 @@ async dismissLearningFollowUp(request: DecideLearningFollowUpRequestDto) : Promi
 },
 async getLearningPracticalWorkspace(programId: string) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_workspace", { programId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practical_workspace", { programId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -888,7 +888,7 @@ async getLearningPracticalWorkspace(programId: string) : Promise<Result<Learning
 },
 async getLearningPracticalDraft(request: GetLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_learning_practical_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practical_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -896,18 +896,18 @@ async getLearningPracticalDraft(request: GetLearningPracticalDraftRequestDto) : 
 },
 async saveLearningPracticalDraft(request: SaveLearningPracticalDraftRequestDto) : Promise<Result<LearningPracticalDraftDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_practical_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practical_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 async getLearningRuntimeCatalog() : Promise<LearningRuntimePresetDto[]> {
-    return await TAURI_INVOKE("get_learning_runtime_catalog");
+    return await TAURI_INVOKE("plugin:learning|get_learning_runtime_catalog");
 },
 async prepareLearningRuntimePreset(request: PrepareLearningRuntimePresetRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("prepare_learning_runtime_preset", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_runtime_preset", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -915,7 +915,7 @@ async prepareLearningRuntimePreset(request: PrepareLearningRuntimePresetRequestD
 },
 async saveLearningRuntimeProfile(request: SaveLearningRuntimeProfileRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_learning_runtime_profile", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_runtime_profile", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -923,7 +923,7 @@ async saveLearningRuntimeProfile(request: SaveLearningRuntimeProfileRequestDto) 
 },
 async generateLearningPracticalActivity(request: GenerateLearningPracticalActivityRequestDto) : Promise<Result<LearningPracticalWorkspaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_learning_practical_activity", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|generate_learning_practical_activity", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -931,7 +931,7 @@ async generateLearningPracticalActivity(request: GenerateLearningPracticalActivi
 },
 async startLearningPracticalRun(request: StartLearningPracticalRunRequestDto) : Promise<Result<LearningPracticalRunDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_practical_run", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_practical_run", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -939,7 +939,7 @@ async startLearningPracticalRun(request: StartLearningPracticalRunRequestDto) : 
 },
 async cancelLearningPracticalRun(request: CancelLearningPracticalRunRequestDto) : Promise<Result<LearningPracticalRunDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_learning_practical_run", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_learning_practical_run", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -947,7 +947,7 @@ async cancelLearningPracticalRun(request: CancelLearningPracticalRunRequestDto) 
 },
 async startLearningSimulation(request: StartLearningSimulationRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_learning_simulation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_learning_simulation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -955,7 +955,7 @@ async startLearningSimulation(request: StartLearningSimulationRequestDto) : Prom
 },
 async sendLearningSimulationTurn(request: SendLearningSimulationTurnRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("send_learning_simulation_turn", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|send_learning_simulation_turn", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -963,7 +963,7 @@ async sendLearningSimulationTurn(request: SendLearningSimulationTurnRequestDto) 
 },
 async finishLearningSimulation(request: FinishLearningSimulationRequestDto) : Promise<Result<LearningSimulationSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("finish_learning_simulation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_learning_simulation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -977,7 +977,7 @@ async finishLearningSimulation(request: FinishLearningSimulationRequestDto) : Pr
  */
 async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_model", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|download_model", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -990,7 +990,7 @@ async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, Api
  */
 async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_first_run_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|check_first_run_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1003,7 +1003,7 @@ async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
  */
 async downloadDefaultEmbeddingModel() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_default_embedding_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|download_default_embedding_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1014,7 +1014,7 @@ async downloadDefaultEmbeddingModel() : Promise<Result<string, ApiError>> {
  */
 async cancelDownload(downloadId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_download", { downloadId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|cancel_download", { downloadId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1025,7 +1025,7 @@ async cancelDownload(downloadId: string) : Promise<Result<null, ApiError>> {
  */
 async deleteModel(modelId: string, deleteFile: boolean) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId, deleteFile }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|delete_model", { modelId, deleteFile }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1038,7 +1038,7 @@ async deleteModel(modelId: string, deleteFile: boolean) : Promise<Result<null, A
  */
 async getModelDownloadPath() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_download_path") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_download_path") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1049,7 +1049,7 @@ async getModelDownloadPath() : Promise<Result<string, ApiError>> {
  */
 async listDownloadedModels() : Promise<Result<DownloadedModelResponse[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_downloaded_models") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_downloaded_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1057,7 +1057,7 @@ async listDownloadedModels() : Promise<Result<DownloadedModelResponse[], ApiErro
 },
 async isModelAlreadyDownloaded(modelId: string) : Promise<Result<boolean, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("is_model_already_downloaded", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|is_model_already_downloaded", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1068,7 +1068,7 @@ async isModelAlreadyDownloaded(modelId: string) : Promise<Result<boolean, ApiErr
  */
 async getDownloadStatus(downloadId: string) : Promise<Result<DownloadStatus, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_download_status", { downloadId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_download_status", { downloadId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1079,7 +1079,7 @@ async getDownloadStatus(downloadId: string) : Promise<Result<DownloadStatus, Api
  */
 async setActiveEmbeddingModel(modelId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_embedding_model", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|set_active_embedding_model", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1087,7 +1087,7 @@ async setActiveEmbeddingModel(modelId: string) : Promise<Result<null, ApiError>>
 },
 async setActiveChatModel(modelId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_chat_model", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|set_active_chat_model", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1095,7 +1095,7 @@ async setActiveChatModel(modelId: string) : Promise<Result<null, ApiError>> {
 },
 async getActiveChatModel() : Promise<Result<DownloadedModelResponse | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_active_chat_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_active_chat_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1103,7 +1103,7 @@ async getActiveChatModel() : Promise<Result<DownloadedModelResponse | null, ApiE
 },
 async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_active_embedding_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_active_embedding_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1114,7 +1114,7 @@ async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null,
  */
 async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_active_models") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_active_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1122,7 +1122,7 @@ async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
 },
 async clearActiveChatModel() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_active_chat_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|clear_active_chat_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1130,7 +1130,7 @@ async clearActiveChatModel() : Promise<Result<null, ApiError>> {
 },
 async clearActiveEmbeddingModel() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_active_embedding_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|clear_active_embedding_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1141,7 +1141,7 @@ async clearActiveEmbeddingModel() : Promise<Result<null, ApiError>> {
  */
 async setActiveUtilityModel(modelId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_utility_model", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|set_active_utility_model", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1152,7 +1152,7 @@ async setActiveUtilityModel(modelId: string) : Promise<Result<null, ApiError>> {
  */
 async clearActiveUtilityModel() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_active_utility_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|clear_active_utility_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1160,7 +1160,7 @@ async clearActiveUtilityModel() : Promise<Result<null, ApiError>> {
 },
 async warmUpActiveChatModel() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("warm_up_active_chat_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warm_up_active_chat_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1168,7 +1168,7 @@ async warmUpActiveChatModel() : Promise<Result<null, ApiError>> {
 },
 async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("warm_up_active_utility_model") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warm_up_active_utility_model") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1179,7 +1179,7 @@ async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
  */
 async getModelInfo(modelId: string) : Promise<Result<DownloadedModelResponse | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_info", { modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_info", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1204,7 +1204,7 @@ async getModelInfo(modelId: string) : Promise<Result<DownloadedModelResponse | n
  */
 async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("detect_system_capabilities") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|detect_system_capabilities") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1237,7 +1237,7 @@ async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, Ap
  */
 async getCompatibleModels(category: string) : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_compatible_models", { category }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_compatible_models", { category }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1257,7 +1257,7 @@ async getCompatibleModels(category: string) : Promise<Result<ModelRecommendation
  */
 async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_all_recommended_models") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_all_recommended_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1295,7 +1295,7 @@ async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppEr
  */
 async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<ModelSearchResultDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_model_catalog", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|search_model_catalog", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1307,7 +1307,7 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
  */
 async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_variants", { repoId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_variants", { repoId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1327,7 +1327,7 @@ async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppE
  */
 async refreshModelCatalog() : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("refresh_model_catalog") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|refresh_model_catalog") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1347,7 +1347,7 @@ async refreshModelCatalog() : Promise<Result<null, AppError>> {
  */
 async clearModelCatalogCache() : Promise<Result<number, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_model_catalog_cache") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|clear_model_catalog_cache") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1369,7 +1369,7 @@ async clearModelCatalogCache() : Promise<Result<number, AppError>> {
  */
 async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_catalog_stats") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_catalog_stats") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1460,7 +1460,7 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<JsonValue, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_documents", { options }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_documents", { options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1529,7 +1529,7 @@ async searchDocuments(options: SearchOptions) : Promise<Result<JsonValue, string
  */
 async searchFast(query: string, limit: number) : Promise<Result<JsonValue, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_fast", { query, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_fast", { query, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1537,7 +1537,7 @@ async searchFast(query: string, limit: number) : Promise<Result<JsonValue, strin
 },
 async semanticSearch(request: SearchRequestDto) : Promise<Result<JsonValue, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("semantic_search", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|semantic_search", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1545,7 +1545,7 @@ async semanticSearch(request: SearchRequestDto) : Promise<Result<JsonValue, stri
 },
 async hybridSearch(args: HybridSearchArgs) : Promise<Result<JsonValue, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("hybrid_search", { args }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|hybrid_search", { args }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1628,7 +1628,7 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<JsonValue, string>> 
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("find_similar", { chunkId, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|find_similar", { chunkId, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1643,7 +1643,7 @@ async findSimilar(chunkId: string, limit: number | null) : Promise<Result<Search
  */
 async findSimilarDocuments(documentId: string, limit: number | null) : Promise<Result<SimilarDocumentDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("find_similar_documents", { documentId, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|find_similar_documents", { documentId, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1747,7 +1747,7 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_with_recency", { options }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_with_recency", { options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1793,7 +1793,7 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  */
 async batchSearch(queries: string[], limit: number | null, searchMode: string | null) : Promise<Result<SearchResultDto[][], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("batch_search", { queries, limit, searchMode }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|batch_search", { queries, limit, searchMode }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1804,7 +1804,7 @@ async batchSearch(queries: string[], limit: number | null, searchMode: string | 
  */
 async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reranker_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|reranker_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1815,7 +1815,7 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_reranker") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|download_reranker") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1823,7 +1823,7 @@ async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
 },
 async listAvailableFunctions() : Promise<Result<ToolDefinition[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_available_functions") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:functions|list_available_functions") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1831,7 +1831,7 @@ async listAvailableFunctions() : Promise<Result<ToolDefinition[], ApiError>> {
 },
 async executeFunction(call: FunctionCall) : Promise<Result<FunctionResult, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("execute_function", { call }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:functions|execute_function", { call }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1839,7 +1839,7 @@ async executeFunction(call: FunctionCall) : Promise<Result<FunctionResult, ApiEr
 },
 async getFunctionStats() : Promise<Result<RegistryStats, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_function_stats") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:functions|get_function_stats") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1847,7 +1847,7 @@ async getFunctionStats() : Promise<Result<RegistryStats, ApiError>> {
 },
 async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_llm_health_wrapper") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|check_llm_health_wrapper") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1859,7 +1859,7 @@ async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
  */
 async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatStartersDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_chat_starters_wrapper", { spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|generate_chat_starters_wrapper", { spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1867,7 +1867,7 @@ async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatS
 },
 async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null, attachmentDocumentIds: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames, attachmentDocumentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames, attachmentDocumentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1882,7 +1882,7 @@ async chatWithConversation(conversationId: string | null, message: string, toolP
  */
 async regenerateResponse(conversationId: string, toolPreferences: ToolPreferences | null, requestId: string | null) : Promise<Result<ChatResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("regenerate_response", { conversationId, toolPreferences, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|regenerate_response", { conversationId, toolPreferences, requestId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1894,7 +1894,7 @@ async regenerateResponse(conversationId: string, toolPreferences: ToolPreference
  */
 async truncateConversationAfter(request: TruncateConversationAfterRequestDto) : Promise<Result<TruncateConversationAfterResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("truncate_conversation_after", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|truncate_conversation_after", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1905,7 +1905,7 @@ async truncateConversationAfter(request: TruncateConversationAfterRequestDto) : 
  */
 async forkConversation(request: ForkConversationRequestDto) : Promise<Result<ForkConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fork_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|fork_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1913,7 +1913,7 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
 },
 async createConversationTangent(request: CreateTangentRequestDto) : Promise<Result<ConversationTangentDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_conversation_tangent", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_conversation_tangent", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1921,7 +1921,7 @@ async createConversationTangent(request: CreateTangentRequestDto) : Promise<Resu
 },
 async listConversationTangents(request: GetConversationRequestDto) : Promise<Result<ConversationTangentDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversation_tangents", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversation_tangents", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1929,7 +1929,7 @@ async listConversationTangents(request: GetConversationRequestDto) : Promise<Res
 },
 async promoteConversationTangent(request: GetConversationRequestDto) : Promise<Result<ConversationDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("promote_conversation_tangent", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|promote_conversation_tangent", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1942,7 +1942,7 @@ async promoteConversationTangent(request: GetConversationRequestDto) : Promise<R
  */
 async continueInNewConversation(request: ContinueInNewConversationRequestDto) : Promise<Result<ContinueInNewConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("continue_in_new_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|continue_in_new_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1950,7 +1950,7 @@ async continueInNewConversation(request: ContinueInNewConversationRequestDto) : 
 },
 async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|compact_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1958,7 +1958,7 @@ async compactConversation(request: CompactConversationRequestDto) : Promise<Resu
 },
 async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<Result<ConversationMemoryDetailsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_conversation_memory", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|get_conversation_memory", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1974,7 +1974,7 @@ async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<
  */
 async manageKnowledge(request: KnowledgeRequestDto) : Promise<Result<KnowledgeResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("manage_knowledge", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|manage_knowledge", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1982,7 +1982,7 @@ async manageKnowledge(request: KnowledgeRequestDto) : Promise<Result<KnowledgeRe
 },
 async getSystemTheme() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_system_theme") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_system_theme") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1993,7 +1993,7 @@ async getSystemTheme() : Promise<Result<string, ApiError>> {
  */
 async setCloudApiKey(provider: string, key: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_cloud_api_key", { provider, key }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|set_cloud_api_key", { provider, key }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2039,7 +2039,7 @@ async setCloudApiKey(provider: string, key: string) : Promise<Result<null, ApiEr
  */
 async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_file", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|open_file", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2070,7 +2070,7 @@ async openFile(path: string) : Promise<Result<OpenFileResponseDto, AppError>> {
  */
 async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_file_by_id", { fileId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|open_file_by_id", { fileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2088,7 +2088,7 @@ async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppErro
  */
 async readFileContent(path: string) : Promise<Result<string, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("read_file_content", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_content", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2106,7 +2106,7 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
  */
 async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("read_file_bytes", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_bytes", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2132,7 +2132,7 @@ async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
  */
 async showInFolder(path: string) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("show_in_folder", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|show_in_folder", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2158,7 +2158,7 @@ async showInFolder(path: string) : Promise<Result<null, AppError>> {
  */
 async getDocument(documentId: string) : Promise<Result<DocumentMetadataDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_document", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_document", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2166,7 +2166,7 @@ async getDocument(documentId: string) : Promise<Result<DocumentMetadataDto, AppE
 },
 async compareDocuments(request: CompareDocumentsRequestDto) : Promise<Result<CompareTableDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("compare_documents", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:compare|compare_documents", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2174,7 +2174,7 @@ async compareDocuments(request: CompareDocumentsRequestDto) : Promise<Result<Com
 },
 async createPassageReference(request: CreatePassageReferenceRequestDto) : Promise<Result<PassageReferenceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_passage_reference", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:references|create_passage_reference", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2182,7 +2182,7 @@ async createPassageReference(request: CreatePassageReferenceRequestDto) : Promis
 },
 async listPassageReferences(limit: number | null) : Promise<Result<PassageReferenceDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_passage_references", { limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:references|list_passage_references", { limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2190,7 +2190,7 @@ async listPassageReferences(limit: number | null) : Promise<Result<PassageRefere
 },
 async updatePassageReference(request: UpdatePassageReferenceRequestDto) : Promise<Result<PassageReferenceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_passage_reference", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:references|update_passage_reference", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2198,7 +2198,7 @@ async updatePassageReference(request: UpdatePassageReferenceRequestDto) : Promis
 },
 async deletePassageReference(id: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_passage_reference", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:references|delete_passage_reference", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2206,7 +2206,7 @@ async deletePassageReference(id: string) : Promise<Result<null, ApiError>> {
 },
 async indexFile(path: string, spaceId: string | null) : Promise<Result<IndexFileResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("index_file", { path, spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|index_file", { path, spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2214,7 +2214,7 @@ async indexFile(path: string, spaceId: string | null) : Promise<Result<IndexFile
 },
 async indexDirectory(path: string, recursive: boolean, spaceId: string | null) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("index_directory", { path, recursive, spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|index_directory", { path, recursive, spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2240,7 +2240,7 @@ async indexDirectory(path: string, recursive: boolean, spaceId: string | null) :
  */
 async getFileMetadata(path: string) : Promise<Result<FileMetadataDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_file_metadata", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_metadata", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2248,7 +2248,7 @@ async getFileMetadata(path: string) : Promise<Result<FileMetadataDto, AppError>>
 },
 async getFileContent(path: string) : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_file_content", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_content", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2256,7 +2256,7 @@ async getFileContent(path: string) : Promise<Result<string, ApiError>> {
 },
 async removeIndexedFile(path: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_indexed_file", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|remove_indexed_file", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2264,7 +2264,7 @@ async removeIndexedFile(path: string) : Promise<Result<null, ApiError>> {
 },
 async listIndexedFiles(limit: number | null) : Promise<Result<string[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_indexed_files", { limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_indexed_files", { limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2272,7 +2272,7 @@ async listIndexedFiles(limit: number | null) : Promise<Result<string[], ApiError
 },
 async listAllDocuments(limit: number) : Promise<Result<DocumentMetadataDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_all_documents", { limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_all_documents", { limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2280,7 +2280,7 @@ async listAllDocuments(limit: number) : Promise<Result<DocumentMetadataDto[], Ap
 },
 async getIndexingStatus() : Promise<Result<IndexingStatus, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_indexing_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_indexing_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2288,7 +2288,7 @@ async getIndexingStatus() : Promise<Result<IndexingStatus, ApiError>> {
 },
 async getIndexingStats() : Promise<Result<IndexingStatsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_indexing_stats") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_indexing_stats") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2296,7 +2296,7 @@ async getIndexingStats() : Promise<Result<IndexingStatsDto, ApiError>> {
 },
 async getIndexProgress() : Promise<Result<IndexProgress, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_index_progress") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_index_progress") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2304,7 +2304,7 @@ async getIndexProgress() : Promise<Result<IndexProgress, ApiError>> {
 },
 async cancelIndexing() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_indexing") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|cancel_indexing") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2312,7 +2312,7 @@ async cancelIndexing() : Promise<Result<null, ApiError>> {
 },
 async pauseIndexing() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pause_indexing") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|pause_indexing") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2320,7 +2320,7 @@ async pauseIndexing() : Promise<Result<null, ApiError>> {
 },
 async resumeIndexing() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resume_indexing") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|resume_indexing") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2328,7 +2328,7 @@ async resumeIndexing() : Promise<Result<null, ApiError>> {
 },
 async clearIndexingFailure(path: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_indexing_failure", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|clear_indexing_failure", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2336,7 +2336,7 @@ async clearIndexingFailure(path: string) : Promise<Result<null, ApiError>> {
 },
 async reindexFile(path: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reindex_file", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|reindex_file", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2344,7 +2344,7 @@ async reindexFile(path: string) : Promise<Result<null, ApiError>> {
 },
 async deleteDocument(documentId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_document", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|delete_document", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2352,7 +2352,7 @@ async deleteDocument(documentId: string) : Promise<Result<null, ApiError>> {
 },
 async renameDocument(documentId: string, newName: string) : Promise<Result<RenameDocumentResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rename_document", { documentId, newName }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|rename_document", { documentId, newName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2360,7 +2360,7 @@ async renameDocument(documentId: string, newName: string) : Promise<Result<Renam
 },
 async getFilePathById(fileId: string) : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_file_path_by_id", { fileId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_path_by_id", { fileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2368,7 +2368,7 @@ async getFilePathById(fileId: string) : Promise<Result<string, ApiError>> {
 },
 async getIndexedFolders() : Promise<Result<IndexedFolder[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_indexed_folders") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_indexed_folders") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2376,7 +2376,7 @@ async getIndexedFolders() : Promise<Result<IndexedFolder[], ApiError>> {
 },
 async getIndexingActivities(limit: number) : Promise<Result<IndexingActivity[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_indexing_activities", { limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_indexing_activities", { limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2384,7 +2384,7 @@ async getIndexingActivities(limit: number) : Promise<Result<IndexingActivity[], 
 },
 async getRecentDocuments(limit: number) : Promise<Result<RecentDocument[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_recent_documents", { limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_recent_documents", { limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2392,7 +2392,7 @@ async getRecentDocuments(limit: number) : Promise<Result<RecentDocument[], ApiEr
 },
 async healthCheck() : Promise<Result<HealthStatus, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("health_check") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|health_check") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2400,7 +2400,7 @@ async healthCheck() : Promise<Result<HealthStatus, ApiError>> {
 },
 async getSystemStats() : Promise<Result<SystemStats, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_system_stats") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|get_system_stats") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2408,7 +2408,7 @@ async getSystemStats() : Promise<Result<SystemStats, ApiError>> {
 },
 async getVersion() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_version") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|get_version") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2416,7 +2416,7 @@ async getVersion() : Promise<Result<string, ApiError>> {
 },
 async initializeDatabase() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("initialize_database") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:health|initialize_database") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2424,7 +2424,7 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
 },
 async getAllTagsWithCounts() : Promise<Result<TagWithCountDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_all_tags_with_counts") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:tags|get_all_tags_with_counts") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2432,7 +2432,7 @@ async getAllTagsWithCounts() : Promise<Result<TagWithCountDto[], ApiError>> {
 },
 async getDocumentTags(documentId: string) : Promise<Result<TagDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_document_tags", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:tags|get_document_tags", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2440,7 +2440,7 @@ async getDocumentTags(documentId: string) : Promise<Result<TagDto[], ApiError>> 
 },
 async applyTags(request: ApplyTagsRequestDto) : Promise<Result<TagDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("apply_tags", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:tags|apply_tags", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2448,7 +2448,7 @@ async applyTags(request: ApplyTagsRequestDto) : Promise<Result<TagDto[], ApiErro
 },
 async removeTagFromDocument(request: RemoveTagRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_tag_from_document", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:tags|remove_tag_from_document", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2456,7 +2456,7 @@ async removeTagFromDocument(request: RemoveTagRequestDto) : Promise<Result<null,
 },
 async generateTagsForDocument(request: GenerateTagsRequestDto) : Promise<Result<string[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_tags_for_document", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:tags|generate_tags_for_document", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2464,7 +2464,7 @@ async generateTagsForDocument(request: GenerateTagsRequestDto) : Promise<Result<
 },
 async addFavorite(documentId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_favorite", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:favorites|add_favorite", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2472,7 +2472,7 @@ async addFavorite(documentId: string) : Promise<Result<null, ApiError>> {
 },
 async removeFavorite(documentId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_favorite", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:favorites|remove_favorite", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2480,7 +2480,7 @@ async removeFavorite(documentId: string) : Promise<Result<null, ApiError>> {
 },
 async getFavorites() : Promise<Result<FavoriteDocument[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_favorites") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:favorites|get_favorites") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2488,7 +2488,7 @@ async getFavorites() : Promise<Result<FavoriteDocument[], ApiError>> {
 },
 async isFavorite(documentId: string) : Promise<Result<boolean, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("is_favorite", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:favorites|is_favorite", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2521,7 +2521,7 @@ async isFavorite(documentId: string) : Promise<Result<boolean, ApiError>> {
  */
 async clearCache() : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_cache") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:cache|clear_cache") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2601,7 +2601,7 @@ async clearCache() : Promise<Result<null, AppError>> {
  */
 async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_cache_stats") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:cache|get_cache_stats") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2675,7 +2675,7 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  */
 async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_cache_metrics") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:cache|get_cache_metrics") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2742,7 +2742,7 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
  */
 async clearSearchCache() : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_search_cache") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:cache|clear_search_cache") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2750,7 +2750,7 @@ async clearSearchCache() : Promise<Result<null, AppError>> {
 },
 async generateEmbedding(text: string) : Promise<Result<number[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_embedding", { text }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:embeddings|generate_embedding", { text }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2758,7 +2758,7 @@ async generateEmbedding(text: string) : Promise<Result<number[], ApiError>> {
 },
 async generateEmbeddingsBatch(texts: string[]) : Promise<Result<number[][], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_embeddings_batch", { texts }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:embeddings|generate_embeddings_batch", { texts }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2766,7 +2766,7 @@ async generateEmbeddingsBatch(texts: string[]) : Promise<Result<number[][], ApiE
 },
 async getEmbeddingModelInfo() : Promise<Result<ModelInfo, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_embedding_model_info") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:embeddings|get_embedding_model_info") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2774,7 +2774,7 @@ async getEmbeddingModelInfo() : Promise<Result<ModelInfo, ApiError>> {
 },
 async setHuggingfaceToken(token: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_huggingface_token", { token }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|set_huggingface_token", { token }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2782,7 +2782,7 @@ async setHuggingfaceToken(token: string) : Promise<Result<null, ApiError>> {
 },
 async getHuggingfaceTokenStatus() : Promise<Result<HfTokenStatus, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_huggingface_token_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|get_huggingface_token_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2790,7 +2790,7 @@ async getHuggingfaceTokenStatus() : Promise<Result<HfTokenStatus, ApiError>> {
 },
 async getHuggingfaceToken() : Promise<Result<string | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_huggingface_token") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|get_huggingface_token") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2798,7 +2798,7 @@ async getHuggingfaceToken() : Promise<Result<string | null, ApiError>> {
 },
 async deleteHuggingfaceToken() : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_huggingface_token") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|delete_huggingface_token") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2806,7 +2806,7 @@ async deleteHuggingfaceToken() : Promise<Result<null, ApiError>> {
 },
 async parseWikilinks(text: string, sourcePath: string | null) : Promise<Result<ParsedLinksResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("parse_wikilinks", { text, sourcePath }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:extraction|parse_wikilinks", { text, sourcePath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2814,7 +2814,7 @@ async parseWikilinks(text: string, sourcePath: string | null) : Promise<Result<P
 },
 async extractDocumentTitle(content: string) : Promise<Result<string | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extract_document_title", { content }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:extraction|extract_document_title", { content }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2822,7 +2822,7 @@ async extractDocumentTitle(content: string) : Promise<Result<string | null, ApiE
 },
 async resolveWikilink(target: string, sourcePath: string, availableDocuments: DocumentRefDto[]) : Promise<Result<ResolveLinkResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resolve_wikilink", { target, sourcePath, availableDocuments }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:extraction|resolve_wikilink", { target, sourcePath, availableDocuments }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2830,7 +2830,7 @@ async resolveWikilink(target: string, sourcePath: string, availableDocuments: Do
 },
 async extractAndResolveLinks(documentId: string, content: string) : Promise<Result<ExtractAndResolveResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extract_and_resolve_links", { documentId, content }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:extraction|extract_and_resolve_links", { documentId, content }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2838,7 +2838,7 @@ async extractAndResolveLinks(documentId: string, content: string) : Promise<Resu
 },
 async createConversation(request: CreateConversationRequestDto) : Promise<Result<CreateConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2846,7 +2846,7 @@ async createConversation(request: CreateConversationRequestDto) : Promise<Result
 },
 async getConversation(request: GetConversationRequestDto) : Promise<Result<GetConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|get_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2854,7 +2854,7 @@ async getConversation(request: GetConversationRequestDto) : Promise<Result<GetCo
 },
 async listConversations(query: ListConversationsQuery) : Promise<Result<ListConversationsResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversations", { query }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversations", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2862,7 +2862,7 @@ async listConversations(query: ListConversationsQuery) : Promise<Result<ListConv
 },
 async deleteConversation(request: DeleteConversationRequestDto) : Promise<Result<DeleteConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|delete_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2870,7 +2870,7 @@ async deleteConversation(request: DeleteConversationRequestDto) : Promise<Result
 },
 async getConversationMessages(request: GetConversationMessagesRequestDto) : Promise<Result<GetConversationMessagesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_conversation_messages", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|get_conversation_messages", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2878,7 +2878,7 @@ async getConversationMessages(request: GetConversationMessagesRequestDto) : Prom
 },
 async renameConversation(request: RenameConversationRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rename_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|rename_conversation", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2886,7 +2886,7 @@ async renameConversation(request: RenameConversationRequestDto) : Promise<Result
 },
 async createConversationSpace(request: CreateConversationSpaceRequestDto) : Promise<Result<ConversationSpaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_conversation_space", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_conversation_space", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2894,7 +2894,7 @@ async createConversationSpace(request: CreateConversationSpaceRequestDto) : Prom
 },
 async listConversationSpaces() : Promise<Result<ConversationSpaceDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversation_spaces") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversation_spaces") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2902,7 +2902,7 @@ async listConversationSpaces() : Promise<Result<ConversationSpaceDto[], ApiError
 },
 async createJournal(request: CreateConversationJournalRequestDto) : Promise<Result<ConversationJournalDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|create_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2910,7 +2910,7 @@ async createJournal(request: CreateConversationJournalRequestDto) : Promise<Resu
 },
 async listJournals() : Promise<Result<ConversationJournalDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_journals") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_journals") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2918,7 +2918,7 @@ async listJournals() : Promise<Result<ConversationJournalDto[], ApiError>> {
 },
 async updateJournal(request: UpdateConversationJournalRequestDto) : Promise<Result<ConversationJournalDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|update_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2926,7 +2926,7 @@ async updateJournal(request: UpdateConversationJournalRequestDto) : Promise<Resu
 },
 async archiveJournal(request: ArchiveConversationJournalRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("archive_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|archive_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2934,7 +2934,7 @@ async archiveJournal(request: ArchiveConversationJournalRequestDto) : Promise<Re
 },
 async deleteJournal(request: DeleteConversationJournalRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|delete_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2942,7 +2942,7 @@ async deleteJournal(request: DeleteConversationJournalRequestDto) : Promise<Resu
 },
 async listConversationSpaceMembers(spaceId: string) : Promise<Result<ConversationSpaceMemberDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversation_space_members", { spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversation_space_members", { spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2950,7 +2950,7 @@ async listConversationSpaceMembers(spaceId: string) : Promise<Result<Conversatio
 },
 async upsertConversationSpaceMember(request: UpsertConversationSpaceMemberRequestDto) : Promise<Result<ConversationSpaceMemberDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("upsert_conversation_space_member", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|upsert_conversation_space_member", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2958,7 +2958,7 @@ async upsertConversationSpaceMember(request: UpsertConversationSpaceMemberReques
 },
 async removeConversationSpaceMember(request: RemoveConversationSpaceMemberRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_conversation_space_member", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|remove_conversation_space_member", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2966,7 +2966,7 @@ async removeConversationSpaceMember(request: RemoveConversationSpaceMemberReques
 },
 async updateConversationSpace(request: UpdateConversationSpaceRequestDto) : Promise<Result<ConversationSpaceDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_conversation_space", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|update_conversation_space", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2974,7 +2974,7 @@ async updateConversationSpace(request: UpdateConversationSpaceRequestDto) : Prom
 },
 async archiveConversationSpace(request: ArchiveConversationSpaceRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("archive_conversation_space", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|archive_conversation_space", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2982,7 +2982,7 @@ async archiveConversationSpace(request: ArchiveConversationSpaceRequestDto) : Pr
 },
 async moveConversationToSpace(request: MoveConversationToSpaceRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("move_conversation_to_space", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|move_conversation_to_space", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2990,7 +2990,7 @@ async moveConversationToSpace(request: MoveConversationToSpaceRequestDto) : Prom
 },
 async addConversationToJournal(request: AddConversationToJournalRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_conversation_to_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|add_conversation_to_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2998,7 +2998,7 @@ async addConversationToJournal(request: AddConversationToJournalRequestDto) : Pr
 },
 async removeConversationFromJournal(request: RemoveConversationFromJournalRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_conversation_from_journal", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|remove_conversation_from_journal", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3013,7 +3013,7 @@ async removeConversationFromJournal(request: RemoveConversationFromJournalReques
  */
 async listSpaceDocuments(spaceId: string | null, conversationId: string | null, query: string | null, limit: number | null) : Promise<Result<SpaceDocumentDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_space_documents", { spaceId, conversationId, query, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_space_documents", { spaceId, conversationId, query, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3021,7 +3021,7 @@ async listSpaceDocuments(spaceId: string | null, conversationId: string | null, 
 },
 async listConversationLinkedDocuments(conversationId: string) : Promise<Result<ConversationLinkedDocumentDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversation_linked_documents", { conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversation_linked_documents", { conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3029,7 +3029,7 @@ async listConversationLinkedDocuments(conversationId: string) : Promise<Result<C
 },
 async removeConversationLinkedDocument(conversationId: string, documentId: string) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_conversation_linked_document", { conversationId, documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|remove_conversation_linked_document", { conversationId, documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3037,7 +3037,7 @@ async removeConversationLinkedDocument(conversationId: string, documentId: strin
 },
 async addConversationWebSource(conversationId: string, url: string, title: string | null, excerpt: string | null, relevanceScore: number | null) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_conversation_web_source", { conversationId, url, title, excerpt, relevanceScore }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|add_conversation_web_source", { conversationId, url, title, excerpt, relevanceScore }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3045,7 +3045,7 @@ async addConversationWebSource(conversationId: string, url: string, title: strin
 },
 async listConversationWebSources(conversationId: string) : Promise<Result<ConversationWebSourceDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversation_web_sources", { conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversation_web_sources", { conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3053,7 +3053,7 @@ async listConversationWebSources(conversationId: string) : Promise<Result<Conver
 },
 async removeConversationWebSource(conversationId: string, sourceId: string) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_conversation_web_source", { conversationId, sourceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|remove_conversation_web_source", { conversationId, sourceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3061,7 +3061,7 @@ async removeConversationWebSource(conversationId: string, sourceId: string) : Pr
 },
 async listDocumentSpaceMemberships(documentId: string) : Promise<Result<DocumentSpaceMembershipDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_document_space_memberships", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_document_space_memberships", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3072,7 +3072,7 @@ async listDocumentSpaceMemberships(documentId: string) : Promise<Result<Document
  */
 async addDocumentsToLibrary(documentIds: string[]) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_documents_to_library", { documentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|add_documents_to_library", { documentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3080,7 +3080,7 @@ async addDocumentsToLibrary(documentIds: string[]) : Promise<Result<RenameConver
 },
 async setDocumentSpaceMembership(documentId: string, spaceId: string, assigned: boolean) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_document_space_membership", { documentId, spaceId, assigned }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_document_space_membership", { documentId, spaceId, assigned }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3088,7 +3088,7 @@ async setDocumentSpaceMembership(documentId: string, spaceId: string, assigned: 
 },
 async setDocumentsSpaceMembership(documentIds: string[], spaceId: string, assigned: boolean) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_documents_space_membership", { documentIds, spaceId, assigned }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_documents_space_membership", { documentIds, spaceId, assigned }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3096,7 +3096,7 @@ async setDocumentsSpaceMembership(documentIds: string[], spaceId: string, assign
 },
 async setConversationSaved(request: SetConversationStateRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_conversation_saved", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_saved", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3104,7 +3104,7 @@ async setConversationSaved(request: SetConversationStateRequestDto) : Promise<Re
 },
 async setConversationBookmarked(request: SetConversationStateRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_conversation_bookmarked", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_bookmarked", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3112,7 +3112,7 @@ async setConversationBookmarked(request: SetConversationStateRequestDto) : Promi
 },
 async setConversationPinned(request: SetConversationStateRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_conversation_pinned", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_pinned", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3120,7 +3120,7 @@ async setConversationPinned(request: SetConversationStateRequestDto) : Promise<R
 },
 async setConversationArchived(request: SetConversationStateRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_conversation_archived", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_conversation_archived", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3128,7 +3128,7 @@ async setConversationArchived(request: SetConversationStateRequestDto) : Promise
 },
 async bookmarkConversationMessage(request: BookmarkConversationMessageRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("bookmark_conversation_message", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|bookmark_conversation_message", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3136,7 +3136,7 @@ async bookmarkConversationMessage(request: BookmarkConversationMessageRequestDto
 },
 async unbookmarkConversationMessage(request: UnbookmarkConversationMessageRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("unbookmark_conversation_message", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|unbookmark_conversation_message", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3144,7 +3144,7 @@ async unbookmarkConversationMessage(request: UnbookmarkConversationMessageReques
 },
 async deleteConversationMessage(request: DeleteConversationMessageRequestDto) : Promise<Result<RenameConversationResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_conversation_message", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|delete_conversation_message", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3152,7 +3152,7 @@ async deleteConversationMessage(request: DeleteConversationMessageRequestDto) : 
 },
 async listMessageBookmarks(query: ListMessageBookmarksQueryDto) : Promise<Result<ListMessageBookmarksResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_message_bookmarks", { query }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_message_bookmarks", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3160,7 +3160,7 @@ async listMessageBookmarks(query: ListMessageBookmarksQueryDto) : Promise<Result
 },
 async listConversationsExplorer(query: ListConversationsExplorerQueryDto) : Promise<Result<ListConversationsResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversations_explorer", { query }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_conversations_explorer", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3168,7 +3168,7 @@ async listConversationsExplorer(query: ListConversationsExplorerQueryDto) : Prom
 },
 async listJournalConversations(query: ListJournalConversationsQueryDto) : Promise<Result<ListConversationsResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_journal_conversations", { query }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_journal_conversations", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3179,7 +3179,7 @@ async listJournalConversations(query: ListJournalConversationsQueryDto) : Promis
  */
 async setJournalEntryPinned(request: SetJournalEntryPinnedRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_journal_entry_pinned", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|set_journal_entry_pinned", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3190,7 +3190,7 @@ async setJournalEntryPinned(request: SetJournalEntryPinnedRequestDto) : Promise<
  */
 async listJournalEntryPins(journalSpaceId: string) : Promise<Result<string[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_journal_entry_pins", { journalSpaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_journal_entry_pins", { journalSpaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3198,7 +3198,7 @@ async listJournalEntryPins(journalSpaceId: string) : Promise<Result<string[], Ap
 },
 async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto, onProgress: TAURI_CHANNEL<SynthesisProgressDto>) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("synthesize_journal_entries", { request, onProgress }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|synthesize_journal_entries", { request, onProgress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3206,7 +3206,7 @@ async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto, onPr
 },
 async batchImportFiles(request: StartBatchFileImportRequestDto) : Promise<Result<StartBatchFileImportResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("batch_import_files", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|batch_import_files", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3214,7 +3214,7 @@ async batchImportFiles(request: StartBatchFileImportRequestDto) : Promise<Result
 },
 async batchImportUrls(request: StartBatchUrlImportRequestDto) : Promise<Result<StartBatchUrlImportResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("batch_import_urls", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|batch_import_urls", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3222,7 +3222,7 @@ async batchImportUrls(request: StartBatchUrlImportRequestDto) : Promise<Result<S
 },
 async getBatchStatus(request: GetBatchJobStatusRequestDto) : Promise<Result<BatchJobStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_batch_status", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|get_batch_status", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3230,7 +3230,7 @@ async getBatchStatus(request: GetBatchJobStatusRequestDto) : Promise<Result<Batc
 },
 async cancelBatch(request: CancelBatchJobRequestDto) : Promise<Result<CancelBatchJobResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_batch", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|cancel_batch", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3238,7 +3238,7 @@ async cancelBatch(request: CancelBatchJobRequestDto) : Promise<Result<CancelBatc
 },
 async getBatchHistory(request: ListBatchJobsRequestDto) : Promise<Result<ListBatchJobsResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_batch_history", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|get_batch_history", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3246,7 +3246,7 @@ async getBatchHistory(request: ListBatchJobsRequestDto) : Promise<Result<ListBat
 },
 async deleteBatchJob(jobId: string) : Promise<Result<DeleteBatchJobResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_batch_job", { jobId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|delete_batch_job", { jobId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3254,7 +3254,7 @@ async deleteBatchJob(jobId: string) : Promise<Result<DeleteBatchJobResponseDto, 
 },
 async retryFailedItems(jobId: string, itemId: string | null, replacementPath: string | null) : Promise<Result<RetryFailedItemsResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_failed_items", { jobId, itemId, replacementPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:batch|retry_failed_items", { jobId, itemId, replacementPath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3262,7 +3262,7 @@ async retryFailedItems(jobId: string, itemId: string | null, replacementPath: st
 },
 async pluginCreateBackup(request: CreateBackupRequestDto) : Promise<Result<CreateBackupResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_create_backup", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_create_backup", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3270,7 +3270,7 @@ async pluginCreateBackup(request: CreateBackupRequestDto) : Promise<Result<Creat
 },
 async pluginRestoreBackup(request: RestoreBackupRequestDto) : Promise<Result<RestoreBackupResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_restore_backup", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_restore_backup", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3278,7 +3278,7 @@ async pluginRestoreBackup(request: RestoreBackupRequestDto) : Promise<Result<Res
 },
 async pluginListBackups() : Promise<Result<ListBackupsResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_list_backups") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_list_backups") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3286,7 +3286,7 @@ async pluginListBackups() : Promise<Result<ListBackupsResultDto, ApiError>> {
 },
 async pluginExportMarkdown(request: ExportMarkdownRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_export_markdown", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_markdown", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3294,7 +3294,7 @@ async pluginExportMarkdown(request: ExportMarkdownRequestDto) : Promise<Result<E
 },
 async pluginExportJson(request: ExportJsonRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_export_json", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_json", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3302,7 +3302,7 @@ async pluginExportJson(request: ExportJsonRequestDto) : Promise<Result<ExportRes
 },
 async pluginExportCsv(request: ExportCsvRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_export_csv", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_csv", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3310,7 +3310,7 @@ async pluginExportCsv(request: ExportCsvRequestDto) : Promise<Result<ExportResul
 },
 async pluginExportHtml(request: ExportHtmlRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_export_html", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_html", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3318,7 +3318,7 @@ async pluginExportHtml(request: ExportHtmlRequestDto) : Promise<Result<ExportRes
 },
 async pluginGetArchiveStatus() : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_get_archive_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_get_archive_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3326,7 +3326,7 @@ async pluginGetArchiveStatus() : Promise<Result<ArchiveStatusDto, ApiError>> {
 },
 async pluginBeginArchiveSetup() : Promise<Result<ArchiveSetupDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_begin_archive_setup") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_begin_archive_setup") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3334,7 +3334,7 @@ async pluginBeginArchiveSetup() : Promise<Result<ArchiveSetupDto, ApiError>> {
 },
 async pluginConfirmArchiveSetup(request: ConfirmArchiveSetupRequestDto) : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_confirm_archive_setup", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_confirm_archive_setup", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3342,7 +3342,7 @@ async pluginConfirmArchiveSetup(request: ConfirmArchiveSetupRequestDto) : Promis
 },
 async pluginChooseArchiveDestination() : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_choose_archive_destination") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_choose_archive_destination") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3350,7 +3350,7 @@ async pluginChooseArchiveDestination() : Promise<Result<ArchiveStatusDto, ApiErr
 },
 async pluginSetArchiveKeepCount(request: SetArchiveKeepCountRequestDto) : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_set_archive_keep_count", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_set_archive_keep_count", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3358,7 +3358,7 @@ async pluginSetArchiveKeepCount(request: SetArchiveKeepCountRequestDto) : Promis
 },
 async pluginSetArchivePassphrase(request: SetArchivePassphraseRequestDto) : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_set_archive_passphrase", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_set_archive_passphrase", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3366,7 +3366,7 @@ async pluginSetArchivePassphrase(request: SetArchivePassphraseRequestDto) : Prom
 },
 async pluginRotateRecoveryCode() : Promise<Result<ArchiveSetupDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_rotate_recovery_code") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_rotate_recovery_code") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3374,7 +3374,7 @@ async pluginRotateRecoveryCode() : Promise<Result<ArchiveSetupDto, ApiError>> {
 },
 async pluginDisableArchive() : Promise<Result<ArchiveStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_disable_archive") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_disable_archive") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3382,7 +3382,7 @@ async pluginDisableArchive() : Promise<Result<ArchiveStatusDto, ApiError>> {
 },
 async pluginCreateArchiveNow() : Promise<Result<ArchiveRunDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_create_archive_now") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_create_archive_now") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3396,7 +3396,7 @@ async pluginCreateArchiveNow() : Promise<Result<ArchiveRunDto, ApiError>> {
  */
 async pluginRestoreArchive(request: RestoreArchiveRequestDto) : Promise<Result<RestoreArchiveResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin_restore_archive", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_restore_archive", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3404,7 +3404,7 @@ async pluginRestoreArchive(request: RestoreArchiveRequestDto) : Promise<Result<R
 },
 async listWorkspaceNotes(request: ListWorkspaceNotesRequestDto | null) : Promise<Result<ListWorkspaceNotesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_workspace_notes", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|list_workspace_notes", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3412,7 +3412,7 @@ async listWorkspaceNotes(request: ListWorkspaceNotesRequestDto | null) : Promise
 },
 async createWorkspaceNote(request: CreateWorkspaceNoteRequestDto) : Promise<Result<WorkspaceNoteDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_workspace_note", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|create_workspace_note", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3420,7 +3420,7 @@ async createWorkspaceNote(request: CreateWorkspaceNoteRequestDto) : Promise<Resu
 },
 async updateWorkspaceNote(note: WorkspaceNoteDto) : Promise<Result<WorkspaceNoteDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_workspace_note", { note }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|update_workspace_note", { note }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3428,7 +3428,7 @@ async updateWorkspaceNote(note: WorkspaceNoteDto) : Promise<Result<WorkspaceNote
 },
 async captureReference(request: CaptureReferenceRequestDto) : Promise<Result<CaptureReferenceResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("capture_reference", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|capture_reference", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3436,7 +3436,7 @@ async captureReference(request: CaptureReferenceRequestDto) : Promise<Result<Cap
 },
 async deleteWorkspaceNote(request: DeleteWorkspaceNoteRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_workspace_note", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|delete_workspace_note", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3444,7 +3444,7 @@ async deleteWorkspaceNote(request: DeleteWorkspaceNoteRequestDto) : Promise<Resu
 },
 async getTodayNote() : Promise<Result<DailyNoteCompatDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_today_note") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|get_today_note") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3452,7 +3452,7 @@ async getTodayNote() : Promise<Result<DailyNoteCompatDto, ApiError>> {
 },
 async quickCapture(content: string, sources: SourceDto[] | null, conversationIds: string[] | null) : Promise<Result<QuickCaptureResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("quick_capture", { content, sources, conversationIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|quick_capture", { content, sources, conversationIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3460,7 +3460,7 @@ async quickCapture(content: string, sources: SourceDto[] | null, conversationIds
 },
 async getDailyNotesRange(request: DailyNotesRangeRequestDto) : Promise<Result<DailyNoteCompatDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_daily_notes_range", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|get_daily_notes_range", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3468,7 +3468,7 @@ async getDailyNotesRange(request: DailyNotesRangeRequestDto) : Promise<Result<Da
 },
 async getPreviousDailyNote(request: DailyNoteCursorRequestDto) : Promise<Result<DailyNoteCompatDto | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_previous_daily_note", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|get_previous_daily_note", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3476,7 +3476,7 @@ async getPreviousDailyNote(request: DailyNoteCursorRequestDto) : Promise<Result<
 },
 async getNextDailyNote(request: DailyNoteCursorRequestDto) : Promise<Result<DailyNoteCompatDto | null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_next_daily_note", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|get_next_daily_note", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3484,7 +3484,7 @@ async getNextDailyNote(request: DailyNoteCursorRequestDto) : Promise<Result<Dail
 },
 async updateDailyNoteContent(request: UpdateDailyNoteContentRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_daily_note_content", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:dailynotes|update_daily_note_content", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3492,7 +3492,7 @@ async updateDailyNoteContent(request: UpdateDailyNoteContentRequestDto) : Promis
 },
 async startModelDownload(request: StartDownloadRequest) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_model_download", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|start_model_download", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3500,7 +3500,7 @@ async startModelDownload(request: StartDownloadRequest) : Promise<Result<string,
 },
 async pauseDownload(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pause_download", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|pause_download", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3508,7 +3508,7 @@ async pauseDownload(id: string) : Promise<Result<null, string>> {
 },
 async resumeDownload(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resume_download", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|resume_download", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3516,7 +3516,7 @@ async resumeDownload(id: string) : Promise<Result<null, string>> {
 },
 async downloadCancel(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_cancel", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|download_cancel", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3524,7 +3524,7 @@ async downloadCancel(id: string) : Promise<Result<null, string>> {
 },
 async retryDownload(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_download", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|retry_download", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3532,7 +3532,7 @@ async retryDownload(id: string) : Promise<Result<null, string>> {
 },
 async removeDownload(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_download", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|remove_download", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3540,7 +3540,7 @@ async removeDownload(id: string) : Promise<Result<null, string>> {
 },
 async clearCompletedDownloads() : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_completed_downloads") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|clear_completed_downloads") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3548,7 +3548,7 @@ async clearCompletedDownloads() : Promise<Result<number, string>> {
 },
 async downloadGetStatus(id: string) : Promise<Result<DownloadStatusResponse | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_get_status", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|download_get_status", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3556,7 +3556,7 @@ async downloadGetStatus(id: string) : Promise<Result<DownloadStatusResponse | nu
 },
 async listDownloads() : Promise<Result<DownloadStatusResponse[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_downloads") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|list_downloads") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3564,7 +3564,7 @@ async listDownloads() : Promise<Result<DownloadStatusResponse[], string>> {
 },
 async extractMentions(documentId: string, content: string) : Promise<Result<ExtractMentionsResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extract_mentions", { documentId, content }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|extract_mentions", { documentId, content }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3572,7 +3572,7 @@ async extractMentions(documentId: string, content: string) : Promise<Result<Extr
 },
 async searchMentions(query: string, limit: number | null) : Promise<Result<SearchMentionsResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_mentions", { query, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|search_mentions", { query, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3580,7 +3580,7 @@ async searchMentions(query: string, limit: number | null) : Promise<Result<Searc
 },
 async getMentionsForDocument(documentId: string) : Promise<Result<GetMentionsForDocumentResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_mentions_for_document", { documentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|get_mentions_for_document", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3588,7 +3588,7 @@ async getMentionsForDocument(documentId: string) : Promise<Result<GetMentionsFor
 },
 async getBacklinksForMention(mentionName: string) : Promise<Result<BacklinksResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_backlinks_for_mention", { mentionName }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|get_backlinks_for_mention", { mentionName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3596,7 +3596,7 @@ async getBacklinksForMention(mentionName: string) : Promise<Result<BacklinksResu
 },
 async getMentionsByType(mentionType: string) : Promise<Result<MentionDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_mentions_by_type", { mentionType }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|get_mentions_by_type", { mentionType }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3604,7 +3604,7 @@ async getMentionsByType(mentionType: string) : Promise<Result<MentionDto[], ApiE
 },
 async createMention(name: string, mentionType: string, metadata: string | null) : Promise<Result<MentionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_mention", { name, mentionType, metadata }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|create_mention", { name, mentionType, metadata }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3612,7 +3612,7 @@ async createMention(name: string, mentionType: string, metadata: string | null) 
 },
 async deleteMention(mentionId: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_mention", { mentionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:mention|delete_mention", { mentionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3620,7 +3620,7 @@ async deleteMention(mentionId: string) : Promise<Result<null, ApiError>> {
 },
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("test_ollama_connection", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3628,7 +3628,7 @@ async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Resul
 },
 async testLlamaCppConnection(request: LlamaCppSettingsDto) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("test_llama_cpp_connection", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3636,7 +3636,7 @@ async testLlamaCppConnection(request: LlamaCppSettingsDto) : Promise<Result<Test
 },
 async testCustomTool(request: TestCustomToolRequest) : Promise<Result<TestCustomToolResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("test_custom_tool", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_custom_tool", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3644,7 +3644,7 @@ async testCustomTool(request: TestCustomToolRequest) : Promise<Result<TestCustom
 },
 async getSettings() : Promise<Result<SettingsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_settings") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_settings") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3652,7 +3652,7 @@ async getSettings() : Promise<Result<SettingsDto, ApiError>> {
 },
 async getSettingsCategory(category: string) : Promise<Result<{ [key in string]: JsonValue }, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_settings_category", { category }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_settings_category", { category }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3660,7 +3660,7 @@ async getSettingsCategory(category: string) : Promise<Result<{ [key in string]: 
 },
 async updateSettings(settings: UpdateSettingsRequest) : Promise<Result<SettingsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_settings", { settings }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|update_settings", { settings }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3668,7 +3668,7 @@ async updateSettings(settings: UpdateSettingsRequest) : Promise<Result<SettingsD
 },
 async resetSettings() : Promise<Result<SettingsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("reset_settings") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|reset_settings") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3676,7 +3676,7 @@ async resetSettings() : Promise<Result<SettingsDto, ApiError>> {
 },
 async exportSettings() : Promise<Result<string, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("export_settings") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|export_settings") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3684,7 +3684,7 @@ async exportSettings() : Promise<Result<string, ApiError>> {
 },
 async importSettings(request: ImportSettingsRequest) : Promise<Result<SettingsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("import_settings", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|import_settings", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3692,7 +3692,7 @@ async importSettings(request: ImportSettingsRequest) : Promise<Result<SettingsDt
 },
 async validateFolderPath(path: string) : Promise<Result<boolean, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("validate_folder_path", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|validate_folder_path", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3711,7 +3711,7 @@ async validateFolderPath(path: string) : Promise<Result<boolean, ApiError>> {
  */
 async addWatchFolder(path: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_watch_folder", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|add_watch_folder", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3725,7 +3725,7 @@ async addWatchFolder(path: string) : Promise<Result<null, ApiError>> {
  */
 async removeWatchFolder(path: string) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_watch_folder", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|remove_watch_folder", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3733,7 +3733,7 @@ async removeWatchFolder(path: string) : Promise<Result<null, ApiError>> {
 },
 async ingestWebUrl(url: string, spaceId: string | null, conversationId: string | null) : Promise<Result<WebIngestResponse, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("ingest_web_url", { url, spaceId, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|ingest_web_url", { url, spaceId, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3741,7 +3741,7 @@ async ingestWebUrl(url: string, spaceId: string | null, conversationId: string |
 },
 async fetchUrlPreview(url: string) : Promise<Result<UrlPreview, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_url_preview", { url }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|fetch_url_preview", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3749,7 +3749,7 @@ async fetchUrlPreview(url: string) : Promise<Result<UrlPreview, ApiError>> {
 },
 async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extract_article", { url }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|extract_article", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3757,7 +3757,7 @@ async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
 },
 async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("read_web_page", { url }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|read_web_page", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3765,7 +3765,7 @@ async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
 },
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rescan_vault") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3773,7 +3773,7 @@ async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
 },
 async checkForUpdates() : Promise<Result<UpdateInfoDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_for_updates") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:updates|check_for_updates") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3781,7 +3781,7 @@ async checkForUpdates() : Promise<Result<UpdateInfoDto, ApiError>> {
 },
 async getVersionInfo() : Promise<Result<VersionInfoDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_version_info") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:updates|get_version_info") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3789,7 +3789,7 @@ async getVersionInfo() : Promise<Result<VersionInfoDto, ApiError>> {
 },
 async getCorpusShape() : Promise<Result<CorpusShapeDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_corpus_shape") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_corpus_shape") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3797,7 +3797,7 @@ async getCorpusShape() : Promise<Result<CorpusShapeDto, ApiError>> {
 },
 async listConversationsCitingDocument(documentId: string, limit: number | null) : Promise<Result<CitingConversationDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_conversations_citing_document", { documentId, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_conversations_citing_document", { documentId, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3805,7 +3805,7 @@ async listConversationsCitingDocument(documentId: string, limit: number | null) 
 },
 async listCustomCollections() : Promise<Result<CustomCollectionDto[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_custom_collections") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_custom_collections") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3813,7 +3813,7 @@ async listCustomCollections() : Promise<Result<CustomCollectionDto[], string>> {
 },
 async createCustomCollection(request: CreateCustomCollectionRequest) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_custom_collection", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|create_custom_collection", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3821,7 +3821,7 @@ async createCustomCollection(request: CreateCustomCollectionRequest) : Promise<R
 },
 async renameCustomCollection(collectionId: string, name: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rename_custom_collection", { collectionId, name }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|rename_custom_collection", { collectionId, name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3829,7 +3829,7 @@ async renameCustomCollection(collectionId: string, name: string) : Promise<Resul
 },
 async moveCustomCollection(collectionId: string, parentId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("move_custom_collection", { collectionId, parentId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|move_custom_collection", { collectionId, parentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3837,7 +3837,7 @@ async moveCustomCollection(collectionId: string, parentId: string | null) : Prom
 },
 async deleteCustomCollection(collectionId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_custom_collection", { collectionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|delete_custom_collection", { collectionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3845,7 +3845,7 @@ async deleteCustomCollection(collectionId: string) : Promise<Result<null, string
 },
 async addDocumentsToCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_documents_to_custom_collection", { collectionId, documentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|add_documents_to_custom_collection", { collectionId, documentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3853,7 +3853,7 @@ async addDocumentsToCustomCollection(collectionId: string, documentIds: string[]
 },
 async removeDocumentsFromCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_documents_from_custom_collection", { collectionId, documentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:file|remove_documents_from_custom_collection", { collectionId, documentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3861,7 +3861,7 @@ async removeDocumentsFromCustomCollection(collectionId: string, documentIds: str
 },
 async clusterVaultDebug() : Promise<Result<string, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cluster_vault_debug") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:corpus-shape|cluster_vault_debug") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3869,7 +3869,7 @@ async clusterVaultDebug() : Promise<Result<string, AppError>> {
 },
 async clusterVaultRun() : Promise<Result<ClusterRunDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cluster_vault_run") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:corpus-shape|cluster_vault_run") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3877,7 +3877,7 @@ async clusterVaultRun() : Promise<Result<ClusterRunDto, AppError>> {
 },
 async listClusters() : Promise<Result<ClusterDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_clusters") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:corpus-shape|list_clusters") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3885,7 +3885,7 @@ async listClusters() : Promise<Result<ClusterDto[], AppError>> {
 },
 async transcribeFile(path: string) : Promise<Result<TranscriptDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("transcribe_file", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|transcribe_file", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3893,7 +3893,7 @@ async transcribeFile(path: string) : Promise<Result<TranscriptDto, ApiError>> {
 },
 async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_transcription_status") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|get_transcription_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -16,8 +16,8 @@ describe('VaultAPI.getConversationMemory', () => {
   });
 
   it('routes to the conversation domain so the command is not rejected as unregistered', async () => {
-    // A missing COMMAND_DOMAIN_MAP entry throws before the IPC call, so this
-    // both proves the route exists and pins the domain it points at.
+    // The route comes from the generated table, so this pins the plugin that
+    // registers the command.
     mockInvoke.mockResolvedValue({ conversationId: 'conv-1' });
 
     const result = await VaultAPI.getConversationMemory('conv-1');

@@ -65,12 +65,7 @@ export interface DeleteConversationRequest {
 /**
  * Query parameters for listing conversations.
  */
-export interface ListConversationsQuery {
-  /** Maximum number of conversations to return */
-  limit?: number;
-  /** Offset for pagination */
-  offset?: number;
-}
+export type ListConversationsQuery = import('../../lib/bindings').ListConversationsQuery;
 
 
 /**
@@ -167,35 +162,9 @@ export interface SynthesizeJournalEntriesResponse {
 /**
  * Conversation space/environment DTO.
  */
-export interface ConversationSpaceDto {
-  id: string;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  accentColor: string | null;
-  spacePrompt: string | null;
-  defaultModelName: string | null;
-  toolPreferencesJson: string | null;
-  isArchived: boolean;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
+export type ConversationSpaceDto = import('../../lib/bindings').ConversationSpaceDto;
 
-export interface ConversationJournalDto {
-  id: string;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  accentColor: string | null;
-  spacePrompt: string | null;
-  defaultModelName: string | null;
-  toolPreferencesJson: string | null;
-  isArchived: boolean;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
+export type ConversationJournalDto = import('../../lib/bindings').ConversationJournalDto;
 
 export interface CreateConversationSpaceRequest {
   name: string;
@@ -328,22 +297,7 @@ export interface ListMessageBookmarksResponse {
   total: number;
 }
 
-export interface ConversationLinkedDocumentDto {
-  documentId: string;
-  fileName: string;
-  filePath: string;
-  fileType: string;
-  category: string;
-  indexedAt: string;
-  /**
-   * True when this file was attached to this chat rather than filed in the
-   * library: the chat's alone, unlisted, unsearchable from anywhere else, and
-   * deleted with the conversation until it is added to the library.
-   */
-  attachedToConversation: boolean;
-  lastReferencedAt: string;
-  referenceCount: number;
-}
+export type ConversationLinkedDocumentDto = import('../../lib/bindings').ConversationLinkedDocumentDto;
 
 export type ConversationWebSourceDto = import('../../lib/bindings').ConversationWebSourceDto;
 

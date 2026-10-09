@@ -77,13 +77,33 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.UNKNOWN]: 'An unexpected error occurred.',
 };
 
+const KNOWN_CODES: ReadonlySet<string> = new Set(Object.values(ErrorCode));
+
+/** A backend code, or UNKNOWN for anything that is not one. */
+function errorCode(value: unknown): ErrorCode {
+  return typeof value === 'string' && KNOWN_CODES.has(value)
+    ? (value as ErrorCode)
+    : ErrorCode.UNKNOWN;
+}
+
+/** Backend details are text; anything else is carried as its JSON. */
+function detailText(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /**
  * Parse unknown error to structured ApiError
  *
  * Handles 4 cases:
  * 1. Structured backend error: { code, message, details? }
- * 2. JavaScript Error object: Extract message + stack
- * 3. String errors: Wrap with UNKNOWN code
+ * 2. JavaScript Error object: message, with the stack as details
+ * 3. String errors: a serialized backend error, or text wrapped as UNKNOWN
  * 4. Unknown types: Safe fallback
  */
 export function parseApiError(error: unknown): ApiError {
@@ -96,9 +116,9 @@ export function parseApiError(error: unknown): ApiError {
   ) {
     const structured = error as Record<string, unknown>;
     return {
-      code: String(structured.code || ErrorCode.UNKNOWN),
+      code: errorCode(structured.code),
       message: String(structured.message || 'Unknown error'),
-      details: structured.details as Record<string, unknown> | undefined,
+      details: detailText(structured.details),
     };
   }
 
@@ -107,10 +127,7 @@ export function parseApiError(error: unknown): ApiError {
     return {
       code: ErrorCode.UNKNOWN,
       message: error.message,
-      details: {
-        stack: error.stack,
-        name: error.name,
-      },
+      details: error.stack ?? error.name,
     };
   }
 
@@ -130,9 +147,7 @@ export function parseApiError(error: unknown): ApiError {
   return {
     code: ErrorCode.UNKNOWN,
     message: 'An unexpected error occurred',
-    details: {
-      rawError: String(error),
-    },
+    details: String(error),
   };
 }
 
@@ -155,7 +170,7 @@ export function handleApiError(error: ApiError, context?: string): void {
 
   // Extract user-friendly message (fallback to UNKNOWN for unrecognized codes)
   const userMessage =
-    USER_MESSAGES[error.code as keyof typeof USER_MESSAGES] || USER_MESSAGES[ErrorCode.UNKNOWN];
+    USER_MESSAGES[error.code] || USER_MESSAGES[ErrorCode.UNKNOWN];
 
   void console.error('[User Message]', userMessage);
 }

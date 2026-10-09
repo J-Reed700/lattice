@@ -1,10 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { learningApi } from '@/features/learning/api/client';
+import { studyApi } from '@/features/study/api/client';
+import { apiCall } from '@/shared/ipc/transport';
+
 import { queryClient } from './queryClient';
 import { beginStudyActivity, dismissStudyActivity, STUDY_ACTIVITY_KEY, type StudyActivity } from './studyActivity';
 
-const { VaultAPI } = await vi.importActual<typeof import('./api')>('./api');
 const activities = () => queryClient.getQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY) ?? [];
 
 beforeEach(() => { vi.useFakeTimers(); queryClient.clear(); vi.mocked(invoke).mockReset(); });
@@ -14,8 +17,8 @@ describe('Study request activity', () => {
   it('tracks a real IPC promise beyond long waits without aborting, retrying, or recording its payload', async () => {
     let resolve!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const request: Parameters<typeof VaultAPI.requestLearningTutorResponse>[0] = { programId: 'biology', sessionId: 'session', expectedRevision: 1, requestKind: 'question', prompt: 'PRIVATE ANSWER', hintLevel: null, operationId: 'operation' };
-    const result = VaultAPI.requestLearningTutorResponse(request);
+    const request: Parameters<typeof learningApi.requestLearningTutorResponse>[0] = { programId: 'biology', sessionId: 'session', expectedRevision: 1, requestKind: 'question', prompt: 'PRIVATE ANSWER', hintLevel: null, operationId: 'operation' };
+    const result = learningApi.requestLearningTutorResponse(request);
     expect(activities()).toEqual([]);
     await vi.advanceTimersByTimeAsync(800);
     expect(activities()).toMatchObject([{ status: 'pending', title: 'Preparing tutor feedback', destination: { programId: 'biology', tab: 'workbench' } }]);
@@ -32,7 +35,7 @@ describe('Study request activity', () => {
   it('retains the actual failure and never retries a model mutation automatically', async () => {
     let reject!: (error: unknown) => void;
     vi.mocked(invoke).mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; }));
-    const result = VaultAPI.generateLearningCardDrafts({ programId: 'rust' } as Parameters<typeof VaultAPI.generateLearningCardDrafts>[0]);
+    const result = learningApi.generateLearningCardDrafts({ programId: 'rust' } as Parameters<typeof learningApi.generateLearningCardDrafts>[0]);
     await vi.advanceTimersByTimeAsync(900);
     reject('The model connection closed.');
     expect(await result).toMatchObject({ ok: false, error: 'The model connection closed.' });
@@ -92,5 +95,27 @@ describe('Study request activity', () => {
     generation.finish(undefined, { id: 'deck-biology', cards: ['private'] });
     expect(activities()[0].destination).toMatchObject({ flashcards: true, deckId: 'deck-biology' });
     expect(JSON.stringify(activities())).not.toContain('private');
+  });
+
+  it('publishes a receipt for a slow deck generation made through the Study client', async () => {
+    let resolve!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const result = studyApi.generateStudyDeck({ documentIds: ['doc'] } as Parameters<typeof studyApi.generateStudyDeck>[0]);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Creating your flashcard deck' }]);
+    resolve({ id: 'deck-1' });
+    await result;
+    expect(activities()[0]).toMatchObject({ status: 'completed', destination: { flashcards: true, deckId: 'deck-1' } });
+  });
+
+  it('leaves the shared transport feature-neutral: a plain apiCall publishes no receipt', async () => {
+    let resolve!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const result = apiCall('start_learning_diagnostic', { request: { programId: 'course' } });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(activities()).toEqual([]);
+    resolve(null);
+    await result;
+    expect(activities()).toEqual([]);
   });
 });

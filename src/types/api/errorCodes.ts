@@ -1,9 +1,8 @@
 /**
  * Error Code Constants
  *
- * SYNCHRONIZED WITH RUST BACKEND (api_result.rs)
- * Matches all 42 error codes from Rust ErrorCode enum exactly.
- * Provides type-safe error code constants for frontend error handling.
+ * One constant per generated ErrorCode; `satisfies` fails the build when the
+ * Rust enum gains, loses or renames a code.
  */
 
 export const ErrorCode = {
@@ -69,9 +68,6 @@ export const ErrorCode = {
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
   UNKNOWN: 'UNKNOWN',
-} as const;
+} as const satisfies { [Code in ErrorCode]: Code };
 
-/**
- * Type extracted from error code constants
- */
-export type ErrorCode = typeof ErrorCode[keyof typeof ErrorCode];
+export type ErrorCode = import('../../lib/bindings').ErrorCode;

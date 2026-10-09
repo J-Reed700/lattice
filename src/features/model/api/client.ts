@@ -21,7 +21,7 @@ export const modelApi = {
    * @returns Array of downloaded model records
    */
   getDownloadedModels: async (): Promise<ApiResult<DownloadedModel[]>> =>
-    apiCall<Wire.DownloadedModelResponse[]>('get_models_with_metadata'),
+    apiCall<Wire.DownloadedModelResponse[]>('list_downloaded_models'),
 
   /**
    * Checks if a model is already downloaded.
@@ -136,7 +136,7 @@ export const modelApi = {
     modelId: string,
     deleteFile: boolean = false,
   ): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_downloaded_model_and_file', { modelId, deleteFile }),
+    apiCall<void>('delete_model', { modelId, deleteFile }),
 
   /**
    * Gets system hardware capabilities for model selection.

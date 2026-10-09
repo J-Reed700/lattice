@@ -38,7 +38,7 @@ for (const width of [1440, 800]) {
     await search.fill('answer');
     await page.getByRole('button', { name: /src\/hello.ts:2/ }).click();
     await expect(page.locator('.cm-explorer-highlight')).toContainText('answer = 42');
-    expect(backend.calls.filter(call => call.command.endsWith('|explorer_search')).at(-1)?.args).toMatchObject({ root: ROOT, query: 'answer', maxResults: 200 });
+    expect(backend.calls.filter(call => call.command === 'explorer_search').at(-1)?.args).toMatchObject({ root: ROOT, query: 'answer', maxResults: 200 });
     await search.fill('no-such-symbol');
     await expect(page.getByText('No matches in 6 files.')).toBeVisible();
     await search.press('Escape');
@@ -76,7 +76,7 @@ test('Explorer picker cancellation and permission failure preserve the start scr
   await page.goto('/explorer');
   await page.getByRole('button', { name: /Choose a folder/ }).click();
   await expect(page.getByRole('heading', { name: 'Pick the folder to work in.' })).toBeVisible();
-  expect(backend.calls.some(call => call.command.endsWith('|explorer_resolve_root'))).toBe(false);
+  expect(backend.calls.some(call => call.command === 'explorer_resolve_root')).toBe(false);
   backend.state.picker = ROOT;
   backend.state.failOpen = true;
   await page.getByRole('button', { name: /Choose a folder/ }).click();
@@ -100,7 +100,7 @@ test('switching Explorer roots keeps cached file contents and search requests sc
   await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeDisabled();
   await page.getByRole('searchbox', { name: 'Search in folder' }).fill('answer');
   await expect(page.getByRole('button', { name: /src\/hello.ts:2/ })).toBeVisible();
-  expect(backend.calls.filter(call => call.command.endsWith('|explorer_search')).at(-1)?.args.root).toBe(OTHER_ROOT);
+  expect(backend.calls.filter(call => call.command === 'explorer_search').at(-1)?.args.root).toBe(OTHER_ROOT);
 });
 
 test('Explorer recovers from a search failure without losing the open file', async ({ page, backend }) => {

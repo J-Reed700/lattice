@@ -10,7 +10,7 @@ export const qaApi = {
    * @returns Health status object with connectivity and model info
    */
   checkLLMHealth: async (): Promise<ApiResult<LLMHealthStatus>> =>
-    apiCall<LLMHealthStatus>('check_llm_health'),
+    apiCall<LLMHealthStatus>('check_llm_health_wrapper'),
 
   /**
    * Three corpus-derived questions for the Chat empty state, drawn from the
@@ -21,7 +21,7 @@ export const qaApi = {
   generateChatStarters: async (
     spaceId?: string | null,
   ): Promise<ApiResult<ChatStarters>> =>
-    apiCall<ChatStarters>('generate_chat_starters', {
+    apiCall<ChatStarters>('generate_chat_starters_wrapper', {
       spaceId: spaceId ?? null,
     }),
 };
