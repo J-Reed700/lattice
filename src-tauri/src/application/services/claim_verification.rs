@@ -1,6 +1,8 @@
 //! Shared evidence judge used by chat and lesson publication.
 //! Strict checking never substitutes a nearby quote for a missing model citation.
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+};
 use crate::application::ports::LLMPort;
 use crate::shared::error::Result;
 use crate::shared::text::normalize_whitespace;
@@ -493,6 +495,9 @@ impl<'a> ClaimChecker<'a> {
                     }),
                     want_logprobs: !reasoned,
                     no_time_limit,
+                    // Checking what an answer or a lesson already says: behind
+                    // whoever is waiting on the model, ahead of upkeep.
+                    priority: InferencePriority::Verification,
                     ..Default::default()
                 })
                 .await

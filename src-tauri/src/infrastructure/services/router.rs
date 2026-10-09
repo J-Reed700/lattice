@@ -1,8 +1,11 @@
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::LLMPort;
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::settings::dto::RouterSettingsDto;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 const CLARIFY_NO_RECENT_DOCUMENT_PROMPT: &str =
@@ -49,11 +52,22 @@ pub struct RouterInput {
 pub struct RouterService {
     llm: Arc<dyn LLMPort>,
     settings: RouterSettingsDto,
+    cancel: Option<CancellationToken>,
 }
 
 impl RouterService {
     pub fn new(llm: Arc<dyn LLMPort>, settings: RouterSettingsDto) -> Self {
-        Self { llm, settings }
+        Self {
+            llm,
+            settings,
+            cancel: None,
+        }
+    }
+
+    /// Stop the routing call when the turn is stopped.
+    pub fn with_cancellation(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     pub async fn route(&self, input: RouterInput) -> RouterDecision {
@@ -64,9 +78,20 @@ impl RouterService {
         let prompt = render_router_prompt(&self.settings.prompt_template, &input);
         let timeout_ms = self.settings.timeout_ms.max(1);
 
-        let result = timeout(Duration::from_millis(timeout_ms), async {
-            self.llm.generate(&prompt, &[], None).await
-        })
+        // Part of the turn the user is waiting on.
+        let result = timeout(
+            Duration::from_millis(timeout_ms),
+            complete_text(
+                self.llm.as_ref(),
+                &prompt,
+                &[],
+                TextCall {
+                    priority: InferencePriority::Interactive,
+                    cancel: self.cancel.clone(),
+                    cache_key: None,
+                },
+            ),
+        )
         .await;
 
         match result {

@@ -12,8 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
 use crate::application::ports::{EmbeddingPort, LLMPort};
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
 use crate::features::summaries::prompt::{
     self, DocumentPromptInput, SectionPromptInput, SummaryDraft,
@@ -309,13 +311,18 @@ async fn ask(
     user_prompt: &str,
     cancel: &CancellationToken,
 ) -> Option<SummaryDraft> {
-    // `LLMPort::generate` takes a prompt plus context; the system prompt goes
-    // in as context, matching `corpus_shape::labeling`.
+    // The system prompt goes in as context, matching `corpus_shape::labeling`.
+    // Upkeep: queued behind anyone waiting on the model.
     let context = [system.to_string()];
+    let call = TextCall {
+        priority: InferencePriority::Maintenance,
+        cancel: Some(cancel.clone()),
+        cache_key: None,
+    };
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => return None,
-        result = tokio::time::timeout(CALL_TIMEOUT, llm.generate(user_prompt, &context, None)) => result,
+        result = tokio::time::timeout(CALL_TIMEOUT, complete_text(llm, user_prompt, &context, call)) => result,
     };
     let response = match result {
         Ok(Ok(response)) => response,

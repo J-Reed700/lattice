@@ -1,7 +1,10 @@
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::LLMPort;
+use crate::application::services::completion_input::{complete_text, TextCall};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation with a \
@@ -59,6 +62,7 @@ pub struct IntentClassifier {
     prompt_template: String,
     confidence_threshold: f32,
     timeout_ms: u64,
+    cancel: Option<CancellationToken>,
 }
 
 impl IntentClassifier {
@@ -82,16 +86,34 @@ impl IntentClassifier {
             prompt_template,
             confidence_threshold,
             timeout_ms,
+            cancel: None,
         }
+    }
+
+    /// Stop the classification when the turn is stopped.
+    pub fn with_cancellation(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     pub async fn classify(&self, input: &IntentInput) -> TurnIntent {
         let prompt = render_intent_prompt(&self.prompt_template, input);
         let timeout_ms = self.timeout_ms.max(1);
 
-        let result = timeout(Duration::from_millis(timeout_ms), async {
-            self.llm.generate(&prompt, &[], None).await
-        })
+        // Part of the turn the user is waiting on.
+        let result = timeout(
+            Duration::from_millis(timeout_ms),
+            complete_text(
+                self.llm.as_ref(),
+                &prompt,
+                &[],
+                TextCall {
+                    priority: InferencePriority::Interactive,
+                    cancel: self.cancel.clone(),
+                    cache_key: None,
+                },
+            ),
+        )
         .await;
 
         match result {

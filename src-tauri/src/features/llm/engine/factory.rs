@@ -47,6 +47,7 @@ use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
+use crate::features::llm::scheduler::{ollama_scheduler, ScheduledLlm};
 use crate::shared::error::AppError;
 use crate::shared::error::Result;
 
@@ -299,10 +300,16 @@ async fn create_local_llm_sidecar(
         n_gpu_layers, supports_tools, "Local LLM (sidecar) ready"
     );
 
-    Ok(Arc::new(SidecarPortAdapter {
+    let scheduler = client.scheduler().await;
+    let tokenizer = client.tokenizer();
+    let output_limit = client.output_limit();
+    let adapter: Arc<dyn LLMPort> = Arc::new(SidecarPortAdapter {
         client,
         supports_tools,
-    }))
+    });
+    Ok(Arc::new(
+        ScheduledLlm::new(adapter, scheduler, output_limit).with_tokenizer(tokenizer),
+    ))
 }
 
 /// Adapts `SidecarLLMClient` (LLMClient trait) to `LLMPort`. The
@@ -359,6 +366,7 @@ fn sidecar_tuning<'a>(
         max_output_tokens: request.max_output_tokens,
         tools,
         want_logprobs: request.want_logprobs,
+        slot: request.assigned_slot,
     }
 }
 
@@ -505,10 +513,6 @@ impl LLMPort for SidecarPortAdapter {
         self.client.context_size() as usize
     }
 
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
-    }
-
     async fn is_ready(&self) -> Result<bool> {
         Ok(crate::features::llm::engine::traits::LLMClient::health_check(&self.client).await)
     }
@@ -547,6 +551,7 @@ pub async fn create_ollama_llm(
         }
     })?;
 
+    let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
     *client.generation_config_mut() = generation_config;
 
     if !client.health_check().await {
@@ -558,7 +563,15 @@ pub async fn create_ollama_llm(
     }
 
     info!("Ollama LLM client created successfully");
-    Ok(Arc::new(client) as Arc<dyn LLMPort>)
+    let scheduler = ollama_scheduler(
+        endpoint,
+        crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
+    );
+    Ok(Arc::new(ScheduledLlm::new(
+        Arc::new(client),
+        scheduler,
+        output_limit,
+    )))
 }
 
 /// Infer model information from file path.
@@ -832,11 +845,6 @@ impl LLMPort for MockLLMPort {
 
     fn max_context_tokens(&self) -> usize {
         4096
-    }
-
-    fn count_tokens(&self, text: &str) -> usize {
-        // Simple heuristic: 1 token ≈ 4 characters
-        text.len().div_ceil(4)
     }
 
     async fn is_ready(&self) -> Result<bool> {

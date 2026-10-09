@@ -98,10 +98,14 @@ fn non_stream_timeout(time_budget: Option<Duration>) -> Duration {
 /// batch of this prompt at the slowest prefill rate. Progress frames reset the
 /// wait, so it only has to cover the gap between two of them — or, from a
 /// server that sends none, the whole prompt, which is why short prompts are
-/// not given the full batch. Tokens are estimated at four bytes each.
+/// not given the full batch. Tokens are estimated at the default ratio.
 fn prefill_allowance(messages: &[Value]) -> Duration {
-    let bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
-    let tokens = (bytes / 4).min(PREFILL_BATCH_TOKENS);
+    let chars: usize = messages.iter().map(|m| m.to_string().chars().count()).sum();
+    let tokens = crate::application::ports::llm_port::tokens_for_chars(
+        chars,
+        crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+    )
+    .min(PREFILL_BATCH_TOKENS);
     FIRST_TOKEN_TIMEOUT + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
 }
 
@@ -204,6 +208,13 @@ struct ChatCompletionRequest<'a> {
     /// The remote adapter sends the same.
     #[serde(skip_serializing_if = "Option::is_none")]
     return_progress: Option<bool>,
+    /// The slot the scheduler admitted this request to, so a conversation
+    /// returns to the slot whose KV cache already holds its prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id_slot: Option<u32>,
+    /// Sent with a pinned slot: reuse whatever prefix that slot still holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_prompt: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,6 +271,8 @@ pub struct RequestTuning<'a> {
     pub tools: Option<&'a Value>,
     /// Ask for the first token's top alternatives with their log-probabilities.
     pub want_logprobs: bool,
+    /// The llama-server slot the scheduler assigned, sent as `id_slot`.
+    pub slot: Option<u32>,
 }
 
 /// LLM client that talks to a bundled llama-server sidecar.
@@ -497,6 +510,51 @@ impl SidecarLLMClient {
         self.sidecar.context_size()
     }
 
+    /// The scheduler every role on this server shares. Slots come from the
+    /// server's `/props` (the pinned build picks four over a unified cache
+    /// when `--parallel` is left on auto); the window is the `--ctx-size` it
+    /// was launched with, which those slots share.
+    pub(crate) async fn scheduler(
+        &self,
+    ) -> Arc<crate::features::llm::scheduler::InferenceScheduler> {
+        use crate::features::llm::scheduler::{
+            llama_server_capacity, BackendCapacity, InferenceScheduler,
+        };
+        self.sidecar
+            .scheduler(|| async {
+                let window = self.context_size() as usize;
+                let slots = match llama_server_capacity(&self.http, self.sidecar.endpoint()).await
+                {
+                    Some((slots, _)) => slots,
+                    None => {
+                        tracing::warn!(
+                            "llama-server did not report its slots; scheduling one request at a time"
+                        );
+                        1
+                    }
+                };
+                tracing::info!(slots, window, "Local llama-server scheduler sized");
+                InferenceScheduler::new(
+                    format!("llama-server {}", self.sidecar.endpoint()),
+                    BackendCapacity::llama_server(slots, window),
+                )
+            })
+            .await
+    }
+
+    /// Exact token counts from this server's own tokenizer.
+    pub(crate) fn tokenizer(&self) -> crate::features::llm::scheduler::ServerTokenizer {
+        crate::features::llm::scheduler::ServerTokenizer::new(
+            self.http.clone(),
+            self.sidecar.endpoint(),
+        )
+    }
+
+    /// The output ceiling this client's settings allow.
+    pub(crate) fn output_limit(&self) -> u32 {
+        u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
+    }
+
     fn endpoint_for(&self, path: &str) -> String {
         format!("{}{}", self.sidecar.endpoint(), path)
     }
@@ -545,6 +603,8 @@ impl SidecarLLMClient {
             top_logprobs: tuning
                 .want_logprobs
                 .then_some(crate::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
+            id_slot: tuning.slot,
+            cache_prompt: tuning.slot.map(|_| true),
         }
     }
 
@@ -1021,6 +1081,27 @@ mod tests {
         assert!(json.get("tools").is_none(), "{json}");
         assert!(json.get("parallel_tool_calls").is_none(), "{json}");
         assert!(json.get("stream_options").is_none(), "{json}");
+        assert!(json.get("id_slot").is_none(), "{json}");
+        assert!(json.get("cache_prompt").is_none(), "{json}");
+    }
+
+    /// The scheduler's slot goes on the wire, with prompt reuse, so the
+    /// conversation lands on the slot whose KV cache holds its prefix.
+    #[test]
+    fn a_scheduled_request_is_pinned_to_its_slot_with_prompt_reuse() {
+        let messages = SidecarLLMClient::build_messages(None, "Hi.");
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            messages,
+            true,
+            RequestTuning {
+                slot: Some(2),
+                ..RequestTuning::default()
+            },
+        );
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["id_slot"], 2);
+        assert_eq!(json["cache_prompt"], true);
     }
 
     /// A tool round has to reach llama-server in the same shape the remote
@@ -1138,6 +1219,7 @@ mod tests {
                 max_output_tokens: None,
                 tools: None,
                 want_logprobs: false,
+                slot: None,
             },
         );
 
@@ -1162,6 +1244,7 @@ mod tests {
                 max_output_tokens: None,
                 tools: None,
                 want_logprobs: false,
+                slot: None,
             },
         );
 

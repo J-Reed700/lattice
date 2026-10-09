@@ -19,7 +19,6 @@ use std::time::Instant;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
-use super::cancellation::is_cancel_requested;
 use super::fetch_memory::{self, Delivery, FetchMemory, Recall};
 use super::focus::FocusScope;
 use super::prompting::render_tool_followup_prompt;
@@ -160,11 +159,12 @@ pub(super) async fn run_agentic_tool_loop(
     // Model rounds this turn may spend; see [`max_tool_rounds`].
     max_tool_rounds: usize,
 ) -> Result<ToolLoopOutcome> {
-    use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+    use crate::application::ports::llm_port::{
+        CompletionInput, CompletionRequest, InferencePriority,
+    };
     use crate::application::ports::StreamChunk;
 
     let max_tool_rounds = max_tool_rounds.max(1);
-    const CANCEL_POLL_INTERVAL_MS: u64 = 200;
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
     // One deadline for the whole turn: tool rounds and provider retries share it.
@@ -202,7 +202,17 @@ pub(super) async fn run_agentic_tool_loop(
     let base_prompt = enhanced_message.to_string();
     let mut tool_context = context.to_vec();
     let mut current_prompt = base_prompt.clone();
+    // The stop button as a token. Every round's request carries it, so a stop
+    // press takes a request out of the backend's queue, or aborts it while it
+    // generates, at once rather than at the next poll.
+    let turn_cancel = super::cancellation::turn_token(request_id);
     let mut native_request = CompletionRequest {
+        // Someone is watching this turn; it goes ahead of background work and
+        // may take the slot kept free for interactive requests.
+        priority: InferencePriority::Interactive,
+        cancel: Some(turn_cancel.clone()),
+        // Every round of a conversation shares its prefix with the last one.
+        cache_key: Some(conv_id.to_string()),
         input: match memory_plan {
             Some(plan) => plan.messages.clone(),
             None => crate::application::services::completion_input::from_context(
@@ -255,14 +265,7 @@ pub(super) async fn run_agentic_tool_loop(
     let tool_schema_chars = tools_ref.map_or(0, |tools| tool_schema_text(tools).chars().count());
     // Stop is honoured at this interval while a tool runs, as it is while the
     // model generates.
-    let cancelled = || async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)).await;
-            if is_cancel_requested(request_id) {
-                return;
-            }
-        }
-    };
+    let cancelled = || turn_cancel.cancelled();
     for iteration in 0..max_tool_rounds {
         timings.iterations = (iteration + 1) as u32;
         // The last round is for answering. A model still calling tools here
@@ -273,7 +276,7 @@ pub(super) async fn run_agentic_tool_loop(
         // calls made now would come back cut to nothing.
         let window_full = iteration > 0
             && !window_has_room_for_a_result(
-                llm.max_context_tokens(),
+                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
                 chars_in_flight(&native_request.input, &tool_context, &current_prompt)
                     + tool_schema_chars,
             );
@@ -290,7 +293,7 @@ pub(super) async fn run_agentic_tool_loop(
         // Offered no tools, a model can still write a call into its text. It is
         // never run, so it is held back from the bubble as it streams.
         let leaked_calls = std::sync::Mutex::new(LeakedCallFilter::new(tools_withdrawn));
-        if is_cancel_requested(request_id) {
+        if turn_cancel.is_cancelled() {
             emit_cancelled_stream(sink, conv_id, request_id);
             return Err(cancellation_error());
         }
@@ -370,14 +373,10 @@ pub(super) async fn run_agentic_tool_loop(
                         &on_retry,
                     ),
                 );
-                tokio::pin!(completion);
-                loop {
-                    tokio::select! {
-                        result = &mut completion => break result.map_err(|_| budget_exhausted())?,
-                        _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
-                            if is_cancel_requested(request_id) { return Err(cancellation_error()); }
-                        }
-                    }
+                tokio::select! {
+                    biased;
+                    _ = turn_cancel.cancelled() => return Err(cancellation_error()),
+                    result = completion => result.map_err(|_| budget_exhausted())?,
                 }
             }?;
             let mut response = response;
@@ -466,14 +465,10 @@ pub(super) async fn run_agentic_tool_loop(
                     round_tools,
                 ),
             );
-            tokio::pin!(creation);
-            loop {
-                tokio::select! {
-                    result = &mut creation => break result.unwrap_or_else(|_| Err(budget_exhausted())),
-                    _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
-                        if is_cancel_requested(request_id) { return Err(cancellation_error()); }
-                    }
-                }
+            tokio::select! {
+                biased;
+                _ = turn_cancel.cancelled() => return Err(cancellation_error()),
+                result = creation => result.unwrap_or_else(|_| Err(budget_exhausted())),
             }
         };
 
@@ -484,19 +479,13 @@ pub(super) async fn run_agentic_tool_loop(
 
                 let stream_future = async {
                     loop {
-                        if is_cancel_requested(request_id) {
-                            emit_cancelled_stream(sink, conv_id, request_id);
-                            return Err(cancellation_error());
-                        }
-
-                        let next_chunk = match timeout(
-                            Duration::from_millis(CANCEL_POLL_INTERVAL_MS),
-                            stream.next(),
-                        )
-                        .await
-                        {
-                            Ok(next) => next,
-                            Err(_) => continue,
+                        let next_chunk = tokio::select! {
+                            biased;
+                            _ = turn_cancel.cancelled() => {
+                                emit_cancelled_stream(sink, conv_id, request_id);
+                                return Err(cancellation_error());
+                            }
+                            next = stream.next() => next,
                         };
                         let Some(chunk_result) = next_chunk else {
                             break;
@@ -643,7 +632,7 @@ pub(super) async fn run_agentic_tool_loop(
                             // configured cap alone let one round of page
                             // fetches outgrow a small model's entire context.
                             let result_allowance = tool_result_allowance(
-                                llm.max_context_tokens(),
+                                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
                                 chars_in_flight(
                                     &native_request.input,
                                     &tool_context,
@@ -656,7 +645,7 @@ pub(super) async fn run_agentic_tool_loop(
                                 max_chars: u32::try_from(result_allowance).unwrap_or(u32::MAX),
                                 ..tool_output_settings.clone()
                             };
-                            if is_cancel_requested(request_id) {
+                            if turn_cancel.is_cancelled() {
                                 emit_cancelled_stream(sink, conv_id, request_id);
                                 return Err(cancellation_error());
                             }
@@ -1263,13 +1252,21 @@ fn partial_marker_suffix_len(text: &str) -> usize {
 /// Whether another tool result could still fit in the window, at the size
 /// below which a result says too little to be worth a round. A provider that
 /// reports no window is never treated as full.
-fn window_has_room_for_a_result(context_tokens: usize, chars_in_flight: usize) -> bool {
-    if context_tokens == 0 {
+fn window_has_room_for_a_result(window_chars: usize, chars_in_flight: usize) -> bool {
+    if window_chars == 0 {
         return true;
     }
-    let window_chars =
-        ((context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize).saturating_mul(CHARS_PER_TOKEN);
     window_chars.saturating_sub(chars_in_flight) >= MIN_TOOL_RESULT_CHARS
+}
+
+/// The characters the prompt may fill: [`CONTEXT_FILL_LIMIT`] of the window,
+/// converted at the backend's calibrated characters per token and erring
+/// short, so dense text under-fills rather than overruns.
+fn window_chars(context_tokens: usize, chars_per_token: f64) -> usize {
+    crate::application::ports::llm_port::chars_within_tokens(
+        (context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize,
+        chars_per_token,
+    )
 }
 
 /// The tool definitions as the provider receives them, for budgeting: the
@@ -1615,9 +1612,6 @@ fn tool_argument_summary(arguments: &serde_json::Value) -> String {
 /// Share of the context window the prompt may fill. The rest is the reply's.
 const CONTEXT_FILL_LIMIT: f64 = 0.75;
 
-/// Characters per token, rounded down, so the estimate errs towards leaving room.
-const CHARS_PER_TOKEN: usize = 3;
-
 /// A result cut shorter than this says too little to have been worth the round
 /// that asked for it, so a nearly full window still gets this much.
 const MIN_TOOL_RESULT_CHARS: usize = 1_500;
@@ -1653,13 +1647,11 @@ fn chars_in_flight(
 /// How many characters one tool result may take, given the model's window,
 /// what is already in it, and how many results this round has still to fit.
 fn tool_result_allowance(
-    context_tokens: usize,
+    window_chars: usize,
     chars_in_flight: usize,
     calls_left: usize,
     configured_max: usize,
 ) -> usize {
-    let window_chars =
-        ((context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize).saturating_mul(CHARS_PER_TOKEN);
     let room = window_chars.saturating_sub(chars_in_flight);
     let share = room / calls_left.max(1);
     // The floor is only kept while the window can still take it. Past that, a
@@ -1728,7 +1720,7 @@ fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::CompletionInput;
+    use crate::application::ports::llm_port::{CompletionInput, DEFAULT_CHARS_PER_TOKEN};
 
     #[test]
     fn stream_sink_keeps_turn_identity_and_emits_completion_once() {
@@ -1786,40 +1778,69 @@ mod tests {
     #[test]
     fn a_round_of_results_is_made_to_fit_a_small_window() {
         let context_tokens = 32_768;
-        let window_chars = (context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        let window = window_chars(context_tokens, DEFAULT_CHARS_PER_TOKEN);
         let already = 20_000;
 
         let mut spent = already;
         for calls_left in (1..=4).rev() {
-            spent += tool_result_allowance(context_tokens, spent, calls_left, 50_000);
+            spent += tool_result_allowance(window, spent, calls_left, 50_000);
         }
         assert!(
-            spent <= window_chars,
-            "{spent} characters in a {window_chars}-character window"
+            spent <= window,
+            "{spent} characters in a {window}-character window"
         );
     }
 
     /// The model in the log has a 131k window. It should get whole pages.
     #[test]
     fn a_large_window_gives_each_result_the_configured_maximum() {
-        assert_eq!(tool_result_allowance(131_072, 20_000, 4, 50_000), 50_000);
+        assert_eq!(
+            tool_result_allowance(
+                window_chars(131_072, DEFAULT_CHARS_PER_TOKEN),
+                20_000,
+                4,
+                50_000
+            ),
+            50_000
+        );
     }
 
     /// Past a full window, the floor would overrun it and fail the next round.
     #[test]
     fn a_full_window_gives_a_result_only_what_is_left() {
-        assert_eq!(tool_result_allowance(8_192, 1_000_000, 3, 50_000), 0);
-        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
-        let nearly_full = window_chars - 900;
-        assert_eq!(tool_result_allowance(8_192, nearly_full, 1, 50_000), 900);
+        assert_eq!(
+            tool_result_allowance(
+                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                1_000_000,
+                3,
+                50_000
+            ),
+            0
+        );
+        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
+        let nearly_full = window - 900;
+        assert_eq!(
+            tool_result_allowance(
+                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                nearly_full,
+                1,
+                50_000
+            ),
+            900
+        );
     }
 
     /// With room, a result still gets enough to be worth the round.
     #[test]
     fn a_window_with_room_keeps_the_floor() {
-        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
         assert_eq!(
-            tool_result_allowance(8_192, window_chars - 4_000, 3, 50_000),
+            tool_result_allowance(
+                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                window - 4_000,
+                3,
+                50_000
+            ),
             MIN_TOOL_RESULT_CHARS
         );
     }
@@ -1840,12 +1861,17 @@ mod tests {
             "parameters must be counted: {schema_chars}"
         );
 
-        let window_chars = (4_096_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
-        let prompt = "p".repeat(window_chars - schema_chars - 500);
+        let window = window_chars(4_096, DEFAULT_CHARS_PER_TOKEN);
+        let prompt = "p".repeat(window - schema_chars - 500);
         let in_flight = chars_in_flight(&[], &[], &prompt) + schema_chars;
-        let allowance = tool_result_allowance(4_096, in_flight, 1, 50_000);
+        let allowance = tool_result_allowance(
+            window_chars(4_096, DEFAULT_CHARS_PER_TOKEN),
+            in_flight,
+            1,
+            50_000,
+        );
         assert_eq!(allowance, 500);
-        assert!(in_flight + allowance <= window_chars);
+        assert!(in_flight + allowance <= window);
     }
 
     #[test]
@@ -1952,14 +1978,17 @@ mod tests {
 
     #[test]
     fn a_full_window_has_no_room_for_another_result() {
-        let window_chars = (8_192_f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
-        assert!(window_has_room_for_a_result(8_192, 0));
+        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
+        assert!(window_has_room_for_a_result(
+            window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+            0
+        ));
         assert!(!window_has_room_for_a_result(
-            8_192,
-            window_chars - MIN_TOOL_RESULT_CHARS + 1
+            window,
+            window - MIN_TOOL_RESULT_CHARS + 1
         ));
         assert!(
-            window_has_room_for_a_result(0, usize::MAX),
+            window_has_room_for_a_result(window_chars(0, DEFAULT_CHARS_PER_TOKEN), usize::MAX),
             "no window reported"
         );
     }
@@ -2017,7 +2046,10 @@ mod tests {
 
     #[test]
     fn a_configured_maximum_below_the_floor_is_respected() {
-        assert_eq!(tool_result_allowance(131_072, 0, 1, 800), 800);
+        assert_eq!(
+            tool_result_allowance(window_chars(131_072, DEFAULT_CHARS_PER_TOKEN), 0, 1, 800),
+            800
+        );
     }
 
     #[test]

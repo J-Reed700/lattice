@@ -39,7 +39,6 @@ infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_w
 infrastructure-imports-feature infrastructure/services/article_extractor.rs features::function_calling 1
 infrastructure-imports-feature infrastructure/services/mod.rs features::batch 2
 infrastructure-imports-feature infrastructure/services/mod.rs features::function_calling 4
-infrastructure-imports-feature infrastructure/services/mod.rs features::search 1
 infrastructure-imports-feature infrastructure/services/mod.rs features::tags 1
 infrastructure-imports-feature infrastructure/services/mod.rs features::web 6
 infrastructure-imports-feature infrastructure/services/router.rs features::settings 1
@@ -66,7 +65,7 @@ feature-edge features::conversation features::function_calling 55
 feature-edge features::conversation features::llm 2
 feature-edge features::conversation features::qa 18
 feature-edge features::conversation features::references 1
-feature-edge features::conversation features::search 35
+feature-edge features::conversation features::search 31
 feature-edge features::conversation features::settings 18
 feature-edge features::conversation features::summaries 4
 feature-edge features::conversation features::web 2

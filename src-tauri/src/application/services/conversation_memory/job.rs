@@ -193,7 +193,8 @@ impl CompactionJob {
                     // run's fault, and charging it would fail the queued request
                     // for a reason the user cannot see.
                     let deadline =
-                        Deadline::new(self.config.deadline, request.cancellation.clone());
+                        Deadline::new(self.config.deadline, request.cancellation.clone())
+                            .for_conversation(request.trigger.priority(), conversation_id);
                     self.run_with_retry(conversation_id, &request, &operation_id, &deadline)
                         .await
                 }

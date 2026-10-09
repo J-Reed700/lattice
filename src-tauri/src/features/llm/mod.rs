@@ -16,6 +16,10 @@
 //!   system capabilities. Owned by this feature; consumed by
 //!   model_management, DI, and others.
 //!
+//! - `crate::features::llm::scheduler` — the one admission point in front of
+//!   each inference backend: priorities, cancellation, slot affinity and
+//!   calibrated token counts.
+//!
 //! No port (`LLMPort` stays in `application/ports/`). No plugin.
 
 pub mod commands;
@@ -27,3 +31,4 @@ pub mod use_cases;
 pub mod cloud;
 pub mod engine;
 pub mod llama_cpp;
+pub(crate) mod scheduler;

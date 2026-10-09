@@ -342,6 +342,7 @@ pub(crate) async fn complete_json_with_progress(
                 max_output_tokens: Some(output_tokens.min(u32::MAX as usize) as u32),
                 time_budget: (!unbounded).then_some(MATERIAL_CALL_BUDGET),
                 no_time_limit: unbounded,
+                cache_key: crate::features::learning::lesson_progress::cache_key(),
                 ..Default::default()
             };
             let _model_call =

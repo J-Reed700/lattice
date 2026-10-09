@@ -45,6 +45,7 @@
 use crate::features::llm::engine::sidecar_pool::{Liveness, Origin, SharedProcesses};
 use crate::features::llm::engine::system::SystemCapabilities;
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::scheduler::InferenceScheduler;
 use parking_lot::Mutex as SyncMutex;
 use std::collections::{BTreeSet, VecDeque};
 use std::net::TcpListener;

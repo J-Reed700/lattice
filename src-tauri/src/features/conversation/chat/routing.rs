@@ -66,6 +66,7 @@ pub(super) async fn infer_turn_intent_flags(
     search_flags: SearchFlags,
     validated_message: &str,
     context: &[String],
+    cancel: tokio_util::sync::CancellationToken,
 ) -> SearchFlags {
     if !should_infer_turn_intent(tool_preferences, search_flags) {
         return search_flags;
@@ -92,6 +93,7 @@ pub(super) async fn infer_turn_intent_flags(
         .cloned()
         .collect();
     let intent = IntentClassifier::new(classifier_llm)
+        .with_cancellation(cancel)
         .classify(&IntentInput {
             message: validated_message.to_string(),
             recent_context,
@@ -162,6 +164,7 @@ pub(super) async fn resolve_router_decision(
     explorer: bool,
     router_settings: &RouterSettingsDto,
     recorder: &TurnRecorder,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
     // In an Explorer turn the question is about the folder on screen, so the
     // router's default "search the library" is not enough to start one.
@@ -208,7 +211,7 @@ pub(super) async fn resolve_router_decision(
     };
     let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
     let router_llm = container.get_or_load_router_llm().await?;
-    let router = RouterService::new(router_llm, router_settings.clone());
+    let router = RouterService::new(router_llm, router_settings.clone()).with_cancellation(cancel);
     let decision = router.route(router_input).await;
     let action = router_action_code(&decision.action);
     recorder.end(

@@ -1,8 +1,8 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 /// How long a cancellation that arrived before its turn registered stays armed.
 /// Long enough to cover a cold model load, short enough that a stop press for a
@@ -12,10 +12,13 @@ const PENDING_CANCEL_TTL: Duration = Duration::from_secs(600);
 /// that never start cannot grow the map without bound.
 const MAX_PENDING_CANCELS: usize = 256;
 
+/// One turn's stop button. The token is what the turn hands every model
+/// request, so a stop press reaches a request still queued behind other work,
+/// or already generating, without waiting for anyone to poll.
 #[derive(Debug, Default)]
 struct TurnCancellationState {
     conversation_id: String,
-    cancel_requested: AtomicBool,
+    token: CancellationToken,
 }
 
 #[derive(Debug)]
@@ -73,11 +76,15 @@ pub(super) fn begin_turn(request_id: &str, conversation_id: &str) -> bool {
         .pending
         .remove(request_id)
         .is_some_and(|entry| entry.conversation_id == conversation_id);
+    let token = CancellationToken::new();
+    if already_cancelled {
+        token.cancel();
+    }
     registry.turns.insert(
         request_id.to_string(),
         Arc::new(TurnCancellationState {
             conversation_id: conversation_id.to_string(),
-            cancel_requested: AtomicBool::new(already_cancelled),
+            token,
         }),
     );
     true
@@ -94,7 +101,18 @@ pub(super) fn is_cancel_requested(request_id: &str) -> bool {
     registry
         .turns
         .get(request_id)
-        .is_some_and(|state| state.cancel_requested.load(Ordering::SeqCst))
+        .is_some_and(|state| state.token.is_cancelled())
+}
+
+/// The token a stop press for this turn fires. A turn that never registered
+/// cannot be stopped through the registry, so it gets one that never fires.
+pub(super) fn turn_token(request_id: &str) -> CancellationToken {
+    let registry = lock();
+    registry
+        .turns
+        .get(request_id)
+        .map(|state| state.token.clone())
+        .unwrap_or_default()
 }
 
 pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) -> bool {
@@ -105,7 +123,7 @@ pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) ->
             if state.conversation_id != conversation_id {
                 return false;
             }
-            state.cancel_requested.store(true, Ordering::SeqCst);
+            state.token.cancel();
             return true;
         }
         // The turn has not registered yet — it is still validating input,
@@ -134,7 +152,7 @@ pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) ->
         .values()
         .filter(|state| state.conversation_id == conversation_id)
     {
-        state.cancel_requested.store(true, Ordering::SeqCst);
+        state.token.cancel();
         cancelled = true;
     }
     cancelled
@@ -221,5 +239,28 @@ mod tests {
         assert!(begin_turn(&request_id, &conversation_id));
         assert!(!is_cancel_requested(&request_id));
         finish_turn(&request_id);
+    }
+
+    #[test]
+    fn a_stop_press_fires_the_token_the_turn_handed_its_model_requests() {
+        let suffix = uuid::Uuid::new_v4();
+        let conversation_id = format!("conversation-{suffix}");
+        let request_id = format!("request-{suffix}");
+
+        assert!(begin_turn(&request_id, &conversation_id));
+        let token = turn_token(&request_id);
+        assert!(!token.is_cancelled());
+
+        assert!(request_cancel(&conversation_id, Some(&request_id)));
+        assert!(
+            token.is_cancelled(),
+            "the request's token must fire at once"
+        );
+        finish_turn(&request_id);
+
+        assert!(
+            !turn_token(&request_id).is_cancelled(),
+            "an unregistered turn's token never fires"
+        );
     }
 }

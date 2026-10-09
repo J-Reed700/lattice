@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::LLMPort;
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::shared::error::Result;
 
 /// The maximum content preview fed per representative doc. Keeps prompts
@@ -66,7 +68,14 @@ pub async fn label_cluster(
     // `generate` takes a plain prompt plus a context array, so the system
     // prompt goes in as context.
     let context = vec![system];
-    let response = llm.generate(&prompt, &context, None).await;
+    // Upkeep: queued behind anyone waiting on the model.
+    let response = complete_text(
+        llm.as_ref(),
+        &prompt,
+        &context,
+        TextCall::at(InferencePriority::Maintenance),
+    )
+    .await;
 
     let raw = match response {
         Ok(r) => r,

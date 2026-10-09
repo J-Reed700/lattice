@@ -145,6 +145,7 @@ impl ClaimChecker<'_> {
             json_schema: Some(json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":claims.len(),"maxItems":claims.len(),"items":{"type":"object","additionalProperties":false,"required":["id","response"],"properties":{"id":{"type":"string","enum":ids},"response":{"type":"string","minLength":1}}}}}})),
             sampling: Some(self.sampling), reasoning_effort: Some("low".into()),
             max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32), no_time_limit:true,
+            priority: InferencePriority::Verification,
             ..Default::default()
         }, on_text, on_retry).await?;
         if !matches!(

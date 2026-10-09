@@ -17,6 +17,8 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
+use crate::application::ports::llm_port::InferencePriority;
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::qa::starters_dto::{ChatStarterDto, ChatStartersDto};
 use crate::interfaces::di::Container;
@@ -438,7 +440,15 @@ pub async fn generate_chat_starters_impl(
     let starters = match llm {
         Some(llm) => {
             let prompt = build_prompt(&titles, &format_type_mix(&type_mix));
-            match llm.generate(&prompt, &[], None).await {
+            // Upkeep: queued behind anyone waiting on the model.
+            match complete_text(
+                llm.as_ref(),
+                &prompt,
+                &[],
+                TextCall::at(InferencePriority::Maintenance),
+            )
+            .await
+            {
                 Ok(raw) => parse_starters(&raw),
                 Err(error) => {
                     tracing::warn!(error = %error, "Chat starter generation failed; showing no questions");

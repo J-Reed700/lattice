@@ -131,4 +131,48 @@ impl ContextPlan {
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
+
+    /// The request's text as a tokenizer reads it, framing aside: every
+    /// role and message body, call and result. What an exact count measures.
+    pub fn tokenizable_text(&self) -> String {
+        let mut text = String::new();
+        for message in &self.messages {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            match message {
+                CompletionInput::Message { role, content } => {
+                    text.push_str(role);
+                    text.push('\n');
+                    text.push_str(content);
+                }
+                CompletionInput::ToolCall {
+                    name, arguments, ..
+                } => {
+                    text.push_str(name);
+                    text.push('\n');
+                    text.push_str(&arguments.to_string());
+                }
+                CompletionInput::ToolResult { output, .. } => text.push_str(output),
+                CompletionInput::Native { value } => text.push_str(&value.to_string()),
+            }
+        }
+        text
+    }
+
+    /// Replace the estimated total with one counted by the provider's own
+    /// tokenizer: `text_tokens` for [`Self::tokenizable_text`], plus the same
+    /// per-message framing and tool schemas the estimate charged. The pool
+    /// figures stay the estimates selection ran on; the total, which decides
+    /// whether the request fits, is now exact.
+    pub fn settle_exact_count(&mut self, text_tokens: usize, tool_schema_tokens: usize) {
+        self.accounting.total_input = text_tokens
+            .saturating_add(
+                self.messages
+                    .len()
+                    .saturating_mul(super::MESSAGE_FRAMING_TOKENS),
+            )
+            .saturating_add(tool_schema_tokens);
+        self.accounting.accounting_method = Some(TokenAccounting::Exact);
+    }
 }

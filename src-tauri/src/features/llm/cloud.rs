@@ -26,6 +26,18 @@ pub struct CloudLlm {
 }
 
 impl CloudLlm {
+    /// Behind the provider's shared scheduler, so every role on one provider
+    /// queues in one place.
+    pub(crate) fn schedule(self) -> std::sync::Arc<dyn LLMPort> {
+        let scheduler = crate::features::llm::scheduler::cloud_scheduler(self.provider_name());
+        let output_limit = self.max_tokens;
+        std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
+            std::sync::Arc::new(self),
+            scheduler,
+            output_limit,
+        ))
+    }
+
     pub fn new(settings: &LLMSettingsDto, key: String) -> Result<Self> {
         if key.trim().is_empty() || settings.model.trim().is_empty() {
             return Err(AppError::InvalidConfig(
@@ -482,9 +494,6 @@ impl LLMPort for CloudLlm {
     }
     fn max_context_tokens(&self) -> usize {
         self.context_window
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(!self.key.is_empty())

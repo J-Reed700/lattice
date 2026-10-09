@@ -99,9 +99,9 @@ impl ModelLoader {
 
     pub(crate) async fn load(&self, settings: &LLMSettingsDto) -> Result<Arc<dyn LLMPort>> {
         if settings.provider == crate::application::contracts::settings::LLMProvider::Llamacpp {
-            return Ok(Arc::new(crate::features::llm::llama_cpp::LlamaCppLlm::new(
-                settings,
-            )?));
+            return Ok(crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?
+                .schedule()
+                .await);
         }
         if matches!(
             settings.provider,
@@ -124,9 +124,7 @@ impl ModelLoader {
             .ok_or_else(|| {
                 AppError::InvalidConfig(format!("Configure the {name} API key in Chat settings"))
             })?;
-            return Ok(Arc::new(crate::features::llm::cloud::CloudLlm::new(
-                settings, key,
-            )?));
+            return Ok(crate::features::llm::cloud::CloudLlm::new(settings, key)?.schedule());
         }
         let config = Self::generation_config_from_settings(settings);
         crate::application::services::model_selection::select_model(
@@ -147,7 +145,7 @@ impl ModelLoader {
         }
         let llm = crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?;
         if llm.is_ready().await? {
-            Ok(Some(Arc::new(llm)))
+            Ok(Some(llm.schedule().await))
         } else {
             Ok(None)
         }
@@ -754,6 +752,17 @@ mod tests {
                 .expect(if provider == LLMProvider::Auto { 1 } else { 0 })
                 .mount(&server)
                 .await;
+            // The server's scheduler is sized from its `/props`, once, when the
+            // connection is first loaded.
+            Mock::given(method("GET"))
+                .and(path("/props"))
+                .and(header("authorization", "Basic test-credential"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"total_slots": 1})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
             // An uninitialized DB must never be queried for an explicit remote provider.
             let pool = sqlx::sqlite::SqlitePoolOptions::new()
                 .connect_lazy("sqlite::memory:")
@@ -787,7 +796,7 @@ mod tests {
             assert_eq!(response.text, "OK");
             assert_eq!(
                 server.received_requests().await.unwrap().len(),
-                if provider == LLMProvider::Auto { 2 } else { 1 }
+                if provider == LLMProvider::Auto { 3 } else { 2 }
             );
         }
     }

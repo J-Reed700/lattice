@@ -48,7 +48,9 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+};
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
 use crate::shared::error::AppError;
@@ -182,6 +184,10 @@ pub struct Deadline {
     expires_at: Instant,
     total: Duration,
     cancellation: Option<CancellationToken>,
+    /// How the run's model calls queue at the backend.
+    priority: InferencePriority,
+    /// The conversation, so its calls return to the slot holding its prefix.
+    cache_key: Option<String>,
 }
 
 impl Deadline {
@@ -190,7 +196,16 @@ impl Deadline {
             expires_at: Instant::now() + total,
             total,
             cancellation,
+            priority: InferencePriority::Maintenance,
+            cache_key: None,
         }
+    }
+
+    /// Queue this run's model calls at `priority`, keyed to `conversation_id`.
+    pub fn for_conversation(mut self, priority: InferencePriority, conversation_id: &str) -> Self {
+        self.priority = priority;
+        self.cache_key = Some(conversation_id.to_string());
+        self
     }
 
     /// Whether the run may continue at all.
@@ -294,6 +309,9 @@ async fn complete_json(
                 // the model's much larger configured chat-output allowance.
                 max_output_tokens: Some(max_output_tokens),
                 time_budget: Some(remaining),
+                priority: deadline.priority,
+                cancel: deadline.cancellation.clone(),
+                cache_key: deadline.cache_key.clone(),
                 ..Default::default()
             };
             llm.complete(&request).await.map(|response| {
@@ -407,6 +425,18 @@ pub enum CompactionTrigger {
     Automatic,
     /// Consolidate completed turns even before the context window fills.
     Maintenance,
+}
+
+impl CompactionTrigger {
+    /// How the run's model calls queue. A manual `/compact` and the compaction
+    /// a turn waits on before it can generate both have someone watching;
+    /// consolidation after a saved answer does not.
+    pub fn priority(self) -> InferencePriority {
+        match self {
+            Self::Manual | Self::Automatic => InferencePriority::Interactive,
+            Self::Maintenance => InferencePriority::Maintenance,
+        }
+    }
 }
 
 /// One compaction request.

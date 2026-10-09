@@ -2,7 +2,7 @@
 //! This separate pass may raise research questions, never approve an unsupported
 //! claim or turn the model's recollection into evidence of a contradiction.
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, InferencePriority};
 
 mod batch;
 pub(super) use batch::guard_batch;
@@ -55,6 +55,8 @@ async fn questions(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Resul
             reasoning_effort: Some("low".into()),
             max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32),
             no_time_limit: true,
+            priority: InferencePriority::Verification,
+            cache_key: crate::features::learning::lesson_progress::cache_key(),
             ..Default::default()
         };
         let _model_call = crate::features::learning::lesson_progress::model_call();

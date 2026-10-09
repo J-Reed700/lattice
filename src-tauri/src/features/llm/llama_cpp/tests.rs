@@ -1318,3 +1318,54 @@ fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
     let combined = parse_completion(json!({"choices":[{"message":{"role":"assistant","content":"supported","reasoning_content":"contradicted"},"logprobs":probability("contradicted"),"finish_reason":"stop"}]})).unwrap();
     assert!(combined.first_token_logprobs.is_none());
 }
+
+#[test]
+fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
+    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    let request = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Hello".into(),
+        }],
+        assigned_slot: Some(1),
+        ..Default::default()
+    };
+    let body = client.body(&request, true).unwrap();
+    assert_eq!(body["id_slot"], 1);
+    assert_eq!(body["cache_prompt"], true);
+
+    let unscheduled = client
+        .body(
+            &CompletionRequest {
+                assigned_slot: None,
+                ..request
+            },
+            true,
+        )
+        .unwrap();
+    assert!(unscheduled.get("id_slot").is_none());
+}
+
+#[tokio::test]
+async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/props"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"total_slots": 3, "default_generation_settings": {"n_ctx": 32768}}),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"tokens": [1, 2, 3, 4]})))
+        .mount(&server)
+        .await;
+
+    let llm = LlamaCppLlm::new(&settings(server.uri()))
+        .unwrap()
+        .schedule()
+        .await;
+    assert!(llm.counts_tokens_exactly());
+    assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);
+}

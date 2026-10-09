@@ -259,6 +259,7 @@ pub(super) async fn run_turn(
             search_flags,
             &validated_message,
             &context,
+            super::cancellation::turn_token(&turn_id),
         )
         .await
     };
@@ -369,6 +370,7 @@ pub(super) async fn run_turn(
         explorer.is_some(),
         &router_settings,
         &recorder,
+        super::cancellation::turn_token(&turn_id),
     )
     .await?;
     flow_metrics.router_ms = elapsed_ms(router_start);
@@ -772,7 +774,7 @@ pub(super) async fn run_turn(
             }
             Ok(turn)
         },
-        || container.compact_for_turn(conv_id.as_str()),
+        || container.compact_for_turn(conv_id.as_str(), super::cancellation::turn_token(&turn_id)),
     )
     .await;
 

@@ -1,5 +1,57 @@
 //! Assemble role-bearing conversation context once for provider adapters.
-use crate::application::ports::llm_port::CompletionInput;
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, InferencePriority};
+use crate::application::ports::LLMPort;
+use crate::shared::error::{AppError, Result};
+use tokio_util::sync::CancellationToken;
+
+/// How a plain-text model call queues at the backend.
+#[derive(Debug, Clone, Default)]
+pub struct TextCall {
+    pub priority: InferencePriority,
+    pub cancel: Option<CancellationToken>,
+    pub cache_key: Option<String>,
+}
+
+impl TextCall {
+    pub fn at(priority: InferencePriority) -> Self {
+        Self {
+            priority,
+            ..Default::default()
+        }
+    }
+}
+
+/// Plain text for `prompt` with "Role: content" `context`, queued as `call`
+/// says.
+///
+/// A typed request is what carries a priority and a cancellation to the
+/// backend's scheduler, so typed backends get one; the string API has nowhere
+/// to put either and is left for backends without typed completions.
+pub async fn complete_text(
+    llm: &dyn LLMPort,
+    prompt: &str,
+    context: &[String],
+    call: TextCall,
+) -> Result<String> {
+    if !llm.supports_typed_completions() {
+        return llm.generate(prompt, context, None).await;
+    }
+    let response = llm
+        .complete(&CompletionRequest {
+            input: from_context("", context, prompt),
+            priority: call.priority,
+            cancel: call.cancel,
+            cache_key: call.cache_key,
+            ..Default::default()
+        })
+        .await?;
+    if !response.tool_calls.is_empty() {
+        return Err(AppError::InvalidState(
+            "Unexpected tool call in text generation".into(),
+        ));
+    }
+    Ok(response.text)
+}
 
 /// Explicit context instructions already reflect conversation > space > global
 /// precedence. Use the default only when context supplies no system instruction.
@@ -60,6 +112,69 @@ fn add_instruction(instructions: &mut Vec<String>, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::CompletionResponse;
+    use async_trait::async_trait;
+
+    /// Records the typed request it was sent.
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Option<CompletionRequest>>);
+
+    #[async_trait]
+    impl LLMPort for Recorder {
+        fn supports_typed_completions(&self) -> bool {
+            true
+        }
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            *self.0.lock().unwrap() = Some(request.clone());
+            Ok(CompletionResponse {
+                text: "answer".into(),
+                ..Default::default()
+            })
+        }
+        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
+            panic!("a typed backend must get a typed request")
+        }
+        async fn generate_streaming(
+            &self,
+            _: &str,
+            _: &[String],
+            _: Option<Vec<String>>,
+        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
+            panic!("not used")
+        }
+        fn model_name(&self) -> &str {
+            "recorder"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plain_text_call_reaches_a_typed_backend_with_its_priority() {
+        let llm = Recorder::default();
+        let text = complete_text(
+            &llm,
+            "Label this",
+            &["System: JSON only".into()],
+            TextCall::at(InferencePriority::Maintenance),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "answer");
+        let sent = llm.0.lock().unwrap().clone().unwrap();
+        assert_eq!(sent.priority, InferencePriority::Maintenance);
+        assert_eq!(
+            messages(sent.input),
+            vec![
+                ("system".into(), "JSON only".into()),
+                ("user".into(), "Label this".into()),
+            ]
+        );
+    }
 
     fn messages(input: Vec<CompletionInput>) -> Vec<(String, String)> {
         input

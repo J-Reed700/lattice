@@ -134,8 +134,13 @@ fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
 /// Runs at most one pass. A successful job (including a partial commit or no-op)
 /// is not permission to generate: the caller must reassemble and verify that no
 /// unprocessed source is missing. Errors leave the transcript intact and prevent
-/// generation from using the incomplete pre-compaction plan.
-pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> Result<()> {
+/// generation from using the incomplete pre-compaction plan. `cancel` is the
+/// turn's stop button.
+pub async fn compact_for_turn(
+    container: &Container,
+    conversation_id: &str,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<()> {
     let job = build_job(container, None).await?.ok_or_else(|| {
         AppError::ServiceNotAvailable(
             "No utility model is available to compact this conversation.".into(),
@@ -147,6 +152,7 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
             conversation_id,
             CompactionRequest {
                 trigger: CompactionTrigger::Automatic,
+                cancellation: Some(cancel),
                 ..Default::default()
             },
         )
@@ -172,19 +178,15 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
 }
 
 /// Consolidation follows a committed answer and cannot change its success.
-/// The shared job slots coalesce queued requests through the durable watermark.
+///
+/// Its model calls go out at maintenance priority, so the backend's scheduler
+/// keeps them behind the user's next turn and out of the slot it holds for
+/// interactive work. The conversation's compaction slot coalesces queued
+/// requests through the durable watermark: a consolidation waiting behind
+/// another of the same conversation finds nothing left to do.
 pub fn consolidate_after_turn(container: Container, conversation_id: String) {
     let cancel = crate::shared::runtime::background::cancellation_token();
     crate::shared::runtime::background::spawn(async move {
-        static MAINTENANCE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-        let permit = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return,
-            permit = MAINTENANCE.acquire() => permit,
-        };
-        let Ok(_permit) = permit else {
-            return;
-        };
         let result: Result<()> = async {
             if !container
                 .get_settings_use_case()
@@ -246,6 +248,26 @@ mod tests {
 
         assert_eq!(pool, turn_pool);
         assert!(pool < empty_prompt_pool, "{pool} vs {empty_prompt_pool}");
+    }
+
+    /// The one-at-a-time maintenance semaphore kept consolidation from crowding
+    /// out the next turn. The scheduler does that now, so consolidation must
+    /// queue as upkeep — while compaction the user is waiting on must not.
+    #[test]
+    fn consolidation_queues_as_upkeep_and_a_waited_on_compaction_does_not() {
+        use crate::application::ports::llm_port::InferencePriority;
+        assert_eq!(
+            CompactionTrigger::Maintenance.priority(),
+            InferencePriority::Maintenance
+        );
+        assert_eq!(
+            CompactionTrigger::Automatic.priority(),
+            InferencePriority::Interactive
+        );
+        assert_eq!(
+            CompactionTrigger::Manual.priority(),
+            InferencePriority::Interactive
+        );
     }
 
     /// A laptop sidecar takes minutes per extraction; the remote default

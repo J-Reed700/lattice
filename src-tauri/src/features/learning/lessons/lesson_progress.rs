@@ -15,6 +15,9 @@ struct State {
     completed: u32,
     activity: LearningGenerationActivity,
     active_model_calls: usize,
+    /// The course this job prepares; its model calls share the course's
+    /// sources as a prompt prefix.
+    program_id: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -24,6 +27,22 @@ tokio::task_local! { static CURRENT: Progress; }
 
 pub(in crate::features::learning) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
+}
+
+/// The slot-affinity key for this job's model calls: its course, so calls
+/// over the same sources return to the llama-server slot that holds them.
+pub(in crate::features::learning) fn cache_key() -> Option<String> {
+    CURRENT
+        .try_with(|progress| {
+            progress
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .program_id
+                .clone()
+        })
+        .ok()
+        .flatten()
 }
 
 pub(in crate::features::learning) fn stage(message: impl Into<String>) {
@@ -236,6 +255,7 @@ pub(in crate::features::learning) async fn run<T>(
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         state.completed = completed;
         state.activity = job.activity.unwrap_or_default();
+        state.program_id = Some(job.program_id.clone());
         // A new run starts by reopening references, even when the prior run
         // stopped in that same phase. Do not count time with the app closed.
         state.activity.phase_started_at = 0;

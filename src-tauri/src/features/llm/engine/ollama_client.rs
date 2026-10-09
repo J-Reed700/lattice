@@ -21,32 +21,27 @@ use crate::features::llm::engine::types::*;
 use crate::shared::error::{AppError, Result};
 use crate::shared::http::reqwest_client_builder;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Client, StatusCode,
 };
 use serde_json;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::timeout;
 use tokio_stream::Stream;
 use tracing::{debug, error, info, warn};
 
 const DEFAULT_OLLAMA_MAX_CONCURRENCY: usize = 3;
 
-fn ollama_max_concurrency() -> usize {
+/// Requests in flight to Ollama at once; its scheduler admits no more.
+pub(crate) fn ollama_max_concurrency() -> usize {
     std::env::var("RECALL_OLLAMA_MAX_CONCURRENCY")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_OLLAMA_MAX_CONCURRENCY)
 }
-
-static OLLAMA_REQUEST_SEMAPHORE: Lazy<Arc<Semaphore>> =
-    Lazy::new(|| Arc::new(Semaphore::new(ollama_max_concurrency())));
 
 /// Custom error types for Ollama client.
 #[derive(Debug, thiserror::Error)]
@@ -298,10 +293,6 @@ impl OllamaClient {
         let body = self.typed_chat_request(request)?;
         let budget = request.wall_clock_budget();
         let call = async {
-            let _permit = self
-                .acquire_request_permit("typed_chat")
-                .await
-                .map_err(|error| OllamaClientError::Api(error.to_string()))?;
             let http_request = self
                 .client
                 .post(format!("{}/api/chat", self.base_url))
@@ -406,7 +397,6 @@ impl OllamaClient {
         body.stream = true;
         let budget = request.wall_clock_budget();
         let call = async {
-            let _permit = self.acquire_request_permit("typed_chat_stream").await?;
             let response = self
                 .circuit_breaker
                 .call(async {
@@ -597,24 +587,6 @@ impl OllamaClient {
             AppError::ServiceNotAvailable("Ollama typed completion exceeded its time budget".into())
         })?;
         result
-    }
-
-    async fn acquire_request_permit(&self, operation: &str) -> Result<OwnedSemaphorePermit> {
-        let permit = OLLAMA_REQUEST_SEMAPHORE
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                AppError::ServiceNotAvailable(
-                    "Ollama concurrency gate is shutting down".to_string(),
-                )
-            })?;
-        debug!(
-            operation = operation,
-            available_permits = OLLAMA_REQUEST_SEMAPHORE.available_permits(),
-            "Acquired Ollama request permit"
-        );
-        Ok(permit)
     }
 
     /// Create a new Ollama client with default timeouts.
@@ -861,7 +833,6 @@ impl OllamaClient {
         }
 
         request.stream = false;
-        let _permit = self.acquire_request_permit("generate_raw").await?;
 
         debug!("Generating with model: {}", request.model);
 
@@ -998,7 +969,6 @@ impl OllamaClient {
         mut request: OllamaGenerateRequest,
     ) -> Result<impl futures::Stream<Item = Result<OllamaStreamResponse>> + '_> {
         request.stream = true;
-        let request_permit = self.acquire_request_permit("generate_stream_raw").await?;
 
         debug!(
             "Starting streaming generation with model: {}",
@@ -1053,7 +1023,6 @@ impl OllamaClient {
         };
 
         let stream = async_stream::stream! {
-            let _request_permit = request_permit;
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut has_content = false;
@@ -1263,10 +1232,6 @@ impl OllamaClient {
         use crate::shared::resilience::{retry_with_backoff, RetryConfig};
 
         debug!("Generating chat with model: {}", self.model_name);
-        let _permit = self
-            .acquire_request_permit("chat")
-            .await
-            .map_err(LLMError::from)?;
 
         let ollama_messages: Vec<OllamaChatMessage> = messages
             .into_iter()
@@ -1410,10 +1375,6 @@ impl OllamaClient {
         };
 
         debug!("Starting streaming chat with model: {}", self.model_name);
-        let request_permit = self
-            .acquire_request_permit("chat_stream")
-            .await
-            .map_err(LLMError::from)?;
 
         let ollama_messages: Vec<OllamaChatMessage> = messages
             .into_iter()
@@ -1507,7 +1468,6 @@ impl OllamaClient {
         };
 
         let stream = async_stream::stream! {
-            let _request_permit = request_permit;
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut has_content = false;
@@ -1821,12 +1781,6 @@ impl LLMPort for OllamaClient {
         128_000
     }
 
-    fn count_tokens(&self, text: &str) -> usize {
-        // Rough approximation: 1 token ≈ 4 characters
-        // This is a simple heuristic and should be replaced with proper tokenization
-        text.len().div_ceil(4)
-    }
-
     async fn is_ready(&self) -> crate::shared::error::Result<bool> {
         self.health_check_with_result().await
     }
@@ -1857,9 +1811,6 @@ impl LLMPort for OllamaClient {
         use crate::features::llm::engine::types::{
             OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool,
         };
-        let request_permit = self
-            .acquire_request_permit("generate_streaming_with_tools")
-            .await?;
 
         fn parse_context_to_chat_message(
             entry: &str,
@@ -1992,7 +1943,6 @@ impl LLMPort for OllamaClient {
 
         let chunk_timeout = self.stream_timeout;
         let stream = async_stream::stream! {
-            let _request_permit = request_permit;
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut has_content = false;
@@ -2127,6 +2077,7 @@ impl LLMPort for OllamaClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {

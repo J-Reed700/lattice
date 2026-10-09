@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<
@@ -47,6 +48,63 @@ pub type OptionalLlmLoader = std::sync::Arc<
 
 /// Wall-clock allowance for one completion, across retries, when the caller sets none.
 pub const DEFAULT_COMPLETION_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
+
+/// Characters per token assumed until a backend has reported real usage.
+/// English prose tokenizes near four; code, numbers and other scripts run
+/// lower, which is what calibration against reported usage corrects.
+pub const DEFAULT_CHARS_PER_TOKEN: f64 = 4.0;
+
+/// Tokens in `chars` characters at `chars_per_token`, rounded up.
+pub fn tokens_for_chars(chars: usize, chars_per_token: f64) -> usize {
+    if chars == 0 {
+        return 0;
+    }
+    let ratio = if chars_per_token.is_finite() && chars_per_token > 0.0 {
+        chars_per_token
+    } else {
+        DEFAULT_CHARS_PER_TOKEN
+    };
+    (chars as f64 / ratio).ceil() as usize
+}
+
+/// Estimated tokens in `text`, for code with no model port in reach. With a
+/// port, use [`LLMPort::count_tokens`]: it is calibrated against the backend.
+pub fn estimate_tokens(text: &str) -> usize {
+    tokens_for_chars(text.chars().count(), DEFAULT_CHARS_PER_TOKEN)
+}
+
+/// Characters a `tokens` budget can safely hold: three quarters of what the
+/// ratio predicts, so a character budget under-fills on densely tokenized text
+/// rather than overflowing the window it was derived from.
+pub fn chars_within_tokens(tokens: usize, chars_per_token: f64) -> usize {
+    const UNDER_FILL: f64 = 0.75;
+    let ratio = if chars_per_token.is_finite() && chars_per_token > 0.0 {
+        chars_per_token
+    } else {
+        DEFAULT_CHARS_PER_TOKEN
+    };
+    (tokens as f64 * ratio * UNDER_FILL) as usize
+}
+
+/// Who is waiting on a model call. When a backend is busy, a higher priority
+/// is admitted first; equal priorities are served in arrival order.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum InferencePriority {
+    /// Batch generation nobody is watching token by token: lessons,
+    /// assessments, practice, study material.
+    #[default]
+    Background,
+    /// Upkeep that keeps later turns good: memory consolidation, summaries,
+    /// corpus labels, chat starters.
+    Maintenance,
+    /// Checking claims an answer or a lesson already made.
+    Verification,
+    /// A person is waiting on this call: a chat turn and everything inside it.
+    Interactive,
+}
 
 /// Tool definition for LLM function calling.
 ///
@@ -262,18 +320,19 @@ pub trait LLMPort: Send + Sync {
     /// ```
     fn max_context_tokens(&self) -> usize;
 
+    /// Characters per token this backend's tokenizer averages.
+    ///
+    /// Starts at [`DEFAULT_CHARS_PER_TOKEN`]; a scheduled backend calibrates it
+    /// against the prompt tokens the server reports.
+    fn chars_per_token(&self) -> f64 {
+        DEFAULT_CHARS_PER_TOKEN
+    }
+
     /// Estimate the number of tokens in a text string.
     ///
-    /// Used for context window management. This is an approximation
-    /// and may not match exact tokenization.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - The text to count tokens for
-    ///
-    /// # Returns
-    ///
-    /// Estimated token count
+    /// Used for context window management: `ceil(chars / chars_per_token)`.
+    /// An approximation; [`Self::count_tokens_exact`] asks the backend's own
+    /// tokenizer where one is reachable.
     ///
     /// # Example
     ///
@@ -281,7 +340,24 @@ pub trait LLMPort: Send + Sync {
     /// let token_count = llm.count_tokens("Hello world");
     /// assert!(token_count > 0);
     /// ```
-    fn count_tokens(&self, text: &str) -> usize;
+    fn count_tokens(&self, text: &str) -> usize {
+        tokens_for_chars(text.chars().count(), self.chars_per_token())
+    }
+
+    /// Tokens in `text` as the backend's own tokenizer counts them, where it
+    /// can be asked; otherwise the estimate. [`Self::counts_tokens_exactly`]
+    /// says which.
+    ///
+    /// For budget decisions that are final, not for every count: it may cost
+    /// a round trip to the server.
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok(self.count_tokens(text))
+    }
+
+    /// Whether [`Self::count_tokens_exact`] reaches a real tokenizer.
+    fn counts_tokens_exactly(&self) -> bool {
+        false
+    }
 
     /// Check if the LLM service is ready and operational.
     ///
@@ -458,6 +534,23 @@ pub struct CompletionRequest {
     /// them ignore the flag and return `None`.
     #[serde(default)]
     pub want_logprobs: bool,
+    /// Who is waiting on this call. The backend's scheduler admits higher
+    /// priorities first and keeps a slot free for interactive work.
+    #[serde(default)]
+    pub priority: InferencePriority,
+    /// Fires when the caller no longer wants the answer. A queued request
+    /// leaves the queue and an in-flight one is aborted, both with an error.
+    #[serde(skip)]
+    pub cancel: Option<CancellationToken>,
+    /// Requests sharing a key share a prompt prefix (one conversation, one
+    /// course). A llama-server backend sends them to the slot that last served
+    /// the key, so the server reuses that prefix from its KV cache.
+    #[serde(default)]
+    pub cache_key: Option<String>,
+    /// The llama-server slot the backend's scheduler admitted this request to.
+    /// Set by the scheduler on the copy it forwards; callers leave it unset.
+    #[serde(skip)]
+    pub assigned_slot: Option<u32>,
 }
 
 impl CompletionRequest {
@@ -604,6 +697,30 @@ mod tests {
             zero.effective_max_output_tokens(provider_limit),
             provider_limit
         );
+    }
+
+    #[test]
+    fn interactive_work_outranks_verification_maintenance_and_background() {
+        use InferencePriority::*;
+        assert!(Interactive > Verification);
+        assert!(Verification > Maintenance);
+        assert!(Maintenance > Background);
+        assert_eq!(CompletionRequest::default().priority, Background);
+    }
+
+    #[test]
+    fn token_estimates_round_up_and_character_budgets_err_short() {
+        assert_eq!(tokens_for_chars(0, 4.0), 0);
+        assert_eq!(tokens_for_chars(1, 4.0), 1);
+        assert_eq!(tokens_for_chars(9, 3.0), 3);
+        assert_eq!(
+            tokens_for_chars(10, 0.0),
+            3,
+            "a broken ratio falls back to the default"
+        );
+        assert_eq!(estimate_tokens("héllo wörld!"), 3, "characters, not bytes");
+        assert_eq!(chars_within_tokens(1_000, 4.0), 3_000);
+        assert_eq!(chars_within_tokens(1_000, 3.0), 2_250);
     }
 
     #[test]

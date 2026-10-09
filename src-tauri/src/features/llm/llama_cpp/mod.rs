@@ -116,7 +116,11 @@ impl LlamaCppLlm {
             .iter()
             .map(|message| message.to_string().chars().count())
             .sum();
-        let prompt_tokens = prompt_chars.div_ceil(4) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR;
+        let prompt_tokens = crate::application::ports::llm_port::tokens_for_chars(
+            prompt_chars,
+            crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+        ) * ESTIMATE_SAFETY
+            / ESTIMATE_SAFETY_DIVISOR;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
         let allowed = requested.min(room).max(MIN_OUTPUT_TOKENS);
         if allowed < requested {
@@ -192,7 +196,40 @@ impl LlamaCppLlm {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}}),
             );
         }
+        // The scheduler's slot: a conversation returns to the slot whose KV
+        // cache holds its prefix. The retry path may still turn reuse off.
+        if let Some(slot) = request.assigned_slot {
+            body.insert("id_slot".into(), json!(slot));
+            body.insert("cache_prompt".into(), json!(true));
+        }
         Ok(Value::Object(body))
+    }
+
+    /// The server's root URL, without the `/v1` the chat routes live under.
+    fn server_root(&self) -> &str {
+        self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url)
+    }
+
+    /// This server's shared scheduler, and an exact tokenizer when it answers
+    /// like a llama-server.
+    pub(crate) async fn schedule(self) -> std::sync::Arc<dyn LLMPort> {
+        use crate::features::llm::scheduler::{
+            remote_llama_cpp_scheduler, ScheduledLlm, ServerTokenizer,
+        };
+        let (scheduler, is_llama_server) = remote_llama_cpp_scheduler(
+            &self.client,
+            self.server_root(),
+            self.settings.context_window as usize,
+        )
+        .await;
+        let tokenizer =
+            is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
+        let output_limit = self.settings.max_tokens;
+        let scheduled = ScheduledLlm::new(std::sync::Arc::new(self), scheduler, output_limit);
+        std::sync::Arc::new(match tokenizer {
+            Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
+            None => scheduled,
+        })
     }
 
     fn legacy_request(
@@ -335,9 +372,6 @@ impl LLMPort for LlamaCppLlm {
     }
     fn max_context_tokens(&self) -> usize {
         self.settings.context_window as usize
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
     }
     async fn is_ready(&self) -> Result<bool> {
         let response = self

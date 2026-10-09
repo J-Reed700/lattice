@@ -31,7 +31,38 @@ type EmbeddingLoader = Arc<
 
 // IDs are durable UUIDs. Register before spawning so a queued job can be cancelled.
 static ACTIVE: LazyLock<Mutex<HashMap<String, CancellationToken>>> = LazyLock::new(Mutex::default);
-static GENERATION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// One preparation per course at a time. Jobs for a course share its source
+/// snapshots and accepted outline: each one refreshes and re-embeds the same
+/// sources and seeds the same snapshot, and two at once would do that work
+/// twice over the same rows. Different courses are independent, and how their
+/// model calls share the backend is the inference scheduler's decision, not
+/// this lock's.
+static PREPARING: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Mutex::default);
+
+/// A course's single-flight lock, created on first use.
+fn course_lock(program_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    PREPARING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(program_id.to_string())
+        .or_default()
+        .clone()
+}
+
+/// Forget a course's lock once nothing holds or waits on it. A count of two
+/// is the map and the caller; anyone arriving later makes a fresh one.
+fn release_course_lock(program_id: &str, lock: Arc<tokio::sync::Mutex<()>>) {
+    let mut preparing = PREPARING.lock().unwrap_or_else(|e| e.into_inner());
+    if preparing
+        .get(program_id)
+        .is_some_and(|existing| Arc::strong_count(existing) == 2)
+    {
+        preparing.remove(program_id);
+    }
+    drop(lock);
+}
 
 struct Registration(String);
 impl Drop for Registration {
@@ -106,7 +137,26 @@ impl LessonGenerationWorker {
 
     async fn run(self, job_id: &str, cancel: CancellationToken) {
         let repo = LearningCurriculumRepository::new(self.pool.clone());
-        let Some(Ok(_permit)) = until_cancelled(&cancel, GENERATION.acquire()).await else {
+        let program_id = match repo.job(job_id).await {
+            Ok(job) => job.program_id,
+            Err(error) => {
+                tracing::warn!(job_id, %error, "Could not read saved lesson work before preparing it");
+                return;
+            }
+        };
+        let course = course_lock(&program_id);
+        self.run_for_course(&repo, job_id, &course, cancel).await;
+        release_course_lock(&program_id, course);
+    }
+
+    async fn run_for_course(
+        &self,
+        repo: &LearningCurriculumRepository,
+        job_id: &str,
+        course: &tokio::sync::Mutex<()>,
+        cancel: CancellationToken,
+    ) {
+        let Some(_preparing) = until_cancelled(&cancel, course.lock()).await else {
             return;
         };
         let result = async {
@@ -124,9 +174,9 @@ impl LessonGenerationWorker {
             match until_cancelled(
                 &cancel,
                 crate::features::learning::lesson_progress::run(
-                    &repo,
+                    repo,
                     job_id,
-                    self.prepare(&repo, job_id),
+                    self.prepare(repo, job_id),
                 ),
             )
             .await
@@ -395,6 +445,40 @@ async fn until_cancelled<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old one-job-at-a-time semaphore did two things: it limited model
+    /// use, which is now the inference scheduler's, and it kept two
+    /// preparations of one course off the same sources and snapshot, which
+    /// this lock still does — for that course only.
+    #[tokio::test]
+    async fn preparations_of_one_course_never_overlap_and_other_courses_do_not_wait() {
+        let course = format!("course-{}", uuid::Uuid::new_v4());
+        let other_course = format!("course-{}", uuid::Uuid::new_v4());
+
+        let first = course_lock(&course);
+        let preparing = first.lock().await;
+
+        let second = course_lock(&course);
+        assert!(
+            second.try_lock().is_err(),
+            "a second preparation of the same course waits"
+        );
+        let other = course_lock(&other_course);
+        assert!(
+            other.try_lock().is_ok(),
+            "another course is not held up by this one"
+        );
+        release_course_lock(&other_course, other);
+
+        drop(preparing);
+        assert!(second.try_lock().is_ok());
+        release_course_lock(&course, second);
+        release_course_lock(&course, first);
+        assert!(
+            !PREPARING.lock().unwrap().contains_key(&course),
+            "an idle course's lock is forgotten"
+        );
+    }
 
     #[tokio::test]
     async fn cancellation_drops_inflight_work_before_returning() {

@@ -44,18 +44,10 @@ use super::ClaimVerdict;
 /// Wall-clock ceiling for all judging in one turn.
 ///
 /// Verification runs after the answer is on screen, so this bounds background
-/// work rather than the reader's wait. Ninety seconds of one-token calls, three
-/// in flight, covers a long research answer on the local utility model.
+/// work rather than the reader's wait. Ninety seconds of one-token calls, run
+/// side by side as far as the backend's slots allow, covers a long research
+/// answer on the local utility model.
 pub(super) const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(90);
-
-/// Claims judged side by side.
-///
-/// The local sidecar serves several slots over one KV cache (llama.cpp's
-/// auto `n_parallel`, four on the pinned build), and decoding is memory-bound,
-/// so three requests in flight finish well ahead of three in a row. A
-/// single-slot remote server simply queues them, which costs nothing over the
-/// sequential path.
-pub(super) const MAX_CONCURRENT_CALLS: usize = 3;
 
 /// Output room for the model's reasoning followed by the public verdict,
 /// factual explanation, and exact source quote. Reasoning tokens count toward
@@ -90,7 +82,6 @@ pub(super) enum Evidence {
 pub(super) struct ClaimJudge {
     llm: Arc<dyn LLMPort>,
     time_budget: Duration,
-    concurrency: usize,
     /// How the verdict is decoded. Greedy unless the user says otherwise.
     sampling: SamplingOverride,
     max_output_tokens: u32,
@@ -101,7 +92,6 @@ impl ClaimJudge {
         Self {
             llm,
             time_budget: DEFAULT_TIME_BUDGET,
-            concurrency: MAX_CONCURRENT_CALLS,
             // Deterministic by default, so a judge built anywhere in the code
             // cannot quietly inherit a creative model's sampling: measured on
             // the bundled 9B at the chat default of 0.7, one claim against one
@@ -129,21 +119,18 @@ impl ClaimJudge {
         self
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn with_concurrency(mut self, concurrency: usize) -> Self {
-        self.concurrency = concurrency.max(1);
-        self
-    }
-
     pub(super) fn model_name(&self) -> &str {
         self.llm.model_name()
     }
 
     /// Judge each `(claim index, claim text, evidence)`, keyed back by index.
     ///
-    /// Every request gets an entry. Claims run side by side against one
-    /// deadline; one that finds no time left when its turn comes is skipped
-    /// rather than started, so a slow model never overruns by a whole call.
+    /// Every request gets an entry. Every claim is submitted at once against
+    /// one deadline, and the backend's scheduler decides how many run side by
+    /// side: at verification priority, behind the user's next turn and never
+    /// in the slot kept for it. A claim still queued when the deadline passes
+    /// is never started; one running is cut off, so judging never outlives
+    /// its budget.
     pub(super) async fn judge_claims(
         &self,
         requests: &[(usize, &str, ClaimEvidence)],
@@ -162,7 +149,7 @@ impl ClaimJudge {
                 async move { (*index, self.judge_one(claim, evidence, deadline).await) }.boxed()
             })
             .collect();
-        let mut calls = futures::stream::iter(calls).buffer_unordered(self.concurrency);
+        let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
         while let Some((index, judgment)) = calls.next().await {
             judgments.insert(index, judgment);
         }

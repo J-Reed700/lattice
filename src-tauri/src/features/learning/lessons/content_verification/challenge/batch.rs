@@ -48,7 +48,10 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
     let response = llm.complete_with_retry_progress(&CompletionRequest {
         input:vec![CompletionInput::Message {role:"system".into(),content:system},CompletionInput::Message {role:"user".into(),content:prompt}],
         json_schema:Some(json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}})),
-        sampling:Some(SamplingOverride::deterministic()),reasoning_effort:Some("low".into()),max_output_tokens:Some(remaining.min(u32::MAX as usize) as u32),no_time_limit:true,..Default::default()
+        sampling:Some(SamplingOverride::deterministic()),reasoning_effort:Some("low".into()),max_output_tokens:Some(remaining.min(u32::MAX as usize) as u32),no_time_limit:true,
+        priority: crate::application::ports::llm_port::InferencePriority::Verification,
+        cache_key: crate::features::learning::lesson_progress::cache_key(),
+        ..Default::default()
     }, &|text| {
         crate::features::learning::lesson_progress::received(&text);
         Ok(())

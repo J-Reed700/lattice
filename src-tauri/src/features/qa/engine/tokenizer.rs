@@ -3,9 +3,8 @@
 /// Provides approximate token counting for context management.
 /// Uses a simple heuristic: ~4 characters per token (typical for English text).
 /// This is faster than running a full tokenizer and sufficient for context budgeting.
+use crate::application::ports::llm_port::{estimate_tokens, DEFAULT_CHARS_PER_TOKEN};
 use crate::features::qa::engine::types::QAError;
-
-const CHARS_PER_TOKEN: f32 = 4.0;
 
 /// Count approximate tokens in text
 ///
@@ -28,14 +27,7 @@ const CHARS_PER_TOKEN: f32 = 4.0;
 /// assert!(count > 0);
 /// ```
 pub fn count_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-
-    // Simple heuristic: 4 characters per token
-    // This is reasonably accurate for English text and very fast
-    let char_count = text.chars().count();
-    ((char_count as f32) / CHARS_PER_TOKEN).ceil() as usize
+    estimate_tokens(text)
 }
 
 /// Truncate text to fit within token limit
@@ -80,7 +72,7 @@ pub fn truncate_to_tokens(
         return Ok(text.to_string());
     }
 
-    let max_chars = (max_tokens as f32 * CHARS_PER_TOKEN) as usize;
+    let max_chars = (max_tokens as f64 * DEFAULT_CHARS_PER_TOKEN) as usize;
 
     let chars: Vec<char> = text.chars().collect();
     let truncate_at = max_chars.min(chars.len());

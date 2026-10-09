@@ -20,7 +20,7 @@ use crate::application::ports::conversation_memory::{
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
     BudgetAllocation, ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence,
-    TokenAccounting,
+    TokenAccounting, TokenCounter,
 };
 use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
@@ -264,23 +264,25 @@ pub async fn build_memory_plan_for_query(
             details: "Memory changed during prompt preparation; retry".into(),
         });
     }
-    let mut plan = assembler.assemble_with_memory(
-        &ContextRequest {
-            conversation_id,
-            system_policy,
-            current_input,
-            tool_schema_tokens,
-            snapshot: Some(&snapshot),
-            recent: &recent,
-            processed_through_sequence: watermark,
-            recalled: recalled.passages(),
-            retrieval: recalled.diagnostics.clone(),
-            recall_status: Some(recalled.availability().note()),
-            document_evidence,
-            capacity,
-        },
-        prepared.as_ref(),
-    )?;
+    let request = ContextRequest {
+        conversation_id,
+        system_policy,
+        current_input,
+        tool_schema_tokens,
+        snapshot: Some(&snapshot),
+        recent: &recent,
+        processed_through_sequence: watermark,
+        recalled: recalled.passages(),
+        retrieval: recalled.diagnostics.clone(),
+        recall_status: Some(recalled.availability().note()),
+        document_evidence,
+        capacity,
+    };
+    let plan = assembler.assemble_with_memory(&request, prepared.as_ref())?;
+    let mut plan = settle_exact_count(llm, plan, tool_schema_tokens, |counter| {
+        ContextAssembler::new(counter).assemble_with_memory(&request, prepared.as_ref())
+    })
+    .await?;
 
     // The assembler reports what it dropped; it cannot report what it never saw.
     // Source below the candidate window is unprocessed and has nothing standing
@@ -292,6 +294,62 @@ pub async fn build_memory_plan_for_query(
         plan,
         recall_note: recalled.availability().note(),
     }))
+}
+
+/// Count the finished plan with the backend's own tokenizer, where it has one.
+///
+/// Selection runs on the calibrated estimate, because it counts every
+/// candidate; whether the request fits is the one decision that is final, so
+/// that is made on an exact count. When the estimate read low and the plan no
+/// longer fits, it is planned again once with the estimate scaled by what the
+/// tokenizer measured, and that plan is counted exactly in turn. An
+/// unreachable tokenizer leaves the estimated plan as it was.
+async fn settle_exact_count(
+    llm: &Arc<dyn LLMPort>,
+    plan: ContextPlan,
+    tool_schema_tokens: usize,
+    replan: impl Fn(TokenCounter) -> Result<ContextPlan>,
+) -> Result<ContextPlan> {
+    if !llm.counts_tokens_exactly() {
+        return Ok(plan);
+    }
+    let measure = |plan: &ContextPlan| {
+        let text = plan.tokenizable_text();
+        let estimated = llm.count_tokens(&text);
+        async move { (llm.count_tokens_exact(&text).await, estimated) }
+    };
+    let (exact, estimated) = measure(&plan).await;
+    let exact = match exact {
+        Ok(exact) => exact,
+        Err(error) => {
+            tracing::warn!(%error, "Exact token count unavailable; keeping the estimated plan");
+            return Ok(plan);
+        }
+    };
+    let mut settled = plan.clone();
+    settled.settle_exact_count(exact, tool_schema_tokens);
+    if settled.accounting.fits() || exact <= estimated {
+        return Ok(settled);
+    }
+
+    let scale = exact as f64 / estimated.max(1) as f64;
+    tracing::info!(
+        estimated,
+        exact,
+        "The estimate read low and the plan did not fit; planning again at the measured ratio"
+    );
+    let scaled: TokenCounter = {
+        let llm = Arc::clone(llm);
+        Arc::new(move |text: &str| (llm.count_tokens(text) as f64 * scale).ceil() as usize)
+    };
+    let mut replanned = replan(scaled)?;
+    match measure(&replanned).await {
+        (Ok(exact), _) => replanned.settle_exact_count(exact, tool_schema_tokens),
+        (Err(error), _) => {
+            tracing::warn!(%error, "Exact token count unavailable for the re-plan");
+        }
+    }
+    Ok(replanned)
 }
 
 /// The newest messages, oldest first, as assembler candidates, and whether

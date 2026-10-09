@@ -46,9 +46,15 @@ engine/
    and waits for `GET /health`. `sidecar_pool` hands an identical request the
    already-running process, so roles pointing at one GGUF share one server; the
    process is killed when its last user drops it.
-3. `LLMConfig::Ollama { .. }` returns an `OllamaClient`. Concurrent Ollama
-   requests are capped by `RECALL_OLLAMA_MAX_CONCURRENCY` (default 3).
-4. `create_llm_with_fallback` returns a `NoOpLLMClient` instead of an error, so
+3. `LLMConfig::Ollama { .. }` returns an `OllamaClient`.
+4. Every port a role gets is wrapped in `scheduler::ScheduledLlm`, one
+   `InferenceScheduler` per backend: per local llama-server (sized from its
+   `/props` slots and `--ctx-size`), per remote llama.cpp endpoint, per Ollama
+   endpoint (`RECALL_OLLAMA_MAX_CONCURRENCY`, default 3) and per cloud
+   provider (8). It admits by priority, keeps one slot for interactive work,
+   pins llama-server requests to a slot by cache key, aborts on cancellation,
+   and calibrates the backend's token estimate from reported usage.
+5. `create_llm_with_fallback` returns a `NoOpLLMClient` instead of an error, so
    the app still starts without a usable model.
 
 Everything above returns `Arc<dyn LLMPort>` (`application/ports/llm_port.rs`),

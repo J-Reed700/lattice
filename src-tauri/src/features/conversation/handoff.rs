@@ -8,7 +8,9 @@ use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
 use super::commands as conversation;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, SamplingOverride};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+};
 use crate::application::ports::LLMPort;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::interfaces::di::Container;
@@ -114,7 +116,11 @@ const SYSTEM: &str = "You summarize conversations faithfully and concisely. You 
 const CALL_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
 const CALL_MAX_OUTPUT_TOKENS: u32 = 2_048;
 
-async fn ask_model(llm: &dyn LLMPort, prompt: String) -> Result<String, ApiError> {
+async fn ask_model(
+    llm: &dyn LLMPort,
+    prompt: String,
+    conversation_id: &str,
+) -> Result<String, ApiError> {
     let text = if llm.supports_typed_completions() {
         let request = CompletionRequest {
             input: vec![
@@ -132,6 +138,11 @@ async fn ask_model(llm: &dyn LLMPort, prompt: String) -> Result<String, ApiError
             sampling: Some(SamplingOverride::deterministic()),
             max_output_tokens: Some(CALL_MAX_OUTPUT_TOKENS),
             time_budget: Some(CALL_TIME_BUDGET),
+            // The user is waiting for the new chat to open, and every part
+            // reads the same conversation, so it returns to the slot that holds
+            // it.
+            priority: InferencePriority::Interactive,
+            cache_key: Some(conversation_id.to_string()),
             ..Default::default()
         };
         llm.complete(&request).await.map(|response| response.text)
@@ -235,7 +246,7 @@ pub async fn continue_in_new_conversation_impl(
         let source_id = source_id.clone();
         async move {
             let started = std::time::Instant::now();
-            let result = ask_model(llm.as_ref(), prompt).await;
+            let result = ask_model(llm.as_ref(), prompt, &source_id).await;
             match &result {
                 Ok(text) => tracing::info!(
                     conversation_id = %source_id,
