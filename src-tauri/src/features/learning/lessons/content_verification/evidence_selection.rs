@@ -3,6 +3,27 @@
 //! sources do not replace the passages we have already selected and checked.
 use super::*;
 
+const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
+
+/// Automatic research is requested for specific failed comparisons. Bind the
+/// resulting source snapshot to those claims so adding a broadly relevant page
+/// cannot reopen unrelated approvals. A later user-supplied source has no such
+/// scope and therefore retains the conservative normal invalidation behavior.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResearchScope {
+    policy: String,
+    sources: Vec<SourceBinding>,
+    targets: Vec<ResearchTarget>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResearchTarget {
+    unit: usize,
+    statement: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Selection {
     sources: Vec<SourceBinding>,
@@ -28,6 +49,102 @@ pub(super) fn sources(references: &ReferenceCollection<'_>) -> Vec<SourceBinding
         .collect();
     sources.sort_by(|a, b| a.id.cmp(&b.id));
     sources
+}
+
+fn research_scope_key(current: &[SourceBinding]) -> String {
+    format!(
+        "claim-research-scope-v1:{}",
+        digest(&json!({"policy":RESEARCH_SCOPE_POLICY,"sources":current}).to_string())
+    )
+}
+
+pub(super) async fn record_research_scope(
+    references: &ReferenceCollection<'_>,
+    findings: &[Finding],
+    retained: &ClaimChecks,
+) -> Result<()> {
+    let current = sources(references);
+    let mut targets: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.verdict,
+                ClaimVerdict::Unsupported | ClaimVerdict::Contradicted
+            )
+        })
+        .map(|finding| ResearchTarget {
+            unit: finding.unit,
+            statement: finding.statement.clone(),
+        })
+        .collect();
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let key = research_scope_key(&current);
+    retained
+        .research_scopes
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(
+            key.clone(),
+            targets
+                .iter()
+                .map(|target| (target.unit, target.statement.clone()))
+                .collect(),
+        );
+    crate::features::learning::lesson_drafts::record_checkpoint(
+        &key,
+        serde_json::to_value(ResearchScope {
+            policy: RESEARCH_SCOPE_POLICY.into(),
+            sources: current,
+            targets,
+        })?,
+    )
+    .await
+}
+
+async fn research_scope(
+    current: &[SourceBinding],
+    retained: &ClaimChecks,
+) -> Result<Option<HashSet<(usize, String)>>> {
+    let key = research_scope_key(current);
+    if let Some(targets) = retained
+        .research_scopes
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&key)
+        .cloned()
+    {
+        return Ok(Some(targets));
+    }
+    let Some(scope) = crate::features::learning::lesson_drafts::checkpoint(&key)
+        .await?
+        .and_then(|value| serde_json::from_value::<ResearchScope>(value).ok())
+    else {
+        return Ok(None);
+    };
+    if scope.policy != RESEARCH_SCOPE_POLICY
+        || scope.sources != current
+        || scope
+            .targets
+            .iter()
+            .any(|target| target.statement.trim().is_empty())
+    {
+        return Ok(None);
+    }
+    let targets: HashSet<_> = scope
+        .targets
+        .into_iter()
+        .map(|target| (target.unit, target.statement))
+        .collect();
+    retained
+        .research_scopes
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(key, targets.clone());
+    Ok(Some(targets))
 }
 
 impl Selection {
@@ -161,6 +278,7 @@ pub(super) async fn select(
     let restored = saved
         .as_ref()
         .and_then(|saved| saved.restore(references, current));
+    let research_scope = research_scope(current, retained).await?;
     let (mut evidence, changed) =
         if let (Some(saved), Some(mut evidence)) = (saved.as_ref(), restored) {
             let added: HashSet<_> = current
@@ -168,7 +286,10 @@ pub(super) async fn select(
                 .filter(|source| !saved.sources.contains(source))
                 .map(|source| source.id.as_str())
                 .collect();
-            if !added.is_empty() {
+            let claim_is_research_target = research_scope
+                .as_ref()
+                .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
+            if !added.is_empty() && claim_is_research_target {
                 // Use normal hybrid retrieval over the current collection to locate
                 // relevant new sources. Keep the old comparison inputs verbatim.
                 // Do not trim new evidence to the old character budget: that could

@@ -222,7 +222,11 @@ pub(in crate::features::learning) async fn check(
                 errors.push(error.to_string());
                 previous_response = Some(raw);
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Err(AppError::ServiceNotAvailable(format!(
+                "The model response still needs correction. Saved work will be retried: {error}"
+            )))
+            }
         }
     }
     let accepted = checked.ok_or_else(invalid)?;

@@ -26,6 +26,8 @@ mod evidence_checks;
 mod evidence_selection;
 mod execution;
 mod inventory;
+mod learner_view;
+mod portability;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
 #[cfg(test)]
@@ -133,6 +135,7 @@ struct Finding {
 struct ClaimChecks {
     findings: HashMap<String, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
+    research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
@@ -288,7 +291,6 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             .get(unit.index)
             .ok_or_else(|| invalid("Unknown verification section."))?;
         if !seen.insert(unit.index)
-            || unit.claims.len() > 24
             || unit.non_factual_reason.chars().count() > 500
             || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
             || unit.claims.iter().any(|c| {
@@ -326,19 +328,11 @@ async fn evidence_for(
             score: 0.0,
         });
     }
-    let mut used: usize = evidence.iter().map(|p| p.text.chars().count()).sum();
-    if used > 24_000 {
-        return Ok(Vec::new());
-    }
     // Each claim searches the entire pinned collection independently of the
     // author's selected passages. Contradictory passages are not filtered out.
-    for passage in references.retrieve_for_verification(claim, 8).await? {
-        let length = passage.text.chars().count();
-        if used + length <= 24_000 {
-            used += length;
-            evidence.push(passage);
-        }
-    }
+    // Execution output must not erase retrieved references when it is lengthy.
+    // The checker batches by its actual context budget, not a character count.
+    evidence.extend(references.retrieve_for_verification(claim, 8).await?);
     canonicalize_evidence(&mut evidence);
     Ok(evidence)
 }
@@ -407,7 +401,7 @@ pub(in crate::features::learning) async fn judge_for_publication(
     challenge::guard(llm, claim, passages, provisional).await
 }
 
-pub(in crate::features::learning) async fn judge_batch_for_publication(
+pub(in crate::features::learning) async fn judge_batch_provisionally(
     llm: &dyn LLMPort,
     claims: &[crate::application::services::claim_verification::LocatedClaim],
 ) -> Result<Vec<ClaimJudgment>> {
@@ -417,7 +411,7 @@ pub(in crate::features::learning) async fn judge_batch_for_publication(
         512,
         CheckPolicy::Strict,
     );
-    let provisional = checker
+    checker
         .check_batch_without_deadline(
             claims,
             &|text| {
@@ -429,8 +423,24 @@ pub(in crate::features::learning) async fn judge_batch_for_publication(
                 Ok(())
             },
         )
-        .await?;
+        .await
+}
+
+pub(in crate::features::learning) async fn challenge_batch_for_publication(
+    llm: &dyn LLMPort,
+    claims: &[crate::application::services::claim_verification::LocatedClaim],
+    provisional: Vec<ClaimJudgment>,
+) -> Result<Vec<ClaimJudgment>> {
     challenge::guard_batch(llm, claims, provisional).await
+}
+
+#[cfg(test)]
+pub(in crate::features::learning) async fn judge_batch_for_publication(
+    llm: &dyn LLMPort,
+    claims: &[crate::application::services::claim_verification::LocatedClaim],
+) -> Result<Vec<ClaimJudgment>> {
+    let provisional = judge_batch_provisionally(llm, claims).await?;
+    challenge_batch_for_publication(llm, claims, provisional).await
 }
 
 #[cfg(test)]
@@ -902,7 +912,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     output_tokens: usize,
 ) -> Result<(String, LessonVerificationReport)> {
     let mut expanded = None;
-    let mut previous_defects = None;
+    let mut previous_issue_fingerprint = None;
+    let mut repair_history = Vec::new();
     let mut resume_repair = true;
     let mut checks = ClaimChecks::default();
     loop {
@@ -918,7 +929,13 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
                     .filter(|saved| saved.matches(llm, prompt, schema, &candidate, active))
             {
-                previous_defects = Some(saved.defects);
+                previous_issue_fingerprint = saved.issue_fingerprint.clone();
+                repair_history = saved
+                    .context
+                    .get("repairHistory")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 crate::features::learning::lesson_progress::phase(
                     crate::features::learning::lesson_progress::Phase::Repair,
                     "Resuming the saved evidence-based repair",
@@ -949,7 +966,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 })
                 .count();
             let active = expanded.as_ref().unwrap_or(references);
-            let Some(additional) = research::expand(llm, active, &report.findings)
+            let Some(additional) = research::expand(llm, active, &report.findings, &checks)
                 .boxed()
                 .await?
             else {
@@ -1008,17 +1025,27 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 .iter()
                 .filter(|f| f.verdict == ClaimVerdict::Unverified)
                 .count();
-            return Err(AppError::Other(format!("The evidence checker could not complete {unfinished} claim checks. No lesson was published. Retry when the checker is available; durable jobs retain the lesson draft.")));
+            return Err(AppError::ServiceNotAvailable(format!("The evidence checker could not complete {unfinished} claim checks. No lesson was published. Retry when the checker is available; durable jobs retain the lesson draft.")));
         }
-        if previous_defects.is_some_and(|previous| report.issues.len() >= previous) {
-            return Err(invalid(format!("Lesson repair stopped making progress with {} unresolved checks: {} The draft is saved; no lesson was published.", report.issues.len(), report.issues.first().map(String::as_str).unwrap_or("Incomplete checks"))));
-        }
-        previous_defects = Some(report.issues.len());
+        let issue_fingerprint = repair_issue_fingerprint(&report.issues);
+        let repeated_defects = previous_issue_fingerprint.as_ref() == Some(&issue_fingerprint);
+        previous_issue_fingerprint = Some(issue_fingerprint.clone());
+        remember_failed_claims(&mut repair_history, &report);
         crate::features::learning::lesson_progress::phase(
             crate::features::learning::lesson_progress::Phase::Repair,
-            "Correcting defects found by evidence checks",
+            if repeated_defects {
+                "Removing a repeatedly unsupported claim"
+            } else {
+                "Correcting defects found by evidence checks"
+            },
         );
-        let context = repair_context(prompt, &candidate, &report)?;
+        let context = repair_context(
+            prompt,
+            &candidate,
+            &report,
+            &repair_history,
+            repeated_defects,
+        )?;
         let pending = PendingRepair {
             fingerprint: repair_fingerprint(
                 llm,
@@ -1028,6 +1055,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 expanded.as_ref().unwrap_or(references),
             ),
             defects: report.issues.len(),
+            issue_fingerprint: Some(issue_fingerprint),
             context: context.clone(),
         };
         crate::features::learning::lesson_drafts::record_pending_repair(
@@ -1052,7 +1080,36 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
 struct PendingRepair {
     fingerprint: String,
     defects: usize,
+    #[serde(default)]
+    issue_fingerprint: Option<String>,
     context: Value,
+}
+
+fn repair_issue_fingerprint(issues: &[String]) -> String {
+    let mut normalized = issues
+        .iter()
+        .map(|issue| issue.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    digest(&json!({"policy":"repair-issue-set-v1","issues":normalized}).to_string())
+}
+
+fn remember_failed_claims(history: &mut Vec<Value>, report: &LessonVerificationReport) {
+    for finding in report
+        .findings
+        .iter()
+        .filter(|finding| finding.verdict != ClaimVerdict::Supported)
+    {
+        let rejected = json!({
+            "unit": finding.unit,
+            "statement": finding.statement,
+            "verdict": finding.verdict,
+            "reason": finding.reason,
+        });
+        if !history.contains(&rejected) {
+            history.push(rejected);
+        }
+    }
 }
 
 pub(in crate::features::learning) async fn has_pending_repair(
@@ -1110,6 +1167,8 @@ fn repair_context(
     prompt: &str,
     candidate: &Value,
     report: &LessonVerificationReport,
+    repair_history: &[Value],
+    repeated_defects: bool,
 ) -> Result<Value> {
     let mut locations = HashMap::new();
     let mut passages = Vec::new();
@@ -1130,7 +1189,9 @@ fn repair_context(
     Ok(json!({
         "requirements":crate::features::learning::generation::parse_json::<Value>(prompt)?,
         "candidate":candidate,"failedClaims":failed,"evidence":passages,
-        "executions":report.executions
+        "executions":report.executions,
+        "repairHistory":repair_history,
+        "repeatedDefects":repeated_defects
     }))
 }
 

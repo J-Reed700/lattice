@@ -53,6 +53,12 @@ pub struct RepairLearningOutlineRequestDto {
     pub expected_revision: i64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(in crate::features::learning) struct OutlineModuleBinding {
+    pub module_id: String,
+    pub lesson_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::features::learning) struct OutlineDraft {
     pub request: GenerateLearningProgramRequestDto,
     pub candidate: Value,
@@ -60,6 +66,10 @@ pub(in crate::features::learning) struct OutlineDraft {
     pub review: LearningOutlineReviewDto,
     #[serde(default)]
     pub completed_review: Option<crate::features::learning::outline_review_scope::ReviewReceipt>,
+    /// App-owned identities for candidate positions. Kept outside model JSON
+    /// so renaming/reordering the visible course cannot reattach its evidence.
+    #[serde(default)]
+    pub bindings: Option<Vec<OutlineModuleBinding>>,
 }
 impl OutlineDraft {
     pub fn new(
@@ -72,6 +82,7 @@ impl OutlineDraft {
             candidate,
             source_ids: sources.iter().map(|s| s.id.clone()).collect(),
             completed_review: None,
+            bindings: None,
             review: LearningOutlineReviewDto {
                 status: LearningOutlineReviewStatus::Unchecked,
                 issues: vec![],
@@ -87,6 +98,51 @@ impl OutlineDraft {
         draft.stamp();
         draft
     }
+
+    /// Called only where the candidate and its materialized outline are saved
+    /// together. Existing bindings survive later repairs of the same shape.
+    pub fn bind_program(&mut self, program: &LearningProgramDto) -> Result<()> {
+        if self.bindings.is_some() {
+            return Ok(());
+        }
+        let modules = self
+            .candidate
+            .get("modules")
+            .and_then(Value::as_array)
+            .ok_or_else(|| AppError::InvalidInput("Outline evidence has no modules.".into()))?;
+        if modules.len() != program.modules.len()
+            || modules
+                .iter()
+                .zip(&program.modules)
+                .any(|(candidate, module)| {
+                    candidate
+                        .get("lessons")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        != Some(module.lessons.len())
+                })
+        {
+            return Err(AppError::InvalidInput(
+                "Outline evidence does not match the saved course structure.".into(),
+            ));
+        }
+        self.bindings = Some(
+            program
+                .modules
+                .iter()
+                .map(|module| OutlineModuleBinding {
+                    module_id: module.id.clone(),
+                    lesson_ids: module
+                        .lessons
+                        .iter()
+                        .map(|lesson| lesson.id.clone())
+                        .collect(),
+                })
+                .collect(),
+        );
+        Ok(())
+    }
+
     pub fn stamp(&mut self) {
         self.review.content_hash = format!(
             "{:x}",

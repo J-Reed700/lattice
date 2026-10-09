@@ -15,6 +15,7 @@ struct BatchModel {
     malformed_first: bool,
     block_individual: bool,
     block_batch: bool,
+    block_challenge: bool,
     max_batch_size: Option<usize>,
     batch_error: Option<AppError>,
     batch_sizes: Mutex<Vec<usize>>,
@@ -79,6 +80,9 @@ impl LLMPort for BatchModel {
             });
         let text = if let Some(batch) = batch {
             let size = batch["claims"].as_array().unwrap().len();
+            if challenge && self.block_challenge {
+                std::future::pending::<()>().await;
+            }
             if !challenge {
                 self.batch_sizes.lock().unwrap().push(size);
                 if self.block_batch {
@@ -138,6 +142,96 @@ impl LLMPort for BatchModel {
         on_text(response.text.clone())?;
         Ok(response)
     }
+}
+
+#[tokio::test]
+async fn interrupted_challenge_resumes_without_repeating_entailment() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("challenge-resume.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let interrupted = BatchModel {
+        block_challenge: true,
+        ..Default::default()
+    };
+    crate::features::learning::lesson_progress::run(
+        &repo,
+        &job,
+        lesson_drafts::run(&repo, &job, &lesson, async {
+            let claims = inventory(8);
+            let retained = ClaimChecks::default();
+            let work = evidence_checks::check(&interrupted, &references, &claims, &[], &retained);
+            tokio::select! {
+                result = work => panic!("The challenge should still be running: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(5), async {
+                    while !interrupted.calls.lock().unwrap().contains(&"batch-challenge") {
+                        tokio::task::yield_now().await;
+                    }
+                }) => result.expect("The challenge never started"),
+            }
+            Ok(())
+        }),
+    )
+    .await?;
+    assert_eq!(
+        *interrupted.calls.lock().unwrap(),
+        vec!["batch-evidence", "batch-challenge"]
+    );
+    assert!(
+        repo.job(&job)
+            .await?
+            .progress_message
+            .contains("Challenging 8 provisional approvals"),
+        "The durable UI should identify the challenge stage instead of appearing frozen"
+    );
+    drop(repo);
+    pool.close().await;
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    repo.recover_running_jobs().await?;
+    assert!(repo.begin_job(&job).await?);
+    let resumed = BatchModel::default();
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let results = evidence_checks::check(
+            &resumed,
+            &references,
+            &inventory(8),
+            &[],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(results.len(), 8);
+        assert!(results
+            .iter()
+            .all(|result| result.2.verdict == ClaimVerdict::Supported));
+        Ok(())
+    })
+    .await?;
+    assert_eq!(
+        *resumed.calls.lock().unwrap(),
+        vec!["batch-challenge"],
+        "Resume should reuse the durable entailment result and continue at the challenge"
+    );
+    pool.close().await;
+    Ok(())
 }
 
 #[tokio::test]

@@ -51,7 +51,7 @@ fn schema(units: &[Value]) -> Value {
             if let Some(id) = passage["id"].as_str() {
                 properties.insert(id.to_owned(), json!({"type":"object","additionalProperties":false,"required":["claimIds","nonFactualReason","missingClaims"],"properties":{
                     "claimIds":claims,"nonFactualReason":{"type":"string","maxLength":500},
-                    "missingClaims":{"type":"array","maxItems":24,"items":{"type":"string","minLength":1,"maxLength":1000}}
+                    "missingClaims":{"type":"array","items":{"type":"string","minLength":1,"maxLength":1000}}
                 }}));
             }
         }
@@ -90,7 +90,6 @@ fn resolve(raw: &str, units: &[Value]) -> Result<Vec<CoverageUnit>> {
             if selected.len() != check.claim_ids.len()
                 || selected.iter().any(|id| !claims.contains(id.as_str()))
                 || check.non_factual_reason.chars().count() > 500
-                || check.missing_claims.len() > 24
                 || check
                     .missing_claims
                     .iter()
@@ -246,7 +245,7 @@ async fn check_fidelity(
         let finding = match result {
             ClaimJudgment::Judged(finding) => finding,
             ClaimJudgment::Failed(error) => return Err(error),
-            _ => return Err(AppError::Other("The claim-fidelity checker could not finish. The extracted claims and lesson draft are saved; no lesson was published.".into())),
+            _ => return Err(AppError::ServiceNotAvailable("The claim-fidelity checker could not finish. The extracted claims and lesson draft are saved; no lesson was published.".into())),
         };
         if finding.verdict == ClaimVerdict::Supported {
             unresolved.remove(&(index, id.to_owned()));

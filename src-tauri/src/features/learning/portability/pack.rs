@@ -13,7 +13,9 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
-pub const LEARNING_PACK_VERSION: u32 = 1;
+// v2 carries durable course provenance. Older importers must reject it rather
+// than silently drop verification history; this reader still accepts v1.
+pub const LEARNING_PACK_VERSION: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
@@ -261,6 +263,7 @@ fn validate_content_policy(
         let expected_kind = match path.as_str() {
             "program/program.json" => Some(LearningPackEntryKind::Program),
             "program/answer-keys.json"
+            | "program/provenance.json"
             | "program/outcomes.json"
             | "curriculum/lesson-state.json" => Some(LearningPackEntryKind::Curriculum),
             "program/attempts.json" => Some(LearningPackEntryKind::Attempt),
@@ -530,7 +533,9 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
             .ok_or_else(|| invalid("A learning pack has no manifest."))?,
     )
     .map_err(|error| AppError::InvalidData(error.to_string()))?;
-    if manifest.format != LEARNING_PACK_FORMAT || manifest.version != LEARNING_PACK_VERSION {
+    if manifest.format != LEARNING_PACK_FORMAT
+        || !(1..=LEARNING_PACK_VERSION).contains(&manifest.version)
+    {
         return Err(invalid("This learning-pack version is not supported."));
     }
     uuid::Uuid::parse_str(&manifest.pack_id)
@@ -676,6 +681,25 @@ mod tests {
             bytes: b"copyrighted body".to_vec(),
         });
         assert!(encode_learning_pack(value).is_err());
+    }
+
+    #[test]
+    fn version_two_exports_and_version_one_imports_remain_explicit() -> anyhow::Result<()> {
+        let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
+        assert_eq!(decoded.manifest.version, 2);
+        let mut manifest = decoded.manifest.clone();
+        manifest.version = 1;
+        assert_eq!(
+            decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)?
+                .manifest
+                .version,
+            1
+        );
+        for unsupported in [0, 3] {
+            manifest.version = unsupported;
+            assert!(decode_learning_pack(&rearchive(&manifest, &decoded.entries)?).is_err());
+        }
+        Ok(())
     }
 
     #[test]

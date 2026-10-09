@@ -133,7 +133,7 @@ fn schema(indices: &[usize], input: &[Value]) -> Value {
             .and_then(|unit| unit.get("passages")).and_then(Value::as_array)
             .into_iter().flatten()
             .filter_map(|passage| passage.get("id").and_then(Value::as_str)).collect();
-        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string","maxLength":500},"claims":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["passageId","statement"],"properties":{"passageId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1,"maxLength":2000}}}}}}))
+        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string","maxLength":500},"claims":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["passageId","statement"],"properties":{"passageId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1,"maxLength":2000}}}}}}))
     }).collect();
     json!({"type":"object","additionalProperties":false,"required":["units"],"properties":{"units":{"type":"object","additionalProperties":false,"required":slots.keys().collect::<Vec<_>>(),"properties":slots}}})
 }
@@ -144,8 +144,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
         .and_then(|v| v.get("passages"))
         .and_then(Value::as_array)
         .ok_or_else(|| format!("Unknown section {}", unit.index))?;
-    if unit.claims.len() > 24
-        || unit.non_factual_reason.chars().count() > 500
+    if unit.non_factual_reason.chars().count() > 500
         || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
     {
         return Err(format!(
@@ -335,13 +334,18 @@ async fn extract_scoped(
                     accepted.remove(index);
                 }
             }
+            // Each valid inventory is durable independently of the response's
+            // remaining sections. Retrying does not re-extract accepted sections.
+            for unit in accepted.values() {
+                revisions::save(llm, content, unit).await?;
+            }
             if attempt == 1 {
                 let recovery = if crate::features::learning::lesson_drafts::active() {
                     "The lesson draft is saved; retry resumes it."
                 } else {
                     "Retry the claim check."
                 };
-                return Err(AppError::Other(format!("Claim extraction could not complete sections {:?}: {}. {recovery} No lesson was published.",missing,errors.join("; "))));
+                return Err(AppError::ServiceNotAvailable(format!("Claim extraction could not complete sections {:?}: {}. {recovery} No lesson was published.",missing,errors.join("; "))));
             }
         }
     }
@@ -367,6 +371,64 @@ mod tests {
             outputs: Mutex::new(responses.into_iter().map(|v| v.to_string()).collect()),
             prompts: Mutex::new(Vec::new()),
         }
+    }
+
+    #[tokio::test]
+    async fn malformed_remaining_section_is_retryable_and_keeps_completed_inventory() -> Result<()>
+    {
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        let content = vec![
+            json!({"body":"The first section states a fact."}),
+            json!({"body":"The second section states another fact."}),
+        ];
+        let broken = model(vec![
+            fixture_response(vec![answer(0, "unit-0-passage-0")]),
+            json!({"units":{}}),
+        ]);
+        let resumed = model(vec![fixture_response(vec![answer(1, "unit-1-passage-0")])]);
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            crate::features::learning::lesson_drafts::resume("inventory-retry-fixture".into())
+                .await?;
+            let error = extract_remaining(&broken, &content, vec![])
+                .await
+                .err()
+                .unwrap();
+            assert!(matches!(error, AppError::ServiceNotAvailable(_)));
+            let result = extract_remaining(&resumed, &content, vec![]).await?;
+            assert_eq!(result.units.len(), 2);
+            let prompts = resumed.prompts.lock().unwrap();
+            assert_eq!(
+                prompts.len(),
+                1,
+                "Only the unfinished section calls the model"
+            );
+            assert!(prompts[0].contains("\"requestedIndices\":[1]"));
+            Ok(())
+        })
+        .await
+    }
+
+    #[test]
+    fn dense_sections_keep_every_claim_in_schema_resolution_and_validation() {
+        let content = vec![json!({"body":"The measurements describe individual samples."})];
+        let input = inputs(&content);
+        let claims: Vec<_> = (0..64).map(|i| json!({"passageId":"unit-0-passage-0","statement":format!("Sample {i} has measured value {i}.")})).collect();
+        let response = fixture_response(vec![
+            json!({"index":0,"claims":claims,"nonFactualReason":""}),
+        ]);
+        assert!(jsonschema::JSONSchema::compile(&schema(&[0], &input))
+            .unwrap()
+            .is_valid(&response));
+        let mut value = response["units"]["unit-0"].clone();
+        value["index"] = json!(0);
+        let unit = resolve(serde_json::from_value(value).unwrap(), &input).unwrap();
+        assert_eq!(unit.claims.len(), 64);
+        validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
     }
 
     #[test]

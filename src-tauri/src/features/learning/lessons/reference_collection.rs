@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 const CHUNK_CHARS: usize = 1200;
 const STEP_CHARS: usize = 900;
 const INDEX_VERSION: &str = "course-passages-v2";
-pub(in crate::features::learning) const MAX_COLLECTION_CHARS: usize = 20_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
@@ -56,25 +55,31 @@ fn terms(text: &str) -> HashMap<String, usize> {
     counts
 }
 fn spans(text: &str) -> Vec<(usize, usize)> {
-    let mut boundaries: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
-    boundaries.push(text.len());
+    // Scan one passage at a time. Precomputing every character boundary would
+    // allocate one machine word per character across the entire source.
     let mut result = Vec::new();
-    let mut offset = 0;
-    while offset + 1 < boundaries.len() {
-        let end = (offset + CHUNK_CHARS).min(boundaries.len() - 1);
-        if let (Some(&start_byte), Some(&end_byte)) = (boundaries.get(offset), boundaries.get(end))
-        {
-            result.push((start_byte, end_byte));
-        } else {
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = text.len();
+        let mut next = text.len();
+        for (ordinal, (offset, _)) in text[start..].char_indices().enumerate() {
+            if ordinal == STEP_CHARS {
+                next = start + offset;
+            }
+            if ordinal == CHUNK_CHARS {
+                end = start + offset;
+                break;
+            }
+        }
+        result.push((start, end));
+        if end == text.len() {
             break;
         }
-        if end == boundaries.len() - 1 {
-            break;
-        }
-        offset += STEP_CHARS;
+        start = next;
     }
     result
 }
+
 fn valid_vector(vector: &[f32], dimension: usize) -> bool {
     vector.len() == dimension
         && dimension > 0
@@ -89,14 +94,6 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
 
 impl<'a> ReferenceCollection<'a> {
     pub fn lexical(sources: &[LearningSourceDto]) -> Result<Self> {
-        if sources
-            .iter()
-            .map(|s| s.excerpt.chars().count())
-            .sum::<usize>()
-            > MAX_COLLECTION_CHARS
-        {
-            return Err(invalid("This course exceeds the MVP reference limit of 20 million characters. Split the materials into smaller courses."));
-        }
         let mut chunks = Vec::new();
         let mut frequencies = HashMap::new();
         for (source, value) in sources.iter().enumerate() {
@@ -410,20 +407,49 @@ impl<'a> ReferenceCollection<'a> {
 
     /// A bounded structural view is supplied alongside passages, so the writer
     /// can see which books/sections exist without treating it as factual evidence.
-    pub fn catalog(&self) -> Vec<serde_json::Value> {
-        let mut heading_budget = 4_000_usize;
-        self.sources.iter().map(|source| {
+    pub fn catalog(&self, llm: &dyn crate::application::ports::LLMPort) -> serde_json::Value {
+        let budget = llm.max_context_tokens() / 16;
+        let mut entries = Vec::new();
+        let mut used = 64;
+        for source in &self.sources {
+            let mut entry = serde_json::json!({
+                "title":source.title,"versionId":source.id,
+                "characters":source.excerpt.chars().count(),
+                "headings":[],"additionalHeadingsOmitted":false,
+            });
+            let base = llm.count_tokens(&entry.to_string()) + 1;
+            if used + base > budget {
+                continue;
+            }
             let mut headings = Vec::new();
             let mut omitted = false;
-            for line in source.excerpt.lines().filter(|line| line.trim_start().starts_with('#')) {
-                let heading: String = line.chars().take(120).collect();
-                let count = heading.chars().count();
-                if count > heading_budget || headings.len() >= 40 { omitted = true; continue; }
-                heading_budget -= count;
-                headings.push(heading);
+            for line in source
+                .excerpt
+                .lines()
+                .filter(|line| line.trim_start().starts_with('#'))
+            {
+                let title: String = line.chars().take(120).collect();
+                let cost = llm.count_tokens(&serde_json::json!(title).to_string()) + 1;
+                if used + base + cost > budget || headings.len() >= 40 {
+                    omitted = true;
+                    continue;
+                }
+                used += cost;
+                headings.push(title);
             }
-            serde_json::json!({"title":source.title.chars().take(90).collect::<String>(),"versionId":source.id,"characters":source.excerpt.chars().count(),"headings":headings,"additionalHeadingsOmitted":omitted})
-        }).collect()
+            used += base;
+            if let Some(fields) = entry.as_object_mut() {
+                fields.insert("headings".into(), serde_json::json!(headings));
+                fields.insert(
+                    "additionalHeadingsOmitted".into(),
+                    serde_json::json!(omitted),
+                );
+            }
+            entries.push(entry);
+        }
+        serde_json::json!({"totalSources":self.sources.len(),
+            "omittedFromThisPrompt":self.sources.len()-entries.len(),"sources":entries,
+            "scope":"A partial catalog for orientation. Retrieval searches all saved sources."})
     }
 
     pub async fn author_sources(&self, query: &str) -> Result<Vec<LearningSourceDto>> {

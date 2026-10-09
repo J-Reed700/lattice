@@ -27,6 +27,7 @@ pub use planning::curriculum;
 pub use planning::curriculum_repository;
 pub use planning::diagnostic_generation;
 pub use planning::outline_draft;
+pub use planning::outline_evidence_view;
 pub use planning::outline_progress;
 pub use planning::plan_dto;
 pub use portability::pack;

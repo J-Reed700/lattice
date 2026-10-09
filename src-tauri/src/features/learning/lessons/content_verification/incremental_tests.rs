@@ -226,18 +226,46 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
     let repo = LearningCurriculumRepository::new(pool.clone());
     repo.recover_running_jobs().await?;
     assert!(repo.begin_job(&job).await?);
+    let broad_counterevidence = format!(
+        "{} COUNTEREVIDENCE",
+        (0..170)
+            .map(|index| format!("mineral{index} property{index}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     sources.push(LearningSourceDto {
         id: "new-counterevidence".into(),
         title: "New research".into(),
         url: None,
-        excerpt: "mineral84 property84 COUNTEREVIDENCE".into(),
+        excerpt: broad_counterevidence,
         acquired_at: 1,
     });
     let resumed = IncrementalModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
+        let collection = ReferenceCollection::lexical(&sources)?;
+        {
+            let transient = ClaimChecks::default();
+            evidence_selection::record_research_scope(
+                &collection,
+                &[Finding {
+                    unit: 84,
+                    quote: "mineral84 property84".into(),
+                    statement: "mineral84 property84".into(),
+                    verdict: ClaimVerdict::Unsupported,
+                    reason: "Targeted research needs counterevidence.".into(),
+                    evidence: Vec::new(),
+                    supporting_quote: None,
+                }],
+                &transient,
+            )
+            .await?;
+        }
+        // Drop the in-memory scope above. The fresh checker must restore the
+        // target from SQLite rather than treating this broadly matching source
+        // as a reason to reopen all 170 completed comparisons.
         let result = evidence_checks::check(
             &resumed,
-            &ReferenceCollection::lexical(&sources)?,
+            &collection,
             &claims(170),
             &[],
             &ClaimChecks::default(),

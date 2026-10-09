@@ -21,21 +21,14 @@ fn uuid(value: &str, label: &str) -> Result<()> {
         .map_err(|_| AppError::InvalidInput(format!("Invalid {label} ID")))
 }
 pub fn validate_request(request: &GenerateLearningProgramRequestDto) -> Result<()> {
-    bounded(&request.goal, "Learning goal", 500, true)?;
-    bounded(&request.prior_knowledge, "Prior knowledge", 2000, false)?;
+    if request.goal.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "Learning goal must not be empty.".into(),
+        ));
+    }
     if !(10..=240).contains(&request.minutes_per_session) {
         return Err(AppError::InvalidInput(
             "Session length must be between 10 and 240 minutes.".into(),
-        ));
-    }
-    if request.document_ids.len() > 8 || request.source_urls.len() > 8 {
-        return Err(AppError::InvalidInput(
-            "Select no more than eight documents and eight source URLs.".into(),
-        ));
-    }
-    if request.document_ids.len() + request.source_urls.len() > 12 {
-        return Err(AppError::InvalidInput(
-            "Select no more than twelve sources in total.".into(),
         ));
     }
     let mut ids = std::collections::HashSet::new();
@@ -269,12 +262,7 @@ pub async fn prepare(
             "Ready lessons are immutable.".into(),
         ));
     }
-    let prepared = tokio::time::timeout(
-        std::time::Duration::from_secs(900),
-        super::generation::prepare_lesson(llm, &program, lesson),
-    )
-    .await
-    .map_err(|_| AppError::ServiceNotAvailable("Lesson preparation timed out.".into()))??;
+    let prepared = super::generation::prepare_lesson(llm, &program, lesson).await?;
     validate_prepared(&prepared, &program)?;
     repo.prepare(
         &request.program_id,

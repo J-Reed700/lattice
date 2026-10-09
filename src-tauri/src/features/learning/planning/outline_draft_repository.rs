@@ -35,6 +35,7 @@ impl LearningRepository {
         sources: &[LearningSourceDto],
         references: &[crate::features::learning::sources::InitialReference],
     ) -> Result<()> {
+        draft.bind_program(program)?;
         draft.stamp();
         let state = serde_json::to_string(draft)?;
         let mut tx = self.pool.begin().await?;
@@ -93,7 +94,9 @@ pub(in crate::features::learning) async fn insert(
     program: &LearningProgramDto,
     draft: &OutlineDraft,
 ) -> Result<()> {
-    let state = serde_json::to_string(draft)?;
+    let mut bound = draft.clone();
+    bound.bind_program(program)?;
+    let state = serde_json::to_string(&bound)?;
     sqlx::query("INSERT INTO learning_outline_drafts(program_id,state_json) VALUES(?,?)")
         .bind(&program.summary.id)
         .bind(&state)

@@ -118,7 +118,8 @@ pub(in crate::features::learning) async fn research(
                 resolved_url: Some(article.url),
                 text: article.content,
                 truncated: article.content_truncated,
-                extraction_version: "web_reference_v1".into(),
+                extraction_version:
+                    crate::features::web::services::REFERENCE_TEXT_EXTRACTION_VERSION.into(),
             };
             if crate::features::learning::sources::validate_capture(&captured).is_err() {
                 unavailable += 1;
@@ -139,18 +140,6 @@ pub(in crate::features::learning) async fn research(
                 .iter()
                 .any(|s| s.excerpt.trim() == captured.text.trim())
             {
-                continue;
-            }
-            // New research must not make a previously usable collection
-            // exceed the retrieval layer's existing resource bound.
-            if sources
-                .iter()
-                .map(|s| s.excerpt.chars().count())
-                .sum::<usize>()
-                + captured.text.chars().count()
-                > crate::features::learning::reference_collection::MAX_COLLECTION_CHARS
-            {
-                unavailable += 1;
                 continue;
             }
             let id = uuid::Uuid::new_v4().to_string();

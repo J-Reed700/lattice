@@ -4,6 +4,8 @@ use super::*;
 use crate::application::services::claim_verification::LocatedClaim;
 
 const BATCH_SIZE: usize = 8;
+const PROVISIONAL_BATCH_POLICY: &str =
+    crate::application::services::claim_verification::STRICT_INTERPRETATION_POLICY;
 
 struct PendingClaim {
     ordinal: usize,
@@ -13,6 +15,106 @@ struct PendingClaim {
     claim: Claim,
     evidence: Vec<EvidencePassage>,
 }
+
+/// First-stage entailment is useful saved work, but never publication approval.
+/// A supported result must still pass the independent evidence challenge.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProvisionalBatchReceipt {
+    policy: String,
+    model: String,
+    model_context: usize,
+    decisions: Vec<ProvisionalDecision>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProvisionalDecision {
+    verdict: ClaimVerdict,
+    reason: String,
+    supporting_quote: Option<String>,
+}
+
+fn provisional_key(pending: &[PendingClaim]) -> String {
+    let comparisons = pending
+        .iter()
+        .map(|item| item.receipt_key.as_str())
+        .collect::<Vec<_>>();
+    format!(
+        "claim-batch-provisional-v1:{}",
+        digest(&json!(comparisons).to_string())
+    )
+}
+
+impl ProvisionalBatchReceipt {
+    fn from_judgments(llm: &dyn LLMPort, judgments: &[ClaimJudgment]) -> Option<Self> {
+        let decisions = judgments
+            .iter()
+            .map(|judgment| match judgment {
+                ClaimJudgment::Judged(outcome)
+                    if outcome.verdict != ClaimVerdict::Unverified
+                        && outcome
+                            .reason
+                            .as_ref()
+                            .is_some_and(|reason| !reason.trim().is_empty()) =>
+                {
+                    Some(ProvisionalDecision {
+                        verdict: outcome.verdict,
+                        reason: outcome.reason.clone()?,
+                        supporting_quote: outcome.quote.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            policy: PROVISIONAL_BATCH_POLICY.into(),
+            model: llm.model_name().into(),
+            model_context: llm.max_context_tokens(),
+            decisions,
+        })
+    }
+
+    fn judgments(self, llm: &dyn LLMPort, pending: &[PendingClaim]) -> Option<Vec<ClaimJudgment>> {
+        if self.policy != PROVISIONAL_BATCH_POLICY
+            || self.model != llm.model_name()
+            || self.model_context != llm.max_context_tokens()
+            || self.decisions.len() != pending.len()
+        {
+            return None;
+        }
+        self.decisions
+            .into_iter()
+            .zip(pending)
+            .map(|(decision, target)| {
+                let reason = decision.reason.trim();
+                if reason.is_empty() || reason.chars().count() > 600 {
+                    return None;
+                }
+                let quote_is_valid = match decision.verdict {
+                    ClaimVerdict::Supported | ClaimVerdict::Contradicted => {
+                        decision.supporting_quote.as_ref().is_some_and(|quote| {
+                            !quote.trim().is_empty()
+                                && target
+                                    .evidence
+                                    .iter()
+                                    .any(|passage| passage.text.contains(quote))
+                        })
+                    }
+                    ClaimVerdict::Unsupported => decision.supporting_quote.is_none(),
+                    ClaimVerdict::Unverified => false,
+                };
+                quote_is_valid.then_some(ClaimJudgment::Judged(JudgeOutcome {
+                    verdict: decision.verdict,
+                    reason: Some(decision.reason),
+                    quote: decision.supporting_quote,
+                    confidence: None,
+                }))
+            })
+            .collect()
+    }
+}
+
 enum PreparedClaim {
     Complete(CheckedClaim),
     Pending(PendingClaim),
@@ -209,25 +311,76 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
             groups.push(pending);
             continue;
         }
-        let _model_call = crate::features::learning::lesson_progress::model_call();
-        let judgments = match judge_batch_for_publication(llm, &targets).await {
-            Ok(judgments) => judgments,
-            Err(AppError::ServiceNotAvailable(_)) => {
+        let provisional_key = provisional_key(&pending);
+        let restored = crate::features::learning::lesson_drafts::checkpoint(&provisional_key)
+            .await?
+            .and_then(|value| serde_json::from_value::<ProvisionalBatchReceipt>(value).ok())
+            .and_then(|receipt| receipt.judgments(llm, &pending));
+        let provisional = if let Some(restored) = restored {
+            crate::features::learning::lesson_progress::stage(format!(
+                "Restored first-stage judgments for {} claims; continuing with their independent evidence challenge",
+                pending.len()
+            ));
+            restored
+        } else {
+            crate::features::learning::lesson_progress::stage(format!(
+                "Comparing a group of {} remaining claims with their assigned evidence",
+                pending.len()
+            ));
+            let _model_call = crate::features::learning::lesson_progress::model_call();
+            let judgments = match judge_batch_provisionally(llm, &targets).await {
+                Ok(judgments) => judgments,
+                Err(AppError::ServiceNotAvailable(_)) => {
+                    crate::features::learning::lesson_drafts::record_checkpoint(
+                        &split_key,
+                        json!(true),
+                    )
+                    .await?;
+                    crate::features::learning::lesson_progress::stage(format!(
+                        "The model could not finish a group of {} checks; retrying in smaller groups with the same evidence",
+                        pending.len()
+                    ));
+                    let rest = pending.split_off(pending.len() / 2);
+                    groups.push(rest);
+                    groups.push(pending);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(receipt) = ProvisionalBatchReceipt::from_judgments(llm, &judgments) {
                 crate::features::learning::lesson_drafts::record_checkpoint(
-                    &split_key,
-                    json!(true),
+                    &provisional_key,
+                    serde_json::to_value(receipt)?,
                 )
                 .await?;
-                crate::features::learning::lesson_progress::stage(format!(
-                    "The model could not finish a group of {} checks; retrying in smaller groups with the same evidence",
-                    pending.len()
-                ));
-                let rest = pending.split_off(pending.len() / 2);
-                groups.push(rest);
-                groups.push(pending);
-                continue;
             }
-            Err(error) => return Err(error),
+            judgments
+        };
+        let approvals = provisional
+            .iter()
+            .filter(|judgment| {
+                matches!(judgment, ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported)
+            })
+            .count();
+        let judgments = if approvals == 0 {
+            crate::features::learning::lesson_progress::stage(format!(
+                "The first-stage comparison found no provisional approvals; saving {} completed checks",
+                pending.len()
+            ));
+            provisional
+        } else {
+            crate::features::learning::lesson_progress::stage(format!(
+                "Challenging {approvals} provisional approvals before saving this group of {} checks",
+                pending.len()
+            ));
+            let _model_call = crate::features::learning::lesson_progress::model_call();
+            match challenge_batch_for_publication(llm, &targets, provisional).await {
+                Ok(judgments) => judgments,
+                // The first-stage judgments are already durable. Let the job
+                // retry this challenge instead of splitting and redoing them.
+                Err(error @ AppError::ServiceNotAvailable(_)) => return Err(error),
+                Err(error) => return Err(error),
+            }
         };
         if judgments.len() != pending.len() {
             return Err(invalid("Incomplete claim batch; no lesson was published."));

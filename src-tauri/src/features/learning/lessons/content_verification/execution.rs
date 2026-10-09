@@ -269,11 +269,6 @@ pub(in crate::features::learning) async fn observe(candidate: &Value) -> Result<
                 .into_iter()
                 .enumerate()
         {
-            if observations.len() >= 12 {
-                return Err(invalid(
-                    "A lesson contains too many runnable examples for verification.",
-                ));
-            }
             observations.push(
                 run(
                     format!("block-{index}-example-{example_index}"),
@@ -327,4 +322,49 @@ pub(in crate::features::learning) fn unexecuted_languages(candidate: &Value) -> 
         }
     }
     languages.into_iter().collect()
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn observes_every_example_after_the_former_twelve_example_boundary() -> Result<()> {
+        let candidate = json!({"blocks":[{"kind":"worked_example","body":
+            "```javascript\nconsole.log('x'.repeat(2000));\n```\n".repeat(16)}]});
+        let observations = observe(&candidate).await?;
+        assert_eq!(observations.len(), 16);
+        assert!(observations.iter().all(Observation::passed));
+        assert_eq!(
+            observations.last().map(|o| o.id.as_str()),
+            Some("block-0-example-15")
+        );
+        let sources = vec![LearningSourceDto {
+            id: "example-reference".into(),
+            title: "Example reference".into(),
+            url: None,
+            acquired_at: 0,
+            excerpt: "Each example emits two thousand repeated characters.".into(),
+        }];
+        let references = ReferenceCollection::lexical(&sources)?;
+        let evidence = super::super::evidence_for(
+            "example repeated characters",
+            0,
+            &references,
+            &observations,
+        )
+        .await?;
+        assert_eq!(
+            evidence
+                .iter()
+                .filter(|p| p.retrieval_kind == "execution")
+                .count(),
+            16
+        );
+        assert!(
+            evidence.iter().any(|p| p.source_id == "example-reference"),
+            "Long execution output must not erase source evidence"
+        );
+        Ok(())
+    }
 }
