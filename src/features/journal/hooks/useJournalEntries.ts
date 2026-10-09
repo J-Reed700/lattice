@@ -145,6 +145,8 @@ export function useJournalEntries(options: {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<EntryFilter>('all');
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinsSpaceId, setPinsSpaceId] = useState<string | null>(null);
+  const [loadedSpaceId, setLoadedSpaceId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messagesByConversation, setMessagesByConversation] = useState<
     Record<string, SnapshotMessage[]>
@@ -152,8 +154,10 @@ export function useJournalEntries(options: {
   const [loadingByConversation, setLoadingByConversation] = useState<Record<string, boolean>>({});
 
   const appliedRequestedEntryKeyRef = useRef<string | null>(null);
+  const requestRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const request = ++requestRef.current;
     if (!journalSpaceId) {
       setEntries([]);
       setIsLoading(false);
@@ -167,6 +171,7 @@ export function useJournalEntries(options: {
       limit: CONVERSATION_LIMIT,
       offset: 0,
     });
+    if (requestRef.current !== request) return;
     if (!result.ok) {
       setLoadError(result.error);
       setIsLoading(false);
@@ -174,11 +179,15 @@ export function useJournalEntries(options: {
     }
     const normalized = parseRawConversations(result.data).map((c) => normalizeConversation(c));
     setEntries(normalized);
+    setLoadedSpaceId(journalSpaceId);
     setIsLoading(false);
   }, [journalSpaceId]);
 
   useEffect(() => {
+    setEntries([]);
+    setLoadedSpaceId(null);
     void reload();
+    return () => { requestRef.current += 1; };
   }, [reload]);
 
   // Refetch on any external vault import.
@@ -190,23 +199,26 @@ export function useJournalEntries(options: {
 
   useEffect(() => {
     setPinnedIds(readPinnedEntries(journalSpaceId));
+    setPinsSpaceId(journalSpaceId);
     appliedRequestedEntryKeyRef.current = null;
     setSelectedId(null);
   }, [journalSpaceId]);
 
   useEffect(() => {
-    if (!journalSpaceId) return;
+    if (!journalSpaceId || pinsSpaceId !== journalSpaceId) return;
     writePinnedEntries(journalSpaceId, pinnedIds);
-  }, [journalSpaceId, pinnedIds]);
+  }, [journalSpaceId, pinnedIds, pinsSpaceId]);
 
   // Sync pinnedIds to only valid conversation IDs
   useEffect(() => {
+    // An empty list before loading is not evidence that saved pins were deleted.
+    if (!journalSpaceId || loadedSpaceId !== journalSpaceId || pinsSpaceId !== journalSpaceId) return;
     const valid = new Set(entries.map((e) => e.id));
     setPinnedIds((current) => {
       const next = new Set([...current].filter((id) => valid.has(id)));
       return next.size === current.size ? current : next;
     });
-  }, [entries]);
+  }, [entries, journalSpaceId, loadedSpaceId, pinsSpaceId]);
 
   const togglePinned = useCallback((conversationId: string) => {
     setPinnedIds((current) => {

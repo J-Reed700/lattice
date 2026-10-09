@@ -22,6 +22,7 @@ export interface ExplorerThreads {
   error: string | null;
   select: (_id: string) => void;
   create: () => Promise<void>;
+  remove: (_id: string) => Promise<boolean>;
   retry: () => void;
 }
 
@@ -43,6 +44,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const createConversation = useConversationsStore((state) => state.createConversation);
+  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const threadByRoot = useExplorerStore((state) => state.threadByRoot);
   const rememberThread = useExplorerStore((state) => state.rememberThread);
   const [creating, setCreating] = useState(false);
@@ -117,6 +119,7 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
       if (root) rememberThread(root, id);
     },
     create,
+    remove: deleteConversation,
     retry: () => {
       setError(null);
       void threadsQuery.refetch();

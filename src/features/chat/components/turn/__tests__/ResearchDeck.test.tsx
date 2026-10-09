@@ -132,4 +132,48 @@ describe('ResearchDeck', () => {
     );
     expect(screen.getByText('Thinking…')).toBeInTheDocument();
   });
+
+  it('keeps live reasoning hidden until requested and open as more arrives', async () => {
+    const view = render(
+      <ResearchDeck
+        live
+        steps={[
+          step({
+            id: 't',
+            kind: 'generate',
+            label: 'Thinking',
+            state: 'running',
+            durationMs: undefined,
+            reasoning: 'Comparing the strongest sources.',
+          }),
+        ]}
+      />
+    );
+
+    const disclosure = screen.getByText('Reasoning').closest('details')!;
+    expect(disclosure).not.toHaveAttribute('open');
+    expect(screen.getByText('Comparing the strongest sources.')).not.toBeVisible();
+
+    await userEvent.click(screen.getByText('Reasoning'));
+    expect(disclosure).toHaveAttribute('open');
+    expect(screen.getByText('Comparing the strongest sources.')).toBeVisible();
+
+    view.rerender(
+      <ResearchDeck
+        live
+        steps={[
+          step({
+            id: 't',
+            kind: 'generate',
+            label: 'Thinking',
+            state: 'running',
+            durationMs: undefined,
+            reasoning: 'Comparing the strongest sources. Resolving a conflict.',
+          }),
+        ]}
+      />
+    );
+    expect(disclosure).toHaveAttribute('open');
+    expect(screen.getByText(/Resolving a conflict/)).toBeVisible();
+  });
 });

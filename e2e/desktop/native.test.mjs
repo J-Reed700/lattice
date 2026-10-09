@@ -202,6 +202,29 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       assert.ok(await invoke('plugin:settings|get_settings'));
       results.checks.push('native-file-access');
     });
+    await step('Explorer reads real files and rejects paths outside its selected folder', async () => {
+      const dataDir = await browser.executeAsync(done => window.__TAURI__.path.appDataDir().then(done));
+      assert.ok(dataDir.includes(manifest.identifier));
+      const root = path.join(dataDir, 'Explorer café');
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, 'notes 日本語.txt'), 'Native scoped evidence 🦀\nSecond line');
+      await writeFile(path.join(root, 'empty.txt'), '');
+      await writeFile(path.join(root, 'binary.bin'), Buffer.from([0, 255, 0, 128]));
+      const outside = path.join(dataDir, 'outside-explorer.txt');
+      await writeFile(outside, 'Must not be exposed by a scoped read');
+      const resolved = await invoke('plugin:explorer|explorer_resolve_root', { path: root });
+      const listing = await invoke('plugin:explorer|explorer_list_dir', { root: resolved.root, path: '' });
+      assert.ok(listing.entries.some(entry => entry.name === 'notes 日本語.txt'));
+      const read = relativePath => invoke('plugin:explorer|explorer_read_file', { root: resolved.root, path: relativePath });
+      assert.equal((await read('notes 日本語.txt')).text, 'Native scoped evidence 🦀\nSecond line');
+      assert.equal((await read('empty.txt')).text, '');
+      assert.equal((await read('binary.bin')).binary, true);
+      await assert.rejects(() => read('../outside-explorer.txt'));
+      await assert.rejects(() => read(outside));
+      await assert.rejects(() => read('deleted.txt'));
+      assert.equal((await read('empty.txt')).text, '', 'Rejected paths must not poison subsequent reads');
+      results.checks.push('explorer-native-boundary');
+    });
     await step('journal UI works at the minimum supported window size', async () => {
       await browser.setWindowSize(800, 600);
       const journal = await browser.$('button[aria-label="Journal"]');
@@ -300,7 +323,7 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
     });
     assert.deepEqual([...results.checks].sort(), [
       'onboarding', 'learning-studio-native-commands', 'learning-runtime-bundle',
-      'native-file-access', 'minimum-window-journal', 'native-close',
+      'native-file-access', 'explorer-native-boundary', 'minimum-window-journal', 'native-close',
       'collection-persistence', 'resource-churn', 'restart-persistence',
     ].sort());
     results.passed = true;
