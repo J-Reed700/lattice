@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
 import VaultAPI from '@/lib/api';
 import type {
   CreateLearningCanvasRequestDto,
@@ -9,7 +10,7 @@ import type {
   SaveLearningCanvasRequestDto,
 } from '@/lib/bindings';
 
-export const learningCanvasKey = (programId: string) => ['learning-canvas', programId] as const;
+export { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
 
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error);

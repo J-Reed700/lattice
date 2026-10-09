@@ -16,7 +16,8 @@ import {
   XCircle,
 } from "lucide-react";
 
-
+import { TiptapViewer } from "@/components/TiptapEditor";
+import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { ActivityComposer, modeCopy } from "@/features/learning/practice/practical/ActivityComposer";
 import { LearningCodeEditor } from "@/features/learning/practice/practical/LearningCodeEditor";
 import { RuntimeSetupPanel } from "@/features/learning/practice/practical/RuntimeSetupPanel";
@@ -37,9 +38,8 @@ import type {
   LearningLessonDto,
   LearningProgramDto,
 } from "@/lib/bindings";
+import { useCitationDisplayStore } from "@/stores/citationDisplayStore";
 
-const workspaceKey = (programId: string) =>
-  ["learning-practical-workspace", programId] as const;
 function uuid() {
   return (
     globalThis.crypto?.randomUUID?.() ?? "00000000-0000-4000-8000-000000000003"
@@ -105,6 +105,7 @@ function SimulationPanel({
   session: LearningSimulationSessionDto | null;
   onSession: (session: LearningSimulationSessionDto) => void;
 }) {
+  const showCitations = useCitationDisplayStore((state) => state.visible);
   const [learnerRole, setLearnerRole] = useState("Incident lead");
   const [counterpartRole, setCounterpartRole] = useState("On-call engineer");
   const [message, setMessage] = useState("");
@@ -308,10 +309,16 @@ function SimulationPanel({
                         ? session.counterpartRole
                         : "Coach"}
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
-                    {turnItem.content}
-                  </p>
-                  {turnItem.citations.map((citation, index) => (
+                  {turnItem.speaker === "learner" ? (
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
+                      {turnItem.content}
+                    </p>
+                  ) : (
+                    <div className="mt-1 text-sm leading-6 text-text-secondary">
+                      <TiptapViewer content={turnItem.content} />
+                    </div>
+                  )}
+                  {showCitations && turnItem.citations.map((citation, index) => (
                     <blockquote
                       key={`${citation.sourceId}:${index}`}
                       className="mt-2 border-l-2 border-accent/40 pl-2 text-xs italic text-text-muted"
@@ -712,9 +719,9 @@ export function PracticalWorkbenchPanel({
                     <h3 className="mt-2 font-serif text-2xl text-text-primary">
                       {activeActivity.title}
                     </h3>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-text-secondary">
-                      {activeActivity.brief}
-                    </p>
+                    <div className="mt-3 text-sm leading-7 text-text-secondary">
+                      <TiptapViewer content={activeActivity.brief} />
+                    </div>
                   </div>
                   <span
                     className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${activeActivity.runtimeAvailable ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" : "bg-amber-500/10 text-amber-900 dark:text-amber-100"}`}

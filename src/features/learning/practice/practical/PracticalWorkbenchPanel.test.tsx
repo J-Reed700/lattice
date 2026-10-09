@@ -255,6 +255,16 @@ describe("Learning Studio Labs & simulations", () => {
     );
   });
 
+  it("renders generated activity briefs as structured rich text", async () => {
+    mocks.workspace.mockResolvedValue(ok(workspace({
+      activities: [activity({ brief: "## Deliverables\n\n- Inspect the data\n- Explain the limit" })],
+    })));
+    renderPractical();
+    const heading = await screen.findByRole("heading", { name: "Deliverables" });
+    expect(heading).toBeVisible();
+    expect(heading.closest(".tiptap-viewer")?.querySelectorAll("ul li")).toHaveLength(2);
+  });
+
   it("keeps execution disabled and explains a missing runtime capability", async () => {
     mocks.workspace.mockResolvedValue(
       ok(

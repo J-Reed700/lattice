@@ -73,6 +73,11 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningLessonEvidenceDto | null>> =>
     apiCall('get_learning_lesson_evidence', { programId, lessonId }),
 
+  getLearningOutlineEvidence: (
+    programId: string,
+  ): Promise<ApiResult<Wire.LearningOutlineEvidenceDto | null>> =>
+    apiCall('get_learning_outline_evidence', { programId }),
+
   generateLearningProgram: (
     request: Wire.GenerateLearningProgramRequestDto,
     options?: {

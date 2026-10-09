@@ -69,6 +69,21 @@ describe('Learning Studio Assess & evidence', () => {
     expect(mocks.start.mock.calls[0][0].formId).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
+  it('renders assessment instructions and prompts as structured rich text', async () => {
+    const richForm = form({
+      instructions: '## Instructions\n\n- Use the saved evidence\n- State its limit',
+      items: [{ ...item, prompt: '### Scenario\n\nWhich claim follows from `sample_size`?' }, explanationItem],
+    });
+    mocks.start.mockResolvedValue(ok(richForm));
+    mocks.form.mockResolvedValue(ok(richForm));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Start' }));
+    expect(await screen.findByRole('heading', { name: 'Instructions' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Scenario' })).toBeVisible();
+    expect(view.container.querySelector('code')).toHaveTextContent('sample_size');
+  });
+
   it('autosaves responses with CAS revisions and retains the exact request for a lost-response retry', async () => {
     const user = userEvent.setup();
     mocks.save.mockImplementationOnce(async () => fail('Connection interrupted')).mockImplementation(async (request) => ok(form({ revision: request.expectedRevision + 1 })));

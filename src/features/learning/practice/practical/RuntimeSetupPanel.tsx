@@ -11,6 +11,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
 import VaultAPI from "@/lib/api";
 import type {
   LearningContainerEngine,
@@ -19,8 +20,6 @@ import type {
   LearningRuntimePresetDto,
 } from "@/lib/bindings";
 
-const workspaceKey = (programId: string) =>
-  ["learning-practical-workspace", programId] as const;
 const catalogKey = ["learning-runtime-catalog"] as const;
 const presetOrder = ["csharp", "rust", "node", "python"] as const;
 const presetActionNames: Record<(typeof presetOrder)[number], string> = {

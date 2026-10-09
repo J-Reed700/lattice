@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import type { LearningLessonDto, LearningPracticeSessionDto, LearningProgramDto } from '@/lib/bindings';
+import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 
 const mocks = vi.hoisted(() => ({
@@ -58,6 +59,7 @@ const renderWorkbench = (chosenLesson = lesson, embedded = false) => {
 describe('Learning Studio grounded practice workbench', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    useCitationDisplayStore.setState({ visible: true });
     currentSession = baseSession();
     currentWorkspace = { programId: 'program-1', sessions: [{ ...currentSession.summary }] };
     mocks.getWorkspace.mockImplementation(async () => ok(toWorkspace()));
@@ -105,6 +107,26 @@ describe('Learning Studio grounded practice workbench', () => {
     await waitFor(() => expect(mocks.tutor).toHaveBeenCalledWith(expect.objectContaining({ hintLevel: 'orienting_question' })));
     expect(await screen.findByRole('button', { name: 'Next hint' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Reveal solution' })).not.toBeInTheDocument();
+  });
+
+  it('opens exact citations in embedded guided replies and hides them without changing the response', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided';
+    currentSession!.tutorTurns = [{ id: 'turn-cited', prompt: 'Check my work.', response: 'Separate the observation from the inference.', requestKind: 'critique', hintLevel: null, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    renderWorkbench(lesson, true);
+
+    await user.click(await screen.findByRole('button', { name: /Saved source quote · exact version/ }));
+    expect(await screen.findByText(/The full captured source/)).toBeVisible();
+    expect(mocks.sourceVersion).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' });
+
+    act(() => useCitationDisplayStore.setState({ visible: false }));
+    expect(screen.queryByRole('button', { name: /Saved source quote · exact version/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/The full captured source/)).not.toBeInTheDocument();
+    expect(screen.getByText('Separate the observation from the inference.')).toBeVisible();
+
+    act(() => useCitationDisplayStore.setState({ visible: true }));
+    expect(screen.getByRole('button', { name: /Saved source quote · exact version/ })).toBeVisible();
   });
 
   it('revises a submitted guided response with its original attempt ID', async () => {
@@ -182,6 +204,30 @@ describe('Learning Studio grounded practice workbench', () => {
     await user.click(citation);
     await waitFor(() => expect(mocks.openSource).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'source-1', versionId: 'version-1' })));
     expect(await screen.findByText(/The full captured source/)).toBeVisible();
+  });
+
+  it('renders generated practice content and saved sources as structured rich text', async () => {
+    const user = userEvent.setup();
+    currentSession!.taskPrompt = '## Compare evidence\n\n- Record the observation\n- Separate the inference';
+    currentSession!.tutorTurns = [{ id: 'turn-rich', prompt: 'What should I inspect?', response: '### Next step\n\nUse the `saved source` before drawing a conclusion.', requestKind: 'question', hintLevel: null, citations: [], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
+    currentSession!.revealedSolution = '### Worked steps\n\n1. State the observation.\n2. Bound the conclusion.';
+    mocks.sourceVersion.mockResolvedValue(ok({
+      sourceId: 'source-1',
+      version: { ...savedVersion, extractionVersion: 'web_reference_v1', wordCount: 12 },
+      fullText: '# Field notes\n\n| Claim | Status\n| Pattern repeats | Supported',
+      usage: [],
+    }));
+
+    const view = renderWorkbench();
+    expect(await screen.findByRole('heading', { name: 'Compare evidence' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Next step' })).toBeVisible();
+    const workedSteps = screen.getByRole('heading', { name: 'Worked steps' });
+    expect(workedSteps).toBeVisible();
+    expect(workedSteps.closest('.tiptap-viewer')?.querySelectorAll('ol li')).toHaveLength(2);
+
+    await user.click(screen.getByRole('button', { name: /Field notes/ }));
+    await screen.findByRole('region', { name: 'Saved source reader' });
+    expect(view.container.querySelector('table')).toBeInTheDocument();
   });
 
   it('shows rubric evidence and lets the learner accept or reject tutor proposals', async () => {

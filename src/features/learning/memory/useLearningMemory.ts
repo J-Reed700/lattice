@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { learningMemoryKey } from '@/features/learning/api/learningQueryKeys';
 import VaultAPI from '@/lib/api';
 import type {
   EnsureLearningLessonNoteRequestDto,
@@ -11,7 +12,7 @@ import type {
   UpdateStudyCardRequestDto,
 } from '@/lib/bindings';
 
-export const learningMemoryKey = (programId: string) => ['learning-memory', programId] as const;
+export { learningMemoryKey } from '@/features/learning/api/learningQueryKeys';
 
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error);

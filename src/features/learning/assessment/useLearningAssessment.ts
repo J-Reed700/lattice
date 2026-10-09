@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { learningAssessmentWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
 import VaultAPI from '@/lib/api';
 import type {
   DecideLearningFollowUpRequestDto,
@@ -10,7 +11,7 @@ import type {
   StartLearningAssessmentFormRequestDto,
 } from '@/lib/bindings';
 
-export const learningAssessmentWorkspaceKey = (programId: string) => ['learning-assessment-workspace', programId] as const;
+export { learningAssessmentWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
 export const learningAssessmentFormKey = (formId: string | null) => ['learning-assessment-form', formId] as const;
 
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
