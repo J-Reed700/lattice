@@ -327,6 +327,7 @@ jobs:
       - run: bash scripts/check-rust-layer-boundaries.sh
       - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
       - run: python3 scripts/check-sql-contracts.py
+      - run: python3 -m unittest scripts/test_tauri_command_inventory.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
   dependency-audit:
@@ -340,9 +341,6 @@ jobs:
       - name: Desktop advisories
         working-directory: src-tauri
         run: cargo audit --deny yanked
-      - name: API advisories
-        working-directory: api-rust
-        run: cargo audit
 
   frontend:
     name: frontend (type-check, lint, test)
@@ -412,50 +410,3 @@ jobs:
             e2e-results/artifacts/
           if-no-files-found: warn
           retention-days: 14
-
-  sync-engine:
-    name: api-rust check
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: test-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            api-rust/target/
-          key: cargo-api-rust-${{ hashFiles('api-rust/Cargo.lock') }}
-          restore-keys: cargo-api-rust-
-      - name: cargo check
-        working-directory: api-rust
-        run: cargo check --all-targets
-      - name: unit tests
-        working-directory: api-rust
-        run: cargo test --lib
-      - name: PostgreSQL contracts
-        working-directory: api-rust
-        env:
-          DATABASE_URL: postgres://postgres:test-only@localhost:5432/postgres
-        run: cargo test --test sync_persistence -- --ignored
-      - name: cargo clippy
-        working-directory: api-rust
-        run: cargo clippy --all-targets
-      - name: cargo fmt --check
-        working-directory: api-rust
-        run: cargo fmt --all -- --check
