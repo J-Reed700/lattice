@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum::{LearningGenerationJobKind, LearningGenerationJobStatus},
     curriculum_repository::LearningCurriculumRepository,
@@ -7,6 +8,7 @@ use crate::features::learning::{
     plan_dto::StartLearningGenerationJobRequestDto,
     repository::LearningRepository,
 };
+use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
@@ -47,7 +49,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
             progress_total: 1,
         })
         .await?;
-    assert!(repo.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     let mut candidate = candidate(GOOD);
     candidate["blocks"] = json!((0..5)
         .map(|i| {
@@ -88,8 +90,10 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job.id).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     let resumed_model = Model::new();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
@@ -230,7 +234,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             progress_total: 1,
         })
         .await?;
-    assert!(repo.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     let content: Vec<_> = (0..5)
         .map(|index| json!({"kind":"teaching","title":format!("Section {index}"),"body":GOOD}))
         .collect();
@@ -272,8 +276,10 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job.id).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         let model = Model::new();
         let coverage = coverage::audit(&model, &content, &inventory, None).await?;
@@ -361,9 +367,10 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             progress_total: 1,
         })
         .await?;
-    assert!(repo.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     let mut model = Model::new();
     model.hold_bad_claim = true;
+    model.batch_unavailable = true;
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let inventory = Inventory {
@@ -371,23 +378,25 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             index: 0,
             claims: vec![
                 Claim {
-                    quote: BAD.into(),
-                    statement: BAD.into(),
-                },
-                Claim {
                     quote: GOOD.into(),
                     statement: GOOD.into(),
+                },
+                Claim {
+                    quote: BAD.into(),
+                    statement: BAD.into(),
                 },
             ],
             non_factual_reason: String::new(),
         }],
     };
-    let claim = &inventory.units[0].claims[1];
+    let claim = &inventory.units[0].claims[0];
     let evidence = evidence_for(GOOD, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let candidate = candidate(GOOD);
-    // First claim never finishes. The second must still be checkpointed; a
-    // buffered/in-order stream would lose its work on interruption here.
+    // The server cannot finish the group, so the claims are checked one at a
+    // time, and the second never finishes. The first must still be
+    // checkpointed; work held until the whole group finished would be lost
+    // on interruption here.
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         let mut checks = ClaimChecks::default();
         let work = check_evidence(
@@ -439,14 +448,18 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
     assert_eq!(
         repo.job(&job.id).await?.status,
         LearningGenerationJobStatus::Pending
     );
-    let (left, right) = tokio::join!(repo.begin_job(&job.id), repo.begin_job(&job.id));
+    let store = JobStore::new(pool.clone());
+    let (left, right) = tokio::join!(store.claim(&job.id), store.claim(&job.id));
     assert_ne!(
-        left?, right?,
+        left?.is_some(),
+        right?.is_some(),
         "Duplicate delivery must have exactly one claimant"
     );
     for i in 0..12 {
@@ -473,8 +486,8 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             1,
             "Only the interrupted comparison should repeat"
         );
-        assert_eq!(report.findings[0].verdict, ClaimVerdict::Contradicted);
-        assert_eq!(report.findings[1].verdict, ClaimVerdict::Supported);
+        assert_eq!(report.findings[0].verdict, ClaimVerdict::Supported);
+        assert_eq!(report.findings[1].verdict, ClaimVerdict::Contradicted);
         let mut changed = sources.clone();
         changed[0]
             .excerpt

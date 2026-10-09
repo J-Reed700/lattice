@@ -8,7 +8,9 @@ use std::time::Duration;
 use futures::{stream, StreamExt};
 use tracing::debug;
 
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::{LLMPort, RepositoryPort};
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::timestamps::now_db_timestamp;
@@ -199,6 +201,23 @@ pub(super) fn assemble_cells(
         .collect()
 }
 
+/// The model's answer for one row. The prompt carries the passages, once;
+/// someone is waiting on the table.
+pub(super) async fn fill_row(
+    llm: &dyn LLMPort,
+    title: &str,
+    columns: &[String],
+    chunks: &[RetrievedChunk],
+) -> Result<String> {
+    complete_text(
+        llm,
+        &build_compare_prompt(title, columns, chunks),
+        &[],
+        TextCall::at(InferencePriority::Interactive),
+    )
+    .await
+}
+
 async fn build_row(
     container: &Container,
     llm: &Arc<dyn LLMPort>,
@@ -215,9 +234,7 @@ async fn build_row(
         ));
     }
 
-    let prompt = build_compare_prompt(&document.title, columns, &chunks);
-    let context: Vec<String> = chunks.iter().map(|chunk| chunk.content.clone()).collect();
-    let raw = llm.generate(&prompt, &context, None).await?;
+    let raw = fill_row(llm.as_ref(), &document.title, columns, &chunks).await?;
 
     let parsed = parse_compare_response(&raw, columns);
     if parsed.is_empty() {

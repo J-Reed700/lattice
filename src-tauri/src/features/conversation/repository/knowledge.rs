@@ -176,7 +176,8 @@ impl ConversationRepository {
             let id = uuid::Uuid::new_v4().to_string();
             changed = Some(id.clone());
             let digest = compute_digest(text);
-            let tokens = (text.chars().count() / 3 + 1) as i64;
+            let tokens = i64::try_from(crate::application::ports::llm_port::estimate_tokens(text))
+                .unwrap_or(i64::MAX);
             sqlx::query("INSERT INTO conversation_messages(id,conversation_id,role,content,tokens,status,sequence,content_digest,metadata) VALUES (?,?,'user',?,?,'completed',?,?, '{\"memoryNote\":true}')")
                 .bind(&message).bind(&r.conversation_id).bind(text).bind(tokens).bind(sequence).bind(&digest).execute(&mut *tx).await?;
             sqlx::query("UPDATE conversations SET message_count=message_count+1,total_tokens=total_tokens+?,updated_at=? WHERE id=?").bind(tokens).bind(&now).bind(&r.conversation_id).execute(&mut *tx).await?;

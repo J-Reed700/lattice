@@ -325,70 +325,59 @@ pub(crate) async fn complete_json_with_progress(
         output_tokens
     };
     let generation = async {
-        if llm.supports_typed_completions() {
-            let request = CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".to_owned(),
-                        content: system.to_owned(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".to_owned(),
-                        content: prompt,
-                    },
-                ],
-                json_schema: Some(schema),
-                reasoning_effort: Some("low".to_owned()),
-                max_output_tokens: Some(output_tokens.min(u32::MAX as usize) as u32),
-                time_budget: (!unbounded).then_some(MATERIAL_CALL_BUDGET),
-                no_time_limit: unbounded,
-                cache_key: crate::features::learning::lesson_progress::cache_key(),
-                ..Default::default()
-            };
-            let _model_call =
-                lesson_progress.then(crate::features::learning::lesson_progress::model_call);
-            let receive = |text: String| {
-                if let Some(progress) = progress {
-                    progress.received(&text);
-                }
-                if lesson_progress {
-                    crate::features::learning::lesson_progress::received(&text);
-                }
+        let request = CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".to_owned(),
+                    content: system.to_owned(),
+                },
+                CompletionInput::Message {
+                    role: "user".to_owned(),
+                    content: prompt,
+                },
+            ],
+            json_schema: Some(schema),
+            reasoning_effort: Some("low".to_owned()),
+            max_output_tokens: Some(output_tokens.min(u32::MAX as usize) as u32),
+            time_budget: (!unbounded).then_some(MATERIAL_CALL_BUDGET),
+            no_time_limit: unbounded,
+            cache_key: crate::features::learning::lesson_progress::cache_key(),
+            ..Default::default()
+        };
+        let _model_call =
+            lesson_progress.then(crate::features::learning::lesson_progress::model_call);
+        let receive = |text: String| {
+            if let Some(progress) = progress {
+                progress.received(&text);
+            }
+            if lesson_progress {
+                crate::features::learning::lesson_progress::received(&text);
+            }
+            Ok(())
+        };
+        let response = if lesson_progress {
+            // Partial structured output is not published or parsed. The
+            // adapter can discard it and retry a broken connection, while
+            // the progress counter resets for the replacement response.
+            llm.complete_with_retry_progress(&request, &receive, &|attempt| {
+                crate::features::learning::lesson_progress::model_retry(attempt);
                 Ok(())
-            };
-            let response = if lesson_progress {
-                // Partial structured output is not published or parsed. The
-                // adapter can discard it and retry a broken connection, while
-                // the progress counter resets for the replacement response.
-                llm.complete_with_retry_progress(&request, &receive, &|attempt| {
-                    crate::features::learning::lesson_progress::model_retry(attempt);
-                    Ok(())
-                })
-                .await?
-            } else if unbounded {
-                llm.complete_with_progress(&request, &receive).await?
-            } else {
-                llm.complete(&request).await?
-            };
-            tracing::info!(
-                stage = ?progress.map(|value| value.snapshot().stage),
-                input_tokens = response.input_tokens,
-                output_tokens = response.output_tokens,
-                finish_reason = %response.finish_reason,
-                "Learning model request completed"
-            );
-            reject_incomplete_finish_reason(&response.finish_reason)?;
-            Ok(response.text)
+            })
+            .await?
+        } else if unbounded {
+            llm.complete_with_progress(&request, &receive).await?
         } else {
-            // This is the same host port and configured provider; it only
-            // accommodates providers that have not implemented typed output.
-            llm.generate(
-                &format!("{system}\n\nReturn JSON matching this schema: {schema}\n\n{prompt}"),
-                &[],
-                None,
-            )
-            .await
-        }
+            llm.complete(&request).await?
+        };
+        tracing::info!(
+            stage = ?progress.map(|value| value.snapshot().stage),
+            input_tokens = response.input_tokens,
+            output_tokens = response.output_tokens,
+            finish_reason = %response.finish_reason,
+            "Learning model request completed"
+        );
+        reject_incomplete_finish_reason(&response.finish_reason)?;
+        Ok(response.text)
     };
     if unbounded {
         // Outline and lesson requests are interactive and cancellable. A slow model is

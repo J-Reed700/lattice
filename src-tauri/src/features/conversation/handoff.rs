@@ -121,44 +121,30 @@ async fn ask_model(
     prompt: String,
     conversation_id: &str,
 ) -> Result<String, ApiError> {
-    let text = if llm.supports_typed_completions() {
-        let request = CompletionRequest {
-            input: vec![
-                CompletionInput::Message {
-                    role: "system".into(),
-                    content: SYSTEM.to_string(),
-                },
-                CompletionInput::Message {
-                    role: "user".into(),
-                    content: prompt,
-                },
-            ],
-            // A summary needs no hidden chain of thought, and a reasoning model
-            // left to it can spend the whole budget before writing a word.
-            sampling: Some(SamplingOverride::deterministic()),
-            max_output_tokens: Some(CALL_MAX_OUTPUT_TOKENS),
-            time_budget: Some(CALL_TIME_BUDGET),
-            // The user is waiting for the new chat to open, and every part
-            // reads the same conversation, so it returns to the slot that holds
-            // it.
-            priority: InferencePriority::Interactive,
-            cache_key: Some(conversation_id.to_string()),
-            ..Default::default()
-        };
-        llm.complete(&request).await.map(|response| response.text)
-    } else {
-        tokio::time::timeout(
-            CALL_TIME_BUDGET,
-            llm.generate(&prompt, &[format!("System: {SYSTEM}")], None),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(AppError::Other(
-                "The summary took too long and was stopped.".to_string(),
-            ))
-        })
-    }
-    .map_err(ApiError::from)?;
+    let request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: SYSTEM.to_string(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: prompt,
+            },
+        ],
+        // A summary needs no hidden chain of thought, and a reasoning model
+        // left to it can spend the whole budget before writing a word.
+        sampling: Some(SamplingOverride::deterministic()),
+        max_output_tokens: Some(CALL_MAX_OUTPUT_TOKENS),
+        time_budget: Some(CALL_TIME_BUDGET),
+        // The user is waiting for the new chat to open, and every part
+        // reads the same conversation, so it returns to the slot that holds
+        // it.
+        priority: InferencePriority::Interactive,
+        cache_key: Some(conversation_id.to_string()),
+        ..Default::default()
+    };
+    let text = llm.complete(&request).await.map_err(ApiError::from)?.text;
     let text = text.trim();
     if text.is_empty() {
         return Err(ApiError::from(AppError::Other(

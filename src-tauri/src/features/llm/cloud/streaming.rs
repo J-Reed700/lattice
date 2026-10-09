@@ -378,6 +378,20 @@ mod tests {
     use crate::application::ports::llm_port::CompletionInput;
     use std::sync::Mutex;
 
+    /// What the response replays, as the provider's own JSON.
+    fn replayed(response: &CompletionResponse) -> Value {
+        Value::Array(
+            response
+                .replay
+                .iter()
+                .map(|item| match item {
+                    CompletionInput::Native { value } => value.clone(),
+                    other => panic!("cloud replay is native, not {other:?}"),
+                })
+                .collect(),
+        )
+    }
+
     fn frames(events: &[Value]) -> Vec<u8> {
         events
             .iter()
@@ -425,7 +439,7 @@ mod tests {
             response.reasoning.as_deref(),
             Some("Compare 世界\n\nChoose evidence")
         );
-        assert_eq!(response.provider_output, terminal["output"]);
+        assert_eq!(replayed(&response), terminal["output"]);
         assert_eq!((response.input_tokens, response.output_tokens), (14, 9));
         assert!(
             matches!(&response.tool_calls[0], CompletionInput::ToolCall { id, arguments, .. } if id == "call-1" && arguments["q"] == "世界")
@@ -467,10 +481,13 @@ mod tests {
         assert_eq!(*reasoning.lock().unwrap(), "Compare the sources.");
         assert_eq!(response.reasoning.as_deref(), Some("Compare the sources."));
         assert_eq!(response.text, "Answer");
-        assert_eq!(response.provider_output[0]["signature"], "signed-state");
-        assert_eq!(response.provider_output[1]["data"], "redacted-state");
+        // One assistant message, its signed thinking included.
+        let message = &replayed(&response)[0];
+        assert_eq!(message["role"], "assistant");
+        assert_eq!(message["content"][0]["signature"], "signed-state");
+        assert_eq!(message["content"][1]["data"], "redacted-state");
         assert_eq!(
-            response.provider_output[2]["citations"][0]["start_page_number"],
+            message["content"][2]["citations"][0]["start_page_number"],
             2
         );
         assert_eq!((response.input_tokens, response.output_tokens), (23, 18));

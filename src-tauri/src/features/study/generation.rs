@@ -242,28 +242,23 @@ pub(super) async fn generate_from_conversation(
             "claimIndex":{"type":"integer","minimum":0,"maximum":batch.len()-1},"question":{"type":"string"},"distractors":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"topic":{"type":"string"}
         }}}}});
         let completion = tokio::time::timeout(std::time::Duration::from_secs(180), async {
-            if llm.supports_typed_completions() {
-                llm.complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt,
-                        },
-                    ],
-                    json_schema: Some(schema),
-                    reasoning_effort: Some("low".into()),
-                    ..Default::default()
-                })
-                .await
-                .map(|result| result.text)
-            } else {
-                llm.generate(&format!("{system}\n\n{prompt}"), &[], None)
-                    .await
-            }
+            llm.complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt,
+                    },
+                ],
+                json_schema: Some(schema),
+                reasoning_effort: Some("low".into()),
+                ..Default::default()
+            })
+            .await
+            .map(|result| result.text)
         })
         .await
         .map_err(|_| {
@@ -337,8 +332,8 @@ pub(super) async fn generate(
     let schema = json!({"type":"object","additionalProperties":false,"required":["cards"],"properties":{"cards":{"type":"array","minItems":1,"maxItems":request.count,"items":{"type":"object","additionalProperties":false,"required":["question","options","correctIndex","explanation","sourceIndex","quote","topic"],"properties":{
         "question":{"type":"string"},"options":{"type":"array","minItems":5,"maxItems":5,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":4},"explanation":{"type":"string"},"sourceIndex":{"type":"integer","minimum":0,"maximum":sources.len()-1},"quote":{"type":"string"},"topic":{"type":"string"}
     }}}}});
-    let raw = if llm.supports_typed_completions() {
-        llm.complete(&CompletionRequest {
+    let raw = llm
+        .complete(&CompletionRequest {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -354,10 +349,6 @@ pub(super) async fn generate(
             ..Default::default()
         })
         .await?
-        .text
-    } else {
-        llm.generate(&format!("{system}\n\n{prompt}"), &[], None)
-            .await?
-    };
+        .text;
     parse_cards(&raw, &sources, deck_id, request.count, now)
 }

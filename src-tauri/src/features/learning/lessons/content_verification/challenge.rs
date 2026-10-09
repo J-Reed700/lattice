@@ -38,56 +38,47 @@ async fn questions(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Resul
             "The evidence challenge does not fit in the model's context window.",
         ));
     }
-    let raw = if llm.supports_typed_completions() {
-        let request = CompletionRequest {
-            input: vec![
-                CompletionInput::Message {
-                    role: "system".into(),
-                    content: SYSTEM.into(),
-                },
-                CompletionInput::Message {
-                    role: "user".into(),
-                    content: prompt,
-                },
-            ],
-            json_schema: Some(schema),
-            sampling: Some(SamplingOverride::deterministic()),
-            reasoning_effort: Some("low".into()),
-            max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32),
-            no_time_limit: true,
-            priority: InferencePriority::Verification,
-            cache_key: crate::features::learning::lesson_progress::cache_key(),
-            ..Default::default()
-        };
-        let _model_call = crate::features::learning::lesson_progress::model_call();
-        let response = llm
-            .complete_with_retry_progress(
-                &request,
-                &|text| {
-                    crate::features::learning::lesson_progress::received(&text);
-                    Ok(())
-                },
-                &|attempt| {
-                    crate::features::learning::lesson_progress::model_retry(attempt);
-                    Ok(())
-                },
-            )
-            .await?;
-        if !matches!(
-            response.finish_reason.as_str(),
-            "stop" | "end_turn" | "completed"
-        ) {
-            return Err(invalid("The evidence challenge response did not complete."));
-        }
-        response.text
-    } else {
-        llm.generate(
-            &format!("{SYSTEM}\n\nReturn JSON matching this schema: {schema}\n\n{prompt}"),
-            &[],
-            None,
-        )
-        .await?
+    let request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: SYSTEM.into(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: prompt,
+            },
+        ],
+        json_schema: Some(schema),
+        sampling: Some(SamplingOverride::deterministic()),
+        reasoning_effort: Some("low".into()),
+        max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32),
+        no_time_limit: true,
+        priority: InferencePriority::Verification,
+        cache_key: crate::features::learning::lesson_progress::cache_key(),
+        ..Default::default()
     };
+    let _model_call = crate::features::learning::lesson_progress::model_call();
+    let response = llm
+        .complete_with_retry_progress(
+            &request,
+            &|text| {
+                crate::features::learning::lesson_progress::received(&text);
+                Ok(())
+            },
+            &|attempt| {
+                crate::features::learning::lesson_progress::model_retry(attempt);
+                Ok(())
+            },
+        )
+        .await?;
+    if !matches!(
+        response.finish_reason.as_str(),
+        "stop" | "end_turn" | "completed"
+    ) {
+        return Err(invalid("The evidence challenge response did not complete."));
+    }
+    let raw = response.text;
     let questions: Questions = crate::features::learning::generation::parse_json(&raw)?;
     validate_questions(&questions)?;
     Ok(questions)

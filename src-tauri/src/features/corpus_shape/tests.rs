@@ -18,11 +18,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::stream::Stream;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
 use crate::application::factories::ChecksumFactory;
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::application::ports::{DocumentRepositoryPort, LLMPort};
 use crate::domain::entities::Document;
 use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
@@ -56,25 +56,11 @@ impl CountingMockLlm {
 
 #[async_trait]
 impl LLMPort for CountingMockLlm {
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        *self.calls.lock() += 1;
-        Ok(r#"{"label":"Mock Cluster","description":"A mocked description."}"#.to_string())
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(
+            self.respond(request.user_text()).await?,
+        ))
     }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        unimplemented!("streaming not used in corpus_shape tests")
-    }
-
     fn model_name(&self) -> &str {
         "mock-llm"
     }
@@ -86,6 +72,12 @@ impl LLMPort for CountingMockLlm {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+impl CountingMockLlm {
+    async fn respond(&self, _prompt: &str) -> Result<String> {
+        *self.calls.lock() += 1;
+        Ok(r#"{"label":"Mock Cluster","description":"A mocked description."}"#.to_string())
     }
 }
 

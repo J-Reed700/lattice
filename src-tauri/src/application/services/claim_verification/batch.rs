@@ -126,7 +126,7 @@ impl ClaimChecker<'_> {
         if claims.is_empty() {
             return Ok(vec![]);
         }
-        if !matches!(self.policy, CheckPolicy::Strict) || !self.llm.supports_typed_completions() {
+        if !matches!(self.policy, CheckPolicy::Strict) {
             return Err(AppError::InvalidInput(
                 "Batched checking requires strict structured judgments.".into(),
             ));

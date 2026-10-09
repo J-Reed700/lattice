@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::stream::Stream;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -600,10 +599,6 @@ impl FakeLlm {
 
 #[async_trait]
 impl LLMPort for FakeLlm {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
-
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.request_limits
             .lock()
@@ -626,24 +621,6 @@ impl LLMPort for FakeLlm {
             text: self.reply(&prompt)?,
             ..Default::default()
         })
-    }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        self.reply(prompt)
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(futures::stream::empty()))
     }
 
     fn model_name(&self) -> &str {

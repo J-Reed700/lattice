@@ -526,28 +526,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LLMPort for RecordingLlm {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            unreachable!("this mock supports typed completions")
-        }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unimplemented!("streaming is not used by the claim judge")
-        }
-
-        fn supports_typed_completions(&self) -> bool {
-            true
-        }
-
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             self.seen.lock().unwrap().push(request.clone());
             Ok(CompletionResponse {

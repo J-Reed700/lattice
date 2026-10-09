@@ -138,7 +138,7 @@ pub use embedding_repository_port::EmbeddingRepositoryPort;
 pub use favorites_port::FavoritesRepositoryPort;
 pub use file_storage_port::{FileMetadata, FileStoragePort};
 pub use file_system_port::FileSystemPort;
-pub use llm_port::{LLMPort, StreamChunk, ToolCall, ToolDefinition};
+pub use llm_port::{LLMPort, ToolDefinition};
 pub use loaded_chat_model::LoadedChatModelPort;
 pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};

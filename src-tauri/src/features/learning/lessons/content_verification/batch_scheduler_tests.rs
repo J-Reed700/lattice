@@ -1,10 +1,12 @@
 use super::*;
 use crate::application::ports::llm_port::CompletionInput;
+use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
     dto::AcceptLearningProgramRequestDto, lesson_drafts,
     plan_dto::StartLearningGenerationJobRequestDto, repository::LearningRepository,
 };
+use crate::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
 
 #[derive(Default)]
 struct BatchModel {
@@ -22,9 +24,6 @@ struct BatchModel {
 }
 #[async_trait::async_trait]
 impl LLMPort for BatchModel {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     fn model_name(&self) -> &str {
         "batch-scheduler-fixture"
     }
@@ -37,17 +36,7 @@ impl LLMPort for BatchModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
-    async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        Err(invalid("Unexpected legacy request"))
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(invalid("Unexpected legacy stream"))
-    }
+
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let system = request
             .input
@@ -168,8 +157,7 @@ async fn interrupted_challenge_resumes_without_repeating_entailment() -> Result<
         ..Default::default()
     };
     crate::features::learning::lesson_progress::run(
-        &repo,
-        &job,
+        &JobContext::detached(&JobStore::new(pool.clone()), &job).await?,
         lesson_drafts::run(&repo, &job, &lesson, async {
             let claims = inventory(8);
             let retained = ClaimChecks::default();
@@ -206,8 +194,10 @@ async fn interrupted_challenge_resumes_without_repeating_entailment() -> Result<
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
         let results = evidence_checks::check(
@@ -283,8 +273,10 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let model = BatchModel {
         max_batch_size: Some(4),
         ..Default::default()
@@ -418,7 +410,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn setup(
             progress_total: 1,
         })
         .await?;
-    assert!(repo.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     Ok((repo, job.id, lesson_id))
 }
 
@@ -514,7 +506,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         block_individual: true,
         ..Default::default()
     };
-    crate::features::learning::lesson_progress::run(&repo, &job, lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
         let inventory = inventory(170);
         let retained = ClaimChecks::default();
         let work = evidence_checks::check(&blocked, &references, &inventory, &[], &retained);
@@ -549,8 +541,10 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
         let results = evidence_checks::check(
@@ -610,7 +604,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let claim = &input.units[7].claims[0];
     let evidence = evidence_for(&claim.statement, 7, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(7, claim, &evidence));
-    crate::features::learning::lesson_progress::run(&repo, &job, lesson_drafts::run(&repo,&job,&lesson,async {
+    crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
         let mut retained=ClaimChecks::default();let candidate=candidate(GOOD);
         let work=check_evidence(&model,&candidate,&references,input,coverage(8),vec![],&mut retained);
         tokio::select! {
@@ -639,8 +633,10 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let model = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
         let report = check_evidence(

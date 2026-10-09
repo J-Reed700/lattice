@@ -5,6 +5,8 @@
     clippy::panic
 )]
 use super::*;
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use crate::features::learning::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::features::{
     function_calling::dto::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult},
     learning::{lessons::course_generation_tests::ScriptedModel, repository::LearningRepository},
@@ -456,12 +458,28 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     }
     #[async_trait::async_trait]
     impl LLMPort for Model {
-        async fn generate(
-            &self,
-            prompt: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<String> {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            "reference-expansion-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl Model {
+        async fn respond(&self, prompt: &str) -> Result<String> {
             if let Some(reply) =
                 crate::features::learning::lessons::content_verification::tests::fixture_response(
                     prompt,
@@ -501,27 +519,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             }
             panic!("Unexpected authoring or repair request")
         }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
-        fn model_name(&self) -> &str {
-            "reference-expansion-fixture"
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-        fn max_context_tokens(&self) -> usize {
-            128000
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
     }
+
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let mut program = crate::features::learning::tests::fixture();

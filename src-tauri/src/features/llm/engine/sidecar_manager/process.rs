@@ -88,7 +88,7 @@ impl SidecarHandle {
     }
 
     /// Base URL of the local llama-server HTTP API, e.g.
-    /// `http://127.0.0.1:53412`. Pass to `SidecarLLMClient`.
+    /// `http://127.0.0.1:53412`. Pass to `LlamaCppLlm::sidecar`.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
@@ -161,7 +161,7 @@ impl Drop for SidecarHandle {
         // `RunEvent::ExitRequested`, synchronous, runs before the
         // tokio runtime stops). This Drop remains as a safety net for
         // handles dropped outside app shutdown — e.g. when the user
-        // swaps active models and the old SidecarLLMClient goes out
+        // swaps active models and the old `LlamaCppLlm` goes out
         // of scope mid-session. No holder awaits while holding the child
         // mutex, so a plain lock cannot stall here; `try_lock` used to
         // drop the kill silently whenever it lost the race.

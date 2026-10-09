@@ -2,11 +2,21 @@
 //! in-memory container. No LLM.
 
 #![cfg(test)]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use super::parser::parse_compare_response;
 use super::retrieval::RetrievedChunk;
-use super::use_case::{assemble_cells, map_quote_to_chunk};
+use super::use_case::{assemble_cells, fill_row, map_quote_to_chunk};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
+};
+use crate::application::ports::LLMPort;
+use crate::shared::error::Result;
 
 fn columns() -> Vec<String> {
     vec!["method".to_string(), "sample size".to_string()]
@@ -223,4 +233,46 @@ async fn a_search_failure_falls_back_to_opening_chunks_and_marks_the_row_degrade
     assert!(!retrieved.chunks.is_empty());
     assert!(retrieved.chunks.len() <= super::use_case::MAX_CHUNKS_PER_DOCUMENT);
     assert_eq!(retrieved.chunks[0].chunk_id, "c0");
+}
+
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<CompletionRequest>>);
+
+#[async_trait::async_trait]
+impl LLMPort for Recorder {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.lock().unwrap().push(request.clone());
+        Ok(CompletionResponse::from_text("{}"))
+    }
+    fn model_name(&self) -> &str {
+        "recorder"
+    }
+    fn max_context_tokens(&self) -> usize {
+        8192
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The passages are in the prompt; sending them again as context paid for
+/// every one twice.
+#[tokio::test]
+async fn a_row_sends_its_passages_once_at_interactive_priority() {
+    let llm = Recorder::default();
+    fill_row(&llm, "Sleep study", &columns(), &sample_chunks())
+        .await
+        .unwrap();
+    let sent = llm.0.lock().unwrap();
+    assert_eq!(sent[0].priority, InferencePriority::Interactive);
+    let [CompletionInput::Message { role, content }] = sent[0].input.as_slice() else {
+        panic!("one user message, got {:?}", sent[0].input);
+    };
+    assert_eq!(role, "user");
+    assert_eq!(
+        content
+            .matches("This paper reviews prior literature on sleep.")
+            .count(),
+        1
+    );
 }

@@ -14,7 +14,7 @@
 //! 2. HyDE generation via LLM
 //! 3. Service orchestration
 use async_trait::async_trait;
-use futures::stream::{self, Stream};
+use lattice::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice::application::ports::LLMPort;
 use lattice::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy};
 use lattice::features::qa::hyde::{HyDEGenerator, HyDEService, QueryClassifier};
@@ -35,23 +35,8 @@ impl MockLLM {
 
 #[async_trait]
 impl LLMPort for MockLLM {
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        Ok(self.response.clone())
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        let stream = stream::once(async { Ok(self.response.clone()) });
-        Ok(Box::new(Box::pin(stream)))
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(self.response.clone()))
     }
 
     fn model_name(&self) -> &str {
@@ -269,21 +254,7 @@ async fn test_greeting_fast_path_performance() {
 
     #[async_trait]
     impl LLMPort for PanicLLM {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            panic!("LLM should not be called for greetings!");
-        }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
             panic!("LLM should not be called for greetings!");
         }
 

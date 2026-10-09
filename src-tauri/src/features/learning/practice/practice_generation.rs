@@ -42,35 +42,26 @@ async fn complete_json(
         ));
     }
     let output = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.supports_typed_completions() {
-            let r = llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt,
-                        },
-                    ],
-                    json_schema: Some(schema),
-                    reasoning_effort: Some("low".into()),
-                    max_output_tokens: Some(max_tokens as u32),
-                    ..Default::default()
-                })
-                .await?;
-            complete_reason(&r.finish_reason)?;
-            Ok(r.text)
-        } else {
-            llm.generate(
-                &format!("{system}\n\nReturn only JSON matching the schema: {schema}\n{prompt}"),
-                &[],
-                None,
-            )
-            .await
-        }
+        let r = llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt,
+                    },
+                ],
+                json_schema: Some(schema),
+                reasoning_effort: Some("low".into()),
+                max_output_tokens: Some(max_tokens as u32),
+                ..Default::default()
+            })
+            .await?;
+        complete_reason(&r.finish_reason)?;
+        Ok::<_, AppError>(r.text)
     })
     .await
     .map_err(|_| AppError::ServiceNotAvailable("Practice model request timed out.".into()))??;

@@ -193,6 +193,7 @@ impl HealthCheckUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use async_trait::async_trait;
 
     struct MockEmbedder {
@@ -224,24 +225,11 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for MockLLM {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            Ok("response".to_string())
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(
+                self.respond(request.user_text()).await?,
+            ))
         }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unimplemented!()
-        }
-
         fn model_name(&self) -> &str {
             "mock-model"
         }
@@ -256,6 +244,11 @@ mod tests {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(self.is_ready)
+        }
+    }
+    impl MockLLM {
+        async fn respond(&self, _prompt: &str) -> Result<String> {
+            Ok("response".to_string())
         }
     }
 

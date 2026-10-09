@@ -19,6 +19,25 @@ fn reply() -> Value {
     json!({"choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]})
 }
 
+/// The assistant message a response replays.
+fn assistant(response: &CompletionResponse) -> Value {
+    match response.replay.as_slice() {
+        [CompletionInput::Native { value }] => value.clone(),
+        other => panic!("a llama-server reply replays as one message, not {other:?}"),
+    }
+}
+
+/// Plain text through the typed path, as string-only callers make it.
+async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
+    crate::application::services::completion_input::complete_text(
+        client,
+        prompt,
+        context,
+        Default::default(),
+    )
+    .await
+}
+
 fn stream_reply(mut message: Value, reason: &str) -> String {
     if let Some(calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
         for (index, call) in calls.iter_mut().enumerate() {
@@ -67,14 +86,7 @@ async fn first_response_and_followup_work_with_a_single_system_template() {
         "System: Conversation override".into(),
         "System: Cite the PDF.".into(),
     ];
-    let mut stream = client
-        .generate_streaming("First question", &context, None)
-        .await
-        .unwrap();
-    let mut answer = String::new();
-    while let Some(chunk) = stream.next().await {
-        answer.push_str(&chunk.unwrap());
-    }
+    let answer = text(&client, "First question", &context).await.unwrap();
     assert_eq!(answer, "Verified answer");
     context.extend([
         "User: First question".into(),
@@ -82,7 +94,7 @@ async fn first_response_and_followup_work_with_a_single_system_template() {
         "System: Cite the PDF.".into(),
     ]);
     assert_eq!(
-        client.generate("Follow-up", &context, None).await.unwrap(),
+        text(&client, "Follow-up", &context).await.unwrap(),
         "Verified answer"
     );
     let requests = server.received_requests().await.unwrap();
@@ -131,7 +143,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         ],
         ..Default::default()
     };
-    let body = client.body(&request, true).unwrap();
+    let body = client.body(&request).unwrap();
     assert_eq!(
         body["messages"],
         json!([
@@ -140,18 +152,26 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
             {"role":"tool","tool_call_id":"call_1","content":"Result"}
         ])
     );
-    let image_request = client.legacy_request(
-        "Describe",
-        &["System: Image instructions".into()],
-        Some(vec!["image-data".into()]),
-    );
-    let body = client.body(&image_request, true).unwrap();
-    assert_eq!(body["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(body["messages"][0]["content"], "Image instructions");
-    assert_eq!(body["messages"][1]["content"][0]["text"], "Describe");
+    let image = json!({"role":"user","content":[
+        {"type":"text","text":"Describe"},
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,image-data"}}
+    ]});
+    let image_request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: "Image instructions".into(),
+            },
+            CompletionInput::Native {
+                value: image.clone(),
+            },
+        ],
+        ..Default::default()
+    };
+    let body = client.body(&image_request).unwrap();
     assert_eq!(
-        body["messages"][1]["content"][1]["image_url"]["url"],
-        "data:image/png;base64,image-data"
+        body["messages"],
+        json!([{"role":"system","content":"Image instructions"}, image])
     );
 }
 
@@ -163,11 +183,13 @@ async fn template_rejections_explain_the_cause_without_echoing_private_content()
             "message":"Unable to generate parser for this template. Private prompt, Basic test-credential. System message must be at the beginning."
         }})))
         .mount(&server).await;
-    let error = LlamaCppLlm::new(&settings(server.uri()))
-        .unwrap()
-        .generate("Private prompt", &[], None)
-        .await
-        .unwrap_err();
+    let error = text(
+        &LlamaCppLlm::new(&settings(server.uri())).unwrap(),
+        "Private prompt",
+        &[],
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(error, AppError::InvalidState(_)));
     let message = error.to_string();
     assert!(message.contains("single system message at the beginning"));
@@ -191,14 +213,7 @@ async fn live_first_response_and_followup() {
     let mut context: Vec<String> = serde_json::from_value(fixture["context"].clone()).unwrap();
     let client = LlamaCppLlm::new(&config).unwrap();
     let start = std::time::Instant::now();
-    let mut stream = client
-        .generate_streaming(prompt, &context, None)
-        .await
-        .unwrap();
-    let mut answer = String::new();
-    while let Some(chunk) = stream.next().await {
-        answer.push_str(&chunk.unwrap());
-    }
+    let answer = text(&client, prompt, &context).await.unwrap();
     assert!(!answer.trim().is_empty(), "first response was empty");
     println!(
         "Live first response completed: {} characters in {:?}",
@@ -208,14 +223,13 @@ async fn live_first_response_and_followup() {
     context.extend([format!("User: {prompt}"), format!("Assistant: {answer}")]);
     context.push("System: Keep this follow-up to one sentence.".into());
     let start = std::time::Instant::now();
-    let followup = client
-        .generate(
-            "What source did you use in your previous answer?",
-            &context,
-            None,
-        )
-        .await
-        .unwrap();
+    let followup = text(
+        &client,
+        "What source did you use in your previous answer?",
+        &context,
+    )
+    .await
+    .unwrap();
     assert!(!followup.trim().is_empty(), "follow-up was empty");
     println!(
         "Live follow-up completed: {} characters in {:?}",
@@ -296,16 +310,13 @@ async fn tools_and_native_assistant_messages_survive_followup() {
     assert!(
         matches!(response.tool_calls.first(), Some(CompletionInput::ToolCall { id, name, .. }) if id == "call_1" && name == "search")
     );
+    let mut input = response.replay;
+    input.push(CompletionInput::ToolResult {
+        id: "call_1".into(),
+        output: "Found Rust docs".into(),
+    });
     let followup = CompletionRequest {
-        input: vec![
-            CompletionInput::Native {
-                value: response.provider_output,
-            },
-            CompletionInput::ToolResult {
-                id: "call_1".into(),
-                output: "Found Rust docs".into(),
-            },
-        ],
+        input,
         ..Default::default()
     };
     Mock::given(path("/v1/chat/completions")).and(body_partial_json(json!({"messages":[message,{"role":"tool","tool_call_id":"call_1","content":"Found Rust docs"}]})))
@@ -329,9 +340,17 @@ async fn streaming_uses_chat_completions_with_auth_and_emits_content() {
         .mount(&server)
         .await;
     let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
-    let mut stream = client.generate_streaming("Hi", &[], None).await.unwrap();
-    assert_eq!(stream.next().await.unwrap().unwrap(), "Hello");
-    assert!(stream.next().await.is_none());
+    let shown = std::sync::Mutex::new(Vec::new());
+    let on_text = |text: String| {
+        shown.lock().unwrap().push(text);
+        Ok(())
+    };
+    let response = client
+        .complete_with_progress(&CompletionRequest::default(), &on_text)
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Hello");
+    assert_eq!(*shown.lock().unwrap(), vec!["Hello".to_string()]);
 }
 
 #[tokio::test]
@@ -341,12 +360,14 @@ async fn errors_do_not_expose_credentials_or_response_bodies() {
         .respond_with(ResponseTemplate::new(401).set_body_string("private response-body"))
         .mount(&server)
         .await;
-    let error = LlamaCppLlm::new(&settings(server.uri()))
-        .unwrap()
-        .generate("Private prompt", &[], None)
-        .await
-        .unwrap_err()
-        .to_string();
+    let error = text(
+        &LlamaCppLlm::new(&settings(server.uri())).unwrap(),
+        "Private prompt",
+        &[],
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(error.contains("401"));
     for secret in ["test-credential", "private response-body", "Private prompt"] {
         assert!(!error.contains(secret));
@@ -495,7 +516,7 @@ fn streamed_tool_arguments_reasoning_and_usage_survive_fragmentation() {
     assert_eq!(response.finish_reason, "tool_calls");
     assert_eq!(response.input_tokens, 20);
     assert_eq!(response.output_tokens, 30);
-    assert_eq!(response.provider_output["reasoning_content"], "Look here");
+    assert_eq!(assistant(&response)["reasoning_content"], "Look here");
     assert_eq!(response.reasoning.as_deref(), Some("Look here"));
     assert!(matches!(&response.tool_calls[0], CompletionInput::ToolCall {id, ..} if id == "first"));
     assert!(
@@ -530,7 +551,8 @@ fn a_malformed_streamed_tool_call_comes_back_as_an_invalid_call_not_an_error() {
             assert!(problem.contains("cut off"), "{problem}");
         }
         // The replayed assistant message carries arguments the template can parse.
-        let replayed = response.provider_output["tool_calls"][0]["function"]["arguments"]
+        let message = assistant(&response);
+        let replayed = message["tool_calls"][0]["function"]["arguments"]
             .as_str()
             .unwrap();
         assert!(serde_json::from_str::<Value>(replayed).is_ok());
@@ -568,7 +590,7 @@ fn a_call_with_no_id_or_no_name_is_given_one_and_kept() {
         ]
     );
     assert_eq!(
-        response.provider_output["tool_calls"][0]["id"],
+        assistant(&response)["tool_calls"][0]["id"],
         "call_invalid_0"
     );
 }
@@ -1148,7 +1170,7 @@ fn done_marker_without_finish_reason_is_rejected_and_duplicate_tool_ids_are_spli
     // is given its own, and the replayed message says so too.
     let call = json!({"id":"same","type":"function","function":{"name":"search","arguments":"{}"}});
     let response = parse_completion(json!({"choices":[{"message":{"tool_calls":[call.clone(), call]},"finish_reason":"tool_calls"}]})).unwrap();
-    let ids: Vec<_> = response.provider_output["tool_calls"]
+    let ids: Vec<_> = assistant(&response)["tool_calls"]
         .as_array()
         .unwrap()
         .iter()
@@ -1185,17 +1207,14 @@ fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
         want_logprobs: true,
         ..Default::default()
     };
-    let body = client.body(&request, true).unwrap();
+    let body = client.body(&request).unwrap();
     assert_eq!(body["logprobs"], true);
     assert!(body["top_logprobs"].as_u64().unwrap() > 1);
     let plain = client
-        .body(
-            &CompletionRequest {
-                want_logprobs: false,
-                ..request.clone()
-            },
-            true,
-        )
+        .body(&CompletionRequest {
+            want_logprobs: false,
+            ..request.clone()
+        })
         .unwrap();
     assert!(plain.get("logprobs").is_none());
 
@@ -1293,7 +1312,7 @@ fn internal_requests_do_not_disable_model_reasoning() {
             reasoning_effort: effort.map(str::to_owned),
             ..Default::default()
         };
-        let body = client.body(&request, true).unwrap();
+        let body = client.body(&request).unwrap();
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("chat_template_kwargs").is_none());
     }
@@ -1330,18 +1349,15 @@ fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
         assigned_slot: Some(1),
         ..Default::default()
     };
-    let body = client.body(&request, true).unwrap();
+    let body = client.body(&request).unwrap();
     assert_eq!(body["id_slot"], 1);
     assert_eq!(body["cache_prompt"], true);
 
     let unscheduled = client
-        .body(
-            &CompletionRequest {
-                assigned_slot: None,
-                ..request
-            },
-            true,
-        )
+        .body(&CompletionRequest {
+            assigned_slot: None,
+            ..request
+        })
         .unwrap();
     assert!(unscheduled.get("id_slot").is_none());
 }
@@ -1368,4 +1384,257 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
         .await;
     assert!(llm.counts_tokens_exactly());
     assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);
+}
+
+/// The config both a bundled and a remote server can be described by.
+fn server_config(prefill_guard: bool) -> ServerConfig {
+    let settings = settings("http://localhost:8080".into());
+    ServerConfig {
+        model: "test-model".into(),
+        generation: GenerationConfig {
+            temperature: settings.temperature,
+            top_p: settings.top_p,
+            top_k: settings.top_k,
+            max_tokens: settings.max_tokens as usize,
+            repeat_penalty: settings.repeat_penalty,
+        },
+        context_window: settings.context_window as usize,
+        stall_timeout: Duration::from_secs(30),
+        supports_tools: true,
+        prefill_guard,
+    }
+}
+
+/// The bundled sidecar and a server the user runs differ in where the server
+/// is, how it authenticates and who owns its process — never in what they ask
+/// of it.
+#[tokio::test]
+async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
+    let remote_server = MockServer::start().await;
+    let sidecar_server = MockServer::start().await;
+    for (server, auth) in [
+        (&remote_server, "Basic test-credential"),
+        (&sidecar_server, "Bearer sidecar-token"),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", auth))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(stream_reply(json!({"content":"Answer"}), "stop")),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+    let remote = LlamaCppLlm::new(&settings(remote_server.uri())).unwrap();
+    let sidecar =
+        LlamaCppLlm::connect(&sidecar_server.uri(), "sidecar-token", server_config(true)).unwrap();
+    let request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: "Answer from the passages.".into(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: "Which passage says so? 世界".into(),
+            },
+            CompletionInput::ToolCall {
+                id: "call_1".into(),
+                name: "search".into(),
+                arguments: json!({"q": "rust"}),
+            },
+            CompletionInput::ToolResult {
+                id: "call_1".into(),
+                output: "Found Rust docs".into(),
+            },
+        ],
+        tools: vec![crate::application::ports::ToolDefinition {
+            name: "search".into(),
+            description: "Search".into(),
+            parameters: json!({"type":"object"}),
+        }],
+        json_schema: Some(json!({"type":"object"})),
+        reasoning_effort: Some("low".into()),
+        sampling: Some(crate::application::ports::llm_port::SamplingOverride::deterministic()),
+        max_output_tokens: Some(512),
+        want_logprobs: true,
+        assigned_slot: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(remote.complete(&request).await.unwrap().text, "Answer");
+    assert_eq!(sidecar.complete(&request).await.unwrap().text, "Answer");
+    let sent = |requests: Vec<wiremock::Request>| -> Value {
+        serde_json::from_slice(&requests[0].body).unwrap()
+    };
+    let remote_body = sent(remote_server.received_requests().await.unwrap());
+    let sidecar_body = sent(sidecar_server.received_requests().await.unwrap());
+    assert_eq!(remote_body, sidecar_body);
+    assert_eq!(remote_body["id_slot"], 2);
+    assert_eq!(
+        remote_body["chat_template_kwargs"]["reasoning_effort"],
+        "low"
+    );
+    assert_eq!(remote_body["max_tokens"], 512);
+}
+
+#[test]
+fn a_model_without_a_tool_template_refuses_tool_traffic() {
+    let config = ServerConfig {
+        supports_tools: false,
+        ..server_config(true)
+    };
+    let client = LlamaCppLlm::connect("http://127.0.0.1:9", "token", config).unwrap();
+    let plain = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Hi".into(),
+        }],
+        ..Default::default()
+    };
+    assert!(client.body(&plain).is_ok());
+    let replayed_result = CompletionRequest {
+        input: vec![CompletionInput::ToolResult {
+            id: "call_1".into(),
+            output: "Result".into(),
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(
+        client.body(&replayed_result),
+        Err(AppError::InvalidConfig(_))
+    ));
+    assert!(!client.supports_tool_calling());
+}
+
+#[test]
+fn ownership_names_the_provider_and_keeps_a_remote_server_alive() {
+    let remote = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    assert_eq!(remote.provider_name(), "llamacpp");
+    assert!(remote.is_alive());
+    assert!(!remote.config.prefill_guard);
+}
+
+const PROGRESS_FRAME: &str = "data: {\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null}}],\"prompt_progress\":{\"total\":4000,\"cache\":0,\"processed\":2048,\"time_ms\":1}}\n\n";
+
+/// Frames delivered at virtual times, for driving the stream clocks on a
+/// paused runtime.
+fn scripted(
+    frames: Vec<(u64, String)>,
+) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Unpin {
+    Box::pin(futures::stream::unfold(
+        frames.into_iter(),
+        |mut frames| async move {
+            let (delay, frame) = frames.next()?;
+            tokio::time::sleep(Duration::from_secs(delay)).await;
+            Some((Ok(frame.into_bytes()), frames))
+        },
+    ))
+}
+
+fn io_error(_: std::io::Error) -> AppError {
+    AppError::Network("fixture stream failed".into())
+}
+
+async fn read(
+    frames: Vec<(u64, String)>,
+    first_frame: Option<Duration>,
+) -> std::result::Result<CompletionResponse, retry::Failure> {
+    retry::read_stream(
+        scripted(frames),
+        retry::Patience {
+            first_frame,
+            stall: Duration::from_secs(30),
+        },
+        io_error,
+        &|_| Ok(()),
+        None,
+        &mut false,
+    )
+    .await
+}
+
+/// Ninety seconds of prompt processing, reported every 45, then the answer.
+fn slow_prefill() -> Vec<(u64, String)> {
+    let answer = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Answer\"},\"finish_reason\":null}]}\n\n";
+    let finish = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    vec![
+        (45, PROGRESS_FRAME.to_string()),
+        (45, PROGRESS_FRAME.to_string()),
+        (10, answer.to_string()),
+        (1, finish.to_string()),
+    ]
+}
+
+/// A flat first-token wait failed this turn; progress frames are liveness.
+#[tokio::test(start_paused = true)]
+async fn a_bundled_servers_prompt_progress_keeps_its_first_frame_wait_alive() {
+    let allowance = retry::prefill_allowance(&[json!({"role":"user","content":"hi"})]);
+    assert_eq!(
+        allowance,
+        retry::FIRST_FRAME_FLOOR,
+        "a short prompt gets the floor"
+    );
+    let response = read(slow_prefill(), Some(allowance)).await.ok().unwrap();
+    assert_eq!(response.text, "Answer");
+}
+
+/// Every request a bundled server sees went through its scheduler, so a
+/// server that says nothing past the allowance has hung: the attempt fails
+/// for good rather than queueing a retry behind it.
+#[tokio::test(start_paused = true)]
+async fn a_silent_bundled_server_fails_without_a_retry_but_a_remote_one_is_waited_for() {
+    let answer = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Late\"},\"finish_reason\":\"stop\"}]}\n\n";
+    let frames = vec![(70, answer.to_string())];
+    let bundled = read(frames.clone(), Some(Duration::from_secs(60))).await;
+    assert!(matches!(
+        bundled,
+        Err(retry::Failure::Permanent(AppError::ServiceNotAvailable(_)))
+    ));
+    let remote = read(frames, None).await.ok().unwrap();
+    assert_eq!(remote.text, "Late");
+}
+
+/// Once the model is generating, silence is a stall, and a stall is retried.
+#[tokio::test(start_paused = true)]
+async fn silence_after_generation_starts_is_still_a_stall() {
+    let answer = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"A\"},\"finish_reason\":null}]}\n\n";
+    let frames = vec![(1, answer.to_string()), (45, answer.to_string())];
+    let result = read(frames, Some(Duration::from_secs(60))).await;
+    assert!(matches!(result, Err(retry::Failure::Retry(..))));
+}
+
+/// A long prompt with no progress frames gets one batch at the floor rate.
+#[test]
+fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
+    let long = json!({"role":"user","content":"x".repeat(40_000)});
+    assert_eq!(
+        retry::prefill_allowance(&[long]),
+        retry::FIRST_FRAME_FLOOR
+            + Duration::from_secs(
+                (retry::PREFILL_BATCH_TOKENS / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64
+            )
+    );
+}
+
+#[test]
+fn a_full_window_keeps_the_output_floor_but_a_smaller_cap_is_kept() {
+    let client = LlamaCppLlm::connect(
+        "http://127.0.0.1:9",
+        "token",
+        ServerConfig {
+            context_window: 8_192,
+            ..server_config(true)
+        },
+    )
+    .unwrap();
+    let prompt = |chars: usize| vec![json!({"role":"user","content":"x".repeat(chars)})];
+    // A prompt that leaves the window nearly full still gets the floor.
+    assert_eq!(client.output_room_for(&prompt(30_000), 4_096), 1_024);
+    // A small prompt gets what it asked for, up to the room left.
+    assert_eq!(client.output_room_for(&prompt(100), 4_096), 4_096);
+    // A cap below the floor is the caller's decision and is kept.
+    assert_eq!(client.output_room_for(&prompt(100), 512), 512);
+    assert_eq!(client.output_room_for(&prompt(30_000), 512), 512);
 }

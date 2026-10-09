@@ -131,43 +131,34 @@ async fn complete_json(
         ));
     }
     let output = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.supports_typed_completions() {
-            let response = llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt,
-                        },
-                    ],
-                    json_schema: Some(schema),
-                    reasoning_effort: Some("medium".into()),
-                    max_output_tokens: Some(max_tokens),
-                    ..Default::default()
-                })
-                .await?;
-            let finish = response.finish_reason.to_ascii_lowercase();
-            if ["length", "max_tokens", "max_output_tokens", "incomplete"]
-                .iter()
-                .any(|reason| finish.contains(reason))
-            {
-                return Err(invalid(
-                    "The model returned an incomplete practical activity.",
-                ));
-            }
-            Ok(response.text)
-        } else {
-            llm.generate(
-                &format!("{system}\n\nReturn only JSON matching the supplied contract.\n{prompt}"),
-                &[],
-                None,
-            )
-            .await
+        let response = llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt,
+                    },
+                ],
+                json_schema: Some(schema),
+                reasoning_effort: Some("medium".into()),
+                max_output_tokens: Some(max_tokens),
+                ..Default::default()
+            })
+            .await?;
+        let finish = response.finish_reason.to_ascii_lowercase();
+        if ["length", "max_tokens", "max_output_tokens", "incomplete"]
+            .iter()
+            .any(|reason| finish.contains(reason))
+        {
+            return Err(invalid(
+                "The model returned an incomplete practical activity.",
+            ));
         }
+        Ok(response.text)
     })
     .await
     .map_err(|_| AppError::ServiceNotAvailable("Practical generation timed out.".into()))??;

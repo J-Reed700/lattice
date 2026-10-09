@@ -10,18 +10,16 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::{build_excerpt, safe_truncate};
-use futures::StreamExt;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::fetch_memory::{self, Delivery, FetchMemory, Recall};
 use super::focus::FocusScope;
-use super::prompting::render_tool_followup_prompt;
 use super::retrieval::{
     build_web_source_citations, deduplicate_sources, fetched_page_text_room, format_tool_result,
     merge_tool_sources, record_tool_document_references,
@@ -54,6 +52,13 @@ pub struct ToolLoopOutcome {
     /// no tokens.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+}
+
+/// One call the model asked for this round.
+struct RequestedCall {
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
 }
 
 /// Emits `llm-stream` events tagged with the turn they belong to.
@@ -133,7 +138,6 @@ pub(super) async fn run_agentic_tool_loop(
     sink: &ChatEventSink,
     context: &[String],
     enhanced_message: &str,
-    validated_message: &str,
     prompt_settings: &LLMPromptSettingsDto,
     highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
@@ -162,11 +166,8 @@ pub(super) async fn run_agentic_tool_loop(
     use crate::application::ports::llm_port::{
         CompletionInput, CompletionRequest, InferencePriority,
     };
-    use crate::application::ports::StreamChunk;
 
     let max_tool_rounds = max_tool_rounds.max(1);
-    const EMPTY_RESPONSE_RETRY_HINT: &str =
-        "Previous generation produced no text. Respond directly to the user query.";
     // One deadline for the whole turn: tool rounds and provider retries share it.
     let deadline = Instant::now() + time_budget;
     let budget_minutes = time_budget.as_secs().div_ceil(60);
@@ -186,8 +187,6 @@ pub(super) async fn run_agentic_tool_loop(
 
     let tool_loop_start = Instant::now();
     let mut timings = ToolLoopTimingMetrics::default();
-    let mut input_tokens: Option<u64> = None;
-    let mut output_tokens: Option<u64> = None;
 
     tracing::info!(
         conversation_id = conv_id,
@@ -199,9 +198,6 @@ pub(super) async fn run_agentic_tool_loop(
     let mut emitter = StreamEmitter::new(sink, conv_id, request_id);
     let mut document_progress = document_progress::DocumentProgress::new(sources);
 
-    let base_prompt = enhanced_message.to_string();
-    let mut tool_context = context.to_vec();
-    let mut current_prompt = base_prompt.clone();
     // The stop button as a token. Every round's request carries it, so a stop
     // press takes a request out of the backend's queue, or aborts it while it
     // generates, at once rather than at the next poll.
@@ -218,7 +214,7 @@ pub(super) async fn run_agentic_tool_loop(
             None => crate::application::services::completion_input::from_context(
                 &prompt_settings.system_prompt,
                 context,
-                &base_prompt,
+                enhanced_message,
             ),
         },
         tools: tools_ref.unwrap_or(&[]).to_vec(),
@@ -277,18 +273,16 @@ pub(super) async fn run_agentic_tool_loop(
         let window_full = iteration > 0
             && !window_has_room_for_a_result(
                 window_chars(llm.max_context_tokens(), llm.chars_per_token()),
-                chars_in_flight(&native_request.input, &tool_context, &current_prompt)
-                    + tool_schema_chars,
+                chars_in_flight(&native_request.input) + tool_schema_chars,
             );
         let final_round = iteration + 1 == max_tool_rounds || window_full;
-        let round_tools = if final_round { None } else { tools_ref };
         let tools_withdrawn = final_round && tools_ref.is_some_and(|tools| !tools.is_empty());
         if tools_withdrawn {
             info!(
                 iteration,
                 window_full, "Last tool round: asking for the answer without tools"
             );
-            withdraw_tools_for_answer(&mut native_request, &mut tool_context);
+            withdraw_tools_for_answer(&mut native_request);
         }
         // Offered no tools, a model can still write a call into its text. It is
         // never run, so it is held back from the bubble as it streams.
@@ -303,7 +297,7 @@ pub(super) async fn run_agentic_tool_loop(
         );
 
         let llm_iteration_start = Instant::now();
-        // Begun before either branch so a round that never produces a token is
+        // Begun before the call so a round that never produces a token is
         // still a visible, timed step rather than a gap. The guard ends it even
         // on the budget and cancellation returns below.
         let generate_step =
@@ -311,791 +305,538 @@ pub(super) async fn run_agentic_tool_loop(
         let reasoning_progress = std::sync::Mutex::new(ReasoningProgress::new());
         let remaining = remaining_budget()?;
         native_request.time_budget = Some(remaining);
-        // Every provider that can take a typed request gets one, tools or not:
-        // the legacy stream ignores finish reasons and error frames (so a
-        // cut-off answer is saved as complete), drops the output cap and
-        // reasoning effort, and flattens the history into one system message.
-        let native_progress = llm.supports_typed_completions();
-        let stream_result = if native_progress {
-            let response = {
-                let first_text_received = std::sync::atomic::AtomicBool::new(false);
-                let on_text = |text: String| {
-                    if !text.is_empty()
-                        && !first_text_received.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        info!(
-                            iteration,
-                            first_text_ms = llm_iteration_start.elapsed().as_millis() as u64,
-                            "LLM first answer text received"
-                        );
-                    }
-                    let shown = leaked_calls
-                        .lock()
-                        .map_or_else(|_| text.clone(), |mut filter| filter.push(&text));
-                    if shown.is_empty() {
-                        return Ok(());
-                    }
-                    emitter.content(&shown)
-                };
-                let on_reasoning = |delta: String| {
-                    let update = reasoning_progress
-                        .lock()
-                        .ok()
-                        .and_then(|mut progress| progress.push(&delta));
-                    if let Some(reasoning) = update.as_deref() {
-                        generate_step.set_reasoning(Some(reasoning));
-                    }
-                    Ok(())
-                };
-                // A provider-level retry is its own step. It used to overwrite
-                // the answer bubble's text, so a turn that recovered ended up
-                // showing "Model response failed. Retrying..." in place of the
-                // answer it went on to write.
-                let on_retry = |attempt: usize| {
-                    if let Ok(mut progress) = reasoning_progress.lock() {
-                        progress.reset();
-                    }
-                    generate_step.set_reasoning(None);
-                    recorder.note(
-                        TurnStepKind::Retry,
-                        "Retrying the model",
-                        None,
-                        Some(format!("attempt {attempt}")),
-                    );
-                    Ok(())
-                };
-                let completion = timeout(
-                    remaining,
-                    llm.complete_with_reasoning_progress(
-                        &native_request,
-                        &on_text,
-                        &on_reasoning,
-                        &on_retry,
-                    ),
-                );
-                tokio::select! {
-                    biased;
-                    _ = turn_cancel.cancelled() => return Err(cancellation_error()),
-                    result = completion => result.map_err(|_| budget_exhausted())?,
-                }
-            }?;
-            let mut response = response;
-            if let Some(reasoning) = response
-                .reasoning
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-            {
-                // Flush the last sub-threshold delta and make the persisted
-                // step agree exactly with the provider's completed value.
-                generate_step.set_reasoning(Some(reasoning));
-            } else if let Ok(progress) = reasoning_progress.lock() {
-                generate_step.set_reasoning(progress.text());
-            }
-            if answer_was_cut_short(
-                &response.finish_reason,
-                &response.text,
-                !response.tool_calls.is_empty(),
-            )? {
-                emitter.content(CUT_SHORT_NOTE)?;
-                response.text.push_str(CUT_SHORT_NOTE);
-            }
-            if response.text.trim().is_empty() && response.tool_calls.is_empty() {
-                return Err(AppError::InvalidState(
-                    "Model returned no answer or tool calls".into(),
-                ));
-            }
-            tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
-            // The last round that reports usage is the one that produced the
-            // answer, so a later round's numbers replace an earlier round's.
-            input_tokens = Some(response.input_tokens);
-            output_tokens = Some(response.output_tokens);
-            if llm.provider_name() == "openai" {
-                if let Some(items) = response.provider_output.as_array() {
-                    native_request.input.extend(
-                        items
-                            .iter()
-                            .cloned()
-                            .map(|value| CompletionInput::Native { value }),
+        let mut response = {
+            let first_text_received = std::sync::atomic::AtomicBool::new(false);
+            let on_text = |text: String| {
+                if !text.is_empty()
+                    && !first_text_received.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    info!(
+                        iteration,
+                        first_text_ms = llm_iteration_start.elapsed().as_millis() as u64,
+                        "LLM first answer text received"
                     );
                 }
-            } else if matches!(llm.provider_name(), "llamacpp" | "local-sidecar") {
-                // Both are llama-server: the assistant message, tool calls and
-                // any reasoning included, replays as the server returned it.
-                native_request.input.push(CompletionInput::Native {
-                    value: response.provider_output,
-                });
-            } else {
-                native_request.input.push(CompletionInput::Native { value: serde_json::json!({"role":"assistant","content":response.provider_output}) });
-            }
-            let calls = response
-                .tool_calls
-                .into_iter()
-                .filter_map(|call| match call {
-                    CompletionInput::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => Some(crate::application::ports::ToolCall {
-                        id: Some(id),
-                        name,
-                        arguments,
-                    }),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            let chunks = vec![
-                Ok(StreamChunk::Content(response.text)),
-                Ok(StreamChunk::ToolCalls(calls)),
-                Ok(StreamChunk::Done),
-            ];
-            Ok(Box::new(futures::stream::iter(chunks))
-                as Box<
-                    dyn futures::Stream<Item = Result<StreamChunk>> + Send + Unpin,
-                >)
-        } else {
-            // A provider that stalls before sending headers must not outlive the
-            // budget or ignore the Stop button.
-            let creation = timeout(
-                remaining_budget()?,
-                llm.generate_streaming_with_tools(
-                    &current_prompt,
-                    &tool_context,
+                let shown = leaked_calls
+                    .lock()
+                    .map_or_else(|_| text.clone(), |mut filter| filter.push(&text));
+                if shown.is_empty() {
+                    return Ok(());
+                }
+                emitter.content(&shown)
+            };
+            let on_reasoning = |delta: String| {
+                let update = reasoning_progress
+                    .lock()
+                    .ok()
+                    .and_then(|mut progress| progress.push(&delta));
+                if let Some(reasoning) = update.as_deref() {
+                    generate_step.set_reasoning(Some(reasoning));
+                }
+                Ok(())
+            };
+            // A provider-level retry is its own step. It used to overwrite
+            // the answer bubble's text, so a turn that recovered ended up
+            // showing "Model response failed. Retrying..." in place of the
+            // answer it went on to write.
+            let on_retry = |attempt: usize| {
+                if let Ok(mut progress) = reasoning_progress.lock() {
+                    progress.reset();
+                }
+                generate_step.set_reasoning(None);
+                recorder.note(
+                    TurnStepKind::Retry,
+                    "Retrying the model",
                     None,
-                    round_tools,
+                    Some(format!("attempt {attempt}")),
+                );
+                Ok(())
+            };
+            let completion = timeout(
+                remaining,
+                llm.complete_with_reasoning_progress(
+                    &native_request,
+                    &on_text,
+                    &on_reasoning,
+                    &on_retry,
                 ),
             );
             tokio::select! {
                 biased;
                 _ = turn_cancel.cancelled() => return Err(cancellation_error()),
-                result = creation => result.unwrap_or_else(|_| Err(budget_exhausted())),
+                result = completion => result.map_err(|_| budget_exhausted())?,
             }
+        }?;
+        if let Some(reasoning) = response
+            .reasoning
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            // Flush the last sub-threshold delta and make the persisted
+            // step agree exactly with the provider's completed value.
+            generate_step.set_reasoning(Some(reasoning));
+        } else if let Ok(progress) = reasoning_progress.lock() {
+            generate_step.set_reasoning(progress.text());
+        }
+        if answer_was_cut_short(
+            &response.finish_reason,
+            &response.text,
+            !response.tool_calls.is_empty(),
+        )? {
+            emitter.content(CUT_SHORT_NOTE)?;
+            response.text.push_str(CUT_SHORT_NOTE);
+        }
+        if response.text.trim().is_empty() && response.tool_calls.is_empty() {
+            return Err(AppError::InvalidState(
+                "Model returned no answer or tool calls".into(),
+            ));
+        }
+        tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
+        // The round that produces the answer reports the turn's usage.
+        let input_tokens = Some(response.input_tokens);
+        let output_tokens = Some(response.output_tokens);
+        // The model's turn goes back in the provider's own shape — its
+        // tool calls, and any signed or opaque reasoning, included — so
+        // the results below answer calls the provider recognises.
+        native_request.input.append(&mut response.replay);
+        let tool_calls = response
+            .tool_calls
+            .into_iter()
+            .filter_map(|call| match call {
+                CompletionInput::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => Some(RequestedCall {
+                    id,
+                    name,
+                    arguments,
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let response_text = response.text;
+        let tool_calls = if final_round && !tool_calls.is_empty() {
+            // Offered no tools, a model can still write a call.
+            // It is not run: this round's text is the answer.
+            warn!(
+                ignored_calls = tool_calls.len(),
+                "Model called tools in the last round; keeping its text as the answer"
+            );
+            Vec::new()
+        } else {
+            tool_calls
         };
+        // A call written as text is cut out of the answer, and
+        // the answer says why it stops there rather than ending
+        // mid-thought for no visible reason.
+        let response_text = match tools_withdrawn
+            .then(|| leaked_tool_call_start(&response_text))
+            .flatten()
+        {
+            Some(start) => {
+                warn!(
+                    conversation_id = conv_id,
+                    "Model wrote tool calls as text in the last round; cutting them from the answer"
+                );
+                let kept = response_text[..start].trim_end();
+                emitter.content(OUT_OF_ROUNDS_NOTE)?;
+                if kept.is_empty() {
+                    OUT_OF_ROUNDS_NOTE.trim_start().to_string()
+                } else {
+                    format!("{kept}{OUT_OF_ROUNDS_NOTE}")
+                }
+            }
+            None => response_text,
+        };
+        timings.llm_stream_ms = timings
+            .llm_stream_ms
+            .saturating_add(elapsed_ms(llm_iteration_start));
+        generate_step.done(Some(round_result_line(&response_text, tool_calls.len())));
+        if tool_calls.is_empty() {
+            if response_text.trim().is_empty() {
+                return Err(AppError::InvalidState("Model returned no answer".into()));
+            }
+            emitter.done();
+            tracing::info!(
+                conversation_id = conv_id,
+                response_len = response_text.len(),
+                iterations = timings.iterations,
+                llm_stream_ms = timings.llm_stream_ms,
+                tool_execution_ms = timings.tool_execution_ms,
+                tool_call_count = timings.tool_call_count,
+                tool_success_count = timings.tool_success_count,
+                tool_failure_count = timings.tool_failure_count,
+                empty_response_retries = timings.empty_response_retries,
+                followup_prompt_build_ms = timings.followup_prompt_build_ms,
+                total_ms = elapsed_ms(tool_loop_start),
+                "chat_with_conversation: tool loop complete"
+            );
+            timings.total_ms = elapsed_ms(tool_loop_start);
+            return Ok(ToolLoopOutcome {
+                response: response_text,
+                timings,
+                input_tokens,
+                output_tokens,
+            });
+        }
 
-        match stream_result {
-            Ok(mut stream) => {
-                let mut full_response = String::new();
-                let mut pending_tool_calls: Vec<crate::application::ports::ToolCall> = Vec::new();
+        for (call_index, tc) in tool_calls.iter().enumerate() {
+            let tool_call_start = Instant::now();
+            timings.tool_call_count = timings.tool_call_count.saturating_add(1);
+            // What is left of the window, shared between the
+            // calls this round still has to answer. The
+            // configured cap alone let one round of page
+            // fetches outgrow a small model's entire context.
+            let result_allowance = tool_result_allowance(
+                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
+                chars_in_flight(&native_request.input) + tool_schema_chars,
+                tool_calls.len().saturating_sub(call_index),
+                tool_output_settings.max_chars as usize,
+            );
+            let round_output_settings = ToolOutputSettingsDto {
+                max_chars: u32::try_from(result_allowance).unwrap_or(u32::MAX),
+                ..tool_output_settings.clone()
+            };
+            if turn_cancel.is_cancelled() {
+                emit_cancelled_stream(sink, conv_id, request_id);
+                return Err(cancellation_error());
+            }
+            // A call the model wrote but that cannot be run is
+            // answered with why, and the model tries again.
+            if let Some(problem) =
+                crate::features::llm::llama_cpp::invalid_tool_call_problem(&tc.arguments)
+            {
+                warn!(
+                    requested_function = tc.name.as_str(),
+                    %problem,
+                    "Model wrote a tool call that cannot be run"
+                );
+                timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
+                recorder.note(
+                    TurnStepKind::Retry,
+                    "The model's tool call was malformed",
+                    None,
+                    Some(tc.name.clone()),
+                );
+                native_request.input.push(CompletionInput::ToolResult {
+                    id: tc.id.clone(),
+                    output: problem.clone(),
+                });
+                continue;
+            }
+            let resolved_tool = canonical_tool_name(tc.name.as_str());
+            if !is_tool_allowed(resolved_tool, tools_ref) {
+                native_request.input.push(CompletionInput::ToolResult {
+                    id: tc.id.clone(),
+                    output: "Requested tool is unavailable".into(),
+                });
+                let available_tools = available_tool_names(tools_ref);
+                warn!(
+                    requested_function = tc.name.as_str(),
+                    resolved_function = resolved_tool,
+                    available_tools = available_tools.join(", "),
+                    "Skipping unavailable tool requested by LLM"
+                );
+                continue;
+            }
+            // A URL this turn already failed on costs a request
+            // to learn nothing. Answer it from memory so the
+            // round can still spend its time somewhere useful.
+            if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                if let Some(reason) = fetch_memory.previous_failure(url) {
+                    let notice = format!(
+                                    "Not retried: {url} already failed this turn ({reason}). Use a different source.",
+                                );
+                    warn!(
+                        requested_function = tc.name.as_str(),
+                        resolved_function = resolved_tool,
+                        url,
+                        reason,
+                        "Skipping a URL that already failed this turn"
+                    );
+                    timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
+                    native_request.input.push(CompletionInput::ToolResult {
+                        id: tc.id.clone(),
+                        output: notice.clone(),
+                    });
+                    timings.tool_execution_ms = timings
+                        .tool_execution_ms
+                        .saturating_add(elapsed_ms(tool_call_start));
+                    continue;
+                }
+                // A page this turn already read is answered
+                // from memory: no request, no politeness delay,
+                // and nothing re-sent that the model has.
+                if let Some(recall) = fetch_memory.recall(url) {
+                    let notice = recalled_page_notice(url, &recall);
+                    info!(
+                        requested_function = tc.name.as_str(),
+                        resolved_function = resolved_tool,
+                        url,
+                        already_whole = matches!(recall, Recall::AlreadyWhole { .. }),
+                        "Answered a repeat page request from this turn's memory"
+                    );
+                    timings.tool_success_count = timings.tool_success_count.saturating_add(1);
+                    native_request.input.push(CompletionInput::ToolResult {
+                        id: tc.id.clone(),
+                        output: notice.clone(),
+                    });
+                    timings.tool_execution_ms = timings
+                        .tool_execution_ms
+                        .saturating_add(elapsed_ms(tool_call_start));
+                    continue;
+                }
+            }
+            let tool_step = recorder.begin_guarded_with_links(
+                tool_step_kind(resolved_tool),
+                tool_activity_label(resolved_tool, &tc.arguments),
+                web_steps::tool_detail(resolved_tool, &tc.arguments)
+                    .or_else(|| Some(tool_argument_summary(&tc.arguments))),
+                web_steps::links_for_call(resolved_tool, &tc.arguments),
+            );
+            info!(
+                requested_function = tc.name.as_str(),
+                resolved_function = resolved_tool,
+                "Executing tool call from LLM"
+            );
 
-                let stream_future = async {
-                    loop {
-                        let next_chunk = tokio::select! {
-                            biased;
-                            _ = turn_cancel.cancelled() => {
-                                emit_cancelled_stream(sink, conv_id, request_id);
-                                return Err(cancellation_error());
-                            }
-                            next = stream.next() => next,
-                        };
-                        let Some(chunk_result) = next_chunk else {
-                            break;
-                        };
-
-                        match chunk_result {
-                            Ok(StreamChunk::Content(chunk)) => {
-                                full_response.push_str(&chunk);
-                                let shown = if native_progress {
-                                    String::new()
-                                } else {
-                                    leaked_calls.lock().map_or_else(
-                                        |_| chunk.clone(),
-                                        |mut filter| filter.push(&chunk),
-                                    )
-                                };
-                                if let Err(e) = if shown.is_empty() {
-                                    Ok(())
-                                } else {
-                                    emitter.content(&shown)
-                                } {
-                                    error!("Failed to emit stream chunk: {}", e);
-                                    return Err(e);
-                                }
-                            }
-                            Ok(StreamChunk::ToolCalls(calls)) => {
-                                info!(count = calls.len(), "LLM requested tool calls");
-                                pending_tool_calls.extend(calls);
-                            }
-                            Ok(StreamChunk::Done) => break,
-                            Err(e) => {
-                                error!("Stream error: {}", e);
-                                return Err(e);
-                            }
-                        }
-                    }
-                    Ok((full_response, pending_tool_calls))
-                };
-
-                match timeout(remaining_budget()?, stream_future).await {
-                    Ok(Ok((response_text, tool_calls))) => {
-                        let tool_calls = if final_round && !tool_calls.is_empty() {
-                            // Offered no tools, a model can still write a call.
-                            // It is not run: this round's text is the answer.
-                            warn!(
-                                ignored_calls = tool_calls.len(),
-                                "Model called tools in the last round; keeping its text as the answer"
-                            );
-                            Vec::new()
-                        } else {
-                            tool_calls
-                        };
-                        // A call written as text is cut out of the answer, and
-                        // the answer says why it stops there rather than ending
-                        // mid-thought for no visible reason.
-                        let response_text = match tools_withdrawn
-                            .then(|| leaked_tool_call_start(&response_text))
-                            .flatten()
+            let call = crate::features::function_calling::domain::FunctionCall::new(
+                uuid::Uuid::new_v4().to_string(),
+                resolved_tool,
+                tc.arguments.clone(),
+            );
+            let explorer_turn = explorer
+                .filter(|_| crate::features::explorer::tools::is_explorer_tool(resolved_tool));
+            let execution = async {
+                if let Some(turn) = explorer_turn {
+                    // Cut to the same allowance as every other
+                    // result, at a line boundary, with a note
+                    // saying where to read on.
+                    turn.execute_tool(call, result_allowance).await
+                } else if super::history_tools::is_history_tool(resolved_tool) {
+                    let scope = super::history_tools::HistoryToolScope::new(
+                        conv_id,
+                        super::history_tools::HistoryToolBudget {
+                            // A char allowance used as a byte ceiling
+                            // is conservative in the safe direction.
+                            max_response_bytes: result_allowance,
+                            deadline: Some(deadline),
+                        },
+                    );
+                    super::history_tools::execute(&history_port, &scope, &mut history_memo, call)
+                        .await
+                } else if resolved_tool == "fetch_url_content" {
+                    // A page this conversation already read is served
+                    // from its permanent archive — the citation's
+                    // snapshot, not another network request.
+                    match fetch_memory::fetch_target(&tc.arguments) {
+                        Some(url) => match super::source_snapshots::archived_page(
+                            container, conv_id, url,
+                        )
+                        .await
                         {
-                            Some(start) => {
-                                warn!(
-                                    conversation_id = conv_id,
-                                    "Model wrote tool calls as text in the last round; cutting them from the answer"
-                                );
-                                let kept = response_text[..start].trim_end();
-                                emitter.content(OUT_OF_ROUNDS_NOTE)?;
-                                if kept.is_empty() {
-                                    OUT_OF_ROUNDS_NOTE.trim_start().to_string()
-                                } else {
-                                    format!("{kept}{OUT_OF_ROUNDS_NOTE}")
-                                }
+                            Some(page) => Ok(
+                                crate::features::function_calling::domain::FunctionResult::success(
+                                    serde_json::to_value(page).unwrap_or_default(),
+                                ),
+                            ),
+                            None => {
+                                scoped_document_tools::execute(container, conv_id, focus, call)
+                                    .await
                             }
-                            None => response_text,
-                        };
-                        timings.llm_stream_ms = timings
-                            .llm_stream_ms
-                            .saturating_add(elapsed_ms(llm_iteration_start));
-                        generate_step
-                            .done(Some(round_result_line(&response_text, tool_calls.len())));
-                        if tool_calls.is_empty() {
-                            if response_text.trim().is_empty() && !final_round {
-                                warn!(
-                                    conversation_id = conv_id,
-                                    iteration = iteration,
-                                    next_attempt = iteration + 2,
-                                    "LLM returned empty response chunk; retrying generation"
-                                );
-                                timings.empty_response_retries =
-                                    timings.empty_response_retries.saturating_add(1);
-                                // A retry is a step of its own. It used to be
-                                // written into the answer bubble, so a turn
-                                // that recovered showed the retry notice where
-                                // its answer should have been.
-                                recorder.note(
-                                    TurnStepKind::Retry,
-                                    "Asking again — the model returned nothing",
-                                    None,
-                                    Some(format!("attempt {}", iteration + 2)),
-                                );
-                                tool_context
-                                    .push(format!("System: [{}]", EMPTY_RESPONSE_RETRY_HINT));
-                                let retry_prompt = render_tool_followup_prompt(
-                                    &prompt_settings.tool_followup_prompt_template,
-                                    validated_message,
-                                    EMPTY_RESPONSE_RETRY_HINT,
-                                );
-                                current_prompt = format!("{base_prompt}\n\n{retry_prompt}");
-                                continue;
-                            }
-                            if response_text.trim().is_empty() {
-                                return Err(AppError::InvalidState(
-                                    "Model returned no answer after repeated attempts".into(),
-                                ));
-                            }
-                            emitter.done();
-                            tracing::info!(
-                                conversation_id = conv_id,
-                                response_len = response_text.len(),
-                                iterations = timings.iterations,
-                                llm_stream_ms = timings.llm_stream_ms,
-                                tool_execution_ms = timings.tool_execution_ms,
-                                tool_call_count = timings.tool_call_count,
-                                tool_success_count = timings.tool_success_count,
-                                tool_failure_count = timings.tool_failure_count,
-                                empty_response_retries = timings.empty_response_retries,
-                                followup_prompt_build_ms = timings.followup_prompt_build_ms,
-                                total_ms = elapsed_ms(tool_loop_start),
-                                "chat_with_conversation: tool loop complete"
-                            );
-                            timings.total_ms = elapsed_ms(tool_loop_start);
-                            return Ok(ToolLoopOutcome {
-                                response: response_text,
-                                timings,
-                                input_tokens,
-                                output_tokens,
-                            });
+                        },
+                        None => {
+                            scoped_document_tools::execute(container, conv_id, focus, call).await
                         }
-
-                        for (call_index, tc) in tool_calls.iter().enumerate() {
-                            let tool_call_start = Instant::now();
-                            timings.tool_call_count = timings.tool_call_count.saturating_add(1);
-                            // What is left of the window, shared between the
-                            // calls this round still has to answer. The
-                            // configured cap alone let one round of page
-                            // fetches outgrow a small model's entire context.
-                            let result_allowance = tool_result_allowance(
-                                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
-                                chars_in_flight(
-                                    &native_request.input,
-                                    &tool_context,
-                                    &current_prompt,
-                                ) + tool_schema_chars,
-                                tool_calls.len().saturating_sub(call_index),
-                                tool_output_settings.max_chars as usize,
-                            );
-                            let round_output_settings = ToolOutputSettingsDto {
-                                max_chars: u32::try_from(result_allowance).unwrap_or(u32::MAX),
-                                ..tool_output_settings.clone()
-                            };
-                            if turn_cancel.is_cancelled() {
-                                emit_cancelled_stream(sink, conv_id, request_id);
-                                return Err(cancellation_error());
-                            }
-                            // A call the model wrote but that cannot be run is
-                            // answered with why, and the model tries again.
-                            if let Some(problem) =
-                                crate::features::llm::llama_cpp::invalid_tool_call_problem(
-                                    &tc.arguments,
-                                )
-                            {
-                                warn!(
-                                    requested_function = tc.name.as_str(),
-                                    %problem,
-                                    "Model wrote a tool call that cannot be run"
-                                );
-                                timings.tool_failure_count =
-                                    timings.tool_failure_count.saturating_add(1);
-                                recorder.note(
-                                    TurnStepKind::Retry,
-                                    "The model's tool call was malformed",
-                                    None,
-                                    Some(tc.name.clone()),
-                                );
-                                if let Some(id) = &tc.id {
-                                    native_request.input.push(CompletionInput::ToolResult {
-                                        id: id.clone(),
-                                        output: problem.clone(),
-                                    });
-                                }
-                                tool_context.push(format!("System: [{problem}]"));
-                                continue;
-                            }
-                            let resolved_tool = canonical_tool_name(tc.name.as_str());
-                            if !is_tool_allowed(resolved_tool, tools_ref) {
-                                if let Some(id) = &tc.id {
-                                    native_request.input.push(CompletionInput::ToolResult {
-                                        id: id.clone(),
-                                        output: "Requested tool is unavailable".into(),
-                                    });
-                                }
-                                let available_tools = available_tool_names(tools_ref);
-                                warn!(
-                                    requested_function = tc.name.as_str(),
-                                    resolved_function = resolved_tool,
-                                    available_tools = available_tools.join(", "),
-                                    "Skipping unavailable tool requested by LLM"
-                                );
-                                tool_context.push(format!(
-                                    "System: [Tool '{}' is not available. Available tools: {}. Continue with available tools or answer directly.]",
-                                    resolved_tool,
-                                    available_tools.join(", ")
-                                ));
-                                continue;
-                            }
-                            // A URL this turn already failed on costs a request
-                            // to learn nothing. Answer it from memory so the
-                            // round can still spend its time somewhere useful.
-                            if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
-                                if let Some(reason) = fetch_memory.previous_failure(url) {
-                                    let notice = format!(
-                                        "Not retried: {url} already failed this turn ({reason}). Use a different source.",
-                                    );
-                                    warn!(
-                                        requested_function = tc.name.as_str(),
-                                        resolved_function = resolved_tool,
-                                        url,
-                                        reason,
-                                        "Skipping a URL that already failed this turn"
-                                    );
-                                    timings.tool_failure_count =
-                                        timings.tool_failure_count.saturating_add(1);
-                                    if let Some(id) = &tc.id {
-                                        native_request.input.push(CompletionInput::ToolResult {
-                                            id: id.clone(),
-                                            output: notice.clone(),
-                                        });
-                                    }
-                                    tool_context.push(format!("System: [{notice}]"));
-                                    timings.tool_execution_ms = timings
-                                        .tool_execution_ms
-                                        .saturating_add(elapsed_ms(tool_call_start));
-                                    continue;
-                                }
-                                // A page this turn already read is answered
-                                // from memory: no request, no politeness delay,
-                                // and nothing re-sent that the model has.
-                                if let Some(recall) = fetch_memory.recall(url) {
-                                    let notice = recalled_page_notice(url, &recall);
-                                    info!(
-                                        requested_function = tc.name.as_str(),
-                                        resolved_function = resolved_tool,
-                                        url,
-                                        already_whole =
-                                            matches!(recall, Recall::AlreadyWhole { .. }),
-                                        "Answered a repeat page request from this turn's memory"
-                                    );
-                                    timings.tool_success_count =
-                                        timings.tool_success_count.saturating_add(1);
-                                    if let Some(id) = &tc.id {
-                                        native_request.input.push(CompletionInput::ToolResult {
-                                            id: id.clone(),
-                                            output: notice.clone(),
-                                        });
-                                    }
-                                    tool_context.push(format!("System: [{notice}]"));
-                                    timings.tool_execution_ms = timings
-                                        .tool_execution_ms
-                                        .saturating_add(elapsed_ms(tool_call_start));
-                                    continue;
-                                }
-                            }
-                            let tool_step = recorder.begin_guarded_with_links(
-                                tool_step_kind(resolved_tool),
-                                tool_activity_label(resolved_tool, &tc.arguments),
-                                web_steps::tool_detail(resolved_tool, &tc.arguments)
-                                    .or_else(|| Some(tool_argument_summary(&tc.arguments))),
-                                web_steps::links_for_call(resolved_tool, &tc.arguments),
-                            );
-                            info!(
-                                requested_function = tc.name.as_str(),
-                                resolved_function = resolved_tool,
-                                "Executing tool call from LLM"
-                            );
-
-                            let call = crate::features::function_calling::domain::FunctionCall::new(
-                                uuid::Uuid::new_v4().to_string(),
-                                resolved_tool,
-                                tc.arguments.clone(),
-                            );
-                            let explorer_turn = explorer.filter(|_| {
-                                crate::features::explorer::tools::is_explorer_tool(resolved_tool)
-                            });
-                            let execution = async {
-                                if let Some(turn) = explorer_turn {
-                                    // Cut to the same allowance as every other
-                                    // result, at a line boundary, with a note
-                                    // saying where to read on.
-                                    turn.execute_tool(call, result_allowance).await
-                                } else if super::history_tools::is_history_tool(resolved_tool) {
-                                    let scope = super::history_tools::HistoryToolScope::new(
-                                        conv_id,
-                                        super::history_tools::HistoryToolBudget {
-                                            // A char allowance used as a byte ceiling
-                                            // is conservative in the safe direction.
-                                            max_response_bytes: result_allowance,
-                                            deadline: Some(deadline),
-                                        },
-                                    );
-                                    super::history_tools::execute(
-                                        &history_port,
-                                        &scope,
-                                        &mut history_memo,
-                                        call,
-                                    )
-                                    .await
-                                } else if resolved_tool == "fetch_url_content" {
-                                    // A page this conversation already read is served
-                                    // from its permanent archive — the citation's
-                                    // snapshot, not another network request.
-                                    match fetch_memory::fetch_target(&tc.arguments) {
-                                    Some(url) => match super::source_snapshots::archived_page(
-                                        container, conv_id, url,
-                                    )
-                                    .await
-                                    {
-                                        Some(page) => Ok(
-                                            crate::features::function_calling::domain::FunctionResult::success(
-                                                serde_json::to_value(page).unwrap_or_default(),
-                                            ),
-                                        ),
-                                        None => {
-                                            scoped_document_tools::execute(container, conv_id, focus, call)
-                                                .await
-                                        }
-                                    },
-                                    None => {
-                                        scoped_document_tools::execute(container, conv_id, focus, call)
-                                            .await
-                                    }
-                                }
-                                } else {
-                                    scoped_document_tools::execute(container, conv_id, focus, call)
-                                        .await
-                                }
-                            };
-                            // A fetch can sit in a site's queue, then its HTTP
-                            // timeout, then the browser fallback. Stop and the
-                            // turn's deadline must not wait for all three.
-                            let executed =
-                                match run_tool_bounded(execution, remaining_budget()?, cancelled())
-                                    .await
-                                {
-                                    ToolRun::Finished(result) => result,
-                                    ToolRun::Cancelled => {
-                                        tool_step.failed(Some("Stopped".into()));
-                                        emit_cancelled_stream(sink, conv_id, request_id);
-                                        return Err(cancellation_error());
-                                    }
-                                    ToolRun::TimedOut => {
-                                        tool_step.failed(Some("Out of time".into()));
-                                        return Err(budget_exhausted());
-                                    }
-                                };
-                            match executed {
-                                Ok(result) => {
-                                    if result.success {
-                                        web_steps::finish_tool_step(
-                                            tool_step,
-                                            recorder,
-                                            resolved_tool,
-                                            &tc.arguments,
-                                            result.data.as_ref(),
-                                        );
-                                    } else {
-                                        tool_step.failed(result.error_message.clone());
-                                    }
-                                    if result.success {
-                                        timings.tool_success_count =
-                                            timings.tool_success_count.saturating_add(1);
-                                    } else {
-                                        timings.tool_failure_count =
-                                            timings.tool_failure_count.saturating_add(1);
-                                    }
-                                    let tool_sources = collect_tool_sources(
-                                        resolved_tool,
-                                        &result,
-                                        highlight_terms,
-                                        tool_output_settings,
-                                    );
-                                    let mut tool_chunk_ids = std::collections::HashSet::new();
-                                    if !tool_sources.is_empty() {
-                                        let offered = tool_sources.len();
-                                        let before = sources.len();
-                                        tool_chunk_ids = merge_tool_sources(sources, tool_sources);
-                                        *sources = deduplicate_sources(std::mem::take(sources));
-                                        super::retrieval::assign_citation_ids(sources);
-                                        info!(
-                                            requested_function = tc.name.as_str(),
-                                            resolved_function = resolved_tool,
-                                            offered_sources = offered,
-                                            added_sources = sources.len().saturating_sub(before),
-                                            merged_sources = sources.len(),
-                                            "Tool call added verifiable sources"
-                                        );
-                                    }
-
-                                    if document_progress.record(resolved_tool, &result) {
-                                        let trace = retrieval_trace.get_or_insert_with(|| {
-                                            super::RetrievalTraceDto {
-                                                scope: "vault".to_string(),
-                                                ..Default::default()
-                                            }
-                                        });
-                                        document_progress.update_trace(trace);
-                                        if let Err(error) = emitter.emit(ChatStreamEventDto {
-                                            status: Some("retrieval".to_owned()),
-                                            retrieval: Some(trace.clone()),
-                                            ..ChatStreamEventDto::new(conv_id, request_id)
-                                        }) {
-                                            warn!(%error, "Failed to update retrieval trace after tool search");
-                                        }
-                                    }
-
-                                    let mut result_text = format_tool_result(
-                                        resolved_tool,
-                                        &result,
-                                        highlight_terms,
-                                        &round_output_settings,
-                                    );
-                                    for source in sources
-                                        .iter()
-                                        .filter(|s| tool_chunk_ids.contains(&s.chunk_id))
-                                    {
-                                        if let Some(number) = source.citation_id {
-                                            result_text.push_str(&format!(
-                                                "\n\nCitable passage [{number}] — {}\n{}",
-                                                source.file_name, source.content
-                                            ));
-                                        }
-                                    }
-                                    result_text = document_evidence.render(
-                                        resolved_tool,
-                                        &result,
-                                        result_text,
-                                        |excerpt| {
-                                            if native_progress {
-                                                native_request.input.iter().any(|item| matches!(item,
-                                                    CompletionInput::ToolResult { output, .. } if output == excerpt))
-                                            } else {
-                                                let entry = format!("System: [Tool '{}' result (excerpted): {}]", resolved_tool, excerpt);
-                                                tool_context.iter().any(|item| item == &entry)
-                                            }
-                                        },
-                                    );
-                                    if let Some(id) = &tc.id {
-                                        native_request.input.push(CompletionInput::ToolResult {
-                                            id: id.clone(),
-                                            output: result_text.clone(),
-                                        });
-                                    }
-                                    if let Err(e) = record_tool_document_references(
-                                        conv_service,
-                                        conv_id,
-                                        resolved_tool,
-                                        &result,
-                                    )
-                                    .await
-                                    {
-                                        warn!(
-                                            error = %e,
-                                            requested_function = tc.name.as_str(),
-                                            resolved_function = resolved_tool,
-                                            "Failed to persist tool document references"
-                                        );
-                                    }
-
-                                    tool_context.push(format!(
-                                        "Assistant: [Called tool '{}' with args: {}]",
-                                        resolved_tool,
-                                        serde_json::to_string(&tc.arguments).unwrap_or_default()
-                                    ));
-                                    tool_context.push(format!(
-                                        "System: [Tool '{}' result (excerpted): {}]",
-                                        resolved_tool, result_text
-                                    ));
-                                    if result.success && resolved_tool == "fetch_url_content" {
-                                        if let (Some(url), Some(page)) = (
-                                            fetch_memory::fetch_target(&tc.arguments),
-                                            result.data.clone().and_then(|data| {
-                                                serde_json::from_value::<FetchUrlContentOutput>(
-                                                    data,
-                                                )
-                                                .ok()
-                                            }),
-                                        ) {
-                                            let room = fetched_page_text_room(result_allowance);
-                                            let text = page.content.trim();
-                                            let delivery = if text.chars().count() <= room {
-                                                Delivery::Whole
-                                            } else {
-                                                Delivery::Clipped { shown_chars: room }
-                                            };
-                                            fetch_memory.record_page(url, text, delivery);
-                                            // A live read becomes the
-                                            // conversation's permanent archive;
-                                            // an archived one already is.
-                                            super::source_snapshots::archive_page_for_url(
-                                                container, conv_id, url, &page,
-                                            )
-                                            .await;
-                                        }
-                                    }
-                                    if !result.success {
-                                        if let Some(url) = fetch_memory::fetch_target(&tc.arguments)
-                                        {
-                                            fetch_memory.record_failure(
-                                                url,
-                                                result
-                                                    .error_message
-                                                    .as_deref()
-                                                    .unwrap_or("the fetch did not succeed"),
-                                            );
-                                        }
-                                    }
-                                    info!(
-                                        requested_function = tc.name.as_str(),
-                                        resolved_function = resolved_tool,
-                                        success = result.success,
-                                        "Tool call executed"
-                                    );
-                                }
-                                Err(e) => {
-                                    tool_step.failed(Some(e.to_string()));
-                                    timings.tool_failure_count =
-                                        timings.tool_failure_count.saturating_add(1);
-                                    warn!(
-                                        requested_function = tc.name.as_str(),
-                                        resolved_function = resolved_tool,
-                                        error = %e,
-                                        "Tool call failed"
-                                    );
-                                    if let Some(id) = &tc.id {
-                                        native_request.input.push(CompletionInput::ToolResult {
-                                            id: id.clone(),
-                                            output: format!("Tool failed: {e}"),
-                                        });
-                                    }
-                                    if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
-                                        fetch_memory.record_failure(url, &e.to_string());
-                                    }
-                                    tool_context.push(format!(
-                                        "System: [Tool '{}' failed: {}]",
-                                        resolved_tool, e
-                                    ));
-                                }
-                            }
-                            timings.tool_execution_ms = timings
-                                .tool_execution_ms
-                                .saturating_add(elapsed_ms(tool_call_start));
-                        }
-
-                        // Restate the whole dead list once per round. A single
-                        // failure line among several results is easy for the
-                        // model to read past; the standing list is not.
-                        if let Some(advisory) = fetch_memory.advisory() {
-                            tool_context.push(format!("System: [{advisory}]"));
-                        }
-
-                        let followup_prompt_start = Instant::now();
-                        let previous_response = if response_text.is_empty() {
-                            String::new()
-                        } else {
-                            format!(
-                                "Previous draft: {}",
-                                safe_truncate(
-                                    &response_text,
-                                    tool_output_settings.max_chars as usize
-                                )
-                            )
-                        };
-                        let followup_prompt = render_tool_followup_prompt(
-                            &prompt_settings.tool_followup_prompt_template,
-                            validated_message,
-                            &previous_response,
-                        );
-                        timings.followup_prompt_build_ms = timings
-                            .followup_prompt_build_ms
-                            .saturating_add(elapsed_ms(followup_prompt_start));
-                        current_prompt = format!("{base_prompt}\n\n{followup_prompt}");
                     }
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => {
-                        let llm_stream_ms = timings
-                            .llm_stream_ms
-                            .saturating_add(elapsed_ms(llm_iteration_start));
-                        error!(
-                            llm_stream_ms,
-                            budget_minutes, "LLM generation exceeded the turn time budget"
+                } else {
+                    scoped_document_tools::execute(container, conv_id, focus, call).await
+                }
+            };
+            // A fetch can sit in a site's queue, then its HTTP
+            // timeout, then the browser fallback. Stop and the
+            // turn's deadline must not wait for all three.
+            let executed = match run_tool_bounded(execution, remaining_budget()?, cancelled()).await
+            {
+                ToolRun::Finished(result) => result,
+                ToolRun::Cancelled => {
+                    tool_step.failed(Some("Stopped".into()));
+                    emit_cancelled_stream(sink, conv_id, request_id);
+                    return Err(cancellation_error());
+                }
+                ToolRun::TimedOut => {
+                    tool_step.failed(Some("Out of time".into()));
+                    return Err(budget_exhausted());
+                }
+            };
+            match executed {
+                Ok(result) => {
+                    if result.success {
+                        web_steps::finish_tool_step(
+                            tool_step,
+                            recorder,
+                            resolved_tool,
+                            &tc.arguments,
+                            result.data.as_ref(),
                         );
-                        return Err(budget_exhausted());
+                    } else {
+                        tool_step.failed(result.error_message.clone());
+                    }
+                    if result.success {
+                        timings.tool_success_count = timings.tool_success_count.saturating_add(1);
+                    } else {
+                        timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
+                    }
+                    let tool_sources = collect_tool_sources(
+                        resolved_tool,
+                        &result,
+                        highlight_terms,
+                        tool_output_settings,
+                    );
+                    let mut tool_chunk_ids = std::collections::HashSet::new();
+                    if !tool_sources.is_empty() {
+                        let offered = tool_sources.len();
+                        let before = sources.len();
+                        tool_chunk_ids = merge_tool_sources(sources, tool_sources);
+                        *sources = deduplicate_sources(std::mem::take(sources));
+                        super::retrieval::assign_citation_ids(sources);
+                        info!(
+                            requested_function = tc.name.as_str(),
+                            resolved_function = resolved_tool,
+                            offered_sources = offered,
+                            added_sources = sources.len().saturating_sub(before),
+                            merged_sources = sources.len(),
+                            "Tool call added verifiable sources"
+                        );
+                    }
+
+                    if document_progress.record(resolved_tool, &result) {
+                        let trace =
+                            retrieval_trace.get_or_insert_with(|| super::RetrievalTraceDto {
+                                scope: "vault".to_string(),
+                                ..Default::default()
+                            });
+                        document_progress.update_trace(trace);
+                        if let Err(error) = emitter.emit(ChatStreamEventDto {
+                            status: Some("retrieval".to_owned()),
+                            retrieval: Some(trace.clone()),
+                            ..ChatStreamEventDto::new(conv_id, request_id)
+                        }) {
+                            warn!(%error, "Failed to update retrieval trace after tool search");
+                        }
+                    }
+
+                    let mut result_text = format_tool_result(
+                        resolved_tool,
+                        &result,
+                        highlight_terms,
+                        &round_output_settings,
+                    );
+                    for source in sources
+                        .iter()
+                        .filter(|s| tool_chunk_ids.contains(&s.chunk_id))
+                    {
+                        if let Some(number) = source.citation_id {
+                            result_text.push_str(&format!(
+                                "\n\nCitable passage [{number}] — {}\n{}",
+                                source.file_name, source.content
+                            ));
+                        }
+                    }
+                    result_text = document_evidence.render(
+                                    resolved_tool,
+                                    &result,
+                                    result_text,
+                                    |excerpt| {
+                                        native_request.input.iter().any(|item| matches!(item,
+                                            CompletionInput::ToolResult { output, .. } if output == excerpt))
+                                    },
+                                );
+                    native_request.input.push(CompletionInput::ToolResult {
+                        id: tc.id.clone(),
+                        output: result_text.clone(),
+                    });
+                    if let Err(e) = record_tool_document_references(
+                        conv_service,
+                        conv_id,
+                        resolved_tool,
+                        &result,
+                    )
+                    .await
+                    {
+                        warn!(
+                            error = %e,
+                            requested_function = tc.name.as_str(),
+                            resolved_function = resolved_tool,
+                            "Failed to persist tool document references"
+                        );
+                    }
+
+                    if result.success && resolved_tool == "fetch_url_content" {
+                        if let (Some(url), Some(page)) = (
+                            fetch_memory::fetch_target(&tc.arguments),
+                            result.data.clone().and_then(|data| {
+                                serde_json::from_value::<FetchUrlContentOutput>(data).ok()
+                            }),
+                        ) {
+                            let room = fetched_page_text_room(result_allowance);
+                            let text = page.content.trim();
+                            let delivery = if text.chars().count() <= room {
+                                Delivery::Whole
+                            } else {
+                                Delivery::Clipped { shown_chars: room }
+                            };
+                            fetch_memory.record_page(url, text, delivery);
+                            // A live read becomes the
+                            // conversation's permanent archive;
+                            // an archived one already is.
+                            super::source_snapshots::archive_page_for_url(
+                                container, conv_id, url, &page,
+                            )
+                            .await;
+                        }
+                    }
+                    if !result.success {
+                        if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                            fetch_memory.record_failure(
+                                url,
+                                result
+                                    .error_message
+                                    .as_deref()
+                                    .unwrap_or("the fetch did not succeed"),
+                            );
+                        }
+                    }
+                    info!(
+                        requested_function = tc.name.as_str(),
+                        resolved_function = resolved_tool,
+                        success = result.success,
+                        "Tool call executed"
+                    );
+                }
+                Err(e) => {
+                    tool_step.failed(Some(e.to_string()));
+                    timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
+                    warn!(
+                        requested_function = tc.name.as_str(),
+                        resolved_function = resolved_tool,
+                        error = %e,
+                        "Tool call failed"
+                    );
+                    native_request.input.push(CompletionInput::ToolResult {
+                        id: tc.id.clone(),
+                        output: format!("Tool failed: {e}"),
+                    });
+                    if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                        fetch_memory.record_failure(url, &e.to_string());
                     }
                 }
             }
-            Err(e) => {
-                let llm_stream_ms = timings
-                    .llm_stream_ms
-                    .saturating_add(elapsed_ms(llm_iteration_start));
-                error!(llm_stream_ms, error = %e, "Failed to start LLM stream");
-                return Err(e);
-            }
+            timings.tool_execution_ms = timings
+                .tool_execution_ms
+                .saturating_add(elapsed_ms(tool_call_start));
         }
     }
 
@@ -1151,10 +892,7 @@ const FINAL_ROUND_INSTRUCTION: &str = "You have used every tool round this turn 
 /// top of the prompt, tens of thousands of tokens before the model reads its
 /// last tool result. From there it was not seen, and the model went on
 /// writing calls as text.
-fn withdraw_tools_for_answer(
-    request: &mut crate::application::ports::llm_port::CompletionRequest,
-    transcript: &mut Vec<String>,
-) {
+fn withdraw_tools_for_answer(request: &mut crate::application::ports::llm_port::CompletionRequest) {
     request.tools.clear();
     request.input.push(
         crate::application::ports::llm_port::CompletionInput::Message {
@@ -1162,7 +900,6 @@ fn withdraw_tools_for_answer(
             content: FINAL_ROUND_INSTRUCTION.into(),
         },
     );
-    transcript.push(format!("System: [{FINAL_ROUND_INSTRUCTION}]"));
 }
 
 /// Model rounds a turn may spend on tool calls, the last of which is kept for
@@ -1616,16 +1353,10 @@ const CONTEXT_FILL_LIMIT: f64 = 0.75;
 /// that asked for it, so a nearly full window still gets this much.
 const MIN_TOOL_RESULT_CHARS: usize = 1_500;
 
-/// Roughly how many characters the next generation already has to read. The
-/// native request and the rendered transcript carry the same turn in two forms
-/// and only one is sent, so the larger of the two is the honest figure.
-fn chars_in_flight(
-    native_input: &[crate::application::ports::llm_port::CompletionInput],
-    transcript: &[String],
-    prompt: &str,
-) -> usize {
+/// Roughly how many characters the next generation already has to read.
+fn chars_in_flight(input: &[crate::application::ports::llm_port::CompletionInput]) -> usize {
     use crate::application::ports::llm_port::CompletionInput;
-    let native: usize = native_input
+    input
         .iter()
         .map(|item| match item {
             CompletionInput::Message { content, .. } => content.chars().count(),
@@ -1635,13 +1366,7 @@ fn chars_in_flight(
             } => name.len() + arguments.to_string().len(),
             CompletionInput::Native { value } => value.to_string().len(),
         })
-        .sum();
-    let rendered: usize = transcript
-        .iter()
-        .map(|line| line.chars().count())
-        .sum::<usize>()
-        + prompt.chars().count();
-    native.max(rendered)
+        .sum()
 }
 
 /// How many characters one tool result may take, given the model's window,
@@ -1862,8 +1587,11 @@ mod tests {
         );
 
         let window = window_chars(4_096, DEFAULT_CHARS_PER_TOKEN);
-        let prompt = "p".repeat(window - schema_chars - 500);
-        let in_flight = chars_in_flight(&[], &[], &prompt) + schema_chars;
+        let prompt = vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "p".repeat(window - schema_chars - 500),
+        }];
+        let in_flight = chars_in_flight(&prompt) + schema_chars;
         let allowance = tool_result_allowance(
             window_chars(4_096, DEFAULT_CHARS_PER_TOKEN),
             in_flight,
@@ -1889,12 +1617,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        let mut transcript = Vec::new();
-        withdraw_tools_for_answer(&mut request, &mut transcript);
+        withdraw_tools_for_answer(&mut request);
         assert!(request.tools.is_empty());
         assert!(matches!(request.input.last(),
             Some(CompletionInput::Message { content, .. }) if content == FINAL_ROUND_INSTRUCTION));
-        assert!(transcript[0].contains(FINAL_ROUND_INSTRUCTION));
     }
 
     #[test]
@@ -1930,7 +1656,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        withdraw_tools_for_answer(&mut request, &mut Vec::new());
+        withdraw_tools_for_answer(&mut request);
         assert!(matches!(request.input.last(),
             Some(CompletionInput::Message { role, .. }) if role == "user"));
     }
@@ -2053,8 +1779,8 @@ mod tests {
     }
 
     #[test]
-    fn what_is_in_flight_is_the_larger_of_the_two_forms_of_the_turn() {
-        let native = vec![
+    fn what_is_in_flight_counts_every_item_the_next_round_sends() {
+        let input = vec![
             CompletionInput::Message {
                 role: "user".to_string(),
                 content: "x".repeat(100),
@@ -2064,9 +1790,8 @@ mod tests {
                 output: "y".repeat(400),
             },
         ];
-        let transcript = vec!["z".repeat(50)];
-        assert_eq!(chars_in_flight(&native, &transcript, "prompt"), 500);
-        assert_eq!(chars_in_flight(&[], &transcript, "prompt"), 56);
+        assert_eq!(chars_in_flight(&input), 500);
+        assert_eq!(chars_in_flight(&[]), 0);
     }
 
     /// "Already fetched" alone invites the model to think the text was lost.

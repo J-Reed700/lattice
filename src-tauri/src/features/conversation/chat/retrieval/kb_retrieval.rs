@@ -30,6 +30,8 @@ pub(super) async fn run_kb_retrieval(
     tuning: &RetrievalTuningSettingsDto,
     focus: &FocusScope,
     recorder: &TurnRecorder,
+    // The turn's stop button, which the planner's model calls carry.
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> super::KbRetrievalOutcome {
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
@@ -167,6 +169,7 @@ pub(super) async fn run_kb_retrieval(
                     history.as_deref(),
                     &catalog,
                     &summaries.summaries,
+                    cancel,
                 )
                 .await
                 .unwrap_or_else(|error| {
@@ -317,6 +320,7 @@ pub(super) async fn run_kb_retrieval(
             &scope,
             &correction,
             candidate_limit,
+            cancel,
         )
         .await;
         if let Some((second_pass, retry_queries)) = retry {
@@ -516,6 +520,7 @@ async fn corrective_pass(
     scope: &super::SpaceDocumentScope,
     correction: &super::corpus_plan::CorrectionRequest,
     limit: usize,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<(SearchResponseDto, Vec<String>)> {
     let Ok(Some(utility)) = container.get_or_load_utility_llm().await else {
         info!("Corrective retrieval skipped: no utility planner is available");
@@ -533,6 +538,7 @@ async fn corrective_pass(
         history.as_deref(),
         catalog,
         correction,
+        cancel,
     )
     .await
     {

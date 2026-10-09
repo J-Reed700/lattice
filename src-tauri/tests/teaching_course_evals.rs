@@ -140,9 +140,6 @@ impl ConfiguredModel {
 }
 #[async_trait]
 impl LLMPort for ConfiguredModel {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let messages: Vec<_> = request
             .input
@@ -203,28 +200,6 @@ impl LLMPort for ConfiguredModel {
         Ok(response)
     }
 
-    async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        Ok(self
-            .complete(&CompletionRequest {
-                input: vec![CompletionInput::Message {
-                    role: "user".into(),
-                    content: prompt.into(),
-                }],
-                ..Default::default()
-            })
-            .await?
-            .text)
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(AppError::InvalidInput(
-            "Evaluation uses complete responses".into(),
-        ))
-    }
     fn model_name(&self) -> &str {
         &self.model
     }

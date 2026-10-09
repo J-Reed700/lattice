@@ -1,5 +1,5 @@
 use super::*;
-use crate::features::conversation::chat::cancellation::is_cancel_requested;
+use crate::features::conversation::chat::cancellation::{is_cancel_requested, turn_token};
 use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
 use crate::features::conversation::chat::turn_record::{
     TurnRecorder, TurnStepKind, TurnStepLinkDto,
@@ -201,6 +201,7 @@ pub(super) async fn run_retrieval_pipeline(
             tuning,
             focus,
             recorder,
+            &turn_token(request_id),
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
@@ -485,7 +486,8 @@ impl ExternalLookup<'_> {
         // HyDE and web-query rewriting run on the utility LLM (small, fast,
         // local) when set, not the chat LLM. See utility_llm resolution above.
         let hyde_service =
-            crate::features::qa::hyde::HyDEService::new(Arc::clone(self.utility_llm));
+            crate::features::qa::hyde::HyDEService::new(Arc::clone(self.utility_llm))
+                .with_cancellation(turn_token(self.request_id));
         let hyde_context = if interpret || search_web {
             let conversation = build_hyde_context_window_for_conversation(
                 self.conv_service,

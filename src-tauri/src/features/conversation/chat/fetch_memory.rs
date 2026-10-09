@@ -138,21 +138,6 @@ impl FetchMemory {
             self.pages.entry(url).or_insert(page);
         }
     }
-
-    /// One line per dead URL, for the transcript. Empty when nothing failed,
-    /// so a turn that is going well carries no extra prompt weight.
-    pub(in crate::features::conversation::chat) fn advisory(&self) -> Option<String> {
-        if self.failures.is_empty() {
-            return None;
-        }
-        let mut lines = String::from(
-            "These URLs already failed this turn and will not be retried. Do not request them again; choose different sources.",
-        );
-        for (url, reason) in &self.failures {
-            lines.push_str(&format!("\n- {url} ({reason})"));
-        }
-        Some(lines)
-    }
 }
 
 /// The `url` argument of a fetch call, if the call has a usable one.
@@ -239,23 +224,6 @@ mod tests {
             memory.previous_failure("https://example.com/a"),
             Some("HTTP 403 Forbidden")
         );
-    }
-
-    #[test]
-    fn a_quiet_turn_adds_nothing_to_the_prompt() {
-        assert_eq!(FetchMemory::default().advisory(), None);
-    }
-
-    #[test]
-    fn the_advisory_names_every_dead_url() {
-        let mut memory = FetchMemory::default();
-        memory.record_failure("https://example.com/a", "HTTP 403 Forbidden");
-        memory.record_failure("https://example.com/b", "HTTP 404 Not Found");
-        let advisory = memory.advisory().expect("failures were recorded");
-        assert!(advisory.contains("https://example.com/a"));
-        assert!(advisory.contains("HTTP 403 Forbidden"));
-        assert!(advisory.contains("https://example.com/b"));
-        assert!(advisory.contains("HTTP 404 Not Found"));
     }
 
     /// A model that invents URLs must not be able to grow the map forever.

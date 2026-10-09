@@ -5,6 +5,7 @@
 //! and that a real snapshot plus real recall reach the assembler intact.
 
 use super::*;
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::llm::engine::factory::MockLLMPort;
 use sqlx::SqlitePool;
@@ -530,16 +531,10 @@ struct DenseTokenizer;
 
 #[async_trait::async_trait]
 impl LLMPort for DenseTokenizer {
-    async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        Ok(String::new())
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(futures::stream::empty()))
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(
+            self.respond(request.user_text()).await?,
+        ))
     }
     fn model_name(&self) -> &str {
         "dense"
@@ -555,6 +550,11 @@ impl LLMPort for DenseTokenizer {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+impl DenseTokenizer {
+    async fn respond(&self, _prompt: &str) -> Result<String> {
+        Ok(String::new())
     }
 }
 

@@ -63,42 +63,33 @@ pub async fn generate(
                 "Assessment authoring request exceeds the model context window.".into(),
             ));
         }
-        if llm.supports_typed_completions() {
-            let response = llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt.clone(),
-                        },
-                    ],
-                    json_schema: Some(schema.clone()),
-                    reasoning_effort: Some("low".into()),
-                    max_output_tokens: Some(output_tokens as u32),
-                    ..Default::default()
-                })
-                .await?;
-            if ["length", "max_tokens", "incomplete", "content_filter"]
-                .iter()
-                .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
-            {
-                return Err(AppError::InvalidInput(
-                    "Assessment authoring output was incomplete.".into(),
-                ));
-            }
-            Ok(response.text)
-        } else {
-            llm.generate(
-                &format!("{system}\nReturn strict JSON matching this schema: {schema}\n{prompt}"),
-                &[],
-                None,
-            )
-            .await
+        let response = llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt.clone(),
+                    },
+                ],
+                json_schema: Some(schema.clone()),
+                reasoning_effort: Some("low".into()),
+                max_output_tokens: Some(output_tokens as u32),
+                ..Default::default()
+            })
+            .await?;
+        if ["length", "max_tokens", "incomplete", "content_filter"]
+            .iter()
+            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
+        {
+            return Err(AppError::InvalidInput(
+                "Assessment authoring output was incomplete.".into(),
+            ));
         }
+        Ok(response.text)
     })
     .await
     .map_err(|_| AppError::ServiceNotAvailable("Assessment authoring timed out.".into()))??;
@@ -322,38 +313,33 @@ pub async fn grade_open(
     }
 
     let raw = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.supports_typed_completions() {
-            let r = llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt,
-                        },
-                    ],
-                    json_schema: Some(schema),
-                    reasoning_effort: Some("low".into()),
-                    max_output_tokens: Some(1500),
-                    ..Default::default()
-                })
-                .await?;
-            if ["length", "max_tokens", "incomplete", "content_filter"]
-                .iter()
-                .any(|s| r.finish_reason.to_ascii_lowercase().contains(s))
-            {
-                return Err(AppError::InvalidInput(
-                    "Assessment grading output was incomplete.".into(),
-                ));
-            }
-            Ok(r.text)
-        } else {
-            llm.generate(&format!("{system}\nReturn JSON.\n{prompt}"), &[], None)
-                .await
+        let r = llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt,
+                    },
+                ],
+                json_schema: Some(schema),
+                reasoning_effort: Some("low".into()),
+                max_output_tokens: Some(1500),
+                ..Default::default()
+            })
+            .await?;
+        if ["length", "max_tokens", "incomplete", "content_filter"]
+            .iter()
+            .any(|s| r.finish_reason.to_ascii_lowercase().contains(s))
+        {
+            return Err(AppError::InvalidInput(
+                "Assessment grading output was incomplete.".into(),
+            ));
         }
+        Ok(r.text)
     })
     .await
     .map_err(|_| AppError::ServiceNotAvailable("Assessment grading timed out.".into()))??;

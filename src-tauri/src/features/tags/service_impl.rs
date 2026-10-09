@@ -6,7 +6,9 @@
 //! **NOTE**: Tag generation uses local LLM via TagServiceImpl.
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::{LoadedChatModelPort, RepositoryPort};
+use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::tags::dto::TagWithCountDto as TagWithCount;
 use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
@@ -245,11 +247,10 @@ impl TagServiceTrait for TagServiceImpl {
         };
 
         let user_message = TagGenerator::build_user_message(content, &metadata, max_tags);
-        let prompt = format!("{}\n\n{}", TAG_GENERATION_SYSTEM_PROMPT, user_message);
         let llm = self.model_provider.current_model().ok_or_else(|| {
             AppError::AiModelsNotInstalled("Default chat model not installed".to_string())
         })?;
-        let response = llm.generate(&prompt, &[], None).await?;
+        let response = suggest_tags(llm.as_ref(), &user_message).await?;
 
         if response.trim().is_empty() {
             return Ok(Vec::new());
@@ -367,9 +368,69 @@ impl TagServiceTrait for TagServiceImpl {
     }
 }
 
+/// The model's tag suggestions for one document. Labels are upkeep: they
+/// wait behind anyone chatting.
+async fn suggest_tags(
+    llm: &dyn crate::application::ports::LLMPort,
+    user_message: &str,
+) -> Result<String> {
+    complete_text(
+        llm,
+        user_message,
+        &[format!("System: {TAG_GENERATION_SYSTEM_PROMPT}")],
+        TextCall::at(InferencePriority::Maintenance),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{
+        CompletionInput, CompletionRequest, CompletionResponse,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<CompletionRequest>>);
+
+    #[async_trait]
+    impl crate::application::ports::LLMPort for Recorder {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            self.0.lock().await.push(request.clone());
+            Ok(CompletionResponse::from_text("rust, ownership"))
+        }
+        fn model_name(&self) -> &str {
+            "recorder"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    async fn tag_suggestions_queue_as_upkeep_with_their_instructions_as_system() {
+        let llm = Recorder::default();
+        assert_eq!(
+            suggest_tags(&llm, "Document: Ownership").await.unwrap(),
+            "rust, ownership"
+        );
+        let sent = llm.0.lock().await;
+        assert_eq!(sent[0].priority, InferencePriority::Maintenance);
+        assert!(matches!(
+            sent[0].input.as_slice(),
+            [
+                CompletionInput::Message { role: system, content: instructions },
+                CompletionInput::Message { role: user, content: message },
+            ] if system == "system"
+                && instructions == TAG_GENERATION_SYSTEM_PROMPT.trim()
+                && user == "user"
+                && message == "Document: Ownership"
+        ));
+    }
 
     #[test]
     fn test_merge_tags() {

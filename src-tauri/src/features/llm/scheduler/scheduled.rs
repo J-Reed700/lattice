@@ -1,24 +1,19 @@
 //! The decorator that puts a backend's scheduler in front of a port.
 //!
-//! Every method that reaches the model is admitted first, the older string
-//! API included (at background priority: it has no request to carry one). The
-//! same decorator owns the backend's calibrated token estimate, because it is
+//! Every method that reaches the model is admitted first, at the priority its
+//! request carries. The same decorator owns the backend's calibrated token estimate, because it is
 //! the one place that sees both what was sent and the usage reported back.
 
 use std::borrow::Cow;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use futures::Stream;
 
 use super::{
     cancelled_error, AdmissionRequest, InferenceScheduler, Permit, ServerTokenizer, TokenEstimator,
 };
 use crate::application::ports::llm_port::{
-    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
-    StreamChunk, ToolDefinition,
+    tokens_for_chars, CompletionInput, CompletionRequest, CompletionResponse,
 };
 use crate::application::ports::LLMPort;
 use crate::shared::error::Result;
@@ -82,26 +77,6 @@ impl ScheduledLlm {
             None => Cow::Borrowed(request),
         };
         Ok((permit, request))
-    }
-
-    /// The string API carries no request: background priority, no slot pin.
-    async fn admit_text(&self, prompt: &str, context: &[String]) -> Result<Permit> {
-        let chars = prompt.chars().count()
-            + context
-                .iter()
-                .map(|entry| entry.chars().count())
-                .sum::<usize>();
-        let prompt = tokens_for_chars(chars, self.estimator.chars_per_token());
-        self.scheduler
-            .admit(
-                AdmissionRequest {
-                    priority: InferencePriority::Background,
-                    tokens: prompt.saturating_add(self.output_limit as usize),
-                    cache_key: None,
-                },
-                None,
-            )
-            .await
     }
 
     /// Run an admitted call, aborting it when the request is cancelled.
@@ -178,26 +153,8 @@ pub(super) fn prompt_chars(request: &CompletionRequest) -> usize {
     input + tools
 }
 
-/// A stream that holds its slot until it is finished or dropped.
-struct Held<S> {
-    stream: S,
-    _permit: Permit,
-}
-
-impl<S: Stream + Unpin> Stream for Held<S> {
-    type Item = S::Item;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
-
 #[async_trait]
 impl LLMPort for ScheduledLlm {
-    fn supports_typed_completions(&self) -> bool {
-        self.inner.supports_typed_completions()
-    }
-
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_permit, request) = self.admit_typed(request).await?;
         self.completed(&request, self.inner.complete(&request))
@@ -246,51 +203,6 @@ impl LLMPort for ScheduledLlm {
                 .complete_with_reasoning_progress(&request, on_text, on_reasoning, on_retry),
         )
         .await
-    }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        let _permit = self.admit_text(prompt, context).await?;
-        self.inner.generate(prompt, context, images).await
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        let permit = self.admit_text(prompt, context).await?;
-        let stream = self
-            .inner
-            .generate_streaming(prompt, context, images)
-            .await?;
-        Ok(Box::new(Held {
-            stream,
-            _permit: permit,
-        }))
-    }
-
-    async fn generate_streaming_with_tools(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-        tools: Option<&[ToolDefinition]>,
-    ) -> Result<Box<dyn Stream<Item = Result<StreamChunk>> + Send + Unpin + '_>> {
-        let permit = self.admit_text(prompt, context).await?;
-        let stream = self
-            .inner
-            .generate_streaming_with_tools(prompt, context, images, tools)
-            .await?;
-        Ok(Box::new(Held {
-            stream,
-            _permit: permit,
-        }))
     }
 
     fn model_name(&self) -> &str {

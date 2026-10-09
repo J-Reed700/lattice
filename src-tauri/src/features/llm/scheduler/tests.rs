@@ -471,9 +471,6 @@ impl GatedModel {
 
 #[async_trait]
 impl LLMPort for GatedModel {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     async fn complete(
         &self,
         request: &CompletionRequest,
@@ -487,24 +484,6 @@ impl LLMPort for GatedModel {
             finish_reason: "stop".into(),
             ..Default::default()
         })
-    }
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> crate::shared::error::Result<String> {
-        Ok("ok".into())
-    }
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> crate::shared::error::Result<
-        Box<dyn futures::Stream<Item = crate::shared::error::Result<String>> + Send + Unpin + '_>,
-    > {
-        Ok(Box::new(futures::stream::empty()))
     }
     fn model_name(&self) -> &str {
         "gated"
@@ -596,8 +575,9 @@ async fn an_admitted_request_reaches_the_backend_pinned_to_its_slot() {
 }
 
 #[tokio::test]
-async fn the_string_api_is_admitted_too() {
+async fn a_call_queues_behind_a_busy_slot() {
     let model = GatedModel::new();
+    model.gate.add_permits(1);
     let scheduler = Arc::new(InferenceScheduler::new(
         "test",
         BackendCapacity::concurrent(1),
@@ -607,9 +587,12 @@ async fn the_string_api_is_admitted_too() {
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
         .unwrap();
-    let waiting =
-        tokio::time::timeout(Duration::from_millis(50), llm.generate("hi", &[], None)).await;
-    assert!(waiting.is_err(), "a legacy call queues behind a busy slot");
+    let waiting = tokio::time::timeout(
+        Duration::from_millis(50),
+        llm.complete(&request("hi", None)),
+    )
+    .await;
+    assert!(waiting.is_err(), "the call waits for the slot");
     drop(held);
-    assert_eq!(llm.generate("hi", &[], None).await.unwrap(), "ok");
+    assert_eq!(llm.complete(&request("hi", None)).await.unwrap().text, "ok");
 }

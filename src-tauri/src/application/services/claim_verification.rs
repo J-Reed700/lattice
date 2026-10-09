@@ -220,10 +220,7 @@ impl<'a> ClaimChecker<'a> {
         locations: Option<&[String]>,
         context: Option<FidelityContext<'_>>,
     ) -> ClaimJudgment {
-        let reasoned = deadline.is_none()
-            && locations.is_some()
-            && self.policy.strict()
-            && self.llm.supports_typed_completions();
+        let reasoned = deadline.is_none() && locations.is_some() && self.policy.strict();
         let verdict_of = |text: &str| {
             if reasoned {
                 final_verdict(text)
@@ -458,66 +455,56 @@ impl<'a> ClaimChecker<'a> {
         no_time_limit: bool,
         located: bool,
     ) -> Result<(String, Option<Vec<(String, f32)>>)> {
-        let reasoned = no_time_limit
-            && located
-            && self.policy.strict()
-            && self.llm.supports_typed_completions();
+        let reasoned = no_time_limit && located && self.policy.strict();
         let system = self.system_prompt(located, reasoned);
-        if self.llm.supports_typed_completions() {
-            self.llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.clone(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt.to_string(),
-                        },
-                    ],
-                    // Keep the model's reasoning enabled. Durable publication
-                    // checks ask for deliberation; chat uses the model default.
-                    reasoning_effort: (no_time_limit && self.policy.strict()).then(|| "low".into()),
-                    sampling: Some(self.sampling),
-                    // A durable lesson check must not fail merely because a
-                    // reasoning provider needs more than the chat-sized reply
-                    // allowance. Its configured provider/context limit still
-                    // applies, and incomplete output can never approve a claim.
-                    max_output_tokens: Some(if no_time_limit && self.policy.strict() {
-                        self.llm
-                            .max_context_tokens()
-                            .saturating_sub(self.llm.count_tokens(&system))
-                            .saturating_sub(self.llm.count_tokens(prompt))
-                            .min(u32::MAX as usize) as u32
-                    } else {
-                        self.max_output_tokens
-                    }),
-                    want_logprobs: !reasoned,
-                    no_time_limit,
-                    // Checking what an answer or a lesson already says: behind
-                    // whoever is waiting on the model, ahead of upkeep.
-                    priority: InferencePriority::Verification,
-                    ..Default::default()
-                })
-                .await
-                .map(|response| {
-                    if self.policy.strict()
-                        && !matches!(
-                            response.finish_reason.as_str(),
-                            "stop" | "end_turn" | "completed"
-                        )
-                    {
-                        return (String::new(), None);
-                    }
-                    (response.text, response.first_token_logprobs)
-                })
-        } else {
-            self.llm
-                .generate(prompt, &[format!("System: {system}")], None)
-                .await
-                .map(|text| (text, None))
-        }
+        self.llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: system.clone(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: prompt.to_string(),
+                    },
+                ],
+                // Keep the model's reasoning enabled. Durable publication
+                // checks ask for deliberation; chat uses the model default.
+                reasoning_effort: (no_time_limit && self.policy.strict()).then(|| "low".into()),
+                sampling: Some(self.sampling),
+                // A durable lesson check must not fail merely because a
+                // reasoning provider needs more than the chat-sized reply
+                // allowance. Its configured provider/context limit still
+                // applies, and incomplete output can never approve a claim.
+                max_output_tokens: Some(if no_time_limit && self.policy.strict() {
+                    self.llm
+                        .max_context_tokens()
+                        .saturating_sub(self.llm.count_tokens(&system))
+                        .saturating_sub(self.llm.count_tokens(prompt))
+                        .min(u32::MAX as usize) as u32
+                } else {
+                    self.max_output_tokens
+                }),
+                want_logprobs: !reasoned,
+                no_time_limit,
+                // Checking what an answer or a lesson already says: behind
+                // whoever is waiting on the model, ahead of upkeep.
+                priority: InferencePriority::Verification,
+                ..Default::default()
+            })
+            .await
+            .map(|response| {
+                if self.policy.strict()
+                    && !matches!(
+                        response.finish_reason.as_str(),
+                        "stop" | "end_turn" | "completed"
+                    )
+                {
+                    return (String::new(), None);
+                }
+                (response.text, response.first_token_logprobs)
+            })
     }
 }
 

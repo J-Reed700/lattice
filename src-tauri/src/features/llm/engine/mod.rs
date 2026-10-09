@@ -7,16 +7,14 @@
 pub mod circuit_breaker;
 pub(crate) mod compatibility;
 pub mod factory;
+pub mod generation_config;
 pub mod gguf_metadata;
 pub mod model_catalog_adapter;
 pub mod model_storage_adapter;
 pub mod models;
-pub mod noop_client;
 pub mod ollama_client;
-pub mod sidecar_client;
 pub mod sidecar_manager;
 pub mod sidecar_pool;
-pub mod traits;
 pub mod types;
 
 // Directory-backed sub-modules.
@@ -25,22 +23,18 @@ pub mod system;
 pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState,
 };
-pub use factory::{
-    create_llm, create_llm_with_fallback, find_local_model, is_ollama_available, LLMConfig,
-};
+pub use factory::{create_llm, find_local_model, LLMConfig};
+pub use generation_config::GenerationConfig;
 pub use model_catalog_adapter::HardcodedModelCatalog;
 pub use model_storage_adapter::FilesystemModelStorage;
 pub use models::{
     get_catalog, HardwareCapabilities, ModelCatalog, ModelFamily, ModelInfo, ModelRecommender,
     PerformanceTier, Quantization, RecommendedModel,
 };
-pub use noop_client::NoOpLLMClient;
 pub use ollama_client::OllamaClient;
-pub use sidecar_client::SidecarLLMClient;
 pub use sidecar_manager::{SidecarConfig, SidecarHandle, SidecarManager};
 pub use sidecar_pool::{Liveness, Origin, SharedProcesses};
 pub use system::{detect_capabilities, GPUInfo, GPUVendor, Platform, SystemCapabilities};
-pub use traits::{GenerationConfig, LLMClient};
 pub use types::*;
 
 use crate::application::ports::model_storage::ModelStoragePort;

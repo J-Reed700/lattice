@@ -408,6 +408,7 @@ async fn run_kb_retrieval(
     tuning: &RetrievalTuningSettingsDto,
     focus: &super::focus::FocusScope,
     recorder: &super::turn_record::TurnRecorder,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
@@ -423,6 +424,7 @@ async fn run_kb_retrieval(
         tuning,
         focus,
         recorder,
+        cancel,
     )
     .await
 }

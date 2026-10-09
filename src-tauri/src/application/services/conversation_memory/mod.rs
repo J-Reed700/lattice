@@ -247,10 +247,9 @@ impl Deadline {
 
 /// Run one prompt against the utility model inside the shared deadline.
 ///
-/// Typed completions carry the JSON schema, which lets a provider reject a
-/// malformed response one round trip before the parser would. Providers without
-/// them fall back to the text API, where the schema only exists as prose in the
-/// prompt — the deterministic validator is what actually enforces it either way.
+/// The request carries the JSON schema, which lets a provider reject a
+/// malformed response one round trip before the parser would; the
+/// deterministic validator is what actually enforces it.
 async fn complete_json(
     llm: &dyn LLMPort,
     deadline: &Deadline,
@@ -259,7 +258,6 @@ async fn complete_json(
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
-    let typed_completions = llm.supports_typed_completions();
     let max_output_tokens = if system == prompts::VERIFIER_SYSTEM {
         4_096
     } else {
@@ -278,55 +276,40 @@ async fn complete_json(
     tracing::info!(
         phase,
         provider = llm.provider_name(),
-        typed_completions,
         timeout_ms = remaining.as_millis() as u64,
         max_output_tokens,
         "Memory utility model call started"
     );
-    let call = async move {
-        if typed_completions {
-            let request = CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.to_string(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt,
-                    },
-                ],
-                json_schema: schema,
-                // Greedy decoding. Without an override the sidecar samples at
-                // the user's chat temperature, and a small extractor then
-                // returns six items from a batch on one run and nothing from
-                // the same batch on the next. Memory must not depend on the
-                // dice; the same passages should yield the same patch.
-                sampling: Some(SamplingOverride::deterministic()),
-                // The deterministic parser applies the tighter byte and
-                // operation bounds after generation. This provider-side cap
-                // prevents a malformed or uncooperative response from using
-                // the model's much larger configured chat-output allowance.
-                max_output_tokens: Some(max_output_tokens),
-                time_budget: Some(remaining),
-                priority: deadline.priority,
-                cancel: deadline.cancellation.clone(),
-                cache_key: deadline.cache_key.clone(),
-                ..Default::default()
-            };
-            llm.complete(&request).await.map(|response| {
-                (
-                    response.text,
-                    Some(response.finish_reason),
-                    Some(response.output_tokens),
-                )
-            })
-        } else {
-            llm.generate(&prompt, &[format!("System: {system}")], None)
-                .await
-                .map(|text| (text, None, None))
-        }
+    let request = CompletionRequest {
+        input: vec![
+            CompletionInput::Message {
+                role: "system".into(),
+                content: system.to_string(),
+            },
+            CompletionInput::Message {
+                role: "user".into(),
+                content: prompt,
+            },
+        ],
+        json_schema: schema,
+        // Greedy decoding. Without an override the sidecar samples at
+        // the user's chat temperature, and a small extractor then
+        // returns six items from a batch on one run and nothing from
+        // the same batch on the next. Memory must not depend on the
+        // dice; the same passages should yield the same patch.
+        sampling: Some(SamplingOverride::deterministic()),
+        // The deterministic parser applies the tighter byte and
+        // operation bounds after generation. This provider-side cap
+        // prevents a malformed or uncooperative response from using
+        // the model's much larger configured chat-output allowance.
+        max_output_tokens: Some(max_output_tokens),
+        time_budget: Some(remaining),
+        priority: deadline.priority,
+        cancel: deadline.cancellation.clone(),
+        cache_key: deadline.cache_key.clone(),
+        ..Default::default()
     };
+    let call = llm.complete(&request);
 
     let outcome = match deadline.cancellation.clone() {
         Some(token) => tokio::select! {
@@ -337,18 +320,17 @@ async fn complete_json(
         None => tokio::time::timeout(remaining, call).await,
     };
     match outcome {
-        Ok(Ok((text, finish_reason, output_tokens))) => {
+        Ok(Ok(response)) => {
             tracing::info!(
                 phase,
                 outcome = "completed",
                 provider = llm.provider_name(),
-                typed_completions,
-                finish_reason = finish_reason.as_deref().unwrap_or("unreported"),
-                output_tokens = output_tokens.unwrap_or(0),
+                finish_reason = %response.finish_reason,
+                output_tokens = response.output_tokens,
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "Memory utility model call finished"
             );
-            Ok(text)
+            Ok(response.text)
         }
         Ok(Err(error)) => {
             tracing::warn!(

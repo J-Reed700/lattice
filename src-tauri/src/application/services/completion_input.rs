@@ -22,20 +22,14 @@ impl TextCall {
 }
 
 /// Plain text for `prompt` with "Role: content" `context`, queued as `call`
-/// says.
-///
-/// A typed request is what carries a priority and a cancellation to the
-/// backend's scheduler, so typed backends get one; the string API has nowhere
-/// to put either and is left for backends without typed completions.
+/// says: the typed request carries its priority, cancellation and cache key
+/// to the backend's scheduler.
 pub async fn complete_text(
     llm: &dyn LLMPort,
     prompt: &str,
     context: &[String],
     call: TextCall,
 ) -> Result<String> {
-    if !llm.supports_typed_completions() {
-        return llm.generate(prompt, context, None).await;
-    }
     let response = llm
         .complete(&CompletionRequest {
             input: from_context("", context, prompt),
@@ -121,26 +115,9 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for Recorder {
-        fn supports_typed_completions(&self) -> bool {
-            true
-        }
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             *self.0.lock().unwrap() = Some(request.clone());
-            Ok(CompletionResponse {
-                text: "answer".into(),
-                ..Default::default()
-            })
-        }
-        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-            panic!("a typed backend must get a typed request")
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            panic!("not used")
+            Ok(CompletionResponse::from_text("answer"))
         }
         fn model_name(&self) -> &str {
             "recorder"
@@ -154,7 +131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_plain_text_call_reaches_a_typed_backend_with_its_priority() {
+    async fn a_plain_text_call_reaches_the_backend_with_its_priority() {
         let llm = Recorder::default();
         let text = complete_text(
             &llm,

@@ -15,7 +15,7 @@
 //! does not expose methods to inspect internal state (max_tokens, temperature, etc.).
 //! The builder pattern is opaque, making verification infeasible without actual
 //! inference execution.
-use lattice::features::llm::engine::traits::GenerationConfig;
+use lattice::features::llm::engine::GenerationConfig;
 
 mod inference_helpers;
 use inference_helpers::GenerationConfigFixture;

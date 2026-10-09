@@ -280,7 +280,7 @@ async fn group(llm: &dyn LLMPort, pending: Vec<PendingClaim>) -> Result<Vec<Chec
             continue;
         }
         let targets: Vec<_> = pending.iter().map(target).collect();
-        if !llm.supports_typed_completions() || pending.len() == 1 {
+        if pending.len() == 1 {
             for item in pending {
                 completed(&mut results, individual(llm, item).await?);
             }
@@ -480,19 +480,12 @@ pub(super) async fn check(
     crate::features::learning::lesson_progress::stage(format!(
         "{reused} saved checks reused · {model_checks} of {total} claims need model review"
     ));
-    let size = if llm.supports_typed_completions() {
-        BATCH_SIZE
-    } else {
-        1
-    };
-    // A group already carries several complete evidence sets. Avoid competing
-    // large prompt prefills on the same model; individual requests stay parallel.
-    let concurrency = if size > 1 { 1 } else { 3 };
-    // Non-structured providers retain the existing individual-call path.
+    // A group already carries several complete evidence sets. Run them one at
+    // a time rather than compete large prompt prefills on the same model.
     let mut groups = futures::stream::iter(pending)
-        .chunks(size)
+        .chunks(BATCH_SIZE)
         .map(|pending| group(llm, pending))
-        .buffer_unordered(concurrency);
+        .buffer_unordered(1);
     while let Some(batch) = groups.next().await {
         results.extend(batch?);
         crate::features::learning::lesson_progress::stage(format!(

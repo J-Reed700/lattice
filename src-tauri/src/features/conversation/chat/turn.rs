@@ -811,7 +811,6 @@ pub(super) async fn run_turn(
                     &emit,
                     &context,
                     &enhanced_message,
-                    &validated_message,
                     &prompt_settings,
                     &highlight_terms,
                     &tool_output_settings,

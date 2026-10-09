@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::application::contracts::search::CorpusDocument;
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
@@ -501,11 +502,12 @@ pub(super) async fn plan(
     history: Option<&str>,
     catalog: &[CorpusDocument],
     summaries: &HashMap<String, String>,
+    cancel: &CancellationToken,
 ) -> Result<CorpusSearchPlan> {
     if let Some(plan) = ordered_learning_plan(question, catalog) {
         return Ok(plan);
     }
-    plan_with(llm, question, history, catalog, None, summaries).await
+    plan_with(llm, question, history, catalog, None, summaries, cancel).await
 }
 
 /// One replanned retry for a turn whose first pass was judged insufficient.
@@ -520,6 +522,7 @@ pub(super) async fn plan_correction(
     history: Option<&str>,
     catalog: &[CorpusDocument],
     correction: &CorrectionRequest,
+    cancel: &CancellationToken,
 ) -> Result<CorpusSearchPlan> {
     let tried: HashSet<String> = correction
         .queries_already_tried
@@ -533,6 +536,7 @@ pub(super) async fn plan_correction(
         catalog,
         Some(correction),
         &HashMap::new(),
+        cancel,
     )
     .await?;
     let queries: Vec<String> = plan
@@ -560,6 +564,7 @@ async fn plan_with(
     catalog: &[CorpusDocument],
     correction: Option<&CorrectionRequest>,
     summaries: &HashMap<String, String>,
+    cancel: &CancellationToken,
 ) -> Result<CorpusSearchPlan> {
     let history = history.unwrap_or("");
     let history: String = history
@@ -628,38 +633,37 @@ async fn plan_with(
             remaining.as_secs()
         )));
     }
-    let response = tokio::time::timeout(PLANNER_TIMEOUT, async {
-        if llm.supports_typed_completions() {
+    let response =
+        tokio::time::timeout(PLANNER_TIMEOUT, async {
             llm.complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message { role: "system".into(), content: PLANNER_SYSTEM.into() },
-                    CompletionInput::Message { role: "user".into(), content: prompt.clone() },
-                ],
-                json_schema: Some(serde_json::json!({
-                    "type":"object", "additionalProperties":false,
-                    "properties":{
-                        "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
-                        "opening_document_ids":{"type":"array","items":{"type":"string"},"maxItems":4},
-                        "start_at_beginning":{"type":"boolean"}
-                    }, "required":["queries","opening_document_ids","start_at_beginning"]
-                })),
-                priority: crate::application::ports::llm_port::InferencePriority::Interactive,
-                ..Default::default()
-            }).await.map(|r| r.text)
-        } else {
-            llm.generate(&prompt, &[format!("System: {PLANNER_SYSTEM}")], None).await
-        }
-    })
-    .await
-    .map_err(|_| {
-        stand_planner_down();
-        tracing::warn!(
+            input: vec![
+                CompletionInput::Message { role: "system".into(), content: PLANNER_SYSTEM.into() },
+                CompletionInput::Message { role: "user".into(), content: prompt.clone() },
+            ],
+            json_schema: Some(serde_json::json!({
+                "type":"object", "additionalProperties":false,
+                "properties":{
+                    "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
+                    "opening_document_ids":{"type":"array","items":{"type":"string"},"maxItems":4},
+                    "start_at_beginning":{"type":"boolean"}
+                }, "required":["queries","opening_document_ids","start_at_beginning"]
+            })),
+            priority: crate::application::ports::llm_port::InferencePriority::Interactive,
+            // A stop press takes the plan out of the backend's queue.
+            cancel: Some(cancel.clone()),
+            ..Default::default()
+        }).await.map(|r| r.text)
+        })
+        .await
+        .map_err(|_| {
+            stand_planner_down();
+            tracing::warn!(
             timeout_s = PLANNER_TIMEOUT.as_secs(),
             cooldown_s = PLANNER_COOLDOWN.as_secs(),
             "Corpus planner timed out; standing it down so later turns do not pay the timeout again"
         );
-        AppError::InvalidState("Document retrieval planning timed out".into())
-    })??;
+            AppError::InvalidState("Document retrieval planning timed out".into())
+        })??;
     planner_is_answering();
     let response = response
         .trim()

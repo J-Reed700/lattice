@@ -104,6 +104,14 @@ impl HyDEService {
         }
     }
 
+    /// Stop every model call this service makes when `cancel` fires: a stop
+    /// press takes a rewrite out of the backend's queue instead of leaving it
+    /// to hold the slot the next turn needs.
+    pub fn with_cancellation(mut self, cancel: tokio_util::sync::CancellationToken) -> Self {
+        self.generator = self.generator.with_cancellation(cancel);
+        self
+    }
+
     /// Interpret a user query with HyDE enrichment.
     ///
     /// This is the main entry point for the HyDE pipeline:
@@ -419,9 +427,9 @@ fn take_last_chars(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::domain::qa::hyde::{QueryType, SearchStrategy};
     use async_trait::async_trait;
-    use futures::stream::{self, Stream};
 
     /// Mock LLM for testing
     struct MockLLM {
@@ -444,26 +452,11 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for MockLLM {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(self.response.clone())
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(
+                self.respond(request.user_text()).await?,
+            ))
         }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            let stream = stream::once(async { Ok(self.response.clone()) });
-            Ok(Box::new(Box::pin(stream)))
-        }
-
         fn model_name(&self) -> &str {
             "mock-llm"
         }
@@ -478,6 +471,12 @@ mod tests {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+    }
+    impl MockLLM {
+        async fn respond(&self, _prompt: &str) -> Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.response.clone())
         }
     }
 
@@ -813,26 +812,11 @@ mod tests {
 
         #[async_trait]
         impl LLMPort for PanicLLM {
-            async fn generate(
-                &self,
-                _prompt: &str,
-                _context: &[String],
-                _images: Option<Vec<String>>,
-            ) -> Result<String> {
-                // P0-6 FIX: Use unreachable! instead of panic! for test invariants
-                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
+            async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::from_text(
+                    self.respond(request.user_text()).await?,
+                ))
             }
-
-            async fn generate_streaming(
-                &self,
-                _prompt: &str,
-                _context: &[String],
-                _images: Option<Vec<String>>,
-            ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-                // P0-6 FIX: Use unreachable! instead of panic! for test invariants
-                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
-            }
-
             fn model_name(&self) -> &str {
                 "panic-llm"
             }
@@ -847,6 +831,12 @@ mod tests {
 
             async fn is_ready(&self) -> Result<bool> {
                 Ok(true)
+            }
+        }
+        impl PanicLLM {
+            async fn respond(&self, _prompt: &str) -> Result<String> {
+                // P0-6 FIX: Use unreachable! instead of panic! for test invariants
+                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
             }
         }
 

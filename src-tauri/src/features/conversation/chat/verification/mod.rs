@@ -517,7 +517,6 @@ mod tests {
     use std::time::Duration;
 
     use async_trait::async_trait;
-    use futures::stream::Stream;
 
     use super::test_support::source;
     use super::*;
@@ -559,33 +558,6 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for ScriptedLlm {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            if !self.delay.is_zero() {
-                tokio::time::sleep(self.delay).await;
-            }
-            Ok(self
-                .replies
-                .get(call)
-                .or_else(|| self.replies.last())
-                .cloned()
-                .unwrap_or_default())
-        }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unimplemented!("streaming is not used by the claim judge")
-        }
-
         async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             if !self.delay.is_zero() {
@@ -601,10 +573,6 @@ mod tests {
                 first_token_logprobs: self.logprobs.clone(),
                 ..Default::default()
             })
-        }
-
-        fn supports_typed_completions(&self) -> bool {
-            self.logprobs.is_some()
         }
 
         fn model_name(&self) -> &str {

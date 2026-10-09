@@ -183,8 +183,8 @@ fn extract_json_object(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use async_trait::async_trait;
-    use futures::stream::{self, Stream};
 
     struct MockLLM {
         response: String,
@@ -200,27 +200,14 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for MockLLM {
-        async fn generate(
+        async fn complete(
             &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> crate::shared::error::Result<String> {
-            Ok(self.response.clone())
+            request: &CompletionRequest,
+        ) -> crate::shared::error::Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(
+                self.respond(request.user_text()).await?,
+            ))
         }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> crate::shared::error::Result<
-            Box<dyn Stream<Item = crate::shared::error::Result<String>> + Send + Unpin + '_>,
-        > {
-            let stream = stream::once(async { Ok(self.response.clone()) });
-            Ok(Box::new(Box::pin(stream)))
-        }
-
         fn model_name(&self) -> &str {
             "mock-llm"
         }
@@ -235,6 +222,11 @@ mod tests {
 
         async fn is_ready(&self) -> crate::shared::error::Result<bool> {
             Ok(true)
+        }
+    }
+    impl MockLLM {
+        async fn respond(&self, _prompt: &str) -> crate::shared::error::Result<String> {
+            Ok(self.response.clone())
         }
     }
 

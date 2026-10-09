@@ -37,6 +37,7 @@ use lazy_regex::regex;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Wall-clock cap for one query-planning completion, including queueing and
@@ -269,6 +270,8 @@ fn parse_research_followups(raw: &str, root: &str, count: usize) -> Vec<String> 
 /// it should be wired end-to-end before being re-enabled.
 pub struct HyDEGenerator {
     llm: Arc<dyn LLMPort>,
+    /// The turn's stop button, when the rewrites run inside one.
+    cancel: Option<CancellationToken>,
 }
 
 fn compact_hyde_text(raw: &str) -> String {
@@ -442,28 +445,21 @@ fn normalize_web_search_query(raw: &str) -> String {
 impl HyDEGenerator {
     /// Create a new HyDE generator with an LLM backend.
     pub fn new(llm: Arc<dyn LLMPort>) -> Self {
-        Self { llm }
+        Self { llm, cancel: None }
+    }
+
+    /// Withdraw every rewrite from the backend's queue, or abort it, when
+    /// `cancel` fires.
+    pub fn with_cancellation(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     /// Run a self-contained rewrite prompt with the caller's time budget.
     ///
     /// Keep the model's normal reasoning behavior. A truncated or failed
-    /// completion is an error, as in the providers' legacy `generate`, never
-    /// a partial rewrite.
+    /// completion is an error, never a partial rewrite.
     async fn rewrite(&self, prompt: &str) -> Result<String> {
-        if !self.llm.supports_typed_completions() {
-            // The untyped path cannot carry the caller's time budget.
-            // Warn once per process rather than once per query.
-            static UNTYPED_REWRITE_WARNED: std::sync::Once = std::sync::Once::new();
-            UNTYPED_REWRITE_WARNED.call_once(|| {
-                warn!(
-                    model = self.llm.model_name(),
-                    "Query rewrites fall back to untyped generation: this provider sees no \
-                     time budget"
-                );
-            });
-            return self.llm.generate(prompt, &[], None).await;
-        }
         let response = self
             .llm
             .complete(&CompletionRequest {
@@ -474,6 +470,7 @@ impl HyDEGenerator {
                 time_budget: Some(REWRITE_TIME_BUDGET),
                 // Rewrites run inside a chat turn, which someone is waiting on.
                 priority: crate::application::ports::llm_port::InferencePriority::Interactive,
+                cancel: self.cancel.clone(),
                 ..Default::default()
             })
             .await?;
@@ -874,9 +871,9 @@ impl HyDEGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use crate::domain::qa::hyde::SearchStrategy;
     use async_trait::async_trait;
-    use futures::stream::{self, Stream};
 
     /// A small model numbers its lines, quotes some, repeats the main search
     /// and wanders into prose; only the usable, distinct queries survive.
@@ -918,25 +915,11 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for MockLLM {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            Ok(self.response.clone())
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(
+                self.respond(request.user_text()).await?,
+            ))
         }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            let stream = stream::once(async { Ok(self.response.clone()) });
-            Ok(Box::new(Box::pin(stream)))
-        }
-
         fn model_name(&self) -> &str {
             "mock-llm"
         }
@@ -951,6 +934,11 @@ mod tests {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+    }
+    impl MockLLM {
+        async fn respond(&self, _prompt: &str) -> Result<String> {
+            Ok(self.response.clone())
         }
     }
 
@@ -978,10 +966,6 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for TypedLLM {
-        fn supports_typed_completions(&self) -> bool {
-            true
-        }
-
         async fn complete(
             &self,
             request: &CompletionRequest,
@@ -992,24 +976,6 @@ mod tests {
                 finish_reason: self.finish_reason.clone(),
                 ..Default::default()
             })
-        }
-
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            unreachable!("typed providers must rewrite through complete()")
-        }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!("typed providers must rewrite through complete()")
         }
 
         fn model_name(&self) -> &str {
@@ -1027,6 +993,31 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    /// A stop press must reach a rewrite still queued behind other work.
+    #[tokio::test]
+    async fn every_rewrite_carries_the_turns_cancellation() {
+        let llm = Arc::new(TypedLLM::new("Rust ownership and borrowing.", "stop"));
+        let turn = tokio_util::sync::CancellationToken::new();
+        let generator = HyDEGenerator::new(llm.clone()).with_cancellation(turn.clone());
+        generator
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 1);
+        let carried = requests[0].cancel.clone().expect("the turn's token");
+        assert!(!carried.is_cancelled());
+        turn.cancel();
+        assert!(carried.is_cancelled());
+
+        let untied = Arc::new(TypedLLM::new("Rust ownership and borrowing.", "stop"));
+        HyDEGenerator::new(untied.clone())
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        assert!(untied.requests()[0].cancel.is_none());
     }
 
     #[tokio::test]
@@ -1316,24 +1307,11 @@ mod tests {
 
         #[async_trait]
         impl LLMPort for PanicLLM {
-            async fn generate(
-                &self,
-                _prompt: &str,
-                _context: &[String],
-                _images: Option<Vec<String>>,
-            ) -> Result<String> {
-                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
+            async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::from_text(
+                    self.respond(request.user_text()).await?,
+                ))
             }
-
-            async fn generate_streaming(
-                &self,
-                _prompt: &str,
-                _context: &[String],
-                _images: Option<Vec<String>>,
-            ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
-            }
-
             fn model_name(&self) -> &str {
                 "panic-llm"
             }
@@ -1348,6 +1326,11 @@ mod tests {
 
             async fn is_ready(&self) -> Result<bool> {
                 Ok(true)
+            }
+        }
+        impl PanicLLM {
+            async fn respond(&self, _prompt: &str) -> Result<String> {
+                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
             }
         }
 

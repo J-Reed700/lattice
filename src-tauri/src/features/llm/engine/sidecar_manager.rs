@@ -10,7 +10,7 @@
 //! Lattice uses the bundled `llama-server` binary rather than an in-process
 //! inference runtime. The
 //! binary speaks an OpenAI-compatible HTTP/SSE API on `127.0.0.1:<port>`.
-//! This module spawns it; `SidecarLLMClient` is its HTTP client.
+//! This module spawns it; `LlamaCppLlm` is its HTTP client.
 //!
 //! # Lifecycle
 //!
@@ -38,7 +38,7 @@
 //!
 //! # What this module does NOT do
 //!
-//! - It does not implement the `LLMClient` trait; `SidecarLLMClient` does.
+//! - It does not talk to the server; `LlamaCppLlm` does.
 //! - It does not download model files — that's the existing model
 //!   storage layer, untouched by this migration.
 
