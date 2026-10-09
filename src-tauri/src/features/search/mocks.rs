@@ -3,7 +3,7 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use super::trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use super::trait_def::{BM25SearchTrait, SearchServiceTrait};
 #[cfg(test)]
 use crate::features::search::engine::service::SearchResult;
 #[cfg(test)]
@@ -257,134 +257,50 @@ impl BM25SearchTrait for MockBM25Search {
 }
 
 #[cfg(test)]
-/// Mock hybrid search service for testing
-///
-/// Simulates hybrid search without actual vector or BM25 search.
-/// Returns configurable mock results for testing search flow.
-/// All operations are deterministic and thread-safe.
-pub struct MockHybridSearch {
-    /// Mock results to return (query -> results mapping)
-    results: Arc<
-        RwLock<
-            std::collections::HashMap<
-                String,
-                Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
-            >,
-        >,
-    >,
-}
-
-#[cfg(test)]
-impl MockHybridSearch {
-    /// Create new mock hybrid search service
-    ///
-    /// # Returns
-    /// New mock service with empty result set
-    pub fn new() -> Self {
-        Self {
-            results: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        }
-    }
-
-    /// Set mock results for a specific query
-    ///
-    /// # Arguments
-    /// * `query` - Query text to match
-    /// * `results` - Mock results to return
-    ///
-    /// # Example
-    /// ```rust
-    /// let mock = MockHybridSearch::new();
-    /// mock.set_results("test query", vec![
-    ///     HybridSearchResult {
-    ///         id: "doc1".to_string(),
-    ///         score: 0.95,
-    ///         vector_score: Some(0.9),
-    ///         bm25_score: Some(1.0),
-    ///         vector_rank: Some(0),
-    ///         bm25_rank: Some(0),
-    ///         rerank_score: None,
-    ///     },
-    /// ]);
-    /// ```
-    pub fn set_results(
-        &self,
-        query: &str,
-        results: Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
-    ) {
-        self.results
-            .write()
-            .unwrap()
-            .insert(query.to_string(), results);
-    }
-
-    /// Clear all configured mock results
-    pub fn clear(&self) {
-        self.results.write().unwrap().clear();
-    }
-}
-
-#[cfg(test)]
-impl Default for MockHybridSearch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// A keyword index with nothing in it.
+pub struct EmptyTextSearch;
 
 #[async_trait]
 #[cfg(test)]
-impl HybridSearchTrait for MockHybridSearch {
+impl crate::application::ports::TextSearchPort for EmptyTextSearch {
     async fn search(
         &self,
-        query_text: &str,
-        _query_embedding: &[f32],
-        top_k: usize,
-        _mode: crate::features::search::engine::hybrid::SearchMode,
-    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>> {
-        Ok(self
-            .results
-            .read()
-            .unwrap()
-            .get(query_text)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .take(top_k)
-            .collect())
+        _query: &str,
+        _top_k: usize,
+    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        Ok(Vec::new())
     }
+    async fn index_document(&self, _id: &str, _content: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn index_batch(&self, _documents: &[(&str, &str)]) -> Result<()> {
+        Ok(())
+    }
+    async fn remove_document(&self, _id: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn clear(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn count(&self) -> Result<usize> {
+        Ok(0)
+    }
+}
 
-    async fn batch_search(
-        &self,
-        queries: Vec<(String, Vec<f32>)>,
-        top_k: usize,
-        mode: crate::features::search::engine::hybrid::SearchMode,
-    ) -> Result<Vec<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>> {
-        let mut results = Vec::new();
-        for (query_text, query_embedding) in queries {
-            let result = self
-                .search(&query_text, &query_embedding, top_k, mode)
-                .await?;
-            results.push(result);
-        }
-        Ok(results)
-    }
-
-    async fn search_with_recency(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        top_k: usize,
-        _recency_weight: f32,
-        _max_age_days: i64,
-    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>> {
-        self.search(
-            query_text,
-            query_embedding,
-            top_k,
-            crate::features::search::engine::hybrid::SearchMode::Hybrid,
-        )
-        .await
-    }
+#[cfg(test)]
+/// The library search orchestrator over an empty library, with no embedding
+/// model loaded.
+pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSearchUseCase> {
+    Arc::new(
+        crate::features::search::use_cases::HybridSearchUseCase::new(
+            Arc::new(crate::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(
+                crate::features::search::engine::vector_search::USearchVectorIndex::new(4, None)
+                    .expect("an in-memory vector index"),
+            ),
+            Arc::new(EmptyTextSearch),
+        ),
+    )
 }
 
 #[cfg(test)]

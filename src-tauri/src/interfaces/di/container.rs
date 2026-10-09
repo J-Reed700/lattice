@@ -252,7 +252,7 @@ impl Container {
             embedding_service,
             search.search_service().clone(),
             search.bm25_search_service().clone(),
-            search.hybrid_search_service().clone(),
+            search.hybrid_search_use_case().clone(),
             search.document_repo().clone(),
             indexing.chunk_repository().clone(),
             library.tag_service().clone(),

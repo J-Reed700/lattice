@@ -11,10 +11,8 @@ use crate::application::contracts::search::CorpusDocument;
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use crate::application::ports::LLMPort;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
-};
-use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
+use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
+use crate::features::search::use_cases::{BranchKind, HybridSearchUseCase, RankedBranch};
 use crate::shared::error::{AppError, Result};
 
 use super::{select_informative_terms, tokenize_keyword_terms};
@@ -645,6 +643,7 @@ async fn plan_with(
                         "start_at_beginning":{"type":"boolean"}
                     }, "required":["queries","opening_document_ids","start_at_beginning"]
                 })),
+                priority: crate::application::ports::llm_port::InferencePriority::Interactive,
                 ..Default::default()
             }).await.map(|r| r.text)
         } else {
@@ -671,71 +670,9 @@ async fn plan_with(
     serde_json::from_str::<CorpusSearchPlan>(response)?.validate(catalog)
 }
 
-/// One query through the vector and keyword branches over an allow-list,
-/// each branch returned with its fusion weight. Also returns how many branches
-/// answered, so a caller can tell "nothing matched" from "search is down".
-async fn search_branches(
-    semantic: &SemanticSearchUseCase,
-    hybrid: &HybridSearchUseCase,
-    query: &str,
-    document_ids: &HashSet<String>,
-    limit: usize,
-) -> (Vec<(f32, Vec<SearchResultDto>)>, usize) {
-    let vector = semantic.execute_scoped(
-        SearchRequestDto {
-            query: query.to_string(),
-            limit: Some(limit * 3),
-            threshold: Some(0.15),
-            mode: SearchModeDto::Vector,
-        },
-        Some(document_ids),
-    );
-    let lexical = hybrid.execute_scoped(
-        SearchRequestDto {
-            query: query.to_string(),
-            limit: Some(limit * 3),
-            threshold: None,
-            mode: SearchModeDto::BM25,
-        },
-        // The allow-list already is the space plus this chat's
-        // attachments. A membership check on top would drop the
-        // attachments, which belong to no space, from the keyword branch.
-        None,
-        Some(document_ids),
-    );
-    let (vector, lexical) = tokio::join!(vector, lexical);
-    let mut branches = Vec::new();
-    for (branch, weight, result) in [
-        (
-            "vector",
-            crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-            vector,
-        ),
-        (
-            "keyword",
-            crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
-            lexical,
-        ),
-    ] {
-        match result {
-            Ok(response) => {
-                tracing::info!(
-                    branch,
-                    result_count = response.results.len(),
-                    query_time_ms = response.query_time_ms,
-                    "Document search branch completed"
-                );
-                branches.push((weight, response.results));
-            }
-            Err(error) => tracing::warn!(branch, %error, "A document search branch failed"),
-        }
-    }
-    let succeeded = branches.len();
-    (branches, succeeded)
-}
-
-/// One query searched exactly as first-pass retrieval searches: the same
-/// branches, weights, RRF constant and per-document cap.
+/// One query searched exactly as first-pass retrieval searches it: the
+/// library search orchestrator's branches, weights, RRF constant and
+/// per-document cap.
 ///
 /// The model's own `semantic_search` calls come through here. They used the
 /// generic hybrid endpoint instead — even weights, a higher vector floor and a
@@ -743,24 +680,26 @@ async fn search_branches(
 /// differently from the search that opened the turn, and could miss passages
 /// the first pass would have found.
 pub(in crate::features::conversation::chat) async fn fused_search(
-    semantic: &SemanticSearchUseCase,
     hybrid: &HybridSearchUseCase,
     query: &str,
     document_ids: &HashSet<String>,
     limit: usize,
 ) -> Result<Vec<SearchResultDto>> {
-    let (branches, succeeded) = search_branches(semantic, hybrid, query, document_ids, limit).await;
-    if succeeded == 0 {
-        return Err(AppError::ServiceNotAvailable(
-            "Document search failed in both vector and keyword retrieval".into(),
-        ));
-    }
-    Ok(fuse_branches(branches, limit))
+    // The allow-list already is the space plus this chat's attachments. A
+    // membership check on top would drop the attachments, which belong to no
+    // space, from the keyword branch.
+    Ok(hybrid
+        .execute_scoped(
+            SearchRequestDto::hybrid(query, limit),
+            None,
+            Some(document_ids),
+        )
+        .await?
+        .results)
 }
 
 pub(super) async fn retrieve(
     repository: &ConversationRepository,
-    semantic: &SemanticSearchUseCase,
     hybrid: &HybridSearchUseCase,
     question: &str,
     plan: &CorpusSearchPlan,
@@ -783,13 +722,24 @@ pub(super) async fn retrieve(
     };
     // Independent lexical and vector branches: a query/model failure cannot
     // silently discard successful retrieval from the other branch. Learned
-    // sparse retrieval remains an evaluation-only experiment; it did not beat
-    // calibrated two-way fusion on the production-path corpus.
+    // sparse retrieval joins only when its product switch is on, and it is
+    // off: it did not beat calibrated two-way fusion on the production-path
+    // corpus.
     for query in &plan.queries {
-        let (query_branches, succeeded) =
-            search_branches(semantic, hybrid, query, search_ids, limit).await;
-        successful_branches += succeeded;
-        branches.extend(query_branches);
+        // The allow-list is the space plus this chat's attachments; see
+        // `fused_search`.
+        let query_branches = hybrid
+            .search_branches(
+                query,
+                None,
+                Some(search_ids),
+                limit,
+                crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+            )
+            .await;
+        successful_branches += query_branches.answered;
+        branches.extend(query_branches.branches);
     }
     let openings = repository
         .retrieval_openings(&plan.opening_document_ids, &scope.document_ids, 4)
@@ -830,16 +780,17 @@ pub(super) async fn retrieve(
     results.retain(|result| seen.insert(result.id.clone()));
     let opening_ids: HashSet<_> = results.iter().map(|r| r.id.clone()).collect();
     results.extend(
-        fuse_branches(
-            branches,
-            if plan.start_at_beginning {
-                limit.min(8)
-            } else {
-                limit
-            },
-        )
-        .into_iter()
-        .filter(|r| !opening_ids.contains(&r.id)),
+        hybrid
+            .fuse(
+                branches,
+                if plan.start_at_beginning {
+                    limit.min(8)
+                } else {
+                    limit
+                },
+            )
+            .into_iter()
+            .filter(|r| !opening_ids.contains(&r.id)),
     );
     // Opening evidence is bounded separately; it must not be thrown away by
     // lexical overlap gates testing the original conversational instructions.
@@ -942,48 +893,17 @@ pub(super) async fn expand_evidence(
 /// passes found rises above one that only the retry did, which is the whole
 /// point of correcting rather than replacing.
 pub(super) fn fuse_passes(
+    hybrid: &HybridSearchUseCase,
     first: Vec<SearchResultDto>,
     second: Vec<SearchResultDto>,
     limit: usize,
 ) -> Vec<SearchResultDto> {
-    fuse_branches(vec![(1.0, first), (1.0, second)], limit)
-}
-
-fn fuse_branches(branches: Vec<(f32, Vec<SearchResultDto>)>, limit: usize) -> Vec<SearchResultDto> {
-    let mut scores: HashMap<String, (f32, SearchResultDto)> = HashMap::new();
-    for (weight, branch) in branches {
-        let mut seen = HashSet::new();
-        for (rank, result) in branch.into_iter().enumerate() {
-            if !seen.insert(result.id.clone()) {
-                continue;
-            }
-            let score = weight / (crate::shared::constants::DEFAULT_RRF_K + rank as f32 + 1.0);
-            scores
-                .entry(result.id.clone())
-                .and_modify(|entry| entry.0 += score)
-                .or_insert((score, result));
-        }
-    }
-    let mut ranked: Vec<_> = scores.into_values().collect();
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
-    let mut counts = HashMap::<String, usize>::new();
-    let mut selected = Vec::new();
-    let mut deferred = Vec::new();
-    for (score, mut result) in ranked {
-        result.score = score;
-        let count = counts
-            .entry(result.document_id.clone().unwrap_or_default())
-            .or_default();
-        if *count < 4 {
-            *count += 1;
-            selected.push(result);
-        } else {
-            deferred.push(result);
-        }
-    }
-    selected.extend(deferred);
-    selected.truncate(limit);
-    selected
+    let pass = |results| RankedBranch {
+        kind: BranchKind::Fused,
+        weight: 1.0,
+        results,
+    };
+    hybrid.fuse(vec![pass(first), pass(second)], limit)
 }
 
 #[cfg(test)]

@@ -42,5 +42,3 @@ pub use crate::features::web::services::ingestion::{
 };
 pub use crate::features::web::services::web::WebService;
 pub use article_extractor::ArticleExtractorService;
-
-pub use crate::features::search::engine::hybrid::HybridSearchService;

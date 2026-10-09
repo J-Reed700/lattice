@@ -11,6 +11,7 @@ use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
+use crate::features::search::use_cases::RerankOptions;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
 
 // Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
@@ -219,13 +220,12 @@ pub(super) async fn run_kb_retrieval(
     // The shortlist a reranker gets to see. The corrective pass reuses it so
     // both passes contribute the same number of candidates to the fusion.
     let candidate_limit = if enable_reranking && !plan.start_at_beginning {
-        kb_search_limit.saturating_mul(3).min(64)
+        RerankOptions::candidate_pool(kb_search_limit)
     } else {
         kb_search_limit
     };
     let response = super::corpus_plan::retrieve(
         &repository,
-        container.semantic_search_use_case().as_ref(),
         container.hybrid_search_use_case().as_ref(),
         validated_message,
         &plan,
@@ -324,6 +324,7 @@ pub(super) async fn run_kb_retrieval(
             let second_count = second_pass.results.len();
             let first_results = std::mem::take(&mut search_response.results);
             search_response.results = super::corpus_plan::fuse_passes(
+                container.hybrid_search_use_case().as_ref(),
                 first_results,
                 second_pass.results,
                 candidate_limit,
@@ -543,7 +544,6 @@ async fn corrective_pass(
     };
     match super::corpus_plan::retrieve(
         repository,
-        container.semantic_search_use_case().as_ref(),
         container.hybrid_search_use_case().as_ref(),
         validated_message,
         &retry_plan,

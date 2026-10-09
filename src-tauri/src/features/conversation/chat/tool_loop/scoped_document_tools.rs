@@ -83,7 +83,6 @@ pub(super) async fn execute(
         SearchMode::Hybrid => {
             let start = std::time::Instant::now();
             let hits = crate::features::conversation::chat::retrieval::fused_search(
-                container.semantic_search_use_case().as_ref(),
                 container.hybrid_search_use_case().as_ref(),
                 &input.query,
                 &allowed,

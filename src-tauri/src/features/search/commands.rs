@@ -23,10 +23,10 @@ use crate::application::ports::RepositoryPort;
 use crate::domain::entities::Document;
 use crate::features::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::features::search::dto::{
-    CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
-    SearchResponseDto, SearchResultDto,
+    CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchModeDto, SearchOptions,
+    SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
-use crate::features::search::engine::SearchMode;
+use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;
@@ -87,8 +87,41 @@ async fn enrich_vector_results(
     Ok(search_results)
 }
 
+/// The search page's ways of asking the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LibraryMode {
+    Vector,
+    Keyword,
+    Hybrid,
+}
+
+impl LibraryMode {
+    /// The orchestrator request for this mode. A semantic search keeps the
+    /// search page's similarity floor; a hybrid one the application's fusion.
+    fn request(self, query: &str, limit: usize) -> SearchRequestDto {
+        match self {
+            Self::Vector => SearchRequestDto {
+                query: query.to_owned(),
+                limit: Some(limit),
+                threshold: Some(crate::shared::constants::MIN_SIMILARITY_SCORE),
+                mode: SearchModeDto::Vector,
+            },
+            Self::Keyword => SearchRequestDto {
+                query: query.to_owned(),
+                limit: Some(limit),
+                threshold: None,
+                mode: SearchModeDto::BM25,
+            },
+            Self::Hybrid => SearchRequestDto::hybrid(query, limit),
+        }
+    }
+}
+
+/// Name fused hits after their documents. Order, scores and per-branch
+/// diagnostics are the search's own; title, path, preview and metadata come
+/// from the enrichment.
 async fn enrich_hybrid_results(
-    results: Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
+    results: Vec<SearchResultDto>,
     enrichment_service: std::sync::Arc<dyn SearchEnrichmentServiceTrait>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
     let chunk_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
@@ -218,9 +251,9 @@ async fn enrich_hybrid_results(
 ///
 /// # Search Modes
 ///
-/// - **Semantic** (`SearchMode::Vector`): Pure embedding similarity search
-/// - **Keyword** (`SearchMode::Keyword`): Traditional BM25 full-text search
-/// - **Hybrid** (`SearchMode::Hybrid`): Combines vector + BM25 with RRF ranking
+/// - **Semantic**: Pure embedding similarity search
+/// - **Keyword**: Traditional BM25 full-text search
+/// - **Hybrid**: Combines vector + BM25 with RRF ranking, exactly as chat searches
 ///
 /// # Caching Strategy
 ///
@@ -594,9 +627,9 @@ pub async fn semantic_search(
 ///
 /// # Search Modes
 ///
-/// - **"semantic"**: Pure vector similarity (falls back to `SearchMode::Vector`)
-/// - **"keyword"**: Pure BM25 keyword matching (`SearchMode::Keyword`)
-/// - **"hybrid"**: RRF fusion of vector + BM25 (`SearchMode::Hybrid`)
+/// - **"semantic"**: Pure vector similarity
+/// - **"keyword"**: Pure BM25 keyword matching
+/// - **"hybrid"**: RRF fusion of vector + BM25, exactly as chat searches
 /// - **Default**: Hybrid mode if unrecognized
 ///
 /// # Ranking Algorithm
@@ -617,12 +650,11 @@ pub async fn semantic_search(
 ///
 /// 1. Rate limiting check
 /// 2. Input validation
-/// 3. Parse search mode string → `SearchMode` enum
-/// 4. Embed query
-/// 5. Execute hybrid search (vector + BM25 + RRF)
-/// 6. Enrich results with metadata
-/// 7. Log audit event
-/// 8. Return ranked results
+/// 3. Parse search mode string
+/// 4. Run the library search orchestrator (vector + BM25 + RRF)
+/// 5. Enrich results with metadata
+/// 6. Log audit event
+/// 7. Return ranked results
 ///
 /// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
 pub async fn hybrid_search_impl(
@@ -653,42 +685,31 @@ pub async fn hybrid_search_impl(
         return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
     }
 
-    let embedding_service = match container.get_or_load_embedding().await {
-        Ok(service) => service,
-        Err(e) => {
-            return ApiResult::error_with_details(
-                ErrorCode::ModelNotLoaded,
-                "Failed to load embedding model",
-                format!(
-                    "{}. Download models from Settings → Models to enable search.",
-                    e
-                ),
-            );
-        }
-    };
-
-    let query_embedding = match embedding_service.embed_query(&query).await {
-        Ok(embedding) => embedding,
-        Err(e) => {
-            return ApiResult::error(ErrorCode::EmbeddingError, e.to_string());
-        }
-    };
+    if let Err(e) = container.get_or_load_embedding().await {
+        return ApiResult::error_with_details(
+            ErrorCode::ModelNotLoaded,
+            "Failed to load embedding model",
+            format!(
+                "{}. Download models from Settings → Models to enable search.",
+                e
+            ),
+        );
+    }
 
     // Determine search mode
     let mode = match search_mode.as_str() {
-        "semantic" => SearchMode::Vector,
-        "keyword" => SearchMode::Keyword,
-        "hybrid" => SearchMode::Hybrid,
-        _ => SearchMode::Hybrid,
+        "semantic" => LibraryMode::Vector,
+        "keyword" => LibraryMode::Keyword,
+        "hybrid" => LibraryMode::Hybrid,
+        _ => LibraryMode::Hybrid,
     };
 
-    // Perform hybrid search
-    let hybrid_service = container.hybrid_search();
-    let results = match hybrid_service
-        .search(&query, &query_embedding, limit, mode)
+    let results = match container
+        .hybrid_search_use_case()
+        .execute(mode.request(&query, limit))
         .await
     {
-        Ok(results) => results,
+        Ok(response) => response.results,
         Err(e) => {
             return ApiResult::error(ErrorCode::ProcessingError, e.to_string());
         }
@@ -941,9 +962,9 @@ pub async fn find_similar(
 /// 3. Apply defaults (limit=10, recency_weight=0.1, max_age_days=730)
 /// 4. Validate recency_weight ∈ [0, 1]
 /// 5. Validate max_age_days > 0
-/// 6. Embed query
-/// 7. Execute recency-aware hybrid search
-/// 8. Enrich results with metadata
+/// 6. Run the library search orchestrator
+/// 7. Enrich results with metadata
+/// 8. Boost recently updated documents
 /// 9. Log audit event
 /// 10. Return time-boosted results
 #[tauri::command]
@@ -953,57 +974,49 @@ pub async fn search_with_recency(
     container: State<'_, Container>,
     options: RecencySearchOptions,
 ) -> Result<Vec<SearchResultDto>, AppError> {
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
+    search_with_recency_impl(&container, options).await
+}
 
-    container
-        .security_context()
-        .input_validator()
-        .validate_search_query(&options.query)?;
-
-    let limit = options.limit.unwrap_or(10);
-    let recency_weight = options.recency_weight.unwrap_or(0.1);
-    let max_age_days = options.max_age_days.unwrap_or(730);
-
-    if !(0.0..=1.0).contains(&recency_weight) {
-        return Err(AppError::InvalidInput(
-            "Recency weight must be between 0.0 and 1.0".to_string(),
-        ));
+/// Lift recently updated documents by `recency_weight`, then re-sort. A
+/// result whose document carries no readable `updated_at` keeps its score.
+fn boost_recent(results: &mut [SearchResultDto], recency_weight: f32, max_age_days: i64) {
+    let recency_weight = recency_weight.clamp(0.0, 1.0);
+    if results.is_empty() || recency_weight == 0.0 {
+        return;
     }
 
-    if max_age_days <= 0 {
-        return Err(AppError::InvalidInput(
-            "Max age days must be positive".to_string(),
-        ));
+    let scorer = RecencyScorer::new(RecencyConfig::with_max_age_days(max_age_days));
+    let now = chrono::Utc::now();
+    for result in results.iter_mut() {
+        let updated_at = result
+            .metadata
+            .get("updated_at")
+            .and_then(|value| value.as_str())
+            .and_then(parse_sqlite_datetime);
+        if let Some(updated_at) = updated_at {
+            let age_days = scorer.calculate_age_days(updated_at, now);
+            let recency_score = scorer.calculate_recency_score(age_days);
+            result.score = scorer.boost_score(result.score, recency_score, recency_weight);
+        }
     }
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
-    let query_embedding = embedding_service.embed_query(&options.query).await?;
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
 
-    let hybrid_service = container.hybrid_search();
-    let results = hybrid_service
-        .search_with_recency(
-            &options.query,
-            &query_embedding,
-            limit,
-            recency_weight,
-            max_age_days,
-        )
-        .await?;
+fn parse_sqlite_datetime(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Some(parsed.with_timezone(&chrono::Utc));
+    }
 
-    let enrichment_service = container.search_enrichment_service();
-    let search_results = enrich_hybrid_results(results, enrichment_service).await?;
-
-    audit_search(&options.query, search_results.len(), false).await?;
-    Ok(search_results)
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f"))
+        .ok()
+        .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc))
 }
 
 // Audit helper
@@ -1063,10 +1076,10 @@ pub async fn search_documents_impl(
     let limit = options.limit.unwrap_or(10);
     let cache_generation = QUERY_CACHE.generation();
     let search_mode = match options.search_mode.as_deref() {
-        Some("semantic") => SearchMode::Vector,
-        Some("keyword") => SearchMode::Keyword,
-        Some("hybrid") => SearchMode::Hybrid,
-        _ => SearchMode::Vector,
+        Some("semantic") => LibraryMode::Vector,
+        Some("keyword") => LibraryMode::Keyword,
+        Some("hybrid") => LibraryMode::Hybrid,
+        _ => LibraryMode::Vector,
     };
 
     let cache_key = QueryCacheKey::new(
@@ -1113,12 +1126,12 @@ pub async fn search_documents_impl(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
-    let query_embedding = embedding_service.embed_query(&options.query).await?;
 
     let enrichment_service = container.search_enrichment_service();
 
     let search_results: Vec<SearchResultDto> = match search_mode {
-        SearchMode::Vector => {
+        LibraryMode::Vector => {
+            let query_embedding = embedding_service.embed_query(&options.query).await?;
             let search_service = container.search_service();
             let results = search_service.search_with_threshold(
                 &query_embedding,
@@ -1127,12 +1140,12 @@ pub async fn search_documents_impl(
             )?;
             enrich_vector_results(results, enrichment_service).await?
         }
-        SearchMode::Keyword | SearchMode::Hybrid => {
-            let hybrid_service = container.hybrid_search();
-            let results = hybrid_service
-                .search(&options.query, &query_embedding, limit, search_mode)
+        LibraryMode::Keyword | LibraryMode::Hybrid => {
+            let response = container
+                .hybrid_search_use_case()
+                .execute(search_mode.request(&options.query, limit))
                 .await?;
-            enrich_hybrid_results(results, enrichment_service).await?
+            enrich_hybrid_results(response.results, enrichment_service).await?
         }
     };
 
@@ -1332,26 +1345,20 @@ pub async fn search_with_recency_impl(
         ));
     }
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
+    container.get_or_load_embedding().await.map_err(|e| {
         AppError::AiModelsNotInstalled(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
-    let query_embedding = embedding_service.embed_query(&options.query).await?;
 
-    let hybrid_service = container.hybrid_search();
-    let results = hybrid_service
-        .search_with_recency(
-            &options.query,
-            &query_embedding,
-            limit,
-            recency_weight,
-            max_age_days,
-        )
+    let response = container
+        .hybrid_search_use_case()
+        .execute(SearchRequestDto::hybrid(options.query.clone(), limit))
         .await?;
 
     let enrichment_service = container.search_enrichment_service();
-    let search_results = enrich_hybrid_results(results, enrichment_service).await?;
+    let mut search_results = enrich_hybrid_results(response.results, enrichment_service).await?;
+    boost_recent(&mut search_results, recency_weight, max_age_days);
 
     audit_search(&options.query, search_results.len(), false).await?;
     Ok(search_results)
@@ -1419,35 +1426,24 @@ pub async fn batch_search(
 
     let limit = limit.unwrap_or(10);
     let mode = match search_mode.as_deref() {
-        Some("vector") => SearchMode::Vector,
-        Some("keyword") => SearchMode::Keyword,
-        Some("hybrid") => SearchMode::Hybrid,
-        _ => SearchMode::Hybrid,
+        Some("vector") => LibraryMode::Vector,
+        Some("keyword") => LibraryMode::Keyword,
+        Some("hybrid") => LibraryMode::Hybrid,
+        _ => LibraryMode::Hybrid,
     };
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
+    container.get_or_load_embedding().await.map_err(|e| {
         AppError::AiModelsNotInstalled(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
 
-    let mut query_embeddings = Vec::new();
-    for query in &queries {
-        let embedding = embedding_service.embed_query(query).await?;
-        query_embeddings.push((query.clone(), embedding));
-    }
-
-    let hybrid_service = container.hybrid_search();
-    let batch_results = hybrid_service
-        .batch_search(query_embeddings, limit, mode)
-        .await?;
-
-    // Enrich all results
+    let search = container.hybrid_search_use_case();
     let enrichment_service = container.search_enrichment_service();
     let mut all_enriched_results = Vec::new();
-
-    for results in batch_results {
-        let enriched = enrich_hybrid_results(results, enrichment_service.clone()).await?;
+    for query in &queries {
+        let response = search.execute(mode.request(query, limit)).await?;
+        let enriched = enrich_hybrid_results(response.results, enrichment_service.clone()).await?;
         all_enriched_results.push(enriched);
     }
 
@@ -1461,4 +1457,57 @@ pub async fn batch_search(
     .await?;
 
     Ok(all_enriched_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fused(id: &str, score: f32, updated_at: Option<&str>) -> SearchResultDto {
+        SearchResultDto {
+            id: id.into(),
+            title: id.into(),
+            content: String::new(),
+            score,
+            path: None,
+            document_id: Some(id.into()),
+            position: None,
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: updated_at
+                .map(|at| {
+                    std::collections::HashMap::from([(
+                        "updated_at".to_owned(),
+                        serde_json::json!(at),
+                    )])
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    #[test]
+    fn a_recently_updated_document_is_lifted_above_an_older_one() {
+        let today = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut results = vec![
+            fused("old", 0.050, Some("2001-01-01 00:00:00")),
+            fused("new", 0.049, Some(&today)),
+        ];
+
+        boost_recent(&mut results, 0.5, 730);
+
+        assert_eq!(results[0].id, "new");
+    }
+
+    #[test]
+    fn a_zero_recency_weight_keeps_the_fused_order_and_scores() {
+        let today = chrono::Utc::now().to_rfc3339();
+        let mut results = vec![fused("old", 0.050, None), fused("new", 0.049, Some(&today))];
+
+        boost_recent(&mut results, 0.0, 730);
+
+        assert_eq!(results[0].id, "old");
+        assert_eq!(results[1].score, 0.049);
+    }
 }

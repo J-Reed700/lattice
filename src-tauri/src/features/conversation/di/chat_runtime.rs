@@ -69,18 +69,10 @@ impl ChatRetrieval for Container {
     ) -> &Arc<dyn crate::features::function_calling::FunctionExecutorTrait> {
         Container::function_executor(self)
     }
-    fn semantic_search_use_case(
-        &self,
-    ) -> Arc<crate::features::search::use_cases::SemanticSearchUseCase> {
-        Container::semantic_search_use_case(self)
-    }
     fn hybrid_search_use_case(
         &self,
     ) -> Arc<crate::features::search::use_cases::HybridSearchUseCase> {
         Container::hybrid_search_use_case(self)
-    }
-    fn reranker(&self) -> Arc<dyn crate::features::search::engine::reranker::Reranker> {
-        Container::reranker(self)
     }
     fn web_service(&self) -> Arc<crate::features::web::services::web::WebService> {
         Container::web_service(self)
@@ -116,8 +108,12 @@ impl ChatPolicy for Container {
     ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto> {
         self.create_conversation_use_case().execute(request).await
     }
-    async fn compact_for_turn(&self, id: &str) -> Result<()> {
-        crate::features::conversation::compaction::compact_for_turn(self, id).await
+    async fn compact_for_turn(
+        &self,
+        id: &str,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<()> {
+        crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
     }
     fn consolidate_after_turn(&self, id: String) {
         crate::features::conversation::compaction::consolidate_after_turn(self.clone(), id);

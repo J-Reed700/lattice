@@ -15,14 +15,14 @@
 /// rest stays with the user's own documents, which the prompt ranks first.
 const WEB_PAGE_BUDGET_SHARE: f64 = 0.4;
 
-/// Characters per token, rounded down. English prose tokenizes nearer four, so
-/// this under-fills rather than overflows.
-const CHARS_PER_TOKEN: usize = 3;
-
-/// The characters of page text a turn with `available_for_rag_tokens` can carry.
+/// The characters of page text a turn with `available_for_rag_tokens` can
+/// carry, erring short so dense text under-fills rather than overflows.
 pub(super) fn page_budget_chars(available_for_rag_tokens: usize) -> usize {
     let tokens = (available_for_rag_tokens as f64 * WEB_PAGE_BUDGET_SHARE) as usize;
-    tokens.saturating_mul(CHARS_PER_TOKEN)
+    crate::application::ports::llm_port::chars_within_tokens(
+        tokens,
+        crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+    )
 }
 
 /// Split `total` characters between pages of the given lengths.

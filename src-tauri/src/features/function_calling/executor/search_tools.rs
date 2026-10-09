@@ -3,11 +3,11 @@
 use super::FunctionExecutor;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::*;
-use crate::features::search::engine::hybrid::{HybridSearchResult, SearchMode as HybridSearchMode};
+use crate::features::search::dto::{SearchRequestDto, SearchResultDto};
 use crate::features::search::engine::service::SearchResult as InfraSearchResult;
 use crate::shared::error::{AppError, Result};
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -43,49 +43,39 @@ impl FunctionExecutor {
         }
     }
 
-    fn build_document_result_from_hybrid(&self, result: HybridSearchResult) -> DocumentResult {
-        let metadata = result.metadata.as_ref().and_then(|value| value.as_object());
-
-        let filename = metadata
-            .and_then(|m| m.get("filename"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        let file_path = metadata
-            .and_then(|m| m.get("path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let mime_type = metadata
-            .and_then(|m| m.get("file_type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let size_bytes = metadata
-            .and_then(|m| m.get("file_size"))
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        let modified_at = metadata
-            .and_then(|m| m.get("updated_at"))
-            .and_then(|v| v.as_str())
-            .and_then(Self::parse_datetime)
-            .unwrap_or_else(Utc::now);
-        let chunk_index = metadata
-            .and_then(|m| m.get("chunk_index"))
-            .and_then(|v| v.as_i64())
-            .and_then(|v| usize::try_from(v).ok());
-
-        DocumentResult {
-            document_id: result.document_id.clone(),
-            filename,
-            file_path,
-            mime_type,
-            score: result.score,
-            snippet: result.content.clone(),
-            chunk_index,
-            modified_at,
-            size_bytes,
-        }
+    /// Name each fused hit after its document, keeping hit order. A hit
+    /// whose document is gone is dropped rather than shown as a bare chunk.
+    async fn label_hits(&self, hits: Vec<SearchResultDto>) -> Result<Vec<DocumentResult>> {
+        let document_ids: Vec<String> = hits
+            .iter()
+            .filter_map(|hit| hit.document_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let documents: HashMap<String, _> = self
+            .document_repository
+            .find_metadata_by_ids(&document_ids)
+            .await?
+            .into_iter()
+            .map(|document| (document.id().as_str().to_owned(), document))
+            .collect();
+        Ok(hits
+            .into_iter()
+            .filter_map(|hit| {
+                let document = documents.get(hit.document_id.as_deref()?)?;
+                Some(DocumentResult {
+                    document_id: document.id().as_str().to_owned(),
+                    filename: document.file_name().to_owned(),
+                    file_path: document.file_path().display().to_string(),
+                    mime_type: document.mime_type().to_owned(),
+                    score: hit.score,
+                    snippet: hit.content,
+                    chunk_index: hit.position,
+                    modified_at: *document.modified_at(),
+                    size_bytes: document.size_bytes(),
+                })
+            })
+            .collect())
     }
 
     pub(super) fn build_document_evidence(results: &[DocumentResult]) -> Vec<DocumentEvidence> {
@@ -196,21 +186,13 @@ impl FunctionExecutor {
                     .into_iter()
                     .map(|r| self.build_document_result_from_search(r.into()))
                     .collect(),
+                // The search chat runs, vault-wide.
                 SearchMode::Hybrid => {
-                    let embedding = self.embedding_service.embed_query(&input.query).await?;
-                    let results = self
-                        .hybrid_service
-                        .search(
-                            &input.query,
-                            &embedding,
-                            input.limit,
-                            HybridSearchMode::Hybrid,
-                        )
-                        .await?
-                        .into_iter()
-                        .map(|r| self.build_document_result_from_hybrid(r))
-                        .collect::<Vec<_>>();
-                    results
+                    let response = self
+                        .hybrid_search
+                        .execute(SearchRequestDto::hybrid(input.query.clone(), input.limit))
+                        .await?;
+                    self.label_hits(response.results).await?
                 }
             };
 

@@ -1,36 +1,6 @@
 use super::*;
 use std::sync::Arc;
 
-fn hit(id: &str, doc: &str, score: f32) -> SearchResultDto {
-    SearchResultDto {
-        id: id.into(),
-        document_id: Some(doc.into()),
-        score,
-        title: doc.into(),
-        content: id.into(),
-        path: None,
-        position: None,
-        vector_score: None,
-        bm25_score: None,
-        vector_rank: None,
-        bm25_rank: None,
-        metadata: HashMap::new(),
-    }
-}
-
-#[test]
-fn ranks_fuse_across_different_score_scales_and_keep_document_diversity() {
-    let vector = vec![hit("v", "a", 0.99), hit("shared", "b", 0.4)];
-    let lexical = vec![hit("shared", "b", 100.0), hit("k", "c", 90.0)];
-    let fused = fuse_branches(vec![(0.7, vector), (0.3, lexical)], 3);
-    assert_eq!(fused[0].id, "shared");
-    let mut crowded: Vec<_> = (0..12).map(|i| hit(&format!("a{i}"), "a", 1.0)).collect();
-    crowded.push(hit("b0", "b", 0.1));
-    let diverse = fuse_branches(vec![(1.0, crowded)], 8);
-    assert_eq!(diverse[4].id, "b0");
-    assert_eq!(diverse.len(), 8);
-}
-
 #[test]
 fn exact_references_keep_subsections_and_deduplicate_before_the_budget() {
     assert_eq!(
@@ -108,7 +78,6 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let semantic = SemanticSearchUseCase::new(embedder.clone(), index.clone());
     // The fixture deliberately lacks an FTS index too; both search branches fail.
     let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
     let scope = super::super::SpaceDocumentScope {
@@ -120,17 +89,9 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
         opening_document_ids: vec![],
         start_at_beginning: false,
     };
-    let found = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "Explain 706.07(a)",
-        &plan,
-        &scope,
-        8,
-    )
-    .await
-    .unwrap();
+    let found = retrieve(&repository, &hybrid, "Explain 706.07(a)", &plan, &scope, 8)
+        .await
+        .unwrap();
     assert_eq!(
         found
             .results
@@ -139,17 +100,11 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
             .collect::<Vec<_>>(),
         ["a-sub", "a-nested"]
     );
-    assert!(retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "Explain 999.99",
-        &plan,
-        &scope,
-        8
-    )
-    .await
-    .is_err());
+    assert!(
+        retrieve(&repository, &hybrid, "Explain 999.99", &plan, &scope, 8)
+            .await
+            .is_err()
+    );
 }
 
 /// A chat's attachment belongs to no space, so it has no membership row. The
@@ -182,7 +137,6 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     // Degraded embedder: the vector branch fails, so only keyword can answer.
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let semantic = SemanticSearchUseCase::new(embedder.clone(), index.clone());
     let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
     let scope = super::super::SpaceDocumentScope {
         space_id: "space_movies".into(),
@@ -193,17 +147,9 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
         opening_document_ids: vec![],
         start_at_beginning: false,
     };
-    let found = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "quarterly budget",
-        &plan,
-        &scope,
-        8,
-    )
-    .await
-    .unwrap();
+    let found = retrieve(&repository, &hybrid, "quarterly budget", &plan, &scope, 8)
+        .await
+        .unwrap();
     assert!(
         found.results.iter().any(|p| p.id == "a1"),
         "{:?}",
@@ -393,7 +339,6 @@ async fn live_corpus_retrieval_and_answer() {
         )
         .unwrap();
     assert!(count > 0);
-    let semantic = SemanticSearchUseCase::new(embedding.clone(), index.clone());
     let hybrid = HybridSearchUseCase::new(
         embedding.clone(),
         index.clone(),
@@ -444,17 +389,9 @@ async fn live_corpus_retrieval_and_answer() {
         serde_json::to_string(&plan).unwrap()
     );
     let search_started = Instant::now();
-    let response = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        &question,
-        &plan,
-        &scope,
-        16,
-    )
-    .await
-    .unwrap();
+    let response = retrieve(&repository, &hybrid, &question, &plan, &scope, 16)
+        .await
+        .unwrap();
     let mut names: Vec<_> = response
         .results
         .iter()
@@ -497,17 +434,9 @@ async fn live_corpus_retrieval_and_answer() {
             start_at_beginning: false,
             opening_document_ids: vec![],
         };
-        let found = retrieve(
-            &repository,
-            &semantic,
-            &hybrid,
-            query,
-            &query_plan,
-            &scope,
-            16,
-        )
-        .await
-        .unwrap();
+        let found = retrieve(&repository, &hybrid, query, &query_plan, &scope, 16)
+            .await
+            .unwrap();
         let expected = if query.contains("706") {
             "mpep-0700.pdf"
         } else {

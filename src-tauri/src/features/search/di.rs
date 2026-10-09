@@ -16,7 +16,6 @@ use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmb
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
-use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
@@ -26,9 +25,7 @@ use crate::features::search::engine::vector_search::{
 };
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-use crate::features::search::{
-    BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait,
-};
+use crate::features::search::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
@@ -38,7 +35,7 @@ use crate::shared::error::{AppError, Result};
 ///
 /// Off: `evals/retrieval/README.md` records the product decision to keep the
 /// BGE-M3 sparse branch out of the curated path. The service is still wired
-/// into both retrieval paths so the switch is the only thing that has to move.
+/// into the search orchestrator so the switch is the only thing that has to move.
 const SPARSE_BRANCH_ENABLED: bool = false;
 
 #[derive(Clone)]
@@ -50,8 +47,6 @@ pub struct SearchDi {
     // Services
     pub search_service: Arc<dyn SearchServiceTrait>,
     pub bm25_search: Arc<dyn BM25SearchTrait>,
-    pub hybrid_search_service: Arc<dyn HybridSearchTrait>,
-    pub reranker: Arc<dyn Reranker>,
     pub search_enrichment_service: Arc<dyn SearchEnrichmentServiceTrait>,
 
     // Ports (exported so IndexingModule can write to the same USearch index)
@@ -289,49 +284,19 @@ pub async fn build_with_compression(
         models_path.join("reranker").join("model.safetensors"),
     )) as Arc<dyn Reranker>;
 
-    let hybrid_config = SearchConfig {
-        mode: SearchMode::Hybrid,
-        vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-        keyword_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
-        min_score: crate::shared::constants::MIN_SIMILARITY_SCORE,
-        // Keep direct-search reranking opt-in until a representative corpus
-        // demonstrates a quality gain that justifies its latency. Chat uses
-        // the same provider through its existing retrieval tuning setting.
-        enable_reranking: false,
-        max_results: 100,
-        // Retained only for controlled experiments. The production evaluation
-        // found that the third branch added cost without improving the good
-        // two-way fusion configuration.
-        sparse_enabled: SPARSE_BRANCH_ENABLED,
-    };
-
     let dynamic_embedding =
         Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
     let chunk_repository = Arc::new(
         crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
     ) as Arc<dyn ChunkRepositoryPort>;
-    // Both retrieval paths get the same third branch, wired unconditionally and
-    // gated identically: `sparse_enabled` above is the product switch, and
+    // The third branch is wired unconditionally and gated twice:
+    // `SPARSE_BRANCH_ENABLED` is the product switch, and
     // `SparseSearchTrait::is_available` tracks whether the loaded model has a
-    // sparse head at all. Neither path queried it before — direct search was
-    // never handed the service, and the chat use case had no slot for one.
+    // sparse head at all.
     let sparse_search = Arc::new(SparseSearchService::new(
         db_pool.clone(),
         Arc::clone(&dynamic_embedding),
     )) as Arc<dyn SparseSearchTrait>;
-    let hybrid_search_service = Arc::new(
-        HybridSearchService::new(
-            search_service.clone(),
-            bm25_search.clone(),
-            db_pool.clone(),
-            search_enrichment_service.clone(),
-            hybrid_config,
-        )
-        .with_chunk_repository(Arc::clone(&chunk_repository))
-        .with_reranker(Arc::clone(&reranker))
-        .with_sparse_search(Arc::clone(&sparse_search)),
-    ) as Arc<dyn HybridSearchTrait>;
-
     let semantic_search_use_case = Arc::new(
         SemanticSearchUseCase::new(dynamic_embedding.clone(), vector_search.clone())
             .with_chunk_repository(Arc::clone(&chunk_repository)),
@@ -339,7 +304,10 @@ pub async fn build_with_compression(
     let hybrid_search_use_case = Arc::new(
         HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
             .with_chunk_repository(chunk_repository)
-            .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED),
+            .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED)
+            // Chat turns it on per turn through its retrieval tuning; direct
+            // search and the tool executor never call the stage.
+            .with_reranker(reranker),
     );
 
     Ok(SearchDi {
@@ -348,8 +316,6 @@ pub async fn build_with_compression(
         hybrid_search_use_case,
         search_service,
         bm25_search,
-        hybrid_search_service,
-        reranker,
         search_enrichment_service,
         vector_search,
         document_repo,
@@ -404,16 +370,6 @@ impl Container {
     /// Get vector search service (for legacy search commands, from SearchModule)
     pub fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         Arc::clone(self.search.search_service())
-    }
-
-    /// Get hybrid search service (for legacy search commands, from SearchModule)
-    pub fn hybrid_search(&self) -> Arc<dyn HybridSearchTrait> {
-        Arc::clone(self.search.hybrid_search_service())
-    }
-
-    /// Get the shared lazy reranker used by every retrieval path.
-    pub fn reranker(&self) -> Arc<dyn Reranker> {
-        Arc::clone(self.search.reranker())
     }
 
     /// Get search enrichment service (for legacy search commands, from SearchModule)

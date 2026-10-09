@@ -97,6 +97,7 @@ mod scope_tests {
             .await
             .unwrap();
         sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+            CREATE TABLE documents(id TEXT, owner_conversation_id TEXT);
             CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
             CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
             INSERT INTO text_chunks VALUES ('a','silo','a giant underground structure of many levels');
@@ -116,6 +117,37 @@ mod scope_tests {
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].doc_id, "silo");
+    }
+
+    #[tokio::test]
+    async fn a_vault_wide_search_leaves_chat_attachments_out_before_the_limit() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+            CREATE TABLE documents(id TEXT, owner_conversation_id TEXT);
+            CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+            CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
+            INSERT INTO documents VALUES ('library', NULL), ('attached', 'some-chat');
+            INSERT INTO text_chunks VALUES ('a','attached','patent patent patent'), ('l','library','patent manual');
+            INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
+            INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;")
+            .execute(&pool).await.unwrap();
+        let search = SqliteTextSearch::new(pool);
+
+        let vault_wide = search.search_scoped("patent", 1, None, None).await.unwrap();
+        assert_eq!(vault_wide.len(), 1);
+        assert_eq!(vault_wide[0].doc_id, "library");
+
+        let allowed = HashSet::from(["attached".to_owned()]);
+        let chat = search
+            .search_scoped("patent", 1, None, Some(&allowed))
+            .await
+            .unwrap();
+        assert_eq!(chat[0].doc_id, "attached");
     }
 }
 
@@ -242,6 +274,16 @@ impl SqliteTextSearch {
             FtsIndex::Trigram => " ORDER BY bm25(chunks_trigram), c.id LIMIT ",
         };
         sql.push_bind(query.match_expression.clone());
+        if space_id.is_none() && allowed_document_ids.is_none() {
+            // An unscoped search is a vault-wide one, and a file attached to a
+            // chat is not part of the vault. Left out here, before `LIMIT`,
+            // rather than after, where it would cost the caller a result. A
+            // scoped search keeps attachments: chat's allow-list names them.
+            sql.push(
+                " AND NOT EXISTS (SELECT 1 FROM documents d \
+                 WHERE d.id = c.document_id AND d.owner_conversation_id IS NOT NULL)",
+            );
+        }
         if let Some(space) = space_id {
             sql.push(" AND EXISTS (SELECT 1 FROM document_space_memberships m WHERE m.document_id = c.document_id AND m.space_id = ");
             sql.push_bind(space).push(")");
@@ -309,6 +351,7 @@ mod tests {
             .unwrap();
         sqlx::raw_sql(
             "CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+             CREATE TABLE documents(id TEXT, owner_conversation_id TEXT);
              CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
              CREATE VIRTUAL TABLE chunks_fts USING fts5(
                 chunk_id UNINDEXED, content,

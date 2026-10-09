@@ -132,7 +132,7 @@ use crate::application::ports::{
 // Service Traits
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
@@ -331,14 +331,6 @@ impl SearchModule {
 
     pub fn bm25_search_service(&self) -> &Arc<dyn BM25SearchTrait> {
         &self.search.bm25_search
-    }
-
-    pub fn hybrid_search_service(&self) -> &Arc<dyn HybridSearchTrait> {
-        &self.search.hybrid_search_service
-    }
-
-    pub fn reranker(&self) -> &Arc<dyn crate::features::search::engine::reranker::Reranker> {
-        &self.search.reranker
     }
 
     pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {

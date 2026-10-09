@@ -29,6 +29,22 @@ pub struct SearchRequestDto {
     pub mode: SearchModeDto,
 }
 
+impl SearchRequestDto {
+    /// A hybrid search at the application's fusion weights: the request chat,
+    /// the tool executor and the search page all send.
+    pub fn hybrid(query: impl Into<String>, limit: usize) -> Self {
+        Self {
+            query: query.into(),
+            limit: Some(limit),
+            threshold: None,
+            mode: SearchModeDto::Hybrid {
+                vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+                bm25_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+            },
+        }
+    }
+}
+
 /// Search mode for algorithm selection.
 ///
 /// Maps to domain SearchMode but uses simple serializable types.

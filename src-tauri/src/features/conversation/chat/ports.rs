@@ -39,13 +39,9 @@ pub trait ChatRetrieval: Send + Sync {
     fn function_executor(
         &self,
     ) -> &Arc<dyn crate::features::function_calling::FunctionExecutorTrait>;
-    fn semantic_search_use_case(
-        &self,
-    ) -> Arc<crate::features::search::use_cases::SemanticSearchUseCase>;
     fn hybrid_search_use_case(
         &self,
     ) -> Arc<crate::features::search::use_cases::HybridSearchUseCase>;
-    fn reranker(&self) -> Arc<dyn crate::features::search::engine::reranker::Reranker>;
     fn web_service(&self) -> Arc<crate::features::web::services::web::WebService>;
     async fn summary_search(
         &self,
@@ -60,7 +56,13 @@ pub trait ChatPolicy: Send + Sync {
         &self,
         request: crate::features::conversation::dto::CreateConversationRequestDto,
     ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto>;
-    async fn compact_for_turn(&self, id: &str) -> Result<()>;
+    /// `cancel` is the turn's stop button: the user is waiting on this
+    /// compaction, so stopping the turn stops it too.
+    async fn compact_for_turn(
+        &self,
+        id: &str,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<()>;
     fn consolidate_after_turn(&self, id: String);
 }
 
