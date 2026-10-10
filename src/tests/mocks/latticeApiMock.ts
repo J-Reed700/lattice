@@ -140,7 +140,6 @@ export function createVaultAPIMock() {
     clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     indexDirectory: vi.fn().mockResolvedValue({ success: true }),
     deleteDocument: vi.fn().mockResolvedValue({ success: true }),
-    getFileContent: vi.fn().mockResolvedValue({ content: 'mock content' }),
 
     // Search operations
     search: vi.fn().mockResolvedValue({
@@ -164,11 +163,6 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
     downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
-    getModelInfo: vi.fn().mockResolvedValue({
-      name: 'test-model',
-      size: 1000000,
-      status: 'ready'
-    }),
     listModels: vi.fn().mockResolvedValue([]),
     getModelDownloadPath: vi
       .fn()

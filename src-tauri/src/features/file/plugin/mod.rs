@@ -35,7 +35,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             file_commands::get_file_metadata,
             file_commands::read_file_content,
             file_commands::read_file_bytes,
-            commands::get_file_content,
             commands::remove_indexed_file,
             commands::list_indexed_files,
             commands::list_all_documents,

@@ -45,4 +45,5 @@ pub mod mocks;
 pub use trait_def::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 pub mod engine;
 pub mod enrichment_service;
+pub mod hyde;
 pub mod repository_tx;

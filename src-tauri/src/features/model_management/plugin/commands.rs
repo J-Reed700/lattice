@@ -325,31 +325,6 @@ pub async fn warm_up_active_utility_model(container: State<'_, Container>) -> Re
         })
 }
 
-/// Get model information by ID
-#[tauri::command]
-#[specta::specta]
-pub async fn get_model_info(
-    model_id: String,
-    container: State<'_, Container>,
-) -> Result<Option<DownloadedModelResponse>, ApiError> {
-    let json_str = get_models_with_metadata_impl(container.inner())
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
-
-    let models: Vec<DownloadedModelResponse> =
-        serde_json::from_str(&json_str).map_err(|e| ApiError {
-            code: ErrorCode::SerializationError,
-            message: format!("Failed to parse models: {}", e),
-            details: None,
-        })?;
-
-    Ok(models.into_iter().find(|m| m.model_id == model_id))
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DownloadModelResponse {
     pub download_id: String,

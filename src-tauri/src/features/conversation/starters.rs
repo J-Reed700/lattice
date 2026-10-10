@@ -20,7 +20,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::application::ports::llm_port::InferencePriority;
 use crate::application::services::completion_input::{complete_text, TextCall};
 use crate::features::conversation::repository::ConversationRepository;
-use crate::features::qa::starters_dto::{ChatStarterDto, ChatStartersDto};
+use crate::features::conversation::starters_dto::{ChatStarterDto, ChatStartersDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::ipc::ApiError;

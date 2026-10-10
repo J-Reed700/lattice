@@ -108,17 +108,6 @@ pub async fn index_directory(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_file_content(
-    path: String,
-    container: State<'_, Container>,
-) -> Result<String, ApiError> {
-    file_commands::read_file_content_impl(&container, path)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn remove_indexed_file(
     path: String,
     container: State<'_, Container>,

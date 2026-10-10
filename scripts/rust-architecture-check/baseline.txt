@@ -46,9 +46,9 @@ feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
 feature-edge features::conversation features::function_calling 54
 feature-edge features::conversation features::llm 2
-feature-edge features::conversation features::qa 18
+feature-edge features::conversation features::qa 17
 feature-edge features::conversation features::references 1
-feature-edge features::conversation features::search 29
+feature-edge features::conversation features::search 30
 feature-edge features::conversation features::settings 17
 feature-edge features::conversation features::summaries 4
 feature-edge features::conversation features::web 2
@@ -93,9 +93,6 @@ feature-edge features::llm features::model_management 22
 feature-edge features::model_management features::download 20
 feature-edge features::model_management features::embedding 8
 feature-edge features::model_management features::llm 2
-feature-edge features::qa features::conversation 1
-feature-edge features::qa features::llm 2
-feature-edge features::qa features::search 1
 feature-edge features::search features::cache 5
 feature-edge features::search features::download 1
 feature-edge features::search features::embedding 13
@@ -118,13 +115,11 @@ container-import features/compare/use_case.rs interfaces::di 1
 container-import features/conversation/branching.rs interfaces::di 1
 container-import features/conversation/compaction.rs interfaces::di 1
 container-import features/conversation/handoff.rs interfaces::di 1
+container-import features/conversation/starters.rs interfaces::di 1
 container-import features/conversation/synthesis.rs interfaces::di 1
 container-import features/explorer/folders.rs interfaces::di 1
 container-import features/learning/portability/pack_repository.rs interfaces::di 4
 container-import features/learning/portability/pack_repository/replacement.rs interfaces::di 1
 container-import features/learning/references/sources.rs interfaces::di 1
-container-import features/qa/starters.rs interfaces::di 1
 container-import features/search/reranker_setup.rs interfaces::di 1
 container-import features/vault/writeback.rs interfaces::di 1
-
-raw-spawn infrastructure/setup/app.rs tokio::spawn 1

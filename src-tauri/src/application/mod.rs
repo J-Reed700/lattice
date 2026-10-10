@@ -39,6 +39,6 @@ pub use factories::{ChecksumFactory, FileMetadataFactory};
 pub use services::FileType;
 
 pub use ports::{
-    EmbeddingPort, FavoritesRepositoryPort, FileStoragePort, LLMPort, NotificationPort,
+    EmbeddingPort, FavoritesRepositoryPort, FileStoragePort, LLMPort,
     RecentDocumentsRepositoryPort, RepositoryPort, TextSearchPort, VectorSearchPort,
 };

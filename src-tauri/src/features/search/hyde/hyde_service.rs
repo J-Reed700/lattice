@@ -22,7 +22,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use lattice::features::qa::hyde::HyDEService;
+//! use lattice::features::search::hyde::HyDEService;
 //! use std::sync::Arc;
 //!
 //! async fn example(llm: Arc<dyn LLMPort>) {
@@ -40,9 +40,9 @@
 
 use crate::application::ports::LLMPort;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
-use crate::features::qa::hyde::hyde_generator::HyDEGenerator;
-use crate::features::qa::hyde::query_classifier::QueryClassifier;
 use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
+use crate::features::search::hyde::hyde_generator::HyDEGenerator;
+use crate::features::search::hyde::query_classifier::QueryClassifier;
 use crate::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -58,7 +58,7 @@ use tracing::{debug, info};
 /// # Example
 ///
 /// ```rust,no_run
-/// use lattice::features::qa::hyde::HyDEService;
+/// use lattice::features::search::hyde::HyDEService;
 /// use lattice::domain::qa::hyde::QueryType;
 /// use std::sync::Arc;
 ///
@@ -92,7 +92,7 @@ impl HyDEService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::features::qa::hyde::HyDEService;
+    /// use lattice::features::search::hyde::HyDEService;
     /// use std::sync::Arc;
     ///
     /// let service = HyDEService::new(llm_port);

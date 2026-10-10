@@ -509,13 +509,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // steady-state operation are unlikely. Refactoring the bridge to
     // be restartable is a separate task.
     let bridge_cancel = shutdown_token.clone();
-    let bridge_handle = tokio::spawn(async move {
+    let bridge_handle = crate::shared::runtime::background::spawn(async move {
         event_bridge.start(bridge_cancel).await;
     });
-    app_handle.manage(super::background_workers::BackgroundWorkers::new(vec![
-        saga_handle,
-        bridge_handle,
-    ]));
+    app_handle.manage(super::background_workers::BackgroundWorkers::new(
+        std::iter::once(saga_handle).chain(bridge_handle).collect(),
+    ));
     tracing::info!("Download event bridge started with EventBus integration");
 
     // Queue promotion must not run inside the event consumer: a full bounded

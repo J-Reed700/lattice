@@ -825,6 +825,12 @@
           "markdownDescription": "Enables the fork_conversation command without any pre-configured scope."
         },
         {
+          "description": "Enables the generate_chat_starters command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-generate-chat-starters",
+          "markdownDescription": "Enables the generate_chat_starters command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-get-conversation",
@@ -1183,6 +1189,12 @@
           "type": "string",
           "const": "conversation:deny-fork-conversation",
           "markdownDescription": "Denies the fork_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_chat_starters command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-generate-chat-starters",
+          "markdownDescription": "Denies the generate_chat_starters command without any pre-configured scope."
         },
         {
           "description": "Denies the get_conversation command without any pre-configured scope.",
@@ -4167,12 +4179,6 @@
           "markdownDescription": "Enables the get_document command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_file_content command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-get-file-content",
-          "markdownDescription": "Enables the get_file_content command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_file_metadata command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-get-file-metadata",
@@ -4381,12 +4387,6 @@
           "type": "string",
           "const": "file:deny-get-document",
           "markdownDescription": "Denies the get_document command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_file_content command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-get-file-content",
-          "markdownDescription": "Denies the get_file_content command without any pre-configured scope."
         },
         {
           "description": "Denies the get_file_metadata command without any pre-configured scope.",
@@ -6039,12 +6039,6 @@
           "markdownDescription": "Enables the get_model_download_path command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_model_info command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-get-model-info",
-          "markdownDescription": "Enables the get_model_info command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_model_variants command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-get-model-variants",
@@ -6201,12 +6195,6 @@
           "markdownDescription": "Denies the get_model_download_path command without any pre-configured scope."
         },
         {
-          "description": "Denies the get_model_info command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-get-model-info",
-          "markdownDescription": "Denies the get_model_info command without any pre-configured scope."
-        },
-        {
           "description": "Denies the get_model_variants command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-get-model-variants",
@@ -6273,22 +6261,10 @@
           "markdownDescription": "Enables the check_llm_health command without any pre-configured scope."
         },
         {
-          "description": "Enables the generate_chat_starters command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:allow-generate-chat-starters",
-          "markdownDescription": "Enables the generate_chat_starters command without any pre-configured scope."
-        },
-        {
           "description": "Denies the check_llm_health command without any pre-configured scope.",
           "type": "string",
           "const": "qa:deny-check-llm-health",
           "markdownDescription": "Denies the check_llm_health command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the generate_chat_starters command without any pre-configured scope.",
-          "type": "string",
-          "const": "qa:deny-generate-chat-starters",
-          "markdownDescription": "Denies the generate_chat_starters command without any pre-configured scope."
         },
         {
           "description": "Enables the create_passage_reference command without any pre-configured scope.",

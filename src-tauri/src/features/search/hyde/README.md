@@ -1,6 +1,6 @@
 # HyDE Query Processing
 
-`features::qa::hyde` interprets a chat turn before retrieval: it classifies the
+`features::search::hyde` interprets a chat turn before retrieval: it classifies the
 query, and for questions asks the utility LLM for a hypothetical answer
 (Hypothetical Document Embeddings) that can be searched alongside the raw
 query. It also rewrites the turn into a web search query and proposes
@@ -48,7 +48,7 @@ The conversation retrieval pipeline
 conversation (and any attached document's digest).
 
 ```rust
-use lattice::features::qa::hyde::HyDEService;
+use lattice::features::search::hyde::HyDEService;
 
 let service = HyDEService::new(utility_llm); // Arc<dyn LLMPort>
 let interpretation = service.interpret_query("how does WAL mode work?").await?;
@@ -58,6 +58,6 @@ let interpretation = service.interpret_query("how does WAL mode work?").await?;
 
 ```bash
 cd src-tauri
-cargo test --lib features::qa::hyde      # classifier unit tests
+cargo test --lib features::search::hyde      # classifier unit tests
 cargo test --test hyde_phase2_tests      # generator + service with a mock LLMPort
 ```

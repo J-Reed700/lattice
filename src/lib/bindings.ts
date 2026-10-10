@@ -1145,17 +1145,6 @@ async warmUpActiveUtilityModel() : Promise<Result<null, ApiError>> {
 }
 },
 /**
- * Get model information by ID
- */
-async getModelInfo(modelId: string) : Promise<Result<DownloadedModelResponse | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_model_info", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Detect system hardware capabilities.
  *
  * Returns comprehensive system information:
@@ -1823,21 +1812,21 @@ async checkLlmHealth() : Promise<Result<LLMHealthStatusDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null, attachmentDocumentIds: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames, attachmentDocumentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Corpus-derived opening questions for the Chat empty state, drawn from the
  * documents one space can see. A blank `space_id` means General.
  */
 async generateChatStarters(spaceId: string | null) : Promise<Result<ChatStartersDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|generate_chat_starters", { spaceId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async chatWithConversation(conversationId: string | null, message: string, toolPreferences: ToolPreferences | null, cancelOnly: boolean | null, requestId: string | null, attachmentNames: string[] | null, attachmentDocumentIds: string[] | null) : Promise<Result<ChatResponse, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|chat_with_conversation", { conversationId, message, toolPreferences, cancelOnly, requestId, attachmentNames, attachmentDocumentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|generate_chat_starters", { spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2211,14 +2200,6 @@ async indexDirectory(path: string, recursive: boolean, spaceId: string | null) :
 async getFileMetadata(path: string) : Promise<Result<FileMetadataDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_metadata", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getFileContent(path: string) : Promise<Result<string, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:file|get_file_content", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

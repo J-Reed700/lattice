@@ -99,7 +99,6 @@ fn main() {
                     "clear_active_chat_model",
                     "clear_active_embedding_model",
                     "clear_active_utility_model",
-                    "get_model_info",
                     "detect_system_capabilities",
                     "get_compatible_models",
                     "get_all_recommended_models",
@@ -130,6 +129,7 @@ fn main() {
                 "conversation",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "create_conversation",
+                    "generate_chat_starters",
                     "get_conversation",
                     "list_conversations",
                     "delete_conversation",
@@ -199,7 +199,6 @@ fn main() {
                     "get_file_metadata",
                     "read_file_content",
                     "read_file_bytes",
-                    "get_file_content",
                     "remove_indexed_file",
                     "list_indexed_files",
                     "list_all_documents",
@@ -342,8 +341,7 @@ fn main() {
             )
             .plugin(
                 "qa",
-                tauri_build::InlinedPlugin::new()
-                    .commands(&["check_llm_health", "generate_chat_starters"]),
+                tauri_build::InlinedPlugin::new().commands(&["check_llm_health"]),
             )
             .plugin(
                 "jobs",

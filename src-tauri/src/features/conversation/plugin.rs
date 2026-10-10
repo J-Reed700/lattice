@@ -30,6 +30,7 @@ use crate::features::conversation::space_dto::{
     SetJournalEntryPinnedRequestDto, UpdateConversationJournalRequestDto,
     UpdateConversationSpaceRequestDto, UpsertConversationSpaceMemberRequestDto,
 };
+use crate::features::conversation::starters_dto::ChatStartersDto;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
@@ -697,6 +698,21 @@ pub async fn compact_conversation(
     conversation_impl::compact_conversation_impl(request, container.inner()).await
 }
 
+/// Corpus-derived opening questions for the Chat empty state, drawn from the
+/// documents one space can see. A blank `space_id` means General.
+#[tauri::command]
+#[specta::specta]
+pub async fn generate_chat_starters(
+    container: State<'_, Container>,
+    space_id: Option<String>,
+) -> Result<ChatStartersDto, ApiError> {
+    crate::features::conversation::starters::generate_chat_starters_impl(
+        container.inner(),
+        space_id,
+    )
+    .await
+}
+
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
         .setup(|app, _api| {
@@ -726,6 +742,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
         })
         .invoke_handler(tauri::generate_handler![
             create_conversation,
+            generate_chat_starters,
             get_conversation,
             list_conversations,
             delete_conversation,

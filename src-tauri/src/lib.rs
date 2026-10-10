@@ -65,8 +65,7 @@ pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearch
 pub use application::{
     mappers,
     ports::{
-        EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
-        VectorSearchPort,
+        EmbeddingPort, FileStoragePort, LLMPort, RepositoryPort, TextSearchPort, VectorSearchPort,
     },
 };
 
