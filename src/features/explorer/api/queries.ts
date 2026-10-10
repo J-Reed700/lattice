@@ -9,8 +9,8 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
+import { isJobFinished, useJobs, useJobStatus, type JobDto } from '@/features/jobs/api';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { VaultAPI } from '@/lib/api';
 import type { ExplorerFolderListDto } from '@/lib/bindings';
@@ -18,8 +18,9 @@ import type { FolderIndexStatus } from '@/stores/explorerStore';
 import type { ApiResult } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
 
-/** Carries a `FolderIndexStatusDto` whenever the open folder's index moves. */
-export const INDEX_STATUS_EVENT = 'explorer-index://status';
+/** The job kind of a folder index build; its activity is a `FolderIndexStatusDto`. */
+export const FOLDER_INDEX_JOB = 'explorer.folder_index';
+const FOLDER_INDEX_JOBS = [FOLDER_INDEX_JOB] as const;
 
 export const explorerKeys = {
   all: ['explorer'] as const,
@@ -124,26 +125,48 @@ export function sortFolders<T extends { root: string; pinned: boolean; lastOpene
   );
 }
 
+/** The status a folder build last saved, when it is running or has ended with one. */
+export function buildStatus(job: JobDto): FolderIndexStatus | null {
+  if (job.kind !== FOLDER_INDEX_JOB || job.status === 'pending' || job.status === 'cancelled') return null;
+  const status = job.activity as FolderIndexStatus | null;
+  return status && typeof status.root === 'string' ? status : null;
+}
+
+/** The folder a build walks, whatever its state. */
+function buildRoot(job: JobDto): string | null {
+  const root = (job.activity as { root?: unknown } | null)?.root;
+  return typeof root === 'string' ? root : null;
+}
+
 /**
- * Puts index status events into the cache, one entry per folder. Mounted
- * once, by the Explorer page; everything that shows a status reads the cache.
+ * Puts the folder builds' statuses into the cache, one entry per folder: the
+ * builds running when the page mounts, then each change the jobs report. A
+ * build that is waiting its turn or was cancelled drops its entry, so the
+ * folder shows what its index on disk holds. Mounted once, by the Explorer
+ * page; everything that shows a status reads the cache.
  */
 export function useExplorerIndexStatusEvents(): void {
   const client = useQueryClient();
+  const builds = useJobs(FOLDER_INDEX_JOBS);
+  const apply = useCallback(
+    (job: JobDto) => {
+      const status = buildStatus(job);
+      if (status) {
+        client.setQueryData(explorerKeys.indexStatus(status.root), status);
+        return;
+      }
+      const root = buildRoot(job);
+      if (root && (!isJobFinished(job) || job.status === 'cancelled')) {
+        client.removeQueries({ queryKey: explorerKeys.indexStatus(root), exact: true });
+      }
+    },
+    [client]
+  );
+  useJobStatus(apply);
+  const running = builds.data;
   useEffect(() => {
-    let mounted = true;
-    let unlisten: UnlistenFn | undefined;
-    void listen<FolderIndexStatus>(INDEX_STATUS_EVENT, (event) => {
-      client.setQueryData(explorerKeys.indexStatus(event.payload.root), event.payload);
-    }).then((fn) => {
-      if (mounted) unlisten = fn;
-      else fn();
-    });
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, [client]);
+    for (const job of running ?? []) if (job.status === 'running') apply(job);
+  }, [running, apply]);
 }
 
 const statusQuery = (root: string) =>

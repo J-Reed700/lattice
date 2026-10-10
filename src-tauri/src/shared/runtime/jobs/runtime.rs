@@ -8,7 +8,7 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 const POLL: Duration = Duration::from_secs(30);
 const RETRY_QUEUED: &str = "Retry queued";
+const WAITING_TURN: &str = "Waiting for its turn";
 
 type Observer = Arc<dyn Fn(&JobDto) + Send + Sync>;
 type Subjects = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
@@ -218,6 +219,9 @@ pub struct JobRuntime {
     tasks: BackgroundTasks,
     kinds: RwLock<HashMap<String, Arc<Kind>>>,
     active: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Jobs whose worker was stopped to give up its turn; each queues again
+    /// once that worker has ended.
+    requeued: Mutex<HashSet<String>>,
     subjects: Subjects,
     wake: Arc<Notify>,
     poll: Duration,
@@ -241,6 +245,7 @@ impl JobRuntime {
             tasks: BackgroundTasks::default(),
             kinds: RwLock::default(),
             active: Arc::default(),
+            requeued: Mutex::default(),
             subjects: Arc::default(),
             wake: Arc::new(Notify::new()),
             poll,
@@ -375,8 +380,11 @@ impl JobRuntime {
         // Rejected admission at shutdown drops the registration; the job is
         // still pending and resumes at the next start.
         let _ = self.tasks.spawn(async move {
-            let _registration = registration;
             runtime.work(&id, cancel).await;
+            drop(registration);
+            if lock(&runtime.requeued).remove(&id) {
+                runtime.dispatch(&id);
+            }
         });
     }
 
@@ -443,6 +451,9 @@ impl JobRuntime {
                 .await
                 .map(drop),
             Ok(JobOutcome::Committed) => Ok(()),
+            Ok(JobOutcome::Failed { code, message }) => {
+                self.store().fail(id, &code, &message).await.map(drop)
+            }
             Ok(JobOutcome::Stopped) => self.stop(id, kind.config.recovery).await,
             // An error raised while stopping is the stop, not a failure of the work.
             Err(_) if cancel.is_cancelled() => self.stop(id, kind.config.recovery).await,
@@ -457,7 +468,9 @@ impl JobRuntime {
     /// Suspends or interrupts a stopped job. Both are conditional on it still
     /// running, so a committed user cancellation stays.
     async fn stop(&self, id: &str, policy: RecoveryPolicy) -> Result<()> {
+        let requeued = lock(&self.requeued).contains(id);
         match policy {
+            RecoveryPolicy::Requeue if requeued => self.store().requeue(id, WAITING_TURN).await,
             RecoveryPolicy::Requeue => self.store().suspend(id).await,
             RecoveryPolicy::Interrupt => self.store().interrupt(id).await,
         }
@@ -509,6 +522,18 @@ impl JobRuntime {
         self.events.publish(id).await;
     }
 
+    /// Gives up a job's turn without ending it: its worker stops, while
+    /// waiting or at its next cancellation point, and the job queues again
+    /// behind the work already waiting. A running job of a kind that
+    /// interrupts on recovery ends as interrupted instead. A job with no
+    /// worker is left alone.
+    pub fn requeue(&self, id: &str) {
+        if let Some(token) = lock(&self.active).get(id) {
+            lock(&self.requeued).insert(id.to_string());
+            token.cancel();
+        }
+    }
+
     /// Queues a new attempt of a finished job and starts its worker.
     pub async fn retry(self: &Arc<Self>, id: &str, operation_id: &str) -> Result<JobRecord> {
         let admitted = self.store().retry(id, operation_id, RETRY_QUEUED).await?;
@@ -529,8 +554,7 @@ impl JobRuntime {
     }
 
     /// Waits until no worker is running or waiting for `id`.
-    #[cfg(test)]
-    pub(crate) async fn finished(&self, id: &str) {
+    pub async fn finished(&self, id: &str) {
         while lock(&self.active).contains_key(id) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }

@@ -655,10 +655,12 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
     const primary = page.getByRole("tablist", { name: "Program workspace" });
     expect(await primary.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
     if (viewport.width >= 800) {
-      const lessonCard = page.locator("main article").first();
-      const bounds = await lessonCard.boundingBox();
+      // The lesson to resume is on the first screen: its title shows without
+      // scrolling, below the module's evidence when citations are shown.
+      const lessonTitle = page.locator("main article").first().getByText("Compare observations", { exact: true });
+      const bounds = await lessonTitle.boundingBox();
       expect(bounds).not.toBeNull();
-      expect(bounds!.y).toBeLessThan(viewport.height - 140);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     }
     await page.screenshot({ path: test.info().outputPath(`studio-active-workspace-${viewport.width}px.png`), fullPage: true });
     const lessonsTab = workspace.getByRole("tab", { name: "Lessons", exact: true });
@@ -2347,19 +2349,17 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await recall.getByRole("textbox", { name: "Why was this card changed?" }).fill("Clarify the comparison details");
   await recall.getByRole("button", { name: "Save card version", exact: true }).click();
   await expect(recall.getByRole("status")).toContainText("Card version saved.");
-  await recall.getByRole("button", { name: "FSRS 6 v1", exact: true }).first().click();
-  await expect(recall.getByRole("status")).toContainText("Schedule changed to FSRS 6 · v1.");
   await recall.getByRole("button", { name: "Reveal answer", exact: true }).first().click();
   await recall.getByRole("button", { name: "good", exact: true }).first().click();
   await expect(recall.getByRole("status")).toContainText("Review saved to this card’s schedule.");
   await recall.getByRole("button", { name: "Mark as duplicate", exact: true }).click();
   await expect(recall.getByRole("status")).toContainText("Duplicate suggestion confirmed.");
   const recallState = await page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { recallV2Workspace: { cards: Array<{ id: string; contentRevision: number; content: { prompt: string }; scheduler: { schedulerVersion: string; reviewCount: number }; versions: unknown[]; reviewHistory: unknown[] }>; duplicates: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { recallV2Workspace: { cards: Array<{ id: string; contentRevision: number; content: { prompt: string }; scheduler: { reviewCount: number }; versions: unknown[]; reviewHistory: unknown[] }>; duplicates: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
     const card = state.recallV2Workspace.cards.find((item) => item.id === "recall-card-e2e");
     return { revision: card?.contentRevision, prompt: card?.content.prompt, versionCount: card?.versions.length, scheduler: card?.scheduler, reviewCount: card?.reviewHistory.length, duplicate: state.recallV2Workspace.duplicates[0]?.status };
   });
-  expect(recallState).toMatchObject({ revision: 2, prompt: "Which measure and period should be recorded?", versionCount: 2, scheduler: { schedulerVersion: "fsrs_6_v1", reviewCount: 1 }, reviewCount: 1, duplicate: "confirmed" });
+  expect(recallState).toMatchObject({ revision: 2, prompt: "Which measure and period should be recorded?", versionCount: 2, scheduler: { reviewCount: 1 }, reviewCount: 1, duplicate: "confirmed" });
 
   if (width === 390) {
     const overflow = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);

@@ -117,6 +117,9 @@ pub enum JobOutcome {
     /// interrupts the job according to the kind's [`RecoveryPolicy`]; a user's
     /// cancellation has already been committed and stays.
     Stopped,
+    /// The work ran and did not succeed, without an error to classify: the job
+    /// ends as failed with this code, and the user may retry it.
+    Failed { code: String, message: String },
 }
 
 /// How a failed attempt is recorded.

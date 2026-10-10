@@ -1,21 +1,14 @@
 //! Tauri commands for corpus-shape clustering.
 //!
-//! Three commands exist today:
-//!
-//! - `cluster_vault_debug`  — runs the pipeline end-to-end and writes a
-//!   human-readable JSON report into the user's Documents folder (or a
-//!   fallback). Returns the file path for diagnostics.
-//! - `cluster_vault_run`    — runs + persists. Returns a summary DTO.
-//! - `list_clusters`        — returns the most recent run's cluster list.
+//! - `cluster_vault_run` — runs + persists. Returns a summary DTO.
+//! - `list_clusters`     — returns the most recent run's cluster list.
 //!   This is a cheap, read-only operation.
 //!
-//! All three are explicit / user-triggered. Nothing here runs on ingest or
+//! Both are explicit / user-triggered. Nothing here runs on ingest or
 //! a timer.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -24,11 +17,10 @@ use crate::features::corpus_shape::entity::{Cluster, ClusterRun, LabelSource};
 use crate::features::corpus_shape::labeling::{RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS};
 use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClusterRepository};
 use crate::features::corpus_shape::use_cases::{
-    run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringOutcome,
-    RunClusteringUseCase,
+    run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringUseCase,
 };
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result};
+use crate::shared::error::Result;
 
 /// Summary of a cluster run for UI consumption.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -58,60 +50,6 @@ pub struct ClusterDto {
     /// Member ids, so the Library can scope its list to a theme without a
     /// second round trip.
     pub member_document_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DebugReport {
-    schema_version: &'static str,
-    run: DebugRunBlock,
-    parameters: DebugParamsBlock,
-    cluster_count: usize,
-    clusters: Vec<DebugClusterBlock>,
-    noise: DebugNoiseBlock,
-    notes: &'static [&'static str],
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DebugRunBlock {
-    run_id: String,
-    ran_at: String,
-    duration_ms: i64,
-    total_docs: i64,
-    llm_calls: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DebugParamsBlock {
-    min_cluster_size: usize,
-    min_samples: usize,
-    jaccard_inheritance_threshold: f32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DebugClusterBlock {
-    label: String,
-    description: Option<String>,
-    label_source: String,
-    inherited_from_cluster_id: Option<String>,
-    member_count: usize,
-    sample_titles: Vec<String>,
-    member_doc_ids: Vec<String>,
-    fingerprint: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DebugNoiseBlock {
-    count: usize,
-    sample_doc_ids: Vec<String>,
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn cluster_vault_debug(container: State<'_, Container>) -> Result<String> {
-    let use_case = build_use_case(&container).await?;
-    let outcome = use_case.execute().await?;
-    let path = write_debug_report(&container, &outcome).await?;
-    Ok(path.display().to_string())
 }
 
 #[tauri::command]
@@ -201,83 +139,6 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
         content_preview,
         llm,
     ))
-}
-
-async fn write_debug_report(
-    container: &Container,
-    outcome: &RunClusteringOutcome,
-) -> Result<PathBuf> {
-    let chunk_repo = container.chunk_repository();
-    let document_repo = container.document_repository();
-
-    let mut cluster_blocks = Vec::with_capacity(outcome.clusters.len());
-    for cluster in &outcome.clusters {
-        let sample_titles = gather_sample_titles(&chunk_repo, &document_repo, cluster).await;
-        cluster_blocks.push(DebugClusterBlock {
-            label: cluster.label.clone(),
-            description: cluster.description.clone(),
-            label_source: cluster.label_source.as_str().to_string(),
-            inherited_from_cluster_id: cluster.inherited_from_cluster_id.clone(),
-            member_count: cluster.member_doc_ids.len(),
-            sample_titles,
-            member_doc_ids: cluster.member_doc_ids.clone(),
-            fingerprint: cluster.fingerprint.clone(),
-        });
-    }
-
-    let noise_sample: Vec<String> = outcome.noise_doc_ids.iter().take(20).cloned().collect();
-
-    let report = DebugReport {
-        schema_version: "corpus-shape-debug-v1",
-        run: DebugRunBlock {
-            run_id: outcome.run.id.clone(),
-            ran_at: outcome.run.ran_at.to_rfc3339(),
-            duration_ms: outcome.run.duration_ms,
-            total_docs: outcome.run.doc_count,
-            llm_calls: outcome.run.llm_calls,
-        },
-        parameters: DebugParamsBlock {
-            min_cluster_size:
-                crate::features::corpus_shape::clustering::DEFAULT_MIN_CLUSTER_SIZE,
-            min_samples: crate::features::corpus_shape::clustering::DEFAULT_MIN_SAMPLES,
-            jaccard_inheritance_threshold:
-                crate::features::corpus_shape::fingerprint::JACCARD_INHERITANCE_THRESHOLD,
-        },
-        cluster_count: outcome.clusters.len(),
-        clusters: cluster_blocks,
-        noise: DebugNoiseBlock {
-            count: outcome.noise_doc_ids.len(),
-            sample_doc_ids: noise_sample,
-        },
-        notes: &[
-            "Noise is documents HDBSCAN could not fit into a dense enough cluster. Not a bug.",
-            "Re-running immediately should produce zero llm_calls and identical labels.",
-            "If more than ~50% of docs land in noise, min_cluster_size is likely too high or the corpus is genuinely heterogeneous.",
-        ],
-    };
-
-    let json = serde_json::to_string_pretty(&report)
-        .map_err(|e| AppError::Serialization(format!("debug report serialize: {}", e)))?;
-
-    let out_dir = dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let filename = format!("lattice-cluster-debug-{}.json", timestamp);
-    let full_path = out_dir.join(filename);
-
-    tokio::fs::write(&full_path, &json).await.map_err(|e| {
-        AppError::FileStorage(format!("write debug report {}: {}", full_path.display(), e))
-    })?;
-
-    tracing::info!(
-        path = %full_path.display(),
-        clusters = outcome.clusters.len(),
-        noise = outcome.noise_doc_ids.len(),
-        "corpus_shape: wrote debug report"
-    );
-
-    Ok(full_path)
 }
 
 async fn gather_sample_titles(

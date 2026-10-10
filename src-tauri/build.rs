@@ -85,10 +85,8 @@ fn main() {
                     "download_model",
                     "check_first_run_status",
                     "download_default_embedding_model",
-                    "cancel_download",
                     "delete_model",
                     "list_downloaded_models",
-                    "get_download_status",
                     "is_model_already_downloaded",
                     "set_active_embedding_model",
                     "set_active_chat_model",
@@ -340,7 +338,11 @@ fn main() {
             .plugin(
                 "qa",
                 tauri_build::InlinedPlugin::new()
-                    .commands(&["check_llm_health_wrapper", "generate_chat_starters_wrapper"]),
+                    .commands(&["check_llm_health", "generate_chat_starters"]),
+            )
+            .plugin(
+                "jobs",
+                tauri_build::InlinedPlugin::new().commands(&["list_jobs"]),
             )
             .plugin(
                 "batch",
@@ -360,11 +362,11 @@ fn main() {
                     "start_model_download",
                     "pause_download",
                     "resume_download",
-                    "download_cancel",
+                    "cancel_download",
                     "retry_download",
                     "remove_download",
                     "clear_completed_downloads",
-                    "download_get_status",
+                    "get_download_status",
                     "list_downloads",
                 ]),
             )
@@ -400,8 +402,6 @@ fn main() {
                     "plugin_list_backups",
                     "plugin_export_markdown",
                     "plugin_export_json",
-                    "plugin_export_csv",
-                    "plugin_export_html",
                     "plugin_get_archive_status",
                     "plugin_begin_archive_setup",
                     "plugin_confirm_archive_setup",
@@ -443,18 +443,6 @@ fn main() {
                     "explorer_folder_set_settings",
                     "explorer_folder_delete_index",
                     "explorer_folder_remove",
-                ]),
-            )
-            .plugin(
-                "study",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "list_study_decks",
-                    "get_study_deck",
-                    "generate_study_deck",
-                    "generate_conversation_study_deck",
-                    "review_study_card",
-                    "update_study_card",
-                    "delete_study_deck",
                 ]),
             )
             .plugin(
@@ -517,7 +505,6 @@ fn main() {
                     "get_learning_recall_workspace",
                     "save_learning_recall_card",
                     "decide_learning_recall_duplicate",
-                    "change_learning_recall_scheduler",
                     "review_learning_recall_card",
                     "get_learning_practice_workspace",
                     "get_learning_practice_session",
@@ -551,6 +538,13 @@ fn main() {
                     "start_learning_simulation",
                     "send_learning_simulation_turn",
                     "finish_learning_simulation",
+                    "list_study_decks",
+                    "get_study_deck",
+                    "generate_study_deck",
+                    "generate_conversation_study_deck",
+                    "review_study_card",
+                    "update_study_card",
+                    "delete_study_deck",
                 ]),
             )
             .plugin(
@@ -568,11 +562,7 @@ fn main() {
             )
             .plugin(
                 "corpus-shape",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "cluster_vault_debug",
-                    "cluster_vault_run",
-                    "list_clusters",
-                ]),
+                tauri_build::InlinedPlugin::new().commands(&["cluster_vault_run", "list_clusters"]),
             ),
     ) {
         eprintln!("failed to run tauri-build: {}", error);

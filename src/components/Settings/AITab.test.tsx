@@ -31,7 +31,6 @@ const mockLlmSettings: LlmSettingsContextValue = {
       greetingPromptTemplate: '',
       ragPromptTemplate: '',
       noContextPromptTemplate: '',
-      toolFollowupPromptTemplate: '',
     },
     router: {
       enabled: true,

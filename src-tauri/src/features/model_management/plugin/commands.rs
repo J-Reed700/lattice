@@ -105,29 +105,6 @@ pub async fn download_default_embedding_model(
         })
 }
 
-/// Cancel an in-progress download
-#[tauri::command]
-#[specta::specta]
-pub async fn cancel_download(
-    download_id: String,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    let download_manager = container.download_manager().map_err(|e| ApiError {
-        code: ErrorCode::InternalError,
-        message: format!("Failed to get download manager: {}", e),
-        details: None,
-    })?;
-
-    download_manager
-        .cancel_download(&download_id)
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: format!("Failed to cancel download: {}", e),
-            details: None,
-        })
-}
-
 /// Delete a downloaded model
 #[tauri::command]
 #[specta::specta]
@@ -179,46 +156,6 @@ pub async fn is_model_already_downloaded(
             message: e,
             details: None,
         })
-}
-
-/// Get download status for a specific download
-#[tauri::command]
-#[specta::specta]
-pub async fn get_download_status(
-    download_id: String,
-    container: State<'_, Container>,
-) -> Result<DownloadStatus, ApiError> {
-    let download_manager = container.download_manager().map_err(|e| ApiError {
-        code: ErrorCode::InternalError,
-        message: format!("Failed to get download manager: {}", e),
-        details: None,
-    })?;
-
-    let session = download_manager
-        .get_download_status(&download_id)
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: format!("Failed to get download status: {}", e),
-            details: None,
-        })?;
-
-    match session {
-        Some(session) => {
-            let progress = session.progress().percentage().unwrap_or(0.0) as f32;
-            Ok(DownloadStatus {
-                id: download_id,
-                status: format!("{:?}", session.state()),
-                progress,
-                error: session.error_message().map(|s| s.to_string()),
-            })
-        }
-        None => Err(ApiError {
-            code: ErrorCode::NotFound,
-            message: format!("Download not found: {}", download_id),
-            details: None,
-        }),
-    }
 }
 
 /// Set active embedding model
@@ -417,14 +354,6 @@ pub async fn get_model_info(
 pub struct DownloadModelResponse {
     pub download_id: String,
     pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct DownloadStatus {
-    pub id: String,
-    pub status: String,
-    pub progress: f32,
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

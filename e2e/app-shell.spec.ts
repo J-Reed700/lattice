@@ -1272,7 +1272,15 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
   await page.goto('/ingest');
   await expect(page.getByText('0 of 45 files processed · 0%')).toBeVisible();
   await expect(page.getByText('Processing chapter-0.pdf — extracting text and building search index')).toBeVisible();
-  await page.evaluate(() => { (window as unknown as { __IMPORT_FINISHED__: number }).__IMPORT_FINISHED__ = 3; });
+  // Three files finish; the import's job reports it.
+  await page.evaluate(() => {
+    (window as unknown as { __IMPORT_FINISHED__: number }).__IMPORT_FINISHED__ = 3;
+    window.__LATTICE_IPC__.emit('jobs://status', {
+      id: 'job', kind: 'batch.file_import', subjectId: null, status: 'running', progressCurrent: 3, progressTotal: 45,
+      progressMessage: 'Imported 3 of 45 files', activity: { completed: 3, failed: 0 }, resultRef: null, errorCode: null,
+      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null,
+    });
+  });
   await expect(page.getByText('3 of 45 files processed · 7%')).toBeVisible();
   await expect(page.getByText('Processing chapter-3.pdf — extracting text and building search index')).toBeVisible();
   await expect(page.getByText('Imported', { exact: true })).toHaveCount(3);
@@ -1448,7 +1456,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   const settings = makeAppSettings();
   settings.llm.provider = 'auto';
   settings.llm.llamaCpp.model = 'qwen-test.gguf';
-  await mockCommands(page, (settings) => {
+  await mockCommands(page, (settings, ipc) => {
     const stamp = new Date().toISOString();
     const conversation = { id: 'patent-chat', title: 'Patent Training', modelName: '__ollama_server__', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false };
     const job = { jobId: 'pdf-import', jobType: 'file_import', status: 'completed', totalItems: 45, completedItems: 44, failedItems: 1, createdAt: stamp };
@@ -1478,6 +1486,12 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
           if (request.replacementPath) { job.status = 'completed'; job.completedItems = 45; item.status = 'completed'; }
           else { job.status = 'failed'; job.failedItems = 1; item.status = 'failed'; item.errorMessage = 'PDF extraction timed out again'; }
           localStorage.setItem('test:pdf-recovery', JSON.stringify({ job, item }));
+          // The import's job reports how the retry ended.
+          ipc.emit('jobs://status', {
+            id: job.jobId, kind: 'batch.file_import', subjectId: null, status: job.status, progressCurrent: 1, progressTotal: 1,
+            progressMessage: job.status, activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null,
+            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+          });
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };
       },
@@ -1709,7 +1723,7 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
-      get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, schedulerVersion: 'fixture' }),
+      get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
     };
   }, makeAppSettings());

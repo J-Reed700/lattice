@@ -29,8 +29,6 @@ pub use router::RouterService;
 
 pub use crate::features::tags::service_impl::TagServiceImpl;
 
-pub use crate::features::batch::services::file_import::BatchFileImportService;
-pub use crate::features::batch::services::url_import::BatchUrlImportService;
 pub use crate::features::function_calling::executor::FunctionExecutor;
 pub use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools, FunctionRegistry,

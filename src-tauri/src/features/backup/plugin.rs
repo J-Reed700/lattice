@@ -52,18 +52,6 @@ pub struct ExportJsonRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ExportCsvRequestDto {
-    pub output_path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportHtmlRequestDto {
-    pub output_dir: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
 pub struct ExportResultDto {
     pub count: usize,
     /// Where the files landed, so the UI can offer "Show in Finder" without
@@ -184,38 +172,6 @@ pub async fn plugin_export_json(
     Ok(ExportResultDto {
         count: summary.count(),
         output_dir: summary.output_dir,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn plugin_export_csv(
-    request: ExportCsvRequestDto,
-    container: State<'_, Container>,
-) -> Result<ExportResultDto, ApiError> {
-    let count = backup::export_csv_impl(request.output_path.clone(), container.inner())
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(ExportResultDto {
-        count,
-        output_dir: request.output_path,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn plugin_export_html(
-    request: ExportHtmlRequestDto,
-    container: State<'_, Container>,
-) -> Result<ExportResultDto, ApiError> {
-    let count = backup::export_html_impl(request.output_dir.clone(), container.inner())
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(ExportResultDto {
-        count,
-        output_dir: request.output_dir,
     })
 }
 
@@ -442,8 +398,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             plugin_list_backups,
             plugin_export_markdown,
             plugin_export_json,
-            plugin_export_csv,
-            plugin_export_html,
             plugin_get_archive_status,
             plugin_begin_archive_setup,
             plugin_confirm_archive_setup,

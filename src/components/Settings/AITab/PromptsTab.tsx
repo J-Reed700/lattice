@@ -61,7 +61,6 @@ export function PromptsTab() {
   const [greetingPromptDraft, setGreetingPromptDraft] = useState('');
   const [ragPromptDraft, setRagPromptDraft] = useState('');
   const [noContextPromptDraft, setNoContextPromptDraft] = useState('');
-  const [toolFollowupPromptDraft, setToolFollowupPromptDraft] = useState('');
   const [verificationDraft, setVerificationDraft] = useState({
     temperature: VERIFICATION_DEFAULTS.temperature,
     topP: VERIFICATION_DEFAULTS.topP,
@@ -74,7 +73,6 @@ export function PromptsTab() {
     setGreetingPromptDraft(llmSettings.prompts.greetingPromptTemplate || '');
     setRagPromptDraft(llmSettings.prompts.ragPromptTemplate || '');
     setNoContextPromptDraft(llmSettings.prompts.noContextPromptTemplate || '');
-    setToolFollowupPromptDraft(llmSettings.prompts.toolFollowupPromptTemplate || '');
     const verification = llmSettings.verification;
     setVerificationDraft({
       temperature: verification?.temperature ?? VERIFICATION_DEFAULTS.temperature,
@@ -174,13 +172,6 @@ export function PromptsTab() {
       label: 'Without documents',
       value: noContextPromptDraft,
       setValue: setNoContextPromptDraft,
-      rows: 4,
-    },
-    {
-      key: 'toolFollowupPromptTemplate',
-      label: 'After a tool call',
-      value: toolFollowupPromptDraft,
-      setValue: setToolFollowupPromptDraft,
       rows: 4,
     },
   ];

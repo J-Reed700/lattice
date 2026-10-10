@@ -19,7 +19,6 @@
 //! 6. **FileOpsModule** - File system operations
 //! 7. **SystemModule** - Settings, health, backup, cache
 
-use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::infrastructure::persistence::repositories::file_library::SqliteFileLibrary;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -38,12 +37,6 @@ use crate::features::indexing::use_cases::{
 
 // Application Use Cases - Web
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
-
-// Application Use Cases - Batch
-use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
-    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
-};
 
 // Application Use Cases - Conversation
 use crate::features::conversation::use_cases::CreateConversationUseCase;
@@ -123,14 +116,13 @@ use crate::features::credentials::use_cases::{
 
 // Application Ports
 use crate::application::ports::{
-    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository,
-    FavoritesRepositoryPort, FileStoragePort, FileSystemPort, MentionRepositoryPort,
-    ModelCatalogPort, RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort,
-    SystemInfoPort, VectorSearchPort,
+    BackupPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository, FavoritesRepositoryPort,
+    FileStoragePort, FileSystemPort, MentionRepositoryPort, ModelCatalogPort,
+    RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort, SystemInfoPort,
+    VectorSearchPort,
 };
 
 // Service Traits
-use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
@@ -485,14 +477,13 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
     json.get("hidden_size")?.as_u64().map(|n| n as usize)
 }
 
-/// Indexing module — hollow composition root over the indexing, web, and
-/// batch feature slices. Shares `vector_search` with [`SearchModule`] so
+/// Indexing module — hollow composition root over the indexing and web
+/// feature slices. Shares `vector_search` with [`SearchModule`] so
 /// index-time writes reach the same USearch instance queried at search time.
 #[derive(Clone)]
 pub struct IndexingModule {
     indexing: crate::features::indexing::di::IndexingDi,
     web: crate::features::web::di::WebDi,
-    batch: crate::features::batch::di::BatchDi,
     /// Page OCR for scanned PDFs. `NoopOcr` until a vision adapter exists:
     /// scanned pages are reported in `ExtractedContent::needs_ocr` and the
     /// rest of every document is still indexed. Swap this one binding for a
@@ -501,7 +492,7 @@ pub struct IndexingModule {
 }
 
 impl IndexingModule {
-    /// Build IndexingModule by composing indexing + web + batch features.
+    /// Build IndexingModule by composing the indexing and web features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -523,19 +514,9 @@ impl IndexingModule {
             vector_search,
             web.web_archive.clone(),
         )?;
-        let batch = crate::features::batch::di::build(
-            indexing.batch_job_repo.clone(),
-            indexing.index_file_use_case.clone(),
-            web.ingest_web_url_use_case.clone(),
-            web.web_ingestion_service.clone(),
-            indexing.uow_factory.clone(),
-            Arc::new(SqliteDocumentScope::new(db_pool)),
-        );
-
         Ok(Self {
             indexing,
             web,
-            batch,
             ocr: Arc::new(crate::application::ports::NoopOcr),
         })
     }
@@ -581,35 +562,6 @@ impl IndexingModule {
         &self.web.get_url_preview_use_case
     }
 
-    // Batch use case getters
-    pub fn start_batch_file_import_use_case(&self) -> &Arc<StartBatchFileImportUseCase> {
-        &self.batch.start_batch_file_import_use_case
-    }
-
-    pub fn start_batch_url_import_use_case(&self) -> &Arc<StartBatchUrlImportUseCase> {
-        &self.batch.start_batch_url_import_use_case
-    }
-
-    pub fn get_batch_job_status_use_case(&self) -> &Arc<GetBatchJobStatusUseCase> {
-        &self.batch.get_batch_job_status_use_case
-    }
-
-    pub fn cancel_batch_job_use_case(&self) -> &Arc<CancelBatchJobUseCase> {
-        &self.batch.cancel_batch_job_use_case
-    }
-
-    pub fn list_batch_jobs_use_case(&self) -> &Arc<ListBatchJobsUseCase> {
-        &self.batch.list_batch_jobs_use_case
-    }
-
-    pub fn delete_batch_job_use_case(&self) -> &Arc<DeleteBatchJobUseCase> {
-        &self.batch.delete_batch_job_use_case
-    }
-
-    pub fn retry_failed_items_use_case(&self) -> &Arc<RetryFailedItemsUseCase> {
-        &self.batch.retry_failed_items_use_case
-    }
-
     // Service getters
     pub fn indexing_state(&self) -> &Arc<crate::features::indexing::engine::IndexingState> {
         &self.indexing.indexing_state
@@ -636,14 +588,6 @@ impl IndexingModule {
         &self.web.web_archive
     }
 
-    pub fn batch_file_import_service(&self) -> &Arc<dyn BatchFileImportServiceTrait> {
-        &self.batch.batch_file_import_service
-    }
-
-    pub fn batch_url_import_service(&self) -> &Arc<dyn BatchUrlImportServiceTrait> {
-        &self.batch.batch_url_import_service
-    }
-
     pub fn file_storage(&self) -> &Arc<dyn FileStoragePort> {
         &self.indexing.file_storage
     }
@@ -652,8 +596,9 @@ impl IndexingModule {
         &self.indexing.chunk_repo
     }
 
-    pub fn batch_job_repo(&self) -> &Arc<dyn BatchJobRepositoryPort> {
-        &self.indexing.batch_job_repo
+    /// Opens the transactions that commit an imported document whole.
+    pub fn uow_factory(&self) -> &Arc<dyn crate::application::ports::UnitOfWorkFactory> {
+        &self.indexing.uow_factory
     }
 }
 

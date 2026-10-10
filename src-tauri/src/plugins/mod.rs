@@ -25,7 +25,6 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::references::plugin::init(),
         // AI services
         crate::features::compare::plugin::init(),
-        crate::features::study::plugin::init(),
         crate::features::learning::plugin::init(),
         crate::features::embedding::plugin::init(),
         crate::features::huggingface::plugin::init(),
@@ -37,6 +36,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::explorer::plugin::init(),
         crate::features::download::plugin::init(),
         crate::features::batch::plugin::init(),
+        crate::features::jobs::plugin::init(),
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),
         crate::features::qa::plugin::init(),

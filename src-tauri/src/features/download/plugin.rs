@@ -39,7 +39,7 @@ pub async fn resume_download(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn download_cancel(
+pub async fn cancel_download(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
@@ -74,7 +74,7 @@ pub async fn clear_completed_downloads(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn download_get_status(
+pub async fn get_download_status(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<Option<DownloadStatusResponse>, String> {
@@ -95,11 +95,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             start_model_download,
             pause_download,
             resume_download,
-            download_cancel,
+            cancel_download,
             retry_download,
             remove_download,
             clear_completed_downloads,
-            download_get_status,
+            get_download_status,
             list_downloads,
         ])
         .build()

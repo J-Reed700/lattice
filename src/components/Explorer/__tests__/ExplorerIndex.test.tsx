@@ -5,8 +5,10 @@ import { act, render as renderBare, screen, waitFor } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { explorerKeys, INDEX_STATUS_EVENT } from '@/features/explorer/api/queries';
+import { explorerKeys } from '@/features/explorer/api/queries';
+import { JOB_STATUS_EVENT } from '@/features/jobs/api';
 import { useExplorerStore, type FolderIndexStatus } from '@/stores/explorerStore';
+import { folderBuildFixture } from '@/tests/fixtures/jobs';
 
 import { describeIndexNotice, ExplorerIndexNotice } from '../ExplorerIndexNotice';
 import { ExplorerPage } from '../ExplorerPage';
@@ -20,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   indexRebuild: vi.fn(),
   resolveRoot: vi.fn(),
   foldersList: vi.fn(),
+  apiCall: vi.fn(),
   listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),
   conversations: {
     conversations: [] as { id: string; explorerRoot: string | null }[],
@@ -36,6 +39,7 @@ vi.mock('@/lib/api', () => ({
     explorerFoldersList: mocks.foldersList,
   },
 }));
+vi.mock('@/shared/ipc/transport', () => ({ apiCall: mocks.apiCall }));
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
     const handlers = mocks.listeners.get(name) ?? new Set();
@@ -83,10 +87,10 @@ function status(overrides: Partial<FolderIndexStatus> = {}): FolderIndexStatus {
   };
 }
 
-/** Sends a status event to everything listening, as the backend would. */
-function emit(payload: FolderIndexStatus) {
+/** Reports a folder build's status to everything listening, as the backend would. */
+function emit(activity: FolderIndexStatus) {
   act(() => {
-    for (const handler of mocks.listeners.get(INDEX_STATUS_EVENT) ?? []) handler({ payload });
+    for (const handler of mocks.listeners.get(JOB_STATUS_EVENT) ?? []) handler({ payload: folderBuildFixture(activity) });
   });
 }
 
@@ -196,6 +200,7 @@ describe('ExplorerPage and the folder index', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listeners.clear();
+    mocks.apiCall.mockResolvedValue({ ok: true, data: [] });
     localStorage.clear();
     useExplorerStore.setState({ root: null });
     mocks.indexClose.mockResolvedValue({ ok: true, data: undefined });
@@ -211,7 +216,7 @@ describe('ExplorerPage and the folder index', () => {
     expect(mocks.indexOpen).toHaveBeenCalledWith(ROOT);
     expect(await screen.findByRole('button', { name: 'Folder index: Scanning files…' })).toBeInTheDocument();
 
-    await waitFor(() => expect(mocks.listeners.get(INDEX_STATUS_EVENT)?.size).toBe(1));
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
     emit(status({ state: 'indexing', passagesEmbedded: 1200, passagesTotal: 4000 }));
     expect(await screen.findByRole('button', { name: 'Folder index: Indexing 30%' })).toBeInTheDocument();
     // Another folder's progress is not this one's.
@@ -249,7 +254,7 @@ describe('ExplorerPage and the folder index', () => {
     mocks.indexOpen.mockReturnValue(new Promise((resolve) => (reply = resolve)));
     useExplorerStore.setState({ root: PROJECT });
     render(<ExplorerPage />);
-    await waitFor(() => expect(mocks.listeners.get(INDEX_STATUS_EVENT)?.size).toBe(1));
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
     emit(status({ filesTotal: 3, filesIndexed: 3 }));
     reply({ ok: true, data: status({ state: 'scanning', filesTotal: 0, filesIndexed: 0 }) });
     expect(await screen.findByRole('button', { name: 'Folder index: Indexed · 3 files' })).toBeInTheDocument();

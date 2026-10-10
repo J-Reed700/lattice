@@ -797,3 +797,155 @@ async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
     assert!(recovered.result_ref.is_none());
     Ok(())
 }
+
+struct Judged;
+
+#[async_trait::async_trait]
+impl JobHandler for Judged {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        Ok(JobOutcome::Failed {
+            code: "items_failed".into(),
+            message: "2 of 5 could not be imported".into(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
+    let runtime = JobRuntime::new(pool().await);
+    runtime
+        .register(
+            ONCE,
+            Arc::new(Judged),
+            JobKindConfig::new(RecoveryPolicy::Interrupt),
+        )
+        .await?;
+    let job = runtime.submit(&new_job(ONCE, "judged", None)).await?;
+    finished(&runtime, &job.id).await;
+    let saved = runtime.store().get(&job.id).await?;
+    assert_eq!(saved.status, JobStatus::Failed);
+    assert_eq!(saved.error_code.as_deref(), Some("items_failed"));
+    assert_eq!(
+        saved.error_message.as_deref(),
+        Some("2 of 5 could not be imported")
+    );
+    let retried = runtime.retry(&job.id, "judged-again").await?;
+    assert_eq!(retried.retry_of_job_id.as_deref(), Some(job.id.as_str()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Result<()> {
+    let runtime = JobRuntime::new(pool().await);
+    let (handler, mut started) = gate();
+    runtime
+        .register(
+            KIND,
+            handler.clone(),
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(1),
+        )
+        .await?;
+    let running = runtime.submit(&new_job(KIND, "running", None)).await?;
+    assert_eq!(next(&mut started).await, running.id);
+    let waiting = runtime.submit(&new_job(KIND, "waiting", None)).await?;
+    quiet(&mut started).await;
+
+    // The running job stops at its cancellation point and queues again,
+    // behind the one that was waiting; nothing is cancelled.
+    runtime.requeue(&running.id);
+    assert_eq!(next(&mut started).await, waiting.id);
+    let paused = runtime.store().get(&running.id).await?;
+    assert_eq!(paused.status, JobStatus::Pending);
+    assert_eq!(paused.progress_message, "Waiting for its turn");
+    handler.release.add_permits(1);
+    assert_eq!(next(&mut started).await, running.id);
+    handler.release.add_permits(1);
+    finished(&runtime, &running.id).await;
+    for id in [&running.id, &waiting.id] {
+        assert_eq!(runtime.store().get(id).await?.status, JobStatus::Completed);
+    }
+    assert_eq!(
+        handler.cancelled_with.lock().unwrap().as_slice(),
+        &[JobStatus::Running],
+        "the worker saw its job still running when it stopped"
+    );
+    // A job with no worker is left alone.
+    runtime.requeue(&running.id);
+    assert_eq!(
+        runtime.store().get(&running.id).await?.status,
+        JobStatus::Completed
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()> {
+    let store = JobStore::new(pool().await);
+    let first = store.submit(&new_job(KIND, "first", None)).await?;
+    let second = store.submit(&new_job(KIND, "second", None)).await?;
+    store.submit(&new_job(ONCE, "other kind", None)).await?;
+    let live: Vec<String> = store
+        .live(KIND)
+        .await?
+        .into_iter()
+        .map(|job| job.id)
+        .collect();
+    assert_eq!(live, vec![first.id.clone(), second.id.clone()]);
+
+    store.claim(&first.id).await?;
+    store.fail(&first.id, "failed", "broken").await?;
+    let retry = store
+        .retry(&first.id, "first-retry", "Retry queued")
+        .await?;
+    let latest: Vec<String> = store
+        .list_latest(&[KIND], 10, 0)
+        .await?
+        .into_iter()
+        .map(|job| job.id)
+        .collect();
+    assert!(latest.contains(&retry.id) && latest.contains(&second.id));
+    assert!(
+        !latest.contains(&first.id),
+        "a retried attempt is not listed"
+    );
+    assert_eq!(store.list_latest(&[KIND, ONCE], 10, 0).await?.len(), 3);
+    assert_eq!(store.list_latest(&[KIND, ONCE], 1, 1).await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_ones() -> Result<()> {
+    let pool = pool().await;
+    let store = JobStore::new(pool.clone());
+    let first = store.submit(&new_job(KIND, "first", None)).await?;
+    store.claim(&first.id).await?;
+    store.fail(&first.id, "failed", "broken").await?;
+    let retry = store
+        .retry(&first.id, "first-retry", "Retry queued")
+        .await?;
+    assert!(matches!(
+        store.delete(&retry.id).await,
+        Err(AppError::InvalidState(_))
+    ));
+    store.claim(&retry.id).await?;
+    store.complete(&retry.id, "done", "Done").await?;
+    let other = store.submit(&new_job(KIND, "other", None)).await?;
+
+    store.delete(&retry.id).await?;
+    for id in [&first.id, &retry.id] {
+        assert!(matches!(store.get(id).await, Err(AppError::NotFound(_))));
+    }
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM job_events WHERE job_id IN (?,?)")
+        .bind(&first.id)
+        .bind(&retry.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 0);
+    assert_eq!(store.get(&other.id).await?.status, JobStatus::Pending);
+    assert!(matches!(
+        store.delete("missing").await,
+        Err(AppError::NotFound(_))
+    ));
+    Ok(())
+}

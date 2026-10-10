@@ -3,6 +3,8 @@ import { type FC, useState, useEffect, useCallback, useRef } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { BATCH_IMPORT_JOBS } from '@/features/batch/jobKinds';
+import { useJobStatus } from '@/features/jobs/api';
 import type { BatchJobSummary, BatchJobStatus, BatchJobItem } from '@/types/api/batch';
 import { listAllBatchJobs, deleteBatchJob, retryFailedItems, getBatchJobDetails } from '@/utils/batchHistory';
 import { validateIndexablePath } from '@/utils/indexingFileValidation';
@@ -99,13 +101,18 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   }, [loadDetails]);
 
   useEffect(() => { void loadJobs(); }, [loadJobs]);
+  // An import's job reports each file it settles; the newest read wins.
+  useJobStatus((report) => {
+    if (BATCH_IMPORT_JOBS.has(report.kind)) void loadJobs(true);
+  });
   const hasActiveJobs = jobs.some(job => isActive(expanded.get(job.id)?.details ?? job));
+  // A read that failed is tried again until it succeeds.
   const hasDetailErrors = Array.from(expanded.values()).some(detail => !!detail.error);
   useEffect(() => {
-    if (!hasActiveJobs && !loadError && !hasDetailErrors) return;
+    if (!loadError && !hasDetailErrors) return;
     const timer = setInterval(() => { void loadJobs(); }, 2000);
     return () => clearInterval(timer);
-  }, [hasActiveJobs, loadError, hasDetailErrors, loadJobs]);
+  }, [loadError, hasDetailErrors, loadJobs]);
   useEffect(() => {
     const refresh = () => { void loadJobs(true); };
     const visible = () => { if (document.visibilityState === 'visible') refresh(); };

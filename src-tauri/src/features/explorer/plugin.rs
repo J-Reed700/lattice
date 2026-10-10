@@ -2,7 +2,7 @@
 //! a search may take its full two seconds and must not stall the runtime.
 
 use super::index::dto::FolderIndexStatusDto;
-use super::index::manager::{self, EmbedderSource, FolderIndexManager, ManagerConfig};
+use super::index::manager::{EmbedderSource, FolderIndexManager};
 use super::{dto::*, folders, fs, scope::Scope};
 use crate::{
     application::ports::EmbeddingPort,
@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    AppHandle, Emitter, Manager, Runtime, State,
+    AppHandle, Manager, Runtime, State,
 };
 
 /// Default and ceiling for a viewer search; the model's tool asks for fewer.
@@ -113,12 +113,18 @@ pub async fn set_conversation_explorer_root(
 
 /// The embedder the folder index uses: the container's, so the model is
 /// loaded once and shared with the chat path.
-struct ContainerEmbedders<R: Runtime> {
+pub(crate) struct AppEmbedders<R: Runtime> {
     app: AppHandle<R>,
 }
 
+impl<R: Runtime> AppEmbedders<R> {
+    pub(crate) fn new(app: AppHandle<R>) -> Self {
+        Self { app }
+    }
+}
+
 #[async_trait]
-impl<R: Runtime> EmbedderSource for ContainerEmbedders<R> {
+impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
     async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>> {
         let container = self.app.try_state::<Container>()?;
         // No identity means no active embedding model: nothing to load.
@@ -131,19 +137,12 @@ impl<R: Runtime> EmbedderSource for ContainerEmbedders<R> {
     }
 }
 
-/// The app's folder index manager, installed on first use.
-fn index_manager<R: Runtime>(app: &AppHandle<R>, container: &Container) -> Arc<FolderIndexManager> {
-    manager::install(|| {
-        let emitter = app.clone();
-        FolderIndexManager::new(
-            ManagerConfig::for_data_dir(container.core.data_dir()),
-            Arc::new(ContainerEmbedders { app: app.clone() }),
-            Arc::new(move |status: &FolderIndexStatusDto| {
-                if let Err(error) = emitter.emit(super::index::STATUS_EVENT, status) {
-                    tracing::debug!(%error, "Could not emit folder index status");
-                }
-            }),
-        )
+/// The app's folder index manager, which the composition root owns.
+fn index_manager(container: &Container) -> Result<Arc<FolderIndexManager>, ApiError> {
+    container.folder_index().cloned().ok_or_else(|| {
+        ApiError::from(AppError::ServiceNotAvailable(
+            "The folder index is not available.".into(),
+        ))
     })
 }
 
@@ -152,12 +151,11 @@ fn index_manager<R: Runtime>(app: &AppHandle<R>, container: &Container) -> Arc<F
 /// up it.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_index_open<R: Runtime>(
+pub async fn explorer_index_open(
     root: String,
-    app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<FolderIndexStatusDto, ApiError> {
-    let status = index_manager(&app, &container)
+    let status = index_manager(&container)?
         .open(&root)
         .await
         .map_err(ApiError::from)?;
@@ -171,22 +169,18 @@ pub async fn explorer_index_open<R: Runtime>(
 /// Closes the open folder's index: its watcher, task and database.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_index_close<R: Runtime>(
-    app: AppHandle<R>,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    index_manager(&app, &container).close().await;
+pub async fn explorer_index_close(container: State<'_, Container>) -> Result<(), ApiError> {
+    index_manager(&container)?.close().await;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_index_status<R: Runtime>(
+pub async fn explorer_index_status(
     root: String,
-    app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<FolderIndexStatusDto, ApiError> {
-    index_manager(&app, &container)
+    index_manager(&container)?
         .status(&root)
         .await
         .map_err(ApiError::from)
@@ -195,12 +189,11 @@ pub async fn explorer_index_status<R: Runtime>(
 /// Wipes the folder's index and starts over.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_index_rebuild<R: Runtime>(
+pub async fn explorer_index_rebuild(
     root: String,
-    app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<FolderIndexStatusDto, ApiError> {
-    index_manager(&app, &container)
+    index_manager(&container)?
         .rebuild(&root)
         .await
         .map_err(ApiError::from)
@@ -210,11 +203,10 @@ pub async fn explorer_index_rebuild<R: Runtime>(
 /// its threads and what its index holds.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_folders_list<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn explorer_folders_list(
     container: State<'_, Container>,
 ) -> Result<ExplorerFolderListDto, ApiError> {
-    let manager = index_manager(&app, &container);
+    let manager = index_manager(&container)?;
     folders::list(container.db_pool(), &manager)
         .await
         .map_err(ApiError::from)
@@ -280,12 +272,12 @@ pub async fn explorer_folder_set_settings(
 /// folder stays listed, and the next open builds the index again.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_folder_delete_index<R: Runtime>(
+pub async fn explorer_folder_delete_index(
     root: String,
-    app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    folders::delete_index(&index_manager(&app, &container), &root)
+    let manager = index_manager(&container)?;
+    folders::delete_index(&manager, &root)
         .await
         .map_err(ApiError::from)
 }
@@ -294,13 +286,12 @@ pub async fn explorer_folder_delete_index<R: Runtime>(
 /// `delete_threads`, its threads too. Returns how many threads were deleted.
 #[tauri::command]
 #[specta::specta]
-pub async fn explorer_folder_remove<R: Runtime>(
+pub async fn explorer_folder_remove(
     root: String,
     delete_threads: bool,
-    app: AppHandle<R>,
     container: State<'_, Container>,
 ) -> Result<u32, ApiError> {
-    let manager = index_manager(&app, &container);
+    let manager = index_manager(&container)?;
     let deleted = folders::remove(container.inner(), &manager, &root, delete_threads)
         .await
         .map_err(ApiError::from)?;
@@ -309,6 +300,14 @@ pub async fn explorer_folder_remove<R: Runtime>(
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("explorer")
+        .setup(|app, _api| {
+            let container = app.state::<Container>().inner().clone();
+            // Registration resumes the builds the last process left running.
+            if let Some(manager) = container.folder_index() {
+                tauri::async_runtime::block_on(manager.register())?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             explorer_resolve_root,
             explorer_list_dir,

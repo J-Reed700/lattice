@@ -77,8 +77,6 @@ export function createVaultAPIMock() {
           "Answer the user's question using only the provided context. Cite sources using [#]. If you need to call get_document, use the exact Document ID shown in the context.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
         noContextPromptTemplate:
           'The user asked: "{question}"\n\nNo relevant documents were found in their knowledge base. Respond politely and ask if they\'d like to upload or specify a document.',
-        toolFollowupPromptTemplate:
-          'Tool results have been added to the context. Use them to answer the user\'s question. If excerpts are provided, quote them briefly and avoid repetition.\n\nQuestion: {question}\n{previous_response}\nAnswer:',
       },
       verification: {
         enabled: true,

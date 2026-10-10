@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { JOB_STATUS_EVENT, type JobDto } from '@/features/jobs/api';
 import type { FolderIndexStatus } from '@/stores/explorerStore';
+import { folderBuildFixture } from '@/tests/fixtures/jobs';
 
 import {
   explorerKeys,
-  INDEX_STATUS_EVENT,
+  FOLDER_INDEX_JOB,
   useExplorerFolderMutations,
   useExplorerIndexCommands,
   useExplorerIndexStatus,
@@ -24,9 +26,11 @@ const mocks = vi.hoisted(() => ({
     explorerFoldersList: vi.fn(),
     explorerFolderSetLastThread: vi.fn(),
   },
+  apiCall: vi.fn(),
   listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),
 }));
 vi.mock('@/lib/api', () => ({ VaultAPI: mocks.api, default: mocks.api }));
+vi.mock('@/shared/ipc/transport', () => ({ apiCall: mocks.apiCall }));
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
     const handlers = mocks.listeners.get(name) ?? new Set();
@@ -50,9 +54,12 @@ const folder = (root: string, lastThreadId: string | null = null) => ({
   index: { state: 'indexed', filesTotal: 10, filesIndexed: 10, passagesTotal: 100, passagesEmbedded: 100, bytes: 1, indexRoot: null, etaSeconds: null, message: null },
 });
 
-function emit(payload: FolderIndexStatus) {
+const build = (activity: FolderIndexStatus, overrides: Partial<JobDto> = {}): JobDto =>
+  folderBuildFixture(activity, { status: 'running', finishedAt: null, ...overrides });
+
+function emit(payload: JobDto) {
   act(() => {
-    for (const handler of mocks.listeners.get(INDEX_STATUS_EVENT) ?? []) handler({ payload });
+    for (const handler of mocks.listeners.get(JOB_STATUS_EVENT) ?? []) handler({ payload });
   });
 }
 
@@ -64,22 +71,45 @@ beforeEach(() => {
   mocks.listeners.clear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: '/Users/me', folders: [folder(ROOT)] } });
+  mocks.apiCall.mockResolvedValue({ ok: true, data: [] });
 });
 
 describe('index status in the query cache', () => {
-  it('one listener feeds both the open folder and the folders list', async () => {
+  it('one job listener feeds both the open folder and the folders list', async () => {
     renderHook(() => useExplorerIndexStatusEvents(), { wrapper });
     const open = renderHook(() => useExplorerIndexStatus(ROOT), { wrapper });
     const list = renderHook(() => useExplorerIndexStatuses([ROOT, OTHER], 0), { wrapper });
-    await waitFor(() => expect(mocks.listeners.get(INDEX_STATUS_EVENT)?.size).toBe(1));
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
+    expect(mocks.apiCall).toHaveBeenCalledWith('list_jobs', { kinds: [FOLDER_INDEX_JOB] });
     expect(open.result.current).toBeNull();
 
-    emit(status());
-    emit(status({ root: OTHER, indexRoot: OTHER, state: 'ready' }));
+    emit(build(status()));
+    emit(build(status({ root: OTHER, indexRoot: OTHER, state: 'ready' }), { status: 'completed', finishedAt: 2 }));
     await waitFor(() => expect(open.result.current).toEqual(status()));
     await waitFor(() => expect(list.result.current.get(ROOT)).toEqual(status()));
     expect(list.result.current.get(OTHER)?.state).toBe('ready');
     expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toEqual(status());
+  });
+
+  it('a build already running when the page mounts fills the cache', async () => {
+    mocks.apiCall.mockResolvedValue({ ok: true, data: [build(status())] });
+    renderHook(() => useExplorerIndexStatusEvents(), { wrapper });
+    const open = renderHook(() => useExplorerIndexStatus(ROOT), { wrapper });
+    await waitFor(() => expect(open.result.current).toEqual(status()));
+  });
+
+  it('a build waiting its turn or cancelled leaves the folder to its index on disk', async () => {
+    renderHook(() => useExplorerIndexStatusEvents(), { wrapper });
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
+    emit(build(status()));
+    expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toEqual(status());
+    emit(build(status(), { status: 'pending', progressMessage: 'Waiting for its turn' }));
+    expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
+    emit(build(status()));
+    emit(build(status(), { status: 'cancelled', finishedAt: 3 }));
+    expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
+    emit({ ...build(status({ root: OTHER, indexRoot: OTHER })), kind: 'batch.file_import' });
+    expect(client.getQueryData(explorerKeys.indexStatus(OTHER))).toBeUndefined();
   });
 
   it('the folders list ignores a status older than its own read', () => {
@@ -94,11 +124,11 @@ describe('index status in the query cache', () => {
     mocks.api.explorerIndexOpen.mockReturnValue(new Promise((resolve) => (reply = resolve)));
     renderHook(() => useExplorerIndexStatusEvents(), { wrapper });
     const commands = renderHook(() => useExplorerIndexCommands(), { wrapper });
-    await waitFor(() => expect(mocks.listeners.get(INDEX_STATUS_EVENT)?.size).toBe(1));
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
 
     let opened: Promise<void> = Promise.resolve();
     act(() => { opened = commands.result.current.open(ROOT); });
-    emit(status({ state: 'ready', passagesEmbedded: 100 }));
+    emit(build(status({ state: 'ready', passagesEmbedded: 100 }), { status: 'completed', finishedAt: 2 }));
     await act(async () => {
       reply({ ok: true, data: status({ state: 'scanning' }) });
       await opened;

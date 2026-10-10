@@ -20,11 +20,6 @@ export type UrlPreview = import('../../lib/bindings').UrlPreview;
 export type CleanArticle = import('../../lib/bindings').CleanArticle;
 
 /**
- * Download status information
- */
-export type DownloadStatus = import('../../lib/bindings').DownloadStatus;
-
-/**
  * Batch download result
  */
 export interface BatchDownloadResult {

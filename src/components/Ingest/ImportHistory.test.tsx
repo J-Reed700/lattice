@@ -2,11 +2,28 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { JOB_STATUS_EVENT } from '@/features/jobs/api';
+import { jobFixture } from '@/tests/fixtures/jobs';
+
 import { ImportHistory } from './ImportHistory';
 
 const api = vi.hoisted(() => ({ listAllBatchJobs: vi.fn(), getBatchJobDetails: vi.fn(), retryFailedItems: vi.fn(), deleteBatchJob: vi.fn(), open: vi.fn() }));
 vi.mock('@/utils/batchHistory', () => api);
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: api.open }));
+const events = vi.hoisted(() => new Map<string, Set<(event: { payload: unknown }) => void>>());
+// A plain function, so `resetAllMocks` leaves the listener working.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (name: string, handler: (event: { payload: unknown }) => void) => {
+    const handlers = events.get(name) ?? new Set();
+    handlers.add(handler);
+    events.set(name, handlers);
+    return Promise.resolve(() => handlers.delete(handler));
+  },
+}));
+/** The import's job reports a change, as each settled file does. */
+const report = (kind = 'batch.file_import') => act(() => {
+  for (const handler of events.get(JOB_STATUS_EVENT) ?? []) handler({ payload: jobFixture({ id: 'job', kind }) });
+});
 const job = { id: 'job', jobType: 'file_import', status: 'completed', totalItems: 2, completedItems: 1, failedItems: 1, createdAt: '2026-09-15T12:00:00Z' };
 const items = [
   { itemId: 'good', target: '/Downloads/readable.pdf', status: 'completed' },
@@ -151,15 +168,20 @@ describe('PDF import recovery', () => {
     fireEvent.click(heading);
     expect(await screen.findByText('Failed — PDF extraction timed out')).toBeVisible();
   });
-  it('keeps polling a collapsed import through completion', async () => {
+  it('follows a collapsed import through completion by its job reports', async () => {
     api.listAllBatchJobs.mockResolvedValue([running]);
     api.getBatchJobDetails.mockResolvedValue(running);
     render(<ImportHistory />);
     await screen.findByText('Processing — not ready to search yet');
     fireEvent.click(screen.getByRole('button', { name: /2 files Added/ }));
+    await waitFor(() => expect(events.get(JOB_STATUS_EVENT)?.size).toBe(1));
     api.listAllBatchJobs.mockResolvedValue([completed]);
     api.getBatchJobDetails.mockResolvedValue(completed);
-    expect(await screen.findByText('2 imported', {}, { timeout: 4000 })).toBeVisible();
+    const reads = api.listAllBatchJobs.mock.calls.length;
+    report('explorer.folder_index');
+    expect(api.listAllBatchJobs).toHaveBeenCalledTimes(reads);
+    report();
+    expect(await screen.findByText('2 imported')).toBeVisible();
     expect(screen.getByRole('button', { name: /2 files Added/ })).toHaveAttribute('aria-expanded', 'false');
   });
   it('surfaces details failures even for a collapsed single-file import', async () => {

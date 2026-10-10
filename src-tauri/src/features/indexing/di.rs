@@ -6,9 +6,9 @@ use sqlx::SqlitePool;
 
 use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
-    BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort,
-    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, EmbeddingPort,
-    EmbeddingRepositoryPort, FileStoragePort, FileSystemPort, TranscriptionPort, VectorSearchPort,
+    ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentRepository,
+    DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
+    FileSystemPort, TranscriptionPort, VectorSearchPort,
 };
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::use_cases::{
@@ -21,7 +21,7 @@ use crate::infrastructure::adapters::content_extraction_adapter::ContentExtracti
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::infrastructure::persistence::repositories::{
-    BatchJobRepository, ChunkRepositoryImpl, DocumentRepositoryImpl, EmbeddingRepository,
+    ChunkRepositoryImpl, DocumentRepositoryImpl, EmbeddingRepository,
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
 use crate::interfaces::di::Container;
@@ -41,8 +41,7 @@ pub struct IndexingDi {
     pub delete_document_use_case: Arc<DeleteDocumentUseCase>,
     pub rename_document_use_case: Arc<RenameDocumentUseCase>,
 
-    // Shared state exposed so BatchDi can reuse it
-    pub batch_job_repo: Arc<dyn BatchJobRepositoryPort>,
+    // Shared state the composition root hands to other features
     pub chunk_repo: Arc<dyn ChunkRepositoryPort>,
     pub document_repo: Arc<dyn DocumentRepository>,
     pub file_storage: Arc<dyn FileStoragePort>,
@@ -62,8 +61,6 @@ pub fn build(
 ) -> Result<IndexingDi> {
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-    let batch_job_repo =
-        Arc::new(BatchJobRepository::new(db_pool.clone())) as Arc<dyn BatchJobRepositoryPort>;
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
     let embedding_repo =
@@ -145,7 +142,6 @@ pub fn build(
         reindex_document_use_case,
         delete_document_use_case,
         rename_document_use_case,
-        batch_job_repo,
         chunk_repo,
         document_repo,
         file_storage,

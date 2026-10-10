@@ -1,14 +1,16 @@
-//! The open folder's index: opening, closing, rebuilding, forgetting, and
-//! the rules for which folders get an index at all.
+//! Folder indexes: which folders get one, the folder open in the Explorer,
+//! and the build jobs that walk and embed them.
 //!
-//! One folder is open at a time. Opening another closes the previous one's
-//! watcher, task and SQLite pool; leaving the Explorer page does not.
-//!
-//! - Once the open folder's run finishes, a folder whose index was stopped
-//!   part-way (the list's "Paused") finishes in the background: the most
-//!   recently opened first, one at a time, each run once, with no watcher.
-//!   Opening or rebuilding a folder stops it, so the folder being looked at
-//!   goes first; the next finished run resumes it.
+//! - A build is a job on the app's job runtime ([`super::build`]), with the
+//!   index root as its subject, so two builds never write one index at once.
+//!   A folder has at most one live build. Builds run one at a time; the
+//!   folder being opened goes first, and the other builds give up their turn
+//!   and resume after it. Closing or leaving a folder leaves its build
+//!   running, and a build stopped by a restart resumes at the next start,
+//!   while its folder still exists.
+//! - One folder is open at a time. It is watched: small changes update its
+//!   index in place, once any build over that index has finished, and a
+//!   change too large for that queues a build.
 //! - The filesystem root, the home folder and any ancestor of home are
 //!   refused: the Explorer still opens them, the index does not. So is a
 //!   folder holding Lattice's data, whose index would watch its own writes.
@@ -21,24 +23,26 @@
 //! - The vectors file is keyed by the embedding identity. A different model
 //!   drops the vectors and embeds again; chunks and hashes stay.
 
+use super::build::{self, BuildRequest, LiveIndex};
 use super::dto::{
     FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryDto, FolderIndexSummaryState,
 };
-use super::run::{Indexer, Limits, Outcome, StatusCell, StatusEmitter};
+use super::run::{Indexer, Limits, Outcome, StatusCell};
 use super::search::FolderSearch;
 use super::store::{self, Counts, FolderStore, IndexEntry, TooLarge};
-use super::watcher::{self, Change};
-use crate::application::ports::vector_search_port::VectorSearchPort;
+use super::watcher::{self, Change, FolderWatcher};
 use crate::application::ports::EmbeddingPort;
 use crate::features::explorer::scope::Scope;
-use crate::features::search::engine::vector_search::USearchVectorIndex;
-use crate::shared::{AppError, Result};
+use crate::shared::{
+    runtime::jobs::{JobRecord, JobRuntime, JobStatus, NewJob},
+    AppError, Result,
+};
 use async_trait::async_trait;
-use parking_lot::RwLock;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -62,8 +66,6 @@ pub struct ManagerConfig {
     pub home: Option<PathBuf>,
     pub limits: Limits,
     pub debounce: Duration,
-    /// Finish paused folders while the open one has nothing to do.
-    pub background: bool,
 }
 
 impl ManagerConfig {
@@ -76,100 +78,51 @@ impl ManagerConfig {
             home: dirs::home_dir().and_then(|home| std::fs::canonicalize(home).ok()),
             limits: Limits::default(),
             debounce: Duration::from_millis(1_500),
-            background: true,
         }
     }
 }
 
-/// Why a folder's index is running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Role {
-    /// The folder open in the Explorer: watched once its first run is done.
-    Open,
-    /// A paused folder finishing while the open one is idle: one run, no
-    /// watcher, and it does not count as opening the folder.
-    Background,
-}
-
-/// What a search needs once the embedder has loaded.
+/// The open folder as builds and searches see it, readable without waiting
+/// for an open or a close in progress.
 #[derive(Clone)]
-struct Engine {
-    vectors: Arc<USearchVectorIndex>,
-    embedder: Arc<dyn EmbeddingPort>,
+pub(super) struct OpenView {
+    pub root: PathBuf,
+    pub status: Arc<StatusCell>,
 }
 
 struct OpenFolder {
     root: PathBuf,
+    index_root: PathBuf,
     /// The index directory; `None` for a refused folder.
     dir: Option<PathBuf>,
     prefix: String,
     status: Arc<StatusCell>,
-    store: Option<Arc<FolderStore>>,
-    engine: Arc<RwLock<Option<Engine>>>,
+    index: Option<Arc<LiveIndex>>,
+    /// Stops the watcher task.
     cancel: CancellationToken,
-    task: Option<JoinHandle<()>>,
+    watching: Option<JoinHandle<()>>,
 }
 
-impl OpenFolder {
-    /// Walking or embedding.
-    fn running(&self) -> bool {
-        matches!(
-            self.status.get().state,
-            FolderIndexState::Scanning | FolderIndexState::Indexing
-        )
-    }
-
-    /// Stops the task (it saves what it has embedded first) and closes the
-    /// pool.
-    async fn shut(mut self) {
-        self.cancel.cancel();
-        if let Some(task) = self.task.take() {
-            let _ = task.await;
-        }
-        if let Some(store) = &self.store {
-            store.close().await;
-        }
-    }
-}
-
-/// The indexes running now, under one lock so the open folder and the
-/// background never hold the same index.
-#[derive(Default)]
-struct Slots {
-    open: Option<OpenFolder>,
-    /// A paused folder finishing behind the open one.
-    background: Option<OpenFolder>,
-    /// Index directories the background has run since a folder was last
-    /// opened, so none is run twice.
-    resumed: HashSet<PathBuf>,
-    /// Nothing paused was left when the background last looked.
-    exhausted: bool,
-}
-
-impl Slots {
-    /// A folder is being opened: it goes first, and once it settles every
-    /// paused folder may be resumed again.
-    async fn make_way(&mut self) {
-        if let Some(background) = self.background.take() {
-            info!(root = %background.root.display(), "Background folder index paused");
-            background.shut().await;
-        }
-        self.resumed.clear();
-        self.exhausted = false;
-    }
+/// An index directory in use, and by how many: the open folder and builds.
+struct LiveEntry {
+    index: Arc<LiveIndex>,
+    users: usize,
 }
 
 pub struct FolderIndexManager {
     config: ManagerConfig,
-    embedders: Arc<dyn EmbedderSource>,
-    emit: StatusEmitter,
-    slots: tokio::sync::Mutex<Slots>,
-    /// Handed to each run, so one that finishes can start the background.
+    pub(super) embedders: Arc<dyn EmbedderSource>,
+    pub(super) jobs: Arc<JobRuntime>,
+    open: tokio::sync::Mutex<Option<OpenFolder>>,
+    view: Arc<parking_lot::Mutex<Option<OpenView>>>,
+    /// The open folder's build, which runs before any other.
+    first: parking_lot::Mutex<Option<String>>,
+    live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
     me: Weak<FolderIndexManager>,
 }
 
 /// The `path` of `inner` below `outer`, `/`-separated; `""` when equal.
-fn relative_below(outer: &Path, inner: &Path) -> Option<String> {
+pub(super) fn relative_below(outer: &Path, inner: &Path) -> Option<String> {
     let rest = inner.strip_prefix(outer).ok()?;
     Some(
         rest.components()
@@ -179,11 +132,11 @@ fn relative_below(outer: &Path, inner: &Path) -> Option<String> {
     )
 }
 
-fn root_string(path: &Path) -> String {
+pub(super) fn root_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn remove_dir(dir: &Path) {
+pub(super) fn remove_dir(dir: &Path) {
     match std::fs::remove_dir_all(dir) {
         Ok(()) => info!(dir = %dir.display(), "Removed a folder index"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -192,7 +145,7 @@ fn remove_dir(dir: &Path) {
 }
 
 /// The words for a walk that found more files than the cap.
-fn too_large_message(found: TooLarge, cap: usize) -> String {
+pub(super) fn too_large_message(found: TooLarge, cap: usize) -> String {
     format!(
         "{}{} files to index; the limit is {}. Search uses text matching.",
         if found.capped { "More than " } else { "" },
@@ -246,35 +199,51 @@ fn live_summary(status: &FolderIndexStatusDto, own_dir: Option<&Path>) -> Folder
     }
 }
 
-/// Removes every vectors file (and its key map and manifest) in `dir`.
-fn remove_vector_files(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.filter_map(|entry| entry.ok()) {
-        if entry.file_name().to_string_lossy().starts_with("vectors-") {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
 impl FolderIndexManager {
     pub fn new(
         config: ManagerConfig,
         embedders: Arc<dyn EmbedderSource>,
-        emit: StatusEmitter,
+        jobs: Arc<JobRuntime>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             config,
             embedders,
-            emit,
-            slots: tokio::sync::Mutex::new(Slots::default()),
+            jobs,
+            open: tokio::sync::Mutex::new(None),
+            view: Arc::default(),
+            first: parking_lot::Mutex::new(None),
+            live: tokio::sync::Mutex::new(HashMap::new()),
             me: me.clone(),
         })
     }
 
+    /// Registers the build job kind. Builds the last process left running
+    /// resume, after their folder is checked to still exist.
+    pub async fn register(self: &Arc<Self>) -> Result<()> {
+        self.jobs
+            .register(
+                build::FOLDER_INDEX,
+                Arc::new(build::BuildJob::new(Arc::downgrade(self))),
+                build::build_job_config(),
+            )
+            .await
+    }
+
     pub fn config(&self) -> &ManagerConfig {
         &self.config
+    }
+
+    pub(super) fn view(&self) -> Option<OpenView> {
+        self.view.lock().clone()
+    }
+
+    pub(super) fn view_handle(&self) -> Arc<parking_lot::Mutex<Option<OpenView>>> {
+        Arc::clone(&self.view)
+    }
+
+    /// The build that runs before any other, when it is not `id`.
+    pub(super) fn first_other_than(&self, id: &str) -> Option<String> {
+        self.first.lock().clone().filter(|first| first != id)
     }
 
     /// The filesystem root, the home folder, or a folder that holds it.
@@ -319,21 +288,159 @@ impl FolderIndexManager {
         parent.unwrap_or_else(|| (root.to_path_buf(), own))
     }
 
+    pub(super) fn index_dir_of(&self, index_root: &Path) -> PathBuf {
+        store::index_dir(&self.config.base_dir, index_root)
+    }
+
     /// Every index directory on disk with the root its meta records: the
     /// folders list reads it once per listing.
     pub async fn index_dirs(&self) -> Vec<IndexEntry> {
         store::list_indexes(&self.config.base_dir).await
     }
 
-    /// Opens `root`'s index and starts (or resumes) indexing it, closing any
-    /// other open folder first. Opening the folder that is already open
-    /// changes nothing.
+    /// Opens the index in `dir` for one more user, sharing it with the open
+    /// folder or a build that already has it.
+    pub(super) async fn acquire(&self, index_root: &Path, dir: &Path) -> Result<Arc<LiveIndex>> {
+        let mut live = self.live.lock().await;
+        if let Some(entry) = live.get_mut(dir) {
+            entry.users += 1;
+            return Ok(Arc::clone(&entry.index));
+        }
+        let store = Arc::new(FolderStore::open(dir).await?);
+        if store.meta(store::META_ROOT).await?.is_none() {
+            store
+                .set_meta(store::META_ROOT, &root_string(index_root))
+                .await?;
+        }
+        let index = Arc::new(LiveIndex::new(dir.to_path_buf(), store));
+        live.insert(
+            dir.to_path_buf(),
+            LiveEntry {
+                index: Arc::clone(&index),
+                users: 1,
+            },
+        );
+        Ok(index)
+    }
+
+    /// Gives back one user's hold; the last closes the index's pool.
+    pub(super) async fn release(&self, index: &LiveIndex) {
+        let closing = {
+            let mut live = self.live.lock().await;
+            match live.get_mut(&index.dir) {
+                Some(entry) if entry.users > 1 => {
+                    entry.users -= 1;
+                    None
+                }
+                Some(_) => live.remove(&index.dir),
+                None => None,
+            }
+        };
+        if let Some(entry) = closing {
+            entry.index.store.close().await;
+        }
+    }
+
+    /// The live builds of the folder index, oldest first.
+    async fn live_builds(&self) -> Result<Vec<JobRecord>> {
+        self.jobs.store().live(build::FOLDER_INDEX).await
+    }
+
+    /// Queues a build of `root` unless it already has a live one, and puts it
+    /// first: every other live build gives up its turn. Finished builds of the
+    /// same index are forgotten, so the job history stays one per index.
+    async fn ensure_build(
+        &self,
+        root: &Path,
+        index_root: &Path,
+        wipe_prefix: bool,
+    ) -> Result<JobRecord> {
+        let subject = root_string(index_root);
+        let request = BuildRequest {
+            root: root_string(root),
+            index_root: subject.clone(),
+            wipe_prefix,
+        };
+        let builds = self
+            .jobs
+            .store()
+            .list_for_subject(build::FOLDER_INDEX, &subject)
+            .await?;
+        let live = builds.iter().find(|job| {
+            !job.status.is_finished()
+                && BuildRequest::of(job).is_some_and(|asked| asked.root == request.root)
+        });
+        let job = match live {
+            Some(job) if !wipe_prefix => job.clone(),
+            live => {
+                if let Some(job) = live {
+                    self.stop_build(&job.id).await;
+                }
+                for old in builds.iter().filter(|job| job.status.is_finished()) {
+                    if let Err(error) = self.jobs.store().delete(&old.id).await {
+                        warn!(%error, job_id = %old.id, "Could not forget a finished folder build");
+                    }
+                }
+                let requested = serde_json::to_value(&request)?;
+                self.jobs
+                    .submit(&NewJob {
+                        kind: build::FOLDER_INDEX.into(),
+                        subject_id: Some(subject),
+                        operation_id: uuid::Uuid::new_v4().to_string(),
+                        payload_hash: request.root.clone(),
+                        requested,
+                        progress_total: 100,
+                        message: "Queued".into(),
+                    })
+                    .await?
+            }
+        };
+        *self.first.lock() = Some(job.id.clone());
+        self.jobs.dispatch(&job.id);
+        for other in self.live_builds().await? {
+            if other.id != job.id {
+                self.jobs.requeue(&other.id);
+            }
+        }
+        Ok(job)
+    }
+
+    /// Cancels a build and waits for its worker to let go of the index.
+    async fn stop_build(&self, id: &str) {
+        if let Err(error) = self.jobs.cancel(id).await {
+            warn!(%error, job_id = id, "Could not cancel a folder build");
+        }
+        self.jobs.finished(id).await;
+    }
+
+    /// Cancels every build over the index rooted at `index_root`, forgets
+    /// them, and removes its directory. Nothing may hold the index after.
+    async fn forget_index(&self, index_root: &Path, dir: &Path) -> Result<()> {
+        let builds = self
+            .jobs
+            .store()
+            .list_for_subject(build::FOLDER_INDEX, &root_string(index_root))
+            .await?;
+        for job in &builds {
+            if !job.status.is_finished() {
+                self.stop_build(&job.id).await;
+            }
+            if let Err(error) = self.jobs.store().delete(&job.id).await {
+                warn!(%error, job_id = %job.id, "Could not forget a folder build");
+            }
+        }
+        remove_dir(dir);
+        Ok(())
+    }
+
+    /// Opens `root`'s index and queues a build of it, ahead of every other,
+    /// closing any other open folder first. Opening the folder that is
+    /// already open changes nothing, unless its index failed: that is the
+    /// retry.
     pub async fn open(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
-        let mut slots = self.slots.lock().await;
-        if let Some(current) = slots.open.as_ref() {
-            // Opening a failed folder again is the retry; any other state of
-            // the same folder is left running.
+        let mut open = self.open.lock().await;
+        if let Some(current) = open.as_ref() {
             let retry = matches!(
                 current.status.get().state,
                 FolderIndexState::Error | FolderIndexState::Unavailable
@@ -342,235 +449,193 @@ impl FolderIndexManager {
                 return Ok(current.status.get());
             }
         }
-        slots.make_way().await;
-        if let Some(previous) = slots.open.take() {
-            previous.shut().await;
+        if let Some(previous) = open.take() {
+            self.close_folder(previous).await;
         }
-        self.open_into(&mut slots.open, scope, false).await
+        let folder = self.open_folder(scope, false).await?;
+        let snapshot = folder.status.get();
+        info!(root = %folder.root.display(), index_root = %snapshot.index_root, "Folder index opened");
+        *open = Some(folder);
+        Ok(snapshot)
     }
 
-    async fn open_into(
-        &self,
-        slot: &mut Option<OpenFolder>,
-        scope: Scope,
-        wipe: bool,
-    ) -> Result<FolderIndexStatusDto> {
+    async fn open_folder(&self, scope: Scope, rebuild: bool) -> Result<OpenFolder> {
         let root = scope.root().to_path_buf();
         let root_text = root_string(&root);
-
         if let Some(reason) = self.refusal(&root) {
             let status = Arc::new(StatusCell::new(
                 FolderIndexStatusDto::new(&root_text, &root_text, FolderIndexState::Refused)
                     .with_message(reason),
-                Arc::clone(&self.emit),
             ));
-            status.announce();
-            let snapshot = status.get();
-            *slot = Some(OpenFolder {
+            self.show(&root, &status);
+            return Ok(OpenFolder {
+                index_root: root.clone(),
                 root,
                 dir: None,
                 prefix: String::new(),
                 status,
-                store: None,
-                engine: Arc::new(RwLock::new(None)),
+                index: None,
                 cancel: CancellationToken::new(),
-                task: None,
+                watching: None,
             });
-            return Ok(snapshot);
         }
 
         let indexes = store::list_indexes(&self.config.base_dir).await;
         let (index_root, dir) = self.choose_index(&root, &indexes);
         let prefix = relative_below(&index_root, &root).unwrap_or_default();
-        if wipe && prefix.is_empty() {
-            remove_dir(&dir);
+        if rebuild && prefix.is_empty() {
+            self.forget_index(&index_root, &dir).await?;
         }
-        let folder = self
-            .start(root, index_root, dir, prefix, wipe, Role::Open)
-            .await?;
-        let snapshot = folder.status.get();
-        info!(root = %folder.root.display(), index_root = %snapshot.index_root, "Folder index opened");
-        *slot = Some(folder);
-        Ok(snapshot)
-    }
-
-    /// Opens the index in `dir` and starts a run over `root` in it.
-    async fn start(
-        &self,
-        root: PathBuf,
-        index_root: PathBuf,
-        dir: PathBuf,
-        prefix: String,
-        wipe: bool,
-        role: Role,
-    ) -> Result<OpenFolder> {
-        let root_text = root_string(&root);
-        let store = Arc::new(FolderStore::open(&dir).await?);
-        if store.meta(store::META_ROOT).await?.is_none() {
-            store
-                .set_meta(store::META_ROOT, &root_string(&index_root))
-                .await?;
-        }
-        // The folders list orders by this; a background run is not an open.
-        if role == Role::Open {
-            store
+        let index = self.acquire(&index_root, &dir).await?;
+        let opened = async {
+            // The folders list orders by this.
+            index
+                .store
                 .set_meta(
                     store::META_LAST_OPENED,
                     &store::next_open_stamp().to_string(),
                 )
                 .await?;
+            index.store.counts(&prefix).await
         }
-        let counts = store.counts(&prefix).await?;
-        let mut initial = FolderIndexStatusDto::new(
-            &root_text,
-            &root_string(&index_root),
+        .await;
+        let counts = match opened {
+            Ok(counts) => counts,
+            Err(error) => {
+                self.release(&index).await;
+                return Err(error);
+            }
+        };
+        let status = Arc::new(StatusCell::new(build::initial_status(
+            &root,
+            &index_root,
             FolderIndexState::Scanning,
-        );
-        initial.files_total = counts.files_total;
-        initial.files_indexed = counts.files_indexed;
-        initial.passages_total = counts.passages_total;
-        initial.passages_embedded = counts.passages_embedded;
-        let status = Arc::new(StatusCell::new(initial, Arc::clone(&self.emit)));
-        status.announce();
+            counts,
+        )));
+        self.show(&root, &status);
 
+        // Watching starts before the build, so a save made during a long
+        // build is picked up after it rather than missed.
         let cancel = crate::shared::runtime::background::cancellation_token().child_token();
-        let engine = Arc::new(RwLock::new(None));
-        let index_scope = Scope::open(&root_string(&index_root))?;
-        let job = FolderJob {
-            embedders: Arc::clone(&self.embedders),
-            store: Arc::clone(&store),
-            dir: dir.clone(),
-            scope: index_scope,
-            walk_root: root.clone(),
-            prefix: prefix.clone(),
-            status: Arc::clone(&status),
-            engine: Arc::clone(&engine),
-            cancel: cancel.clone(),
-            limits: self.config.limits,
-            debounce: self.config.debounce,
-            wipe_prefix: wipe && !prefix.is_empty(),
-            role,
-            manager: Weak::clone(&self.me),
-        };
-        let task = crate::shared::runtime::background::spawn(job.run());
-        Ok(OpenFolder {
-            root,
-            dir: Some(dir),
-            prefix,
-            status,
-            store: Some(store),
-            engine,
-            cancel,
-            task,
-        })
-    }
-
-    /// Closes the open folder's index, if any. A background run goes on.
-    pub async fn close(&self) {
-        if let Some(previous) = self.slots.lock().await.open.take() {
-            previous.shut().await;
-        }
-    }
-
-    /// Looks for a paused folder to resume, off the caller's task.
-    fn hand_over(&self) {
-        if let Some(manager) = self.me.upgrade() {
-            let _ =
-                crate::shared::runtime::background::spawn(
-                    async move { manager.resume_paused().await },
-                );
-        }
-    }
-
-    /// Resumes the most recently opened paused folder in the background,
-    /// when the open folder has settled and no other is running. A folder
-    /// that finishes hands over to the next.
-    async fn resume_paused(&self) {
-        if !self.config.background {
-            return;
-        }
-        let mut slots = self.slots.lock().await;
-        if slots.exhausted || slots.background.as_ref().is_some_and(OpenFolder::running) {
-            return;
-        }
-        let skip = match slots.open.as_ref() {
-            Some(current) if current.running() => return,
-            Some(current) => current.dir.clone(),
-            None => None,
-        };
-        if let Some(finished) = slots.background.take() {
-            finished.shut().await;
-        }
-        let Some((root, dir)) = self.next_paused(skip.as_deref(), &slots.resumed).await else {
-            slots.exhausted = true;
-            return;
-        };
-        slots.resumed.insert(dir.clone());
-        match self
-            .start(
-                root.clone(),
-                root.clone(),
-                dir,
-                String::new(),
-                false,
-                Role::Background,
-            )
-            .await
-        {
-            Ok(folder) => {
-                info!(root = %root.display(), "Folder index resumed in the background");
-                slots.background = Some(folder);
+        let watching = match watcher::watch(&root, self.config.debounce) {
+            Ok((watcher, changes)) => {
+                let task = WatchTask {
+                    manager: Weak::clone(&self.me),
+                    index: Arc::clone(&index),
+                    scope: Scope::open(&root_string(&index_root))?,
+                    walk_root: root.clone(),
+                    prefix: prefix.clone(),
+                    status: Arc::clone(&status),
+                    cancel: cancel.clone(),
+                    limits: self.config.limits,
+                };
+                crate::shared::runtime::background::spawn(task.run(watcher, changes))
             }
             Err(error) => {
-                warn!(%error, root = %root.display(), "Could not resume a paused folder index");
-                drop(slots);
-                self.hand_over();
+                warn!(%error, "Folder index runs without a watcher");
+                None
             }
-        }
-    }
-
-    /// The most recently opened folder whose own index stopped part-way,
-    /// as `(root, index directory)`, leaving out `skip` (the open folder's
-    /// index) and those already resumed.
-    async fn next_paused(
-        &self,
-        skip: Option<&Path>,
-        resumed: &HashSet<PathBuf>,
-    ) -> Option<(PathBuf, PathBuf)> {
-        let mut indexes = store::list_indexes(&self.config.base_dir).await;
-        indexes.sort_by_key(|entry| std::cmp::Reverse(entry.last_opened));
-        for entry in indexes {
-            if entry.too_large || skip == Some(entry.dir.as_path()) || resumed.contains(&entry.dir)
-            {
-                continue;
-            }
-            let Some(root) = entry.root else { continue };
-            if !root.is_dir() || self.refusal(&root).is_some() {
-                continue;
-            }
-            if let Ok(Some(snapshot)) = store::inspect(&entry.dir, "").await {
-                let paused = snapshot.too_large.is_none()
-                    && settled_state(&snapshot.counts, snapshot.complete)
-                        == FolderIndexSummaryState::Partial;
-                if paused {
-                    return Some((root, entry.dir));
+        };
+        let folder = OpenFolder {
+            root: root.clone(),
+            index_root: index_root.clone(),
+            dir: Some(dir),
+            prefix: prefix.clone(),
+            status: Arc::clone(&status),
+            index: Some(index),
+            cancel,
+            watching,
+        };
+        match self
+            .ensure_build(&root, &index_root, rebuild && !prefix.is_empty())
+            .await
+        {
+            Ok(job) => {
+                // A build already running has the newest word on its progress.
+                if job.status == JobStatus::Running {
+                    if let Some(activity) = build::activity_status(&job) {
+                        status.replace(activity);
+                    }
                 }
+                Ok(folder)
+            }
+            Err(error) => {
+                self.close_folder(folder).await;
+                Err(error)
             }
         }
-        None
     }
 
-    /// The live status for the open folder or the one finishing in the
-    /// background; for another, what its index on disk holds.
+    fn show(&self, root: &Path, status: &Arc<StatusCell>) {
+        *self.view.lock() = Some(OpenView {
+            root: root.to_path_buf(),
+            status: Arc::clone(status),
+        });
+    }
+
+    /// Stops watching a folder and lets go of its index. Its build goes on.
+    async fn close_folder(&self, mut folder: OpenFolder) {
+        folder.cancel.cancel();
+        if let Some(task) = folder.watching.take() {
+            let _ = task.await;
+        }
+        {
+            let mut view = self.view.lock();
+            if view.as_ref().is_some_and(|view| view.root == folder.root) {
+                *view = None;
+            }
+        }
+        *self.first.lock() = None;
+        if let Some(index) = folder.index.take() {
+            self.release(&index).await;
+        }
+    }
+
+    /// Closes the open folder's index, if any: its watcher and its hold on
+    /// the index. A build of it goes on in the background.
+    pub async fn close(&self) {
+        if let Some(previous) = self.open.lock().await.take() {
+            self.close_folder(previous).await;
+        }
+    }
+
+    /// Queues a full build of the open folder, when it is still `root`.
+    async fn rescan(&self, root: &Path) {
+        let index_root = {
+            let open = self.open.lock().await;
+            match open.as_ref() {
+                Some(current) if current.root == root && current.dir.is_some() => {
+                    current.index_root.clone()
+                }
+                _ => return,
+            }
+        };
+        if let Err(error) = self.ensure_build(root, &index_root, false).await {
+            warn!(%error, root = %root.display(), "Could not queue a folder rescan");
+        }
+    }
+
+    /// The running build of `root`, with the status it last saved.
+    async fn running_status(&self, root: &Path) -> Option<FolderIndexStatusDto> {
+        let text = root_string(root);
+        let builds = self.live_builds().await.ok()?;
+        builds
+            .iter()
+            .filter(|job| job.status == JobStatus::Running)
+            .filter(|job| BuildRequest::of(job).is_some_and(|asked| asked.root == text))
+            .find_map(build::activity_status)
+    }
+
+    /// The live status for the open folder or a running build; for another,
+    /// what its index on disk holds.
     pub async fn status(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
         let root = scope.root().to_path_buf();
-        {
-            let slots = self.slots.lock().await;
-            let live = slots.open.iter().chain(&slots.background);
-            if let Some(current) = live.into_iter().find(|current| current.root == root) {
-                return Ok(current.status.get());
-            }
+        if let Some(view) = self.view().filter(|view| view.root == root) {
+            return Ok(view.status.get());
+        }
+        if let Some(status) = self.running_status(&root).await {
+            return Ok(status);
         }
         let root_text = root_string(&root);
         if let Some(reason) = self.refusal(&root) {
@@ -593,44 +658,54 @@ impl FolderIndexManager {
         let store = FolderStore::open(&dir).await?;
         let counts = store.counts(&prefix).await;
         store.close().await;
-        let counts = counts?;
-        let mut status = FolderIndexStatusDto::new(
-            &root_text,
-            &root_string(&index_root),
+        Ok(build::initial_status(
+            &root,
+            &index_root,
             FolderIndexState::Ready,
-        );
-        status.files_total = counts.files_total;
-        status.files_indexed = counts.files_indexed;
-        status.passages_total = counts.passages_total;
-        status.passages_embedded = counts.passages_embedded;
-        Ok(status)
+            counts?,
+        ))
     }
 
     /// What each of `roots`' index holds, for the folders list: the live
-    /// status for the open folder and the background one, what is on disk
-    /// for the rest. `indexes` is the directory listing, read once for the
-    /// lot.
+    /// status for the open folder and running builds, what is on disk for
+    /// the rest. `indexes` is the directory listing, read once for the lot.
     pub async fn summaries(
         &self,
         roots: &[PathBuf],
         indexes: &[IndexEntry],
     ) -> Vec<FolderIndexSummaryDto> {
-        let live: Vec<_> = {
-            let slots = self.slots.lock().await;
-            slots
-                .open
+        let view = self.view();
+        let running: Vec<(PathBuf, FolderIndexStatusDto)> = match self.live_builds().await {
+            Ok(builds) => builds
                 .iter()
-                .chain(&slots.background)
-                .map(|current| {
-                    let own = current.dir.clone().filter(|_| current.prefix.is_empty());
-                    (current.root.clone(), own, current.status.get())
+                .filter(|job| job.status == JobStatus::Running)
+                .filter_map(|job| {
+                    Some((
+                        PathBuf::from(BuildRequest::of(job)?.root),
+                        build::activity_status(job)?,
+                    ))
                 })
-                .collect()
+                .collect(),
+            Err(error) => {
+                warn!(%error, "Could not read running folder builds");
+                Vec::new()
+            }
         };
         let mut summaries = Vec::with_capacity(roots.len());
         for root in roots {
-            summaries.push(match live.iter().find(|(running, _, _)| running == root) {
-                Some((_, own, status)) => live_summary(status, own.as_deref()),
+            let live = match &view {
+                Some(view) if &view.root == root => Some(view.status.get()),
+                _ => running
+                    .iter()
+                    .find(|(running, _)| running == root)
+                    .map(|(_, status)| status.clone()),
+            };
+            summaries.push(match live {
+                Some(status) => {
+                    let own = (status.index_root == status.root)
+                        .then(|| store::index_dir(&self.config.base_dir, root));
+                    live_summary(&status, own.as_deref())
+                }
                 None => self.summary_on_disk(root, indexes).await,
             });
         }
@@ -677,57 +752,47 @@ impl FolderIndexManager {
         summary
     }
 
-    /// Wipes `root`'s index and starts it over. A sub-folder that reuses a
+    /// Wipes `root`'s index and builds it again. A sub-folder that reuses a
     /// parent's index wipes only its own part of it.
     pub async fn rebuild(&self, root: &str) -> Result<FolderIndexStatusDto> {
         let scope = Scope::open(root)?;
-        let mut slots = self.slots.lock().await;
-        slots.make_way().await;
-        if let Some(previous) = slots.open.take() {
-            previous.shut().await;
+        let mut open = self.open.lock().await;
+        if let Some(previous) = open.take() {
+            self.close_folder(previous).await;
         }
-        self.open_into(&mut slots.open, scope, true).await
+        let folder = self.open_folder(scope, true).await?;
+        let snapshot = folder.status.get();
+        *open = Some(folder);
+        Ok(snapshot)
     }
 
     /// Deletes `root`'s own index directory, closing it first if it is open
-    /// or finishing in the background.
-    /// A folder that reuses an enclosing folder's index has none of its own,
-    /// and the enclosing one is left alone. The folder may be gone from disk
-    /// by now, so a root that no longer resolves is taken as given.
+    /// and stopping its builds. A folder that reuses an enclosing folder's
+    /// index has none of its own, and the enclosing one is left alone. The
+    /// folder may be gone from disk by now, so a root that no longer resolves
+    /// is taken as given.
     pub async fn delete_index(&self, root: &str) -> Result<()> {
         let root = Scope::open(root)
             .map(|scope| scope.root().to_path_buf())
             .unwrap_or_else(|_| PathBuf::from(root.trim()));
         let dir = store::index_dir(&self.config.base_dir, &root);
-        let here = |current: &OpenFolder| {
+        let mut open = self.open.lock().await;
+        if open.as_ref().is_some_and(|current| {
             current.root == root || current.dir.as_deref() == Some(dir.as_path())
-        };
-        let mut slots = self.slots.lock().await;
-        if slots.open.as_ref().is_some_and(here) {
-            if let Some(current) = slots.open.take() {
-                current.shut().await;
+        }) {
+            if let Some(current) = open.take() {
+                self.close_folder(current).await;
             }
         }
-        let background_here = slots.background.as_ref().is_some_and(here);
-        if background_here {
-            if let Some(current) = slots.background.take() {
-                current.shut().await;
-            }
-        }
-        remove_dir(&dir);
-        drop(slots);
-        if background_here {
-            self.hand_over();
-        }
-        Ok(())
+        self.forget_index(&root, &dir).await
     }
 
     /// Search over the open folder, when it is `root` and has anything
     /// indexed. `None` otherwise: refused, too large, no model, or empty.
     pub async fn search_for(&self, root: &Path) -> Option<Arc<FolderSearch>> {
         let search = {
-            let slots = self.slots.lock().await;
-            let current = slots.open.as_ref()?;
+            let open = self.open.lock().await;
+            let current = open.as_ref()?;
             if current.root != root {
                 return None;
             }
@@ -739,9 +804,10 @@ impl FolderIndexManager {
             ) {
                 return None;
             }
-            let engine = current.engine.read().clone()?;
+            let index = current.index.as_ref()?;
+            let engine = index.engine()?;
             FolderSearch::new(
-                Arc::clone(current.store.as_ref()?),
+                Arc::clone(&index.store),
                 engine.vectors,
                 engine.embedder,
                 current.prefix.clone(),
@@ -751,155 +817,55 @@ impl FolderIndexManager {
         search.has_chunks().await.then(|| Arc::new(search))
     }
 
-    /// Waits for the open folder's first run to settle. For tests, which
-    /// otherwise race the background task.
+    /// Waits for the open folder's build to settle. For tests, which
+    /// otherwise race the job.
     #[cfg(test)]
     pub async fn settled(&self) -> FolderIndexStatusDto {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
-            let status = {
-                let slots = self.slots.lock().await;
-                slots.open.as_ref().map(|current| current.status.get())
+            let Some(view) = self.view() else {
+                return FolderIndexStatusDto::new("", "", FolderIndexState::Error)
+                    .with_message("nothing open");
             };
-            match status {
-                Some(status)
-                    if !matches!(
-                        status.state,
-                        FolderIndexState::Scanning | FolderIndexState::Indexing
-                    ) =>
-                {
-                    return status
-                }
-                Some(status) if std::time::Instant::now() > deadline => return status,
-                Some(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-                None => {
-                    return FolderIndexStatusDto::new("", "", FolderIndexState::Error)
-                        .with_message("nothing open")
-                }
+            let status = view.status.get();
+            let first = self.first.lock().clone();
+            let building = match first {
+                Some(id) => self
+                    .jobs
+                    .store()
+                    .get(&id)
+                    .await
+                    .is_ok_and(|job| !job.status.is_finished()),
+                None => false,
+            };
+            let moving = matches!(
+                status.state,
+                FolderIndexState::Scanning | FolderIndexState::Indexing
+            );
+            if (!building && !moving) || std::time::Instant::now() > deadline {
+                return status;
             }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }
-
-    /// The folder finishing in the background, if any. For tests.
-    #[cfg(test)]
-    pub async fn background(&self) -> Option<FolderIndexStatusDto> {
-        let slots = self.slots.lock().await;
-        slots
-            .background
-            .as_ref()
-            .map(|current| current.status.get())
-    }
-
-    /// Lets tests release a blocked embedding only after foreground work has
-    /// cancelled the background run, without assuming how fast either runs.
-    #[cfg(test)]
-    pub async fn background_cancellation_token(&self) -> Option<CancellationToken> {
-        self.slots
-            .lock()
-            .await
-            .background
-            .as_ref()
-            .map(|current| current.cancel.clone())
     }
 }
 
-/// Everything the background task of one open folder owns.
-struct FolderJob {
-    embedders: Arc<dyn EmbedderSource>,
-    store: Arc<FolderStore>,
-    dir: PathBuf,
-    /// The index root; walks start here so its ignore rules apply.
+/// Keeps the open folder's index current while it stays open.
+struct WatchTask {
+    manager: Weak<FolderIndexManager>,
+    index: Arc<LiveIndex>,
+    /// The index root; paths are named relative to it.
     scope: Scope,
-    /// The folder the user picked: what is walked and watched.
+    /// The folder the user picked: what is watched.
     walk_root: PathBuf,
     prefix: String,
     status: Arc<StatusCell>,
-    engine: Arc<RwLock<Option<Engine>>>,
     cancel: CancellationToken,
     limits: Limits,
-    debounce: Duration,
-    /// A rebuild of a sub-folder inside a reused index.
-    wipe_prefix: bool,
-    role: Role,
-    /// Told when a run finishes, so a paused folder can take its turn.
-    manager: Weak<FolderIndexManager>,
 }
 
-impl FolderJob {
-    fn fail(&self, error: &AppError) {
-        warn!(%error, root = %self.walk_root.display(), "Folder index failed");
-        self.status.update(|status| {
-            status.state = FolderIndexState::Error;
-            status.message = Some(error.to_string());
-            status.passages_per_second = None;
-            status.eta_seconds = None;
-        });
-    }
-
-    async fn run(self) {
-        let embedder = tokio::select! {
-            biased;
-            _ = self.cancel.cancelled() => return,
-            embedder = self.embedders.embedder() => embedder,
-        };
-        let Some(embedder) = embedder else {
-            self.status.update(|status| {
-                status.state = FolderIndexState::Unavailable;
-                status.message = Some(
-                    "No embedding model is active, so the folder is searched by text only.".into(),
-                );
-            });
-            return;
-        };
-        let vectors = match self.prepare_vectors(embedder.as_ref()).await {
-            Ok(vectors) => vectors,
-            Err(error) => return self.fail(&error),
-        };
-        *self.engine.write() = Some(Engine {
-            vectors: Arc::clone(&vectors),
-            embedder: Arc::clone(&embedder),
-        });
-        let indexer = Indexer {
-            store: Arc::clone(&self.store),
-            vectors,
-            embedder,
-            scope: self.scope.clone(),
-            prefix: self.prefix.clone(),
-            status: Arc::clone(&self.status),
-            cancel: self.cancel.clone(),
-            limits: self.limits,
-        };
-        if self.wipe_prefix {
-            let wiped = async {
-                let removed = self.store.remove_under(&self.prefix).await?;
-                indexer
-                    .vectors
-                    .remove_embeddings(&removed.iter().map(i64::to_string).collect::<Vec<_>>())
-            };
-            if let Err(error) = wiped.await {
-                return self.fail(&error);
-            }
-        }
-
-        // Watching starts before the walk, so a save made during a long
-        // first run is picked up after it rather than missed.
-        let watching = match self.role {
-            Role::Background => None,
-            Role::Open => match watcher::watch(&self.walk_root, self.debounce) {
-                Ok(watching) => Some(watching),
-                Err(error) => {
-                    warn!(%error, "Folder index runs without a watcher");
-                    None
-                }
-            },
-        };
-
-        if !self.settle_and_hand_over(indexer.run().await) || self.role == Role::Background {
-            return;
-        }
-        let Some((_watcher, mut changes)) = watching else {
-            return;
-        };
+impl WatchTask {
+    async fn run(self, _watcher: FolderWatcher, mut changes: mpsc::UnboundedReceiver<Change>) {
         loop {
             let first = tokio::select! {
                 biased;
@@ -919,76 +885,66 @@ impl FolderJob {
             while let Ok(change) = changes.try_recv() {
                 take(change);
             }
-            let outcome = if rescan || paths.len() > RESCAN_PATHS {
-                indexer.run().await
-            } else {
-                let relative: Vec<String> = paths
-                    .iter()
-                    .filter_map(|path| self.watched_relative(path))
-                    .collect();
-                if relative.is_empty() {
-                    continue;
+            if rescan || paths.len() > RESCAN_PATHS {
+                if let Some(manager) = self.manager.upgrade() {
+                    // Closing the folder waits for this task, holding the
+                    // lock a rescan needs.
+                    tokio::select! {
+                        biased;
+                        _ = self.cancel.cancelled() => return,
+                        _ = manager.rescan(&self.walk_root) => {}
+                    }
                 }
-                indexer.sync_paths(relative).await
+                continue;
+            }
+            let relative: Vec<String> = paths
+                .iter()
+                .filter_map(|path| self.watched_relative(path))
+                .collect();
+            if relative.is_empty() {
+                continue;
+            }
+            // A build over this index holds the turn to write; these paths
+            // are synced once it is done.
+            let writing = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => return,
+                writing = self.index.writing.lock() => writing,
             };
-            // A save may land just as the first run hands over, and the
-            // background waits while the open folder is busy; the next
-            // finished sync tries again.
-            if !self.settle_and_hand_over(outcome) {
-                return;
-            }
-        }
-    }
-
-    /// Settles the run, and when it finished (done, or too large to index)
-    /// lets the manager resume a paused folder. `false` when the task should
-    /// stop.
-    fn settle_and_hand_over(&self, outcome: Result<Outcome>) -> bool {
-        let finished = matches!(outcome, Ok(Outcome::Done | Outcome::TooLarge { .. }));
-        let go_on = self.settle(outcome);
-        if finished {
-            if let Some(manager) = self.manager.upgrade() {
-                manager.hand_over();
-            }
-        }
-        go_on
-    }
-
-    /// Records how a run ended. `false` when the task should stop.
-    fn settle(&self, outcome: Result<Outcome>) -> bool {
-        match outcome {
-            Ok(Outcome::Done) => {
-                self.status.update(|status| {
+            // Nothing has prepared the vectors yet: the build that will
+            // covers these paths too.
+            let Some(engine) = self.index.engine() else {
+                continue;
+            };
+            let indexer = Indexer {
+                store: Arc::clone(&self.index.store),
+                vectors: engine.vectors,
+                embedder: engine.embedder,
+                scope: self.scope.clone(),
+                prefix: self.prefix.clone(),
+                status: Arc::clone(&self.status),
+                cancel: self.cancel.clone(),
+                limits: self.limits,
+            };
+            let outcome = indexer.sync_paths(relative).await;
+            drop(writing);
+            match outcome {
+                Ok(Outcome::Done) => self.status.update(|status| {
                     status.state = FolderIndexState::Ready;
                     status.message = None;
                     status.passages_per_second = None;
                     status.eta_seconds = None;
-                });
-                true
-            }
-            Ok(Outcome::Cancelled) => {
-                let status = self.status.get();
-                info!(
-                    root = %self.walk_root.display(),
-                    embedded = status.passages_embedded,
-                    total = status.passages_total,
-                    "Folder index paused"
-                );
-                false
-            }
-            Ok(Outcome::TooLarge { count, capped }) => {
-                let message = too_large_message(TooLarge { count, capped }, self.limits.max_files);
-                self.status.update(|status| {
-                    status.state = FolderIndexState::TooLarge;
-                    status.files_total = u32::try_from(count).unwrap_or(u32::MAX);
-                    status.files_indexed = 0;
-                    status.message = Some(message);
-                });
-                false
-            }
-            Err(error) => {
-                self.fail(&error);
-                false
+                }),
+                Ok(Outcome::Cancelled) => return,
+                Ok(Outcome::TooLarge { .. }) => {}
+                Err(error) => {
+                    warn!(%error, root = %self.walk_root.display(), "Folder index update failed");
+                    self.status.update(|status| {
+                        status.state = FolderIndexState::Error;
+                        status.message = Some(error.to_string());
+                    });
+                    return;
+                }
             }
         }
     }
@@ -1001,50 +957,6 @@ impl FolderJob {
         }
         let relative = self.scope.relative_of(path)?;
         (!relative.is_empty()).then_some(relative)
-    }
-
-    /// The vectors file for this embedder. A different identity than the one
-    /// recorded drops every vectors file and marks every file for embedding;
-    /// so does a vectors file that is missing or will not load.
-    async fn prepare_vectors(
-        &self,
-        embedder: &dyn EmbeddingPort,
-    ) -> Result<Arc<USearchVectorIndex>> {
-        let identity = embedder.model_identity();
-        let stored = self.store.meta(store::META_IDENTITY).await?;
-        let path = store::vectors_path(&self.dir, &identity);
-        let keymap = path.with_extension("keymap.json");
-        if stored.as_deref() != Some(identity.as_str()) || !path.exists() || !keymap.exists() {
-            if stored.is_some() {
-                info!(
-                    from = stored.as_deref().unwrap_or_default(),
-                    to = %identity,
-                    "Folder index: embedding model changed; embedding again"
-                );
-            }
-            remove_vector_files(&self.dir);
-            self.store.reset_embedded().await?;
-            self.store.set_meta(store::META_IDENTITY, &identity).await?;
-        }
-        let dimension = embedder.dimension();
-        let load_path = path.clone();
-        let loaded = tokio::task::spawn_blocking(move || {
-            USearchVectorIndex::open_or_create(dimension, load_path)
-        })
-        .await
-        .map_err(|error| {
-            AppError::InternalError(format!("Loading folder vectors failed: {error}"))
-        })?;
-        let index = match loaded {
-            Ok(index) => index,
-            Err(error) => {
-                warn!(%error, "Folder index: vectors file unreadable; embedding again");
-                remove_vector_files(&self.dir);
-                self.store.reset_embedded().await?;
-                USearchVectorIndex::open_or_create(dimension, path)?
-            }
-        };
-        Ok(Arc::new(index.with_coalesced_saves()))
     }
 }
 
@@ -1059,21 +971,4 @@ pub fn group_digits(value: usize) -> String {
         out.push(digit);
     }
     out
-}
-
-static MANAGER: OnceLock<Arc<FolderIndexManager>> = OnceLock::new();
-
-/// The app's manager, installed by the first index command.
-pub fn global() -> Option<Arc<FolderIndexManager>> {
-    MANAGER.get().cloned()
-}
-
-/// Installs the app's manager unless one already is; returns whichever won.
-pub fn install(manager: impl FnOnce() -> Arc<FolderIndexManager>) -> Arc<FolderIndexManager> {
-    Arc::clone(MANAGER.get_or_init(manager))
-}
-
-/// Search over `root` when it is the open folder and has an index.
-pub async fn search_for_root(root: &Path) -> Option<Arc<FolderSearch>> {
-    global()?.search_for(root).await
 }

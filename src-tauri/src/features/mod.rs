@@ -27,6 +27,7 @@ pub mod health;
 pub mod huggingface;
 pub mod indexing;
 pub mod initialization;
+pub mod jobs;
 pub mod llm;
 pub mod mentions;
 pub mod metrics;
@@ -45,4 +46,3 @@ pub mod vault;
 pub mod web;
 
 pub mod learning;
-pub mod study;

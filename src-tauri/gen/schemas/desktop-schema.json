@@ -3651,6 +3651,12 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:allow-cancel-download",
+          "markdownDescription": "Enables the cancel_download command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_completed_downloads command without any pre-configured scope.",
           "type": "string",
           "const": "download:allow-clear-completed-downloads",
@@ -3667,6 +3673,12 @@
           "type": "string",
           "const": "download:allow-download-get-status",
           "markdownDescription": "Enables the download_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_download_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:allow-get-download-status",
+          "markdownDescription": "Enables the get_download_status command without any pre-configured scope."
         },
         {
           "description": "Enables the list_downloads command without any pre-configured scope.",
@@ -3705,6 +3717,12 @@
           "markdownDescription": "Enables the start_model_download command without any pre-configured scope."
         },
         {
+          "description": "Denies the cancel_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:deny-cancel-download",
+          "markdownDescription": "Denies the cancel_download command without any pre-configured scope."
+        },
+        {
           "description": "Denies the clear_completed_downloads command without any pre-configured scope.",
           "type": "string",
           "const": "download:deny-clear-completed-downloads",
@@ -3721,6 +3739,12 @@
           "type": "string",
           "const": "download:deny-download-get-status",
           "markdownDescription": "Denies the download_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_download_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "download:deny-get-download-status",
+          "markdownDescription": "Denies the get_download_status command without any pre-configured scope."
         },
         {
           "description": "Denies the list_downloads command without any pre-configured scope.",
@@ -4659,6 +4683,18 @@
           "markdownDescription": "Denies the set_huggingface_token command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "jobs:allow-list-jobs",
+          "markdownDescription": "Enables the list_jobs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "jobs:deny-list-jobs",
+          "markdownDescription": "Denies the list_jobs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the accept_learning_card_draft command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-accept-learning-card-draft",
@@ -4803,6 +4839,12 @@
           "markdownDescription": "Enables the delete_learning_source command without any pre-configured scope."
         },
         {
+          "description": "Enables the delete_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-delete-study-deck",
+          "markdownDescription": "Enables the delete_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Enables the discard_learning_card_draft command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-discard-learning-card-draft",
@@ -4839,6 +4881,12 @@
           "markdownDescription": "Enables the finish_learning_simulation command without any pre-configured scope."
         },
         {
+          "description": "Enables the generate_conversation_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-generate-conversation-study-deck",
+          "markdownDescription": "Enables the generate_conversation_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Enables the generate_learning_card_drafts command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-generate-learning-card-drafts",
@@ -4855,6 +4903,12 @@
           "type": "string",
           "const": "learning:allow-generate-learning-program",
           "markdownDescription": "Enables the generate_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-generate-study-deck",
+          "markdownDescription": "Enables the generate_study_deck command without any pre-configured scope."
         },
         {
           "description": "Enables the get_learning_assessment_form command without any pre-configured scope.",
@@ -4971,6 +5025,12 @@
           "markdownDescription": "Enables the get_learning_source_workspace command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-get-study-deck",
+          "markdownDescription": "Enables the get_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Enables the interrupt_learning_assessment_form command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-interrupt-learning-assessment-form",
@@ -4981,6 +5041,12 @@
           "type": "string",
           "const": "learning:allow-list-learning-programs",
           "markdownDescription": "Enables the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_study_decks command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-list-study-decks",
+          "markdownDescription": "Enables the list_study_decks command without any pre-configured scope."
         },
         {
           "description": "Enables the match_learning_source_selector command without any pre-configured scope.",
@@ -5071,6 +5137,12 @@
           "type": "string",
           "const": "learning:allow-review-learning-recall-card",
           "markdownDescription": "Enables the review_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the review_study_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-review-study-card",
+          "markdownDescription": "Enables the review_study_card command without any pre-configured scope."
         },
         {
           "description": "Enables the save_learning_assessment_response command without any pre-configured scope.",
@@ -5203,6 +5275,12 @@
           "type": "string",
           "const": "learning:allow-update-learning-source-policy",
           "markdownDescription": "Enables the update_learning_source_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_study_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-update-study-card",
+          "markdownDescription": "Enables the update_study_card command without any pre-configured scope."
         },
         {
           "description": "Denies the accept_learning_card_draft command without any pre-configured scope.",
@@ -5349,6 +5427,12 @@
           "markdownDescription": "Denies the delete_learning_source command without any pre-configured scope."
         },
         {
+          "description": "Denies the delete_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-delete-study-deck",
+          "markdownDescription": "Denies the delete_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Denies the discard_learning_card_draft command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-discard-learning-card-draft",
@@ -5385,6 +5469,12 @@
           "markdownDescription": "Denies the finish_learning_simulation command without any pre-configured scope."
         },
         {
+          "description": "Denies the generate_conversation_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-generate-conversation-study-deck",
+          "markdownDescription": "Denies the generate_conversation_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Denies the generate_learning_card_drafts command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-generate-learning-card-drafts",
@@ -5401,6 +5491,12 @@
           "type": "string",
           "const": "learning:deny-generate-learning-program",
           "markdownDescription": "Denies the generate_learning_program command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-generate-study-deck",
+          "markdownDescription": "Denies the generate_study_deck command without any pre-configured scope."
         },
         {
           "description": "Denies the get_learning_assessment_form command without any pre-configured scope.",
@@ -5517,6 +5613,12 @@
           "markdownDescription": "Denies the get_learning_source_workspace command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_study_deck command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-get-study-deck",
+          "markdownDescription": "Denies the get_study_deck command without any pre-configured scope."
+        },
+        {
           "description": "Denies the interrupt_learning_assessment_form command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-interrupt-learning-assessment-form",
@@ -5527,6 +5629,12 @@
           "type": "string",
           "const": "learning:deny-list-learning-programs",
           "markdownDescription": "Denies the list_learning_programs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_study_decks command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-list-study-decks",
+          "markdownDescription": "Denies the list_study_decks command without any pre-configured scope."
         },
         {
           "description": "Denies the match_learning_source_selector command without any pre-configured scope.",
@@ -5617,6 +5725,12 @@
           "type": "string",
           "const": "learning:deny-review-learning-recall-card",
           "markdownDescription": "Denies the review_learning_recall_card command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the review_study_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-review-study-card",
+          "markdownDescription": "Denies the review_study_card command without any pre-configured scope."
         },
         {
           "description": "Denies the save_learning_assessment_response command without any pre-configured scope.",
@@ -5749,6 +5863,12 @@
           "type": "string",
           "const": "learning:deny-update-learning-source-policy",
           "markdownDescription": "Denies the update_learning_source_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_study_card command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-update-study-card",
+          "markdownDescription": "Denies the update_study_card command without any pre-configured scope."
         },
         {
           "description": "Enables the create_mention command without any pre-configured scope.",
@@ -6183,10 +6303,22 @@
           "markdownDescription": "Denies the warm_up_active_utility_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_llm_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:allow-check-llm-health",
+          "markdownDescription": "Enables the check_llm_health command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_llm_health_wrapper command without any pre-configured scope.",
           "type": "string",
           "const": "qa:allow-check-llm-health-wrapper",
           "markdownDescription": "Enables the check_llm_health_wrapper command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_chat_starters command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:allow-generate-chat-starters",
+          "markdownDescription": "Enables the generate_chat_starters command without any pre-configured scope."
         },
         {
           "description": "Enables the generate_chat_starters_wrapper command without any pre-configured scope.",
@@ -6195,10 +6327,22 @@
           "markdownDescription": "Enables the generate_chat_starters_wrapper command without any pre-configured scope."
         },
         {
+          "description": "Denies the check_llm_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:deny-check-llm-health",
+          "markdownDescription": "Denies the check_llm_health command without any pre-configured scope."
+        },
+        {
           "description": "Denies the check_llm_health_wrapper command without any pre-configured scope.",
           "type": "string",
           "const": "qa:deny-check-llm-health-wrapper",
           "markdownDescription": "Denies the check_llm_health_wrapper command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_chat_starters command without any pre-configured scope.",
+          "type": "string",
+          "const": "qa:deny-generate-chat-starters",
+          "markdownDescription": "Denies the generate_chat_starters command without any pre-configured scope."
         },
         {
           "description": "Denies the generate_chat_starters_wrapper command without any pre-configured scope.",
@@ -6607,90 +6751,6 @@
           "type": "string",
           "const": "shell:deny-stdin-write",
           "markdownDescription": "Denies the stdin_write command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the delete_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-delete-study-deck",
-          "markdownDescription": "Enables the delete_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the generate_conversation_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-generate-conversation-study-deck",
-          "markdownDescription": "Enables the generate_conversation_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the generate_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-generate-study-deck",
-          "markdownDescription": "Enables the generate_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-get-study-deck",
-          "markdownDescription": "Enables the get_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the list_study_decks command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-list-study-decks",
-          "markdownDescription": "Enables the list_study_decks command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the review_study_card command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-review-study-card",
-          "markdownDescription": "Enables the review_study_card command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the update_study_card command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:allow-update-study-card",
-          "markdownDescription": "Enables the update_study_card command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the delete_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-delete-study-deck",
-          "markdownDescription": "Denies the delete_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the generate_conversation_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-generate-conversation-study-deck",
-          "markdownDescription": "Denies the generate_conversation_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the generate_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-generate-study-deck",
-          "markdownDescription": "Denies the generate_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_study_deck command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-get-study-deck",
-          "markdownDescription": "Denies the get_study_deck command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the list_study_decks command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-list-study-decks",
-          "markdownDescription": "Denies the list_study_decks command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the review_study_card command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-review-study-card",
-          "markdownDescription": "Denies the review_study_card command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the update_study_card command without any pre-configured scope.",
-          "type": "string",
-          "const": "study:deny-update-study-card",
-          "markdownDescription": "Denies the update_study_card command without any pre-configured scope."
         },
         {
           "description": "Enables the apply_tags command without any pre-configured scope.",

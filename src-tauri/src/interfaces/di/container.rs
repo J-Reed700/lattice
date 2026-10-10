@@ -116,6 +116,12 @@ pub struct Container {
     /// plugin setup; shutdown closes and drains it before the database closes.
     pub(crate) jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
 
+    /// The Explorer's folder indexes: the open folder and its builds, which
+    /// run as jobs. Built with the app handle, which it loads the embedder
+    /// through; `None` in test fixtures.
+    pub(crate) folder_index:
+        Option<Arc<crate::features::explorer::index::manager::FolderIndexManager>>,
+
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
     /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
@@ -307,6 +313,7 @@ impl Container {
             vault_write_suppression,
             settings_side_effects,
             jobs,
+            folder_index: None,
             app_handle: None,
         })
     }
@@ -331,6 +338,18 @@ impl Container {
             }
         });
 
+        self.folder_index = Some(
+            crate::features::explorer::index::manager::FolderIndexManager::new(
+                crate::features::explorer::index::manager::ManagerConfig::for_data_dir(
+                    self.core.data_dir(),
+                ),
+                Arc::new(crate::features::explorer::plugin::AppEmbedders::new(
+                    handle.clone(),
+                )),
+                Arc::clone(&self.jobs),
+            ),
+        );
+
         self.app_handle = Some(handle);
         self
     }
@@ -341,6 +360,12 @@ impl Container {
 
     pub fn jobs(&self) -> &Arc<crate::shared::runtime::jobs::JobRuntime> {
         &self.jobs
+    }
+
+    pub fn folder_index(
+        &self,
+    ) -> Option<&Arc<crate::features::explorer::index::manager::FolderIndexManager>> {
+        self.folder_index.as_ref()
     }
 
     pub fn db_conn(

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+import { useJobStatus } from '@/features/jobs/api';
 import type { FileIndexingOptionsDto } from '@/lib/bindings';
 
 import { VaultAPI } from '../lib/api';
@@ -18,6 +19,9 @@ export interface IndexingOperation {
   error?: string;
   items?: BatchJobItem[];
 }
+
+/** How soon a status read that failed is tried again. */
+const STATUS_RETRY_MS = 1000;
 
 /** The statuses the backend stops writing to an item. */
 const TERMINAL_ITEM_STATUSES = ['completed', 'failed', 'cancelled'];
@@ -58,21 +62,93 @@ export function useIndexing(): UseIndexingReturn {
     []
   );
 
-  // Poll all active operations without overlapping status requests.
-  useEffect(() => {
-    let mounted = true;
-    let polling = false;
+  const mounted = useRef(true);
+  const inFlight = useRef(new Set<string>());
+  const again = useRef(new Set<string>());
+  const retryTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-    // Reattach to imports after navigation or an app restart.
+  /**
+   * Reads one import's status and files. One request per import at a time; a
+   * change reported meanwhile reads it again after. A failed read is tried
+   * again shortly, since no further report may come.
+   */
+  const refresh = useCallback(async (id: string): Promise<void> => {
+    if (inFlight.current.has(id)) {
+      again.current.add(id);
+      return;
+    }
+    inFlight.current.add(id);
+    const retryLater = (message: string) => {
+      updateOperations((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(id);
+        if (!existing) return next;
+        next.set(id, { ...existing, error: `Could not refresh import status: ${message}. Checking again…` });
+        return next;
+      });
+      clearTimeout(retryTimers.current.get(id));
+      retryTimers.current.set(id, setTimeout(() => {
+        retryTimers.current.delete(id);
+        if (mounted.current && operationsRef.current.has(id)) void refresh(id);
+      }, STATUS_RETRY_MS));
+    };
+    try {
+      const result = await VaultAPI.getBatchJobStatus(id);
+      if (!mounted.current) return;
+      if (!result.ok) {
+        retryLater(result.error);
+        return;
+      }
+      updateOperations((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(id);
+        const completedItems = result.data.completedItems ?? result.data.completed_items ?? 0;
+        const failedItems = result.data.failedItems ?? result.data.failed_items ?? 0;
+        const currentItem = result.data.items?.find((item) =>
+          ['running', 'processing'].includes(item.status.toLowerCase())
+        );
+        next.set(id, {
+          id,
+          totalFiles: result.data.totalItems ?? result.data.total_items ?? 0,
+          processedFiles: completedItems + failedItems,
+          successfulFiles: completedItems,
+          failedFiles: failedItems,
+          status: mapBatchStatus(result.data),
+          error: undefined,
+          items: result.data.items || existing?.items,
+          currentFile: currentItem?.target || currentItem?.url,
+        });
+        return next;
+      });
+    } catch (error) {
+      if (mounted.current) retryLater(error instanceof Error ? error.message : 'Failed to fetch batch status');
+    } finally {
+      inFlight.current.delete(id);
+      if (again.current.delete(id) && mounted.current) void refresh(id);
+    }
+  }, [updateOperations]);
+
+  // Each file an import settles is reported as a job status; read the import
+  // again when one of ours moves.
+  useJobStatus((job) => {
+    if (operationsRef.current.has(job.id)) void refresh(job.id);
+  });
+
+  // Reattach to imports after navigation or an app restart.
+  useEffect(() => {
+    mounted.current = true;
+    const timers = retryTimers.current;
     void listAllBatchJobs().then((jobs) => {
-      if (!mounted) return;
+      if (!mounted.current) return;
       setHistoryError(undefined);
+      const reattached: string[] = [];
       updateOperations((prev) => {
         const next = new Map(prev);
         for (const job of jobs) {
           if (job.jobType !== 'file_import' || (!['pending', 'running'].includes(job.status) && job.failedItems === 0)) continue;
           const id = job.jobId || job.id;
           if (next.has(id)) continue;
+          reattached.push(id);
           next.set(id, {
             id, totalFiles: job.totalItems,
             successfulFiles: job.completedItems, failedFiles: job.failedItems,
@@ -81,98 +157,16 @@ export function useIndexing(): UseIndexingReturn {
         }
         return next;
       });
+      for (const id of reattached) void refresh(id);
     }).catch((error: unknown) => {
-      if (mounted) setHistoryError(error instanceof Error ? error.message : 'Import status is unavailable');
+      if (mounted.current) setHistoryError(error instanceof Error ? error.message : 'Import status is unavailable');
     });
-
-    const poll = async () => {
-      if (polling) return;
-      polling = true;
-      const activeOperations = Array.from(operationsRef.current.values()).filter(
-        (op) =>
-          op.status === 'pending' ||
-          op.status === 'processing' ||
-          (op.status === 'cancelled' && hasUnsettledItems(op))
-      );
-
-      for (const operation of activeOperations) {
-        try {
-          const result = await VaultAPI.getBatchJobStatus(operation.id);
-          if (!mounted) continue;
-
-          if (!result.ok) {
-            updateOperations((prev) => {
-              const next = new Map(prev);
-              const existing = next.get(operation.id);
-              if (!existing) return next;
-
-              next.set(operation.id, {
-                ...existing,
-                error: `Could not refresh import status: ${result.error}. Checking again…`,
-              });
-              return next;
-            });
-            continue;
-          }
-
-          updateOperations((prev) => {
-            const next = new Map(prev);
-            const existing = next.get(operation.id);
-            const status = mapBatchStatus(result.data);
-            const completedItems = result.data.completedItems ?? result.data.completed_items ?? 0;
-            const failedItems = result.data.failedItems ?? result.data.failed_items ?? 0;
-            const totalItems = result.data.totalItems ?? result.data.total_items ?? 0;
-            const processedFiles = completedItems + failedItems;
-            const currentItem = result.data.items?.find((item) =>
-              ['running', 'processing'].includes(item.status.toLowerCase())
-            );
-
-            next.set(operation.id, {
-              id: operation.id,
-              totalFiles: totalItems,
-              processedFiles,
-              successfulFiles: completedItems,
-              failedFiles: failedItems,
-              status,
-              error: undefined,
-              items: result.data.items || existing?.items,
-              currentFile: currentItem?.target || currentItem?.url,
-            });
-            return next;
-          });
-        } catch (error) {
-          if (!mounted) continue;
-
-          const errorMessage =
-            error instanceof Error ? error.message : 'Failed to fetch batch status';
-
-          updateOperations((prev) => {
-            const next = new Map(prev);
-            const existing = next.get(operation.id);
-            if (!existing) return next;
-
-            next.set(operation.id, {
-              ...existing,
-              error: `Could not refresh import status: ${errorMessage}. Checking again…`,
-            });
-            return next;
-          });
-        }
-      }
-      polling = false;
-    };
-
-    const interval = setInterval(() => {
-      void poll();
-    }, 1000);
-
-    void poll();
-
     return () => {
-      mounted = false;
-      clearInterval(interval);
+      mounted.current = false;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
     };
-  }, [updateOperations]);
+  }, [refresh, updateOperations]);
 
   const startBatchImport = useCallback(async (filePaths: string[], spaceId?: string, indexing?: FileIndexingOptionsDto): Promise<ApiResult<string>> => {
     const result = await VaultAPI.batchFileImport(filePaths, spaceId, indexing);
@@ -190,17 +184,18 @@ export function useIndexing(): UseIndexingReturn {
         });
         return next;
       });
+      void refresh(result.data);
     }
 
     return result;
-  }, [updateOperations]);
+  }, [refresh, updateOperations]);
 
   const cancelBatchImport = useCallback(async (id: string): Promise<ApiResult<number>> => {
     const result = await VaultAPI.cancelBatchJob(id);
     if (result.ok) {
       // The job is cancelled, but each file's outcome stays whatever the
       // backend last reported: the file in flight may still finish indexing,
-      // and polling continues until every item has settled.
+      // and the job's final report reads it again once the worker stops.
       updateOperations((prev) => {
         const next = new Map(prev);
         const operation = next.get(id);

@@ -40,13 +40,12 @@ use crate::application::ports::{
     UnitOfWork as UnitOfWorkTrait, UnitOfWorkFactory as UnitOfWorkFactoryTrait,
 };
 use crate::application::ports::{
-    BatchJobRepositoryPort, ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
+    ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 use crate::domain::repositories::{SearchRepository, SystemRepository};
 use crate::shared::error::AppError;
 use crate::shared::error::Result;
 
-use super::batch_job::SqliteBatchJobRepositoryTx;
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
 use super::model_file::SqliteModelFileRepositoryTx;
@@ -132,17 +131,6 @@ impl UnitOfWorkTrait for SqliteUnitOfWork {
             .ok_or_else(|| AppError::InvalidState("Transaction already consumed".to_string()))?
             .clone();
         Ok(Box::new(SqliteSearchRepositoryTx::new(tx)))
-    }
-
-    fn batch_job_repository(&self) -> Result<Box<dyn BatchJobRepositoryPort + Send + '_>> {
-        let tx = self
-            .transaction
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidState("Transaction already consumed".to_string()))?
-            .clone();
-        let repository: Box<dyn BatchJobRepositoryPort + Send + '_> =
-            Box::new(SqliteBatchJobRepositoryTx::new(tx));
-        Ok(repository)
     }
 
     fn system_repository(&self) -> Result<Box<dyn SystemRepository + Send + '_>> {

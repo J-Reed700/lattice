@@ -11,6 +11,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 const SUSPENDED: &str = "Saved; resumes when the app opens";
 const RESUMING: &str = "Resuming saved work";
 const STOPPED_BY_RESTART: &str = "The app closed before this job finished.";
+const STILL_RUNNING: &str = "Cancel this job before deleting it.";
 const ERROR_LIMIT: usize = 2000;
 
 fn db(error: sqlx::Error) -> AppError {
@@ -154,6 +155,71 @@ impl JobStore {
             .iter()
             .map(parse)
             .collect()
+    }
+
+    /// Pending and running jobs of a kind, oldest first.
+    pub async fn live(&self, kind: &str) -> Result<Vec<JobRecord>> {
+        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,id")
+            .bind(kind)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(parse)
+            .collect()
+    }
+
+    /// Jobs of the given kinds, newest first, leaving out attempts that a
+    /// later retry superseded.
+    pub async fn list_latest(
+        &self,
+        kinds: &[&str],
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<JobRecord>> {
+        let kinds =
+            serde_json::to_string(kinds).map_err(|e| AppError::Serialization(e.to_string()))?;
+        sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,id LIMIT ? OFFSET ?")
+            .bind(kinds)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(parse)
+            .collect()
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.immediate().await?;
+        Self::delete_in(&mut tx, id).await?;
+        tx.commit().await.map_err(db)
+    }
+
+    /// Deletes a finished job with every earlier attempt it retried, and their
+    /// events and checkpoints. A job still pending or running is refused.
+    pub async fn delete_in(connection: &mut SqliteConnection, id: &str) -> Result<()> {
+        let statuses: Vec<String> = sqlx::query_scalar("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) SELECT status FROM jobs WHERE id IN (SELECT id FROM chain)")
+        .bind(id)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?;
+        if statuses.is_empty() {
+            return Err(not_found());
+        }
+        if statuses
+            .iter()
+            .any(|status| matches!(status.as_str(), "pending" | "running"))
+        {
+            return Err(AppError::InvalidState(STILL_RUNNING.into()));
+        }
+        sqlx::query("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) DELETE FROM jobs WHERE id IN (SELECT id FROM chain)")
+        .bind(id)
+        .execute(connection)
+        .await
+        .map_err(db)?;
+        Ok(())
     }
 
     /// Pending jobs of a kind whose retry time, if any, has passed. Jobs are
@@ -586,6 +652,15 @@ impl JobStore {
         .await?;
         tx.commit().await.map_err(db)?;
         Ok(true)
+    }
+
+    /// Returns a running job to pending, recording why, so it runs again at
+    /// its next delivery.
+    pub(super) async fn requeue(&self, id: &str, message: &str) -> Result<bool> {
+        let mut tx = self.immediate().await?;
+        let requeued = Self::suspend_in(&mut tx, id, message).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(requeued)
     }
 
     /// Returns a running job to pending so it resumes at the next start.

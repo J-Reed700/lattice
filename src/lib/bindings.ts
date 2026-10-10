@@ -190,62 +190,6 @@ async explorerFolderRemove(root: string, deleteThreads: boolean) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|list_study_decks") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getStudyDeck(id: string) : Promise<Result<StudyDeckDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|get_study_deck", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async generateStudyDeck(request: GenerateStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|generate_study_deck", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async generateConversationStudyDeck(request: GenerateConversationStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|generate_conversation_study_deck", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<StudyCardDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|review_study_card", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|update_study_card", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:study|delete_study_deck", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getLearningPlan(id: string) : Promise<Result<LearningPlanDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_plan", { id }) };
@@ -702,14 +646,6 @@ async decideLearningRecallDuplicate(request: DecideLearningRecallDuplicateReques
     else return { status: "error", error: e  as any };
 }
 },
-async changeLearningRecallScheduler(request: ChangeLearningRecallSchedulerRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_recall_scheduler", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async reviewLearningRecallCard(request: ReviewLearningRecallCardRequestDto) : Promise<Result<LearningRecallWorkspaceDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_learning_recall_card", { request }) };
@@ -969,6 +905,62 @@ async finishLearningSimulation(request: FinishLearningSimulationRequestDto) : Pr
     else return { status: "error", error: e  as any };
 }
 },
+async listStudyDecks() : Promise<Result<StudyDeckSummaryDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_study_decks") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getStudyDeck(id: string) : Promise<Result<StudyDeckDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_study_deck", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateStudyDeck(request: GenerateStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|generate_study_deck", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateConversationStudyDeck(request: GenerateConversationStudyDeckRequestDto) : Promise<Result<StudyDeckDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|generate_conversation_study_deck", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<StudyCardDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_study_card", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_study_card", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|delete_study_deck", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Download a model by ID
  *
@@ -1004,17 +996,6 @@ async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
 async downloadDefaultEmbeddingModel() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|download_default_embedding_model") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Cancel an in-progress download
- */
-async cancelDownload(downloadId: string) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|cancel_download", { downloadId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1058,17 +1039,6 @@ async listDownloadedModels() : Promise<Result<DownloadedModelResponse[], ApiErro
 async isModelAlreadyDownloaded(modelId: string) : Promise<Result<boolean, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|is_model_already_downloaded", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get download status for a specific download
- */
-async getDownloadStatus(downloadId: string) : Promise<Result<DownloadStatus, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|get_download_status", { downloadId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1845,9 +1815,9 @@ async getFunctionStats() : Promise<Result<RegistryStats, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
+async checkLlmHealth() : Promise<Result<LLMHealthStatusDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|check_llm_health_wrapper") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|check_llm_health") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1857,9 +1827,9 @@ async checkLlmHealthWrapper() : Promise<Result<LLMHealthStatusDto, ApiError>> {
  * Corpus-derived opening questions for the Chat empty state, drawn from the
  * documents one space can see. A blank `space_id` means General.
  */
-async generateChatStartersWrapper(spaceId: string | null) : Promise<Result<ChatStartersDto, ApiError>> {
+async generateChatStarters(spaceId: string | null) : Promise<Result<ChatStartersDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|generate_chat_starters_wrapper", { spaceId }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:qa|generate_chat_starters", { spaceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3252,9 +3222,25 @@ async deleteBatchJob(jobId: string) : Promise<Result<DeleteBatchJobResponseDto, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Retries an import's failed items as a new attempt that takes over its
+ * items; `item_id` retries one, optionally from `replacement_path`.
+ */
 async retryFailedItems(jobId: string, itemId: string | null, replacementPath: string | null) : Promise<Result<RetryFailedItemsResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:batch|retry_failed_items", { jobId, itemId, replacementPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The pending and running jobs of `kinds`, oldest first. Each later change
+ * to one, finishing included, arrives on `jobs://status`.
+ */
+async listJobs(kinds: string[]) : Promise<Result<JobDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:jobs|list_jobs", { kinds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3295,22 +3281,6 @@ async pluginExportMarkdown(request: ExportMarkdownRequestDto) : Promise<Result<E
 async pluginExportJson(request: ExportJsonRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_json", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async pluginExportCsv(request: ExportCsvRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_csv", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async pluginExportHtml(request: ExportHtmlRequestDto) : Promise<Result<ExportResultDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:backup|plugin_export_html", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3514,9 +3484,9 @@ async resumeDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async downloadCancel(id: string) : Promise<Result<null, string>> {
+async cancelDownload(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:download|download_cancel", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|cancel_download", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3546,9 +3516,9 @@ async clearCompletedDownloads() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async downloadGetStatus(id: string) : Promise<Result<DownloadStatusResponse | null, string>> {
+async getDownloadStatus(id: string) : Promise<Result<DownloadStatusResponse | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:download|download_get_status", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:download|get_download_status", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3854,14 +3824,6 @@ async addDocumentsToCustomCollection(collectionId: string, documentIds: string[]
 async removeDocumentsFromCustomCollection(collectionId: string, documentIds: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|remove_documents_from_custom_collection", { collectionId, documentIds }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async clusterVaultDebug() : Promise<Result<string, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:corpus-shape|cluster_vault_debug") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4528,7 +4490,6 @@ export type CaptureReferenceRequestDto = { conversationId: string; conversationT
 inboxTitle: string; preferredNoteId: string | null; addSnapshot: boolean }
 export type CaptureReferenceResultDto = { noteId: string; noteTitle: string; linkedDocumentCount: number; snapshotId: string | null }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
-export type ChangeLearningRecallSchedulerRequestDto = { operationId: string; programId: string; cardId: string; expectedReviewCount: number; schedulerVersion: LearningRecallSchedulerVersion }
 /**
  * Chat response with conversation metadata
  */
@@ -5324,7 +5285,6 @@ export type DomainError =
  */
 { ConstraintViolation: { constraint: string } }
 export type DownloadModelResponse = { download_id: string; status: string }
-export type DownloadStatus = { id: string; status: string; progress: number; error: string | null }
 export type DownloadStatusResponse = { id: string; url: string; destination: string; state: string; bytes_downloaded: number; total_bytes: number | null; bytes_per_second: number; percentage: number | null; eta_seconds: number | null; error_message: string | null; retry_count: number; created_at: string; started_at: string | null; completed_at: string | null; model_name: string | null; model_id: string | null }
 /**
  * Response for get_models_with_metadata command
@@ -5644,8 +5604,6 @@ export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
  * A bound was hit (results, files, bytes or time), so there may be more.
  */
 truncated: boolean; filesScanned: number }
-export type ExportCsvRequestDto = { outputPath: string }
-export type ExportHtmlRequestDto = { outputDir: string }
 export type ExportJsonRequestDto = {
 /**
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
@@ -6080,6 +6038,11 @@ indexedDocuments: number;
  */
 totalChunks: number }
 export type IndexingStatus = { active: boolean; progress: number }
+/**
+ * A job as the renderer sees it on [`STATUS_EVENT`].
+ */
+export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
 export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
 /**
@@ -6130,12 +6093,7 @@ ragPromptTemplate: string;
  * Prompt template when no relevant context is found.
  * Supports placeholders: {question}
  */
-noContextPromptTemplate: string;
-/**
- * Prompt template used after tool results are appended to context.
- * Supports placeholders: {question}, {previous_response}
- */
-toolFollowupPromptTemplate: string }
+noContextPromptTemplate: string }
 /**
  * LLM provider selection.
  */
@@ -6368,7 +6326,7 @@ export type LearningLabRuntimeCapability = { engine: LearningContainerEngine; av
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; questions: LearningQuestionDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
-export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number; schedulerVersion: string }
+export type LearningMemoryDto = { programId: string; journalId: string | null; lessonNotes: LearningLessonNoteDto[]; studyDeck: StudyDeckDto | null; drafts: LearningCardDraftDto[]; acceptedCards: LearningCardOriginDto[]; dueCount: number }
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
 export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
@@ -6464,9 +6422,8 @@ options: string[];
 correctOptionIndex: number | null; language: string | null; clozeDeletions: string[] }
 export type LearningRecallDuplicateStatus = "pending" | "confirmed" | "dismissed"
 export type LearningRecallDuplicateSuggestionDto = { id: string; cardId: string; possibleDuplicateCardId: string; reason: string; similarity: number | null; status: LearningRecallDuplicateStatus; createdAt: number; decidedAt: number | null }
-export type LearningRecallSchedulerStateDto = { schedulerVersion: LearningRecallSchedulerVersion; stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
-export type LearningRecallSchedulerVersion = "expanding_v1" | "fsrs_6_v1"
-export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; fsrsAvailable: boolean; schedulerDisclosure: string }
+export type LearningRecallSchedulerStateDto = { stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
+export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; schedulerDisclosure: string }
 export type LearningRubricCriterion = { id: string; title: string; description: string; maxPoints: number }
 export type LearningRuntimePresetDto = { id: LearningRuntimePresetId; name: string; description: string;
 /**
@@ -7223,7 +7180,7 @@ docSupportMultiHitRatioFactor: number; docSupportSingleHitRatioFactor: number; d
  */
 export type RetryFailedItemsResponseDto = {
 /**
- * Job to monitor (file retries reuse the original job).
+ * The retry attempt to follow; it takes over the import's items.
  */
 newJobId: string;
 /**
@@ -7742,7 +7699,7 @@ export type StartLearningPracticeSessionRequestDto = { operationId: string; sess
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
 export type StructureMode = "sections" | "pages"
-export type StudyCardDto = { id: string; format?: StudyCardFormat; schedulerVersion?: StudySchedulerVersion; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
+export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
 /**
  * Every passage cited by the answer. `source` remains the primary passage
  * for compatibility with decks created before multi-citation cards.
@@ -7752,7 +7709,6 @@ export type StudyCardFormat = "multiple_choice" | "question_answer"
 export type StudyDeckDto = { id: string; title: string; focus: string; studyGoal?: string; modelName: string; createdAt: number; cards: StudyCardDto[] }
 export type StudyDeckSummaryDto = { id: string; title: string; focus: string; studyGoal?: string; createdAt: number; cardCount: number; dueCount: number; quizAttempts: number; quizCorrect: number }
 export type StudyRating = "again" | "hard" | "good" | "easy"
-export type StudySchedulerVersion = "expanding_v1" | "fsrs_6_v1"
 export type StudySourceDto = { chunkId: string; documentId: string; fileName: string; filePath: string; excerpt: string;
 /**
  * External web source URL when this citation is not an indexed document.
@@ -7903,7 +7859,7 @@ description: string;
  * - required: list of required parameter names
  */
 input_schema: JsonValue }
-export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmStreamMs: number; toolExecutionMs: number; toolCallCount: number; toolSuccessCount: number; toolFailureCount: number; emptyResponseRetries: number; followupPromptBuildMs: number }
+export type ToolLoopTimingMetrics = { totalMs: number; iterations: number; llmStreamMs: number; toolExecutionMs: number; toolCallCount: number; toolSuccessCount: number; toolFailureCount: number }
 /**
  * Tool output shaping settings (excerpts + truncation).
  */

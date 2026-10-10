@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useExplorerIndexStatusEvents } from '@/features/explorer/api/queries';
 import type { FolderIndexStatus } from '@/stores/explorerStore';
+import { folderBuildFixture } from '@/tests/fixtures/jobs';
 
 import { describeFolderChip, openedAgo } from '../ExplorerFolders';
 import { ExplorerStart } from '../ExplorerStart';
@@ -19,8 +20,10 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   saveSettings: vi.fn(),
   spaces: vi.fn(),
+  apiCall: vi.fn(),
   listeners: new Set<(event: { payload: unknown }) => void>(),
 }));
+vi.mock('@/shared/ipc/transport', () => ({ apiCall: mocks.apiCall }));
 
 vi.mock('@/lib/api', () => {
   const api = {
@@ -150,6 +153,7 @@ describe('Your folders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listeners.clear();
+    mocks.apiCall.mockResolvedValue({ ok: true, data: [] });
     localStorage.clear();
     mocks.list.mockResolvedValue(listed(FOLDERS));
     for (const action of [mocks.rename, mocks.setPinned, mocks.deleteIndex]) action.mockResolvedValue({ ok: true, data: undefined });
@@ -365,9 +369,9 @@ describe('Your folders', () => {
       etaSeconds: 220,
       message: null,
     };
-    act(() => mocks.listeners.forEach((handler) => handler({ payload: event })));
+    act(() => mocks.listeners.forEach((handler) => handler({ payload: folderBuildFixture(event) })));
     await waitFor(() => expect(rows()[0]).toHaveTextContent('Indexing 60% · ~4 min'));
-    act(() => mocks.listeners.forEach((handler) => handler({ payload: { ...event, state: 'ready', passagesEmbedded: 10958, etaSeconds: null } })));
+    act(() => mocks.listeners.forEach((handler) => handler({ payload: folderBuildFixture({ ...event, state: 'ready', passagesEmbedded: 10958, etaSeconds: null }) })));
     await waitFor(() => expect(rows()[0]).toHaveTextContent('Indexed · 1,379 files'));
   });
 });

@@ -312,7 +312,6 @@ export async function installLearningStudioBackend(page: Page) {
       drafts: [],
       acceptedCards: [],
       dueCount: 0,
-      schedulerVersion: "expanding_v1",
     };
     type CanvasSnapshot = {
       id: string;
@@ -527,7 +526,6 @@ export async function installLearningStudioBackend(page: Page) {
         cards: [],
         duplicates: [],
         dueCount: 0,
-        fsrsAvailable: false,
         schedulerDisclosure: "The FSRS schedule is not available in this test runtime.",
       },
       packMutationCalls: [] as Array<{ command: string; request: Record<string, unknown> }>,
@@ -599,7 +597,7 @@ export async function installLearningStudioBackend(page: Page) {
       contentRevision: 1,
       versions: [{ revision: 1, format: "question_answer", content: { prompt: "Which details define a careful comparison?", answer: "The measure and observation period.", explanation: "Both make the comparison interpretable.", options: [], correctOptionIndex: null, language: null, clozeDeletions: [] }, sourceVersionIds: [sourceV1.id], changeReason: "Initial source-backed card", createdAt: 1_790_000_000_000 }],
       sourceVersionIds: [sourceV1.id],
-      scheduler: { schedulerVersion: "expanding_v1", stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 },
+      scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 },
       reviewHistory: [],
       createdAt: 1_790_000_000_000,
       updatedAt: 1_790_000_000_000,
@@ -608,7 +606,6 @@ export async function installLearningStudioBackend(page: Page) {
       cards: [recallCard, { ...JSON.parse(JSON.stringify(recallCard)), id: "recall-card-match-e2e", content: { ...recallCard.content, prompt: "What should a careful comparison record?" }, versions: [{ ...recallCard.versions[0], content: { ...recallCard.content, prompt: "What should a careful comparison record?" } }], sourceVersionIds: [sourceV1.id] }],
       duplicates: [{ id: "duplicate-e2e", cardId: recallCard.id, possibleDuplicateCardId: "recall-card-match-e2e", reason: "Saved prompts cover closely related comparison details.", similarity: 0.91, status: "pending", createdAt: 1_790_000_000_001, decidedAt: null }],
       dueCount: 1,
-      fsrsAvailable: true,
       schedulerDisclosure: "The scheduler choice is recorded per card in this deterministic fixture.",
     });
     const persistedPracticeStateKey = "__learning_studio_practice_backend__";
@@ -2053,7 +2050,6 @@ export async function installLearningStudioBackend(page: Page) {
         const card: StudyCardDto = {
           id: cardId,
           format: "question_answer",
-          schedulerVersion: "expanding_v1",
           deckId: "deck-learning-1",
           question: draft.question,
           answer: draft.answer,
@@ -2302,7 +2298,7 @@ export async function installLearningStudioBackend(page: Page) {
           Object.assign(existing, { format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: revision, sourceVersionIds: request.sourceVersionIds, updatedAt: Date.now() });
         } else {
           const timestamp = Date.now();
-          cards.push({ id: request.cardId, programId: program.summary.id, format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: 1, versions: [{ revision: 1, format: request.format, content: JSON.parse(JSON.stringify(content)), sourceVersionIds: request.sourceVersionIds, changeReason: request.changeReason, createdAt: timestamp }], sourceVersionIds: request.sourceVersionIds, scheduler: { schedulerVersion: "expanding_v1", stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 }, reviewHistory: [], createdAt: timestamp, updatedAt: timestamp });
+          cards.push({ id: request.cardId, programId: program.summary.id, format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: 1, versions: [{ revision: 1, format: request.format, content: JSON.parse(JSON.stringify(content)), sourceVersionIds: request.sourceVersionIds, changeReason: request.changeReason, createdAt: timestamp }], sourceVersionIds: request.sourceVersionIds, scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 }, reviewHistory: [], createdAt: timestamp, updatedAt: timestamp });
         }
         return state.recallV2Workspace;
       },
@@ -2314,15 +2310,6 @@ export async function installLearningStudioBackend(page: Page) {
         suggestion.decidedAt = Date.now();
         return state.recallV2Workspace;
       },
-      change_learning_recall_scheduler: (args) => {
-        const request = getRequest<Record<string, unknown>>(args);
-        const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
-        if (!card) throw new Error("Recall card not found.");
-        const scheduler = card.scheduler as Record<string, unknown>;
-        if (scheduler.reviewCount !== request.expectedReviewCount) throw new Error("Review state changed.");
-        scheduler.schedulerVersion = request.schedulerVersion;
-        return state.recallV2Workspace;
-      },
       review_learning_recall_card: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
@@ -2332,7 +2319,7 @@ export async function installLearningStudioBackend(page: Page) {
         const timestamp = Date.now();
         const intervalDays = request.rating === "good" ? 1 : request.rating === "easy" ? 2 : 0;
         Object.assign(scheduler, { reviewCount: Number(scheduler.reviewCount) + 1, intervalDays, dueAt: timestamp + intervalDays * 86_400_000, lastReviewedAt: timestamp });
-        (card.reviewHistory as Array<Record<string, unknown>>).push({ id: request.reviewId, rating: request.rating, schedulerVersion: scheduler.schedulerVersion, createdAt: timestamp });
+        (card.reviewHistory as Array<Record<string, unknown>>).push({ id: request.reviewId, rating: request.rating, createdAt: timestamp });
         state.recallV2Workspace.dueCount = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).filter((entry) => ((entry.scheduler as Record<string, unknown>).dueAt as number) <= Date.now()).length;
         return state.recallV2Workspace;
       },

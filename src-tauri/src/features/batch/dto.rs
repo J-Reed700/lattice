@@ -1,26 +1,7 @@
 //! # Batch Operation DTOs
 //!
-//! Data Transfer Objects for batch file and URL import operations.
-//!
-//! This module provides DTOs for creating and monitoring batch import jobs.
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::application::dtos::batch_dto::{
-//!     StartBatchFileImportRequestDto,
-//!     GetBatchStatusRequestDto,
-//! };
-//!
-//! let request = StartBatchFileImportRequestDto {
-//!     file_paths: vec![
-//!         "/path/to/file1.txt".to_string(),
-//!         "/path/to/file2.pdf".to_string(),
-//!     ],
-//!
-//! space_id: None,
-//! };
-//! ```
+//! Data Transfer Objects for starting and monitoring batch file and URL
+//! imports.
 
 use serde::{Deserialize, Serialize};
 
@@ -51,56 +32,6 @@ pub struct StartBatchFileImportRequestDto {
 pub struct StartBatchFileImportResponseDto {
     /// Unique identifier for the batch job.
     pub job_id: String,
-}
-
-/// Request to get the status of a batch job.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GetBatchStatusRequestDto {
-    /// Unique identifier of the batch job.
-    pub job_id: String,
-}
-
-/// Response containing batch job status and progress.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GetBatchStatusResponseDto {
-    /// Unique identifier for the batch job.
-    pub job_id: String,
-    /// Overall status of the batch job.
-    pub status: BatchJobStatus,
-    /// Progress breakdown by item status.
-    pub progress: BatchProgressDto,
-}
-
-/// Overall status of a batch job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub enum BatchJobStatus {
-    /// Job created but not yet started.
-    Pending,
-    /// Job is currently processing items.
-    Running,
-    /// Job completed successfully (may include some failures).
-    Completed,
-    /// Job failed (all items failed).
-    Failed,
-}
-
-/// Progress information for a batch job.
-///
-/// Tracks the number of items in each state.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BatchProgressDto {
-    /// Total number of items in the batch.
-    pub total: usize,
-    /// Number of items successfully completed.
-    pub completed: usize,
-    /// Number of items that failed.
-    pub failed: usize,
-    /// Number of items still pending.
-    pub pending: usize,
 }
 
 /// Request to start a batch URL import job.
@@ -289,14 +220,6 @@ pub struct BatchJobSummaryDto {
     pub created_at: String,
 }
 
-/// Request to delete a batch job.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteBatchJobRequestDto {
-    /// The batch job ID to delete
-    pub job_id: String,
-}
-
 /// Response from deleting a batch job.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -305,23 +228,11 @@ pub struct DeleteBatchJobResponseDto {
     pub success: bool,
 }
 
-/// Request to retry failed items from a batch job.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct RetryFailedItemsRequestDto {
-    /// The batch job ID to retry failed items from
-    pub job_id: String,
-    #[serde(default)]
-    pub item_id: Option<String>,
-    #[serde(default)]
-    pub replacement_path: Option<String>,
-}
-
 /// Response from retrying failed items.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetryFailedItemsResponseDto {
-    /// Job to monitor (file retries reuse the original job).
+    /// The retry attempt to follow; it takes over the import's items.
     pub new_job_id: String,
 
     /// Number of failed items being retried
