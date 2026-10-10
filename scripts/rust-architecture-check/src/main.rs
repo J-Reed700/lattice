@@ -454,20 +454,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     check_integration_tests(&root, &mut failures)?;
     check_feature_entrypoints(&root.join("features"), &mut failures)?;
-    for workflow in [
+    let mut chat_workflows: Vec<PathBuf> = [
         "chat/turn_record.rs",
         "chat/tool_loop.rs",
-        "chat/turn.rs",
         "chat/routing.rs",
         "chat/tools.rs",
-    ] {
-        scan_with_drivers(
-            &root.join("features/conversation").join(workflow),
-            &[],
-            &["tauri"],
-            &mut HashSet::new(),
-            &mut failures,
-        )?;
+    ]
+    .iter()
+    .map(|workflow| root.join("features/conversation").join(workflow))
+    .collect();
+    // The turn is split into stage modules; every stage is a workflow file.
+    let mut turn_stages: Vec<PathBuf> = fs::read_dir(root.join("features/conversation/chat/turn"))
+        .map_err(|error| format!("chat/turn stages: {error}"))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .filter(|path| path.file_name().is_some_and(|name| name != "tests.rs"))
+        .collect();
+    turn_stages.sort();
+    chat_workflows.extend(turn_stages);
+    for workflow in &chat_workflows {
+        scan_with_drivers(workflow, &[], &["tauri"], &mut HashSet::new(), &mut failures)?;
     }
     scan_with_drivers(
         &root.join("features/learning/lessons/generation_jobs.rs"),

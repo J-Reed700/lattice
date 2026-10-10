@@ -37,7 +37,6 @@ infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_w
 infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::model_management 1
 infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::search 1
 infrastructure-imports-feature infrastructure/services/article_extractor.rs features::function_calling 1
-infrastructure-imports-feature infrastructure/services/mod.rs features::batch 2
 infrastructure-imports-feature infrastructure/services/mod.rs features::function_calling 4
 infrastructure-imports-feature infrastructure/services/mod.rs features::tags 1
 infrastructure-imports-feature infrastructure/services/mod.rs features::web 6
@@ -48,25 +47,24 @@ infrastructure-imports-feature infrastructure/setup/app.rs features::download 8
 infrastructure-imports-feature infrastructure/setup/app.rs features::embedding 1
 infrastructure-imports-feature infrastructure/setup/app.rs features::settings 1
 infrastructure-imports-feature infrastructure/setup/app.rs features::summaries 1
-infrastructure-imports-feature infrastructure/setup/degraded_mocks.rs features::batch 2
 infrastructure-imports-feature infrastructure/setup/degraded_mocks.rs features::web 2
 infrastructure-imports-feature infrastructure/setup/shutdown.rs features::llm 1
 
 feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2
-feature-edge features::batch features::indexing 9
-feature-edge features::batch features::web 5
+feature-edge features::batch features::indexing 4
+feature-edge features::batch features::web 2
 feature-edge features::cache features::search 2
-feature-edge features::compare features::search 2
+feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 2
 feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
-feature-edge features::conversation features::function_calling 55
+feature-edge features::conversation features::function_calling 54
 feature-edge features::conversation features::llm 2
 feature-edge features::conversation features::qa 18
 feature-edge features::conversation features::references 1
-feature-edge features::conversation features::search 31
-feature-edge features::conversation features::settings 18
+feature-edge features::conversation features::search 29
+feature-edge features::conversation features::settings 16
 feature-edge features::conversation features::summaries 4
 feature-edge features::conversation features::web 2
 feature-edge features::daily_notes features::conversation 1
@@ -99,7 +97,6 @@ feature-edge features::indexing features::web 2
 feature-edge features::learning features::conversation 1
 feature-edge features::learning features::daily_notes 5
 feature-edge features::learning features::function_calling 4
-feature-edge features::learning features::study 13
 feature-edge features::learning features::vault 1
 feature-edge features::learning features::web 14
 feature-edge features::llm features::download 7
@@ -118,7 +115,6 @@ feature-edge features::settings features::llm 2
 feature-edge features::settings features::vault 3
 feature-edge features::stats features::health 1
 feature-edge features::stats features::tags 2
-feature-edge features::study features::qa 1
 feature-edge features::summaries features::search 1
 feature-edge features::transcription features::download 2
 feature-edge features::vault features::daily_notes 4
@@ -143,8 +139,6 @@ container-import features/search/reranker_setup.rs interfaces::di 1
 container-import features/vault/writeback.rs interfaces::di 1
 
 raw-spawn features/backup/scheduler.rs tokio::spawn 1
-raw-spawn features/batch/services/file_import.rs tokio::spawn 1
-raw-spawn features/batch/services/url_import.rs tokio::spawn 1
 raw-spawn features/file/commands.rs tokio::spawn 4
 raw-spawn features/file/plugin/mod.rs tauri::async_runtime::spawn 1
 raw-spawn features/learning/runtime/lab_runtime.rs tokio::spawn 2
