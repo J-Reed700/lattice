@@ -1,15 +1,22 @@
-//! Retrieval over immutable course snapshots. Uses the existing saved-source
-//! vector table and embedding port, keeping course versions out of global search.
-use crate::application::ports::EmbeddingPort;
+//! Retrieval over a program's immutable source snapshots.
+//!
+//! A snapshot captured from a library document is ranked by the library
+//! itself: its chunks, vectors and hybrid fusion, confined to the program's
+//! documents. Web pages and pasted text have no library copy, so they are
+//! ranked by keyword alone. Every hit is mapped back onto the snapshot's
+//! bytes, so evidence is always an exact substring of what was captured.
+use crate::application::ports::{LibraryChunk, LibraryPassagesPort};
 use crate::features::learning::dto::LearningSourceDto;
+use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
 const CHUNK_CHARS: usize = 1200;
 const STEP_CHARS: usize = 900;
-const INDEX_VERSION: &str = "course-passages-v2";
+/// Reciprocal-rank constant for merging library and keyword rankings.
+const RANK_K: usize = 60;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
@@ -21,28 +28,38 @@ pub struct ReferencePassage {
     pub retrieval_kind: String,
     pub score: f64,
 }
+
+/// A keyword-ranked passage of a snapshot the library cannot rank.
 struct Chunk {
     source: usize,
     start: usize,
     end: usize,
     terms: HashMap<String, usize>,
     length: usize,
-    vector: Option<Vec<f32>>,
+}
+
+/// Where one library chunk sits inside a captured snapshot.
+#[derive(Clone, Copy)]
+struct Span {
+    source: usize,
+    start: usize,
+    end: usize,
 }
 
 pub struct ReferenceCollection<'a> {
     pub sources: Vec<LearningSourceDto>,
     chunks: Vec<Chunk>,
-    embedder: Option<&'a dyn EmbeddingPort>,
     frequencies: HashMap<String, usize>,
     average_length: f64,
+    library: Option<&'a dyn LibraryPassagesPort>,
+    /// Library chunk ID to its bytes in a snapshot.
+    library_spans: HashMap<String, Span>,
+    /// The library documents behind the snapshots the library ranks.
+    library_documents: HashSet<String>,
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
 }
 fn terms(text: &str) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
@@ -80,23 +97,39 @@ fn spans(text: &str) -> Vec<(usize, usize)> {
     result
 }
 
-fn valid_vector(vector: &[f32], dimension: usize) -> bool {
-    vector.len() == dimension
-        && dimension > 0
-        && vector.iter().all(|v| v.is_finite())
-        && vector.iter().any(|v| *v != 0.0)
-}
-fn cosine(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a.iter().zip(b).map(|(a, b)| *a as f64 * *b as f64).sum();
-    let norm = |v: &[f32]| v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    dot / (norm(a) * norm(b))
+/// Locate each library chunk, in order, inside the snapshot captured from
+/// it. `None` when any chunk is missing: the library document changed after
+/// the capture, so the library can no longer rank this snapshot.
+fn locate_chunks(text: &str, chunks: &[LibraryChunk]) -> Option<Vec<(String, usize, usize)>> {
+    let mut cursor = 0;
+    let mut located = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let needle = chunk.text.trim();
+        if needle.is_empty() {
+            continue;
+        }
+        let start = cursor + text.get(cursor..)?.find(needle)?;
+        let end = start + needle.len();
+        located.push((chunk.id.clone(), start, end));
+        cursor = end;
+    }
+    (!located.is_empty()).then_some(located)
 }
 
 impl<'a> ReferenceCollection<'a> {
+    /// Keyword ranking over every source, with no library.
     pub fn lexical(sources: &[LearningSourceDto]) -> Result<Self> {
+        Ok(Self::keyword(sources, &HashSet::new()))
+    }
+
+    /// Keyword passages for every source not in `ranked_by_library`.
+    fn keyword(sources: &[LearningSourceDto], ranked_by_library: &HashSet<usize>) -> Self {
         let mut chunks = Vec::new();
         let mut frequencies = HashMap::new();
         for (source, value) in sources.iter().enumerate() {
+            if ranked_by_library.contains(&source) {
+                continue;
+            }
             for (start, end) in spans(&value.excerpt) {
                 let counts = terms(&value.excerpt[start..end]);
                 for term in counts.keys() {
@@ -108,121 +141,95 @@ impl<'a> ReferenceCollection<'a> {
                     end,
                     length: counts.values().sum(),
                     terms: counts,
-                    vector: None,
                 });
             }
         }
         let average_length = (chunks.iter().map(|c| c.length).sum::<usize>() as f64
             / chunks.len().max(1) as f64)
             .max(1.0);
-        Ok(Self {
+        Self {
             sources: sources.to_vec(),
             chunks,
-            embedder: None,
             frequencies,
             average_length,
-        })
+            library: None,
+            library_spans: HashMap::new(),
+            library_documents: HashSet::new(),
+        }
     }
 
-    /// Completed versions are reused on retry. A version is replaced atomically;
-    /// cancellation cannot mark a partially embedded version as complete. Model
-    /// identity and chunk layout are checked, including after model switches.
+    /// Rank snapshots captured from library documents through the library,
+    /// and the rest by keyword. A document the library no longer holds as it
+    /// was captured falls back to keywords for that snapshot only.
     pub async fn load(
         pool: &SqlitePool,
         program_id: &str,
         sources: &[LearningSourceDto],
-        embedder: Option<&'a dyn EmbeddingPort>,
+        library: Option<&'a dyn LibraryPassagesPort>,
     ) -> Result<Self> {
-        let mut collection = Self::lexical(sources)?;
-        let Some(embedder) = embedder else {
-            return Ok(collection);
+        let Some(library) = library else {
+            return Self::lexical(sources);
         };
-        if !embedder.is_ready().await? {
-            return Ok(collection);
-        }
-        let identity = format!("{INDEX_VERSION}:{}", embedder.model_identity());
-        for (source_index, source) in sources.iter().enumerate() {
-            let chunks: Vec<_> = collection
-                .chunks
-                .iter_mut()
-                .filter(|c| c.source == source_index)
-                .collect();
-            let saved = sqlx::query("SELECT chunk_text,start_byte,end_byte,embedding_json FROM learning_source_retrieval_index WHERE program_id=? AND source_version_id=? AND embedding_model=? ORDER BY chunk_ordinal")
-                .bind(program_id).bind(&source.id).bind(&identity).fetch_all(pool).await.map_err(db)?;
-            let cached: Option<Vec<Vec<f32>>> = if saved.len() == chunks.len() {
-                saved
-                    .iter()
-                    .zip(&chunks)
-                    .map(|(row, chunk)| {
-                        if row.get::<i64, _>("start_byte") != chunk.start as i64
-                            || row.get::<i64, _>("end_byte") != chunk.end as i64
-                            || row.get::<String, _>("chunk_text")
-                                != source.excerpt[chunk.start..chunk.end]
-                        {
-                            return None;
-                        }
-                        let raw: Option<String> = row.get("embedding_json");
-                        let vector: Vec<f32> = serde_json::from_str(raw.as_deref()?).ok()?;
-                        valid_vector(&vector, embedder.dimension()).then_some(vector)
-                    })
-                    .collect()
-            } else {
-                None
+        let documents = LearningSourceLibraryRepository::new(pool.clone())
+            .library_documents(program_id)
+            .await?;
+        let mut library_spans = HashMap::new();
+        let mut library_documents = HashSet::new();
+        let mut ranked_by_library = HashSet::new();
+        for (index, source) in sources.iter().enumerate() {
+            let Some(document_id) = documents.get(&source.id) else {
+                continue;
             };
-            let vectors = if let Some(cached) = cached {
-                cached
-            } else {
-                let mut vectors = Vec::new();
-                // Bound inference batches; never embed only a document's prefix.
-                for (batch_index, batch) in chunks.chunks(16).enumerate() {
-                    crate::features::learning::lesson_progress::stage(format!(
-                        "Indexing reference {} of {} · passages {}–{} of {}",
-                        source_index + 1,
-                        sources.len(),
-                        batch_index * 16 + 1,
-                        (batch_index * 16 + batch.len()).min(chunks.len()),
-                        chunks.len()
-                    ));
-                    let texts: Vec<_> = batch
-                        .iter()
-                        .map(|c| source.excerpt[c.start..c.end].to_owned())
-                        .collect();
-                    let generated = embedder.embed_batch(&texts).await?;
-                    if generated.len() != texts.len()
-                        || generated
-                            .iter()
-                            .any(|v| !valid_vector(v, embedder.dimension()))
-                    {
-                        return Err(invalid("The embedding model returned incomplete or invalid reference vectors. Retry indexing the sources."));
-                    }
-                    vectors.extend(generated);
+            // The snapshot itself is always searchable, so a document the
+            // library cannot serve right now (mid-import, unreadable) is
+            // ranked by keyword instead of failing the whole collection.
+            let document = match library.document_text(document_id).await {
+                Ok(document) => document,
+                Err(error) => {
+                    tracing::warn!(%document_id, %error, "Library cannot serve a reference; ranking it by keyword");
+                    None
                 }
-                let mut tx = pool.begin().await.map_err(db)?;
-                sqlx::query("DELETE FROM learning_source_retrieval_index WHERE program_id=? AND source_version_id=?").bind(program_id).bind(&source.id).execute(&mut *tx).await.map_err(db)?;
-                for (ordinal, (chunk, vector)) in chunks.iter().zip(&vectors).enumerate() {
-                    sqlx::query("INSERT INTO learning_source_retrieval_index(program_id,source_version_id,chunk_ordinal,chunk_text,start_byte,end_byte,embedding_model,embedding_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
-                        .bind(program_id).bind(&source.id).bind(ordinal as i64).bind(&source.excerpt[chunk.start..chunk.end]).bind(chunk.start as i64).bind(chunk.end as i64).bind(&identity).bind(serde_json::to_string(vector)?).bind(chrono::Utc::now().timestamp_millis()).execute(&mut *tx).await.map_err(db)?;
-                }
-                tx.commit().await.map_err(db)?;
-                vectors
             };
-            for (chunk, vector) in chunks.into_iter().zip(vectors) {
-                chunk.vector = Some(vector);
+            let Some(located) =
+                document.and_then(|document| locate_chunks(&source.excerpt, &document.chunks))
+            else {
+                continue;
+            };
+            for (chunk_id, start, end) in located {
+                library_spans.insert(
+                    chunk_id,
+                    Span {
+                        source: index,
+                        start,
+                        end,
+                    },
+                );
             }
+            library_documents.insert(document_id.clone());
+            ranked_by_library.insert(index);
         }
-        collection.embedder = Some(embedder);
+        let mut collection = Self::keyword(sources, &ranked_by_library);
+        collection.library = Some(library);
+        collection.library_spans = library_spans;
+        collection.library_documents = library_documents;
         Ok(collection)
     }
 
+    /// `hybrid` once the library ranks at least one snapshot.
     pub fn mode(&self) -> &'static str {
-        if self.embedder.is_some() {
+        if self.ranks_through_library() {
             "hybrid"
         } else {
             "lexical_fallback"
         }
     }
     pub fn embedding_model(&self) -> Option<String> {
-        self.embedder.map(EmbeddingPort::model_identity)
+        self.library
+            .filter(|_| self.ranks_through_library())
+            .map(LibraryPassagesPort::model_identity)
+    }
+    fn ranks_through_library(&self) -> bool {
+        self.library.is_some() && !self.library_documents.is_empty()
     }
 
     pub(in crate::features::learning) async fn reload(
@@ -231,65 +238,41 @@ impl<'a> ReferenceCollection<'a> {
         program_id: &str,
         sources: &[LearningSourceDto],
     ) -> Result<Self> {
-        Self::load(pool, program_id, sources, self.embedder).await
+        Self::load(pool, program_id, sources, self.library).await
     }
 
-    /// Keyword BM25 and semantic rankings contribute equally through RRF. Scores
-    /// rank evidence only; they are never a factual-correctness confidence.
+    /// Library hits and keyword hits come from disjoint sources, so they are
+    /// merged by rank, each list contributing equally. Scores rank evidence
+    /// only; they are never a factual-correctness confidence.
     pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
-        if self.chunks.is_empty() || query.trim().is_empty() {
+        if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let query_terms = terms(query);
-        let count = self.chunks.len() as f64;
-        let mut lexical: Vec<_> = self
-            .chunks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, chunk)| {
-                let score: f64 = query_terms
-                    .keys()
-                    .map(|term| {
-                        let tf = *chunk.terms.get(term).unwrap_or(&0) as f64;
-                        let df = *self.frequencies.get(term).unwrap_or(&0) as f64;
-                        let idf = (1.0 + (count - df + 0.5) / (df + 0.5)).ln();
-                        idf * tf * 2.2
-                            / (tf + 1.2 * (0.25 + 0.75 * chunk.length as f64 / self.average_length))
-                    })
-                    .sum();
-                (score > 0.0).then_some((index, score))
-            })
-            .collect();
-        lexical.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        let mut scores: HashMap<usize, f64> = HashMap::new();
-        for (rank, (index, _)) in lexical.into_iter().take(100).enumerate() {
-            *scores.entry(index).or_default() += 1.0 / (60 + rank + 1) as f64;
-        }
-        if let Some(embedder) = self.embedder {
-            let vector = embedder.embed_query(query).await?;
-            if !valid_vector(&vector, embedder.dimension()) {
-                return Err(invalid("Reference query embedding is invalid."));
-            }
-            let mut semantic: Vec<_> = self
-                .chunks
+        let limit = limit.clamp(1, 50);
+        let mut ranked: Vec<(Span, f64, &'static str)> = Vec::new();
+        if let Some(library) = self.library.filter(|_| !self.library_documents.is_empty()) {
+            let hits = library
+                .search(query, &self.library_documents, limit * 3)
+                .await?;
+            let spans = hits
                 .iter()
-                .enumerate()
-                .filter_map(|(index, c)| c.vector.as_ref().map(|v| (index, cosine(&vector, v))))
-                .filter(|(_, score)| *score > 0.0)
-                .collect();
-            semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-            for (rank, (index, _)) in semantic.into_iter().take(100).enumerate() {
-                *scores.entry(index).or_default() += 1.0 / (60 + rank + 1) as f64;
+                .filter_map(|hit| self.library_spans.get(&hit.chunk_id).copied());
+            for (rank, span) in spans.enumerate() {
+                ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "hybrid"));
             }
         }
-        let mut ranked: Vec<_> = scores.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        for (rank, span) in self
+            .keyword_ranking(query)
+            .into_iter()
+            .take(100)
+            .enumerate()
+        {
+            ranked.push((span, 1.0 / (RANK_K + rank + 1) as f64, "lexical_fallback"));
+        }
+        // Equal ranks keep library hits ahead; the sort is stable.
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
         let mut selected: Vec<ReferencePassage> = Vec::new();
-        for (index, score) in ranked {
-            let chunk = self
-                .chunks
-                .get(index)
-                .ok_or_else(|| invalid("Reference index contains an unknown passage."))?;
+        for (chunk, score, retrieval_kind) in ranked {
             let source = self
                 .sources
                 .get(chunk.source)
@@ -321,14 +304,48 @@ impl<'a> ReferenceCollection<'a> {
                 text: source.excerpt[start..end].to_owned(),
                 start_byte: start,
                 end_byte: end,
-                retrieval_kind: self.mode().into(),
+                retrieval_kind: retrieval_kind.into(),
                 score,
             });
-            if selected.len() >= limit.clamp(1, 50) {
+            if selected.len() >= limit {
                 break;
             }
         }
         Ok(selected)
+    }
+
+    /// BM25 over the keyword passages, best first.
+    fn keyword_ranking(&self, query: &str) -> Vec<Span> {
+        let query_terms = terms(query);
+        let count = self.chunks.len() as f64;
+        let mut scored: Vec<_> = self
+            .chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chunk)| {
+                let score: f64 = query_terms
+                    .keys()
+                    .map(|term| {
+                        let tf = *chunk.terms.get(term).unwrap_or(&0) as f64;
+                        let df = *self.frequencies.get(term).unwrap_or(&0) as f64;
+                        let idf = (1.0 + (count - df + 0.5) / (df + 0.5)).ln();
+                        idf * tf * 2.2
+                            / (tf + 1.2 * (0.25 + 0.75 * chunk.length as f64 / self.average_length))
+                    })
+                    .sum();
+                (score > 0.0).then_some((index, score))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        scored
+            .into_iter()
+            .filter_map(|(index, _)| self.chunks.get(index))
+            .map(|chunk| Span {
+                source: chunk.source,
+                start: chunk.start,
+                end: chunk.end,
+            })
+            .collect()
     }
 
     /// Verification needs nearby conditions as well as the matching paragraph.
@@ -476,4 +493,4 @@ impl<'a> ReferenceCollection<'a> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::features::learning) mod tests;

@@ -21,8 +21,10 @@ use std::sync::Arc;
 type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<Arc<dyn LLMPort>>> + Send + Sync>;
 type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
-type EmbeddingLoader = Arc<
-    dyn Fn() -> BoxFuture<'static, Option<Arc<dyn crate::application::ports::EmbeddingPort>>>
+/// The library search for document references, once the embedding model
+/// it queries with is loaded; `None` leaves every reference to keywords.
+type LibraryLoader = Arc<
+    dyn Fn() -> BoxFuture<'static, Option<Arc<dyn crate::application::ports::LibraryPassagesPort>>>
         + Send
         + Sync,
 >;
@@ -31,7 +33,7 @@ type EmbeddingLoader = Arc<
 pub(in crate::features::learning) struct LessonGenerationWorker {
     pub pool: SqlitePool,
     pub load_llm: ModelLoader,
-    pub load_embedding: EmbeddingLoader,
+    pub load_library: LibraryLoader,
     pub refresh_sources: SourceRefresh,
     pub research_web: Option<Arc<dyn crate::features::web::WebServiceTrait>>,
 }
@@ -175,16 +177,16 @@ impl LessonGenerationWorker {
         crate::features::learning::lesson_progress::stage(
             "Getting the reference search model ready",
         );
-        let embedding = (self.load_embedding)().await;
+        let library = (self.load_library)().await;
         crate::features::learning::lesson_progress::stage(
-            "Indexing saved references for lesson evidence",
+            "Matching saved references to the library",
         );
         let mut references =
             crate::features::learning::reference_collection::ReferenceCollection::load(
                 &self.pool,
                 &job.program_id,
                 &program.sources,
-                embedding.as_deref(),
+                library.as_deref(),
             )
             .await?;
         crate::features::learning::lesson_progress::stage("Getting the lesson model ready");
@@ -411,7 +413,7 @@ mod repository_tests {
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
                 research_web: None,
-                load_embedding: Arc::new(|| Box::pin(async { None })),
+                load_library: Arc::new(|| Box::pin(async { None })),
                 pool: pool.clone(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
                 load_llm: Arc::new(move || {

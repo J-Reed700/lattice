@@ -1,11 +1,8 @@
-//! Study wire types, exported to TypeScript by the bindings generator.
+//! Study deck wire types, exported to TypeScript by the bindings generator.
 use serde::{Deserialize, Serialize};
 
 fn default_card_format() -> StudyCardFormat {
     StudyCardFormat::MultipleChoice
-}
-fn default_scheduler_version() -> StudySchedulerVersion {
-    StudySchedulerVersion::ExpandingV1
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -13,14 +10,6 @@ fn default_scheduler_version() -> StudySchedulerVersion {
 pub enum StudyCardFormat {
     MultipleChoice,
     QuestionAnswer,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum StudySchedulerVersion {
-    ExpandingV1,
-    #[serde(rename = "fsrs_6_v1")]
-    Fsrs6V1,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -42,8 +31,6 @@ pub struct StudyCardDto {
     pub id: String,
     #[serde(default = "default_card_format")]
     pub format: StudyCardFormat,
-    #[serde(default = "default_scheduler_version")]
-    pub scheduler_version: StudySchedulerVersion,
     pub deck_id: String,
     pub question: String,
     pub answer: String,
@@ -109,7 +96,7 @@ pub struct GenerateConversationStudyDeckRequestDto {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct VerifiedConversationClaim {
+pub(in crate::features::learning) struct VerifiedConversationClaim {
     pub answer: String,
     pub citations: Vec<StudySourceDto>,
 }

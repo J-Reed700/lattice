@@ -1,18 +1,14 @@
 //! SQL persistence for Learning Studio. Domain orchestration never issues SQL.
 use super::dto::*;
+use super::persistence::{db, decode, encode as json, hash_text};
+use super::recall::{
+    study_dto::{StudyCardDto, StudyCardFormat, StudySourceDto},
+    study_repository::StudyRepository,
+};
 use crate::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
-fn json<T: serde::Serialize>(v: &T) -> Result<String> {
-    serde_json::to_string(v).map_err(|e| AppError::Serialization(e.to_string()))
-}
-fn decode<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
-    serde_json::from_str(s).map_err(|e| AppError::Serialization(e.to_string()))
-}
 fn status(v: LearningProgramStatus) -> &'static str {
     match v {
         LearningProgramStatus::Draft => "draft",
@@ -98,63 +94,6 @@ impl LearningRepository {
         super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
             .verification_sources(program_id)
             .await
-    }
-
-    pub async fn acquire_document_sources(
-        &self,
-        ids: &[String],
-        goal: &str,
-    ) -> Result<Vec<LearningSourceDto>> {
-        use sqlx::{QueryBuilder, Sqlite};
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let terms: Vec<String> = goal
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|s| s.len() >= 4)
-            .take(8)
-            .map(str::to_lowercase)
-            .collect();
-        let mut out = Vec::new();
-        for id in ids {
-            let mut q = QueryBuilder::<Sqlite>::new("SELECT c.id,c.document_id,d.file_name,c.content FROM text_chunks c JOIN documents d ON d.id=c.document_id WHERE c.document_id=");
-            q.push_bind(id);
-            if !terms.is_empty() {
-                q.push(" AND (");
-                let mut sep = q.separated(" OR ");
-                for term in &terms {
-                    sep.push("instr(lower(c.content), ")
-                        .push_bind_unseparated(term)
-                        .push_unseparated(") > 0");
-                }
-                q.push(")");
-            }
-            q.push(" ORDER BY c.chunk_index LIMIT 4");
-            let mut rows = q.build().fetch_all(&self.pool).await.map_err(db)?;
-            if rows.is_empty() && !terms.is_empty() {
-                rows = sqlx::query("SELECT c.id,c.document_id,d.file_name,c.content FROM text_chunks c JOIN documents d ON d.id=c.document_id WHERE c.document_id=? ORDER BY c.chunk_index LIMIT 4")
-                    .bind(id).fetch_all(&self.pool).await.map_err(db)?;
-            }
-            if rows.is_empty() {
-                return Err(AppError::InvalidInput(
-                    "A selected document has no indexed text yet. Let its import finish first."
-                        .into(),
-                ));
-            }
-            for row in rows {
-                let chunk_id: String = row.get("id");
-                let doc_id: String = row.get("document_id");
-                let excerpt: String = row.get("content");
-                out.push(LearningSourceDto {
-                    id: format!("{doc_id}:{chunk_id}"),
-                    title: row.get("file_name"),
-                    url: None,
-                    excerpt: excerpt.chars().take(2400).collect(),
-                    acquired_at: chrono::Utc::now().timestamp_millis(),
-                });
-            }
-        }
-        Ok(out)
     }
 
     pub async fn create(&self, program: &LearningProgramDto) -> Result<()> {
@@ -489,7 +428,7 @@ impl LearningRepository {
             assessment(req.kind.clone()),
             normalized_answers,
         ))?;
-        let hash = format!("{:x}", sha2::Sha256::digest(payload.as_bytes()));
+        let hash = hash_text(&payload);
         let mut tx = self.pool.begin().await.map_err(db)?;
         if let Some(row) = sqlx::query("SELECT * FROM learning_attempts WHERE id=?")
             .bind(&req.attempt_id)
@@ -864,7 +803,7 @@ impl LearningRepository {
             } else {
                 String::new()
             };
-            citations.push(crate::features::study::dto::StudySourceDto {
+            citations.push(StudySourceDto {
                 chunk_id,
                 document_id,
                 file_name: source.get("title"),
@@ -874,7 +813,7 @@ impl LearningRepository {
             });
         }
         if citations.is_empty() {
-            citations.push(crate::features::study::dto::StudySourceDto {
+            citations.push(StudySourceDto {
                 chunk_id: format!("learning-memory:{draft_id}"),
                 document_id: String::new(),
                 file_name: if generated {
@@ -899,10 +838,9 @@ impl LearningRepository {
             .first()
             .cloned()
             .ok_or_else(|| AppError::InvalidInput("Learning card needs a source record.".into()))?;
-        let card = crate::features::study::dto::StudyCardDto {
+        let card = StudyCardDto {
             id: card_id.clone(),
-            format: crate::features::study::dto::StudyCardFormat::QuestionAnswer,
-            scheduler_version: crate::features::study::dto::StudySchedulerVersion::ExpandingV1,
+            format: StudyCardFormat::QuestionAnswer,
             deck_id: deck_id.clone(),
             question: row.get("question"),
             answer,
@@ -917,10 +855,7 @@ impl LearningRepository {
             review_count: 0,
             lapses: 0,
         };
-        crate::features::study::repository::StudyRepository::insert_learning_card_in_transaction(
-            &mut tx, &card,
-        )
-        .await?;
+        StudyRepository::insert_learning_card_in_transaction(&mut tx, &card).await?;
         let origin: String = row.get("origin");
         sqlx::query("INSERT INTO learning_card_origins(card_id,program_id,lesson_id,origin,source_ids_json,accepted_at) VALUES(?,?,?,?,?,?)")
             .bind(&card_id).bind(program_id).bind(&lesson_id).bind(&origin).bind(json(&source_ids)?).bind(now)
@@ -1115,11 +1050,16 @@ pub(crate) async fn ensure_memory_resources(
         Some(id) => id,
         None => {
             let id = format!("learning-studio-{program_id}");
-            crate::features::study::repository::StudyRepository::insert_learning_deck_in_transaction(
-                tx, &id, &base_title, &program.get::<String,_>("goal"),
-                "Recall concepts from Learning Studio lessons", "learning-studio",
+            StudyRepository::insert_learning_deck_in_transaction(
+                tx,
+                &id,
+                &base_title,
+                &program.get::<String, _>("goal"),
+                "Recall concepts from Learning Studio lessons",
+                "learning-studio",
                 chrono::Utc::now().timestamp_millis(),
-            ).await?;
+            )
+            .await?;
             sqlx::query("UPDATE learning_memory SET deck_id=? WHERE program_id=?")
                 .bind(&id)
                 .bind(program_id)
@@ -1131,8 +1071,6 @@ pub(crate) async fn ensure_memory_resources(
     };
     Ok((journal_id, deck_id))
 }
-
-use sha2::Digest;
 
 pub(super) async fn insert_source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -1180,7 +1118,7 @@ pub(super) async fn insert_source(
     let resolved_url = reference
         .and_then(|r| r.captured.resolved_url.as_deref())
         .or(source.url.as_deref());
-    let digest = format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
+    let digest = hash_text(&text);
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,0,?,?)")
         .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,?,NULL,?,?,?,?,?,?,?,?,?)")

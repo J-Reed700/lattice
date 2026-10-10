@@ -1,10 +1,14 @@
 //! Managed file and database lifecycle for portable Learning Studio packs.
 mod export;
 mod provenance;
+mod remap;
 mod replacement;
+mod validation;
 use crate::features::learning::{
     dto::{LearningPreparation, LearningProgramDto, LearningProgramStatus},
+    operations::Operation,
     pack::{decode_learning_pack, encode_learning_pack, DecodedLearningPack, LearningPackManifest},
+    persistence::{db, hash, now},
     portability_dto::*,
     source_library::LearningSourceLibraryRepository,
 };
@@ -17,6 +21,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use remap::{
+    map_evidence_ids, map_id, remap, remap_id_array, remap_json_field, remap_json_string_field,
+    remap_nested_value, remap_refs, rewrite_program,
+};
+use validation::{
+    validate_aggregate_id_namespaces, validate_answer_keys, validate_program, validate_source_id,
+};
+
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 const PROGRAM_ENTRY: &str = "program/program.json";
 const KEYS_ENTRY: &str = "program/answer-keys.json";
@@ -27,9 +39,6 @@ const FOLLOW_UP_ENTRY: &str = "evidence/follow-ups.json";
 const CANVAS_ENTRY: &str = "program/canvases.json";
 const LESSON_STATE_ENTRY: &str = "curriculum/lesson-state.json";
 
-fn db(e: sqlx::Error) -> AppError {
-    AppError::Database(e.to_string())
-}
 fn invalid(s: impl Into<String>) -> AppError {
     AppError::InvalidInput(s.into())
 }
@@ -117,104 +126,6 @@ async fn snapshot_evidence_tables(
         });
     }
     Ok(LearningEvidenceSnapshot { tables })
-}
-fn map_evidence_ids(
-    snapshot: &LearningEvidenceSnapshot,
-    map: &mut HashMap<String, String>,
-) -> Result<()> {
-    let mut namespaces = HashMap::<String, String>::new();
-    for table in &snapshot.tables {
-        for row in &table.rows {
-            let object = row
-                .as_object()
-                .ok_or_else(|| invalid("Pack aggregate contains a malformed row."))?;
-            for key in ["id", "operation_id"] {
-                if let Some(old) = object.get(key).and_then(serde_json::Value::as_str) {
-                    let namespace = format!("{}:{key}", table.table);
-                    if let Some(previous) = namespaces.get(old) {
-                        if previous != &namespace {
-                            return Err(invalid(
-                                "Pack aggregate reuses an identifier across entity types.",
-                            ));
-                        }
-                        continue;
-                    }
-                    namespaces.insert(old.to_owned(), namespace);
-                    // Cross-snapshot aliases are checked before this mapper
-                    // runs; preserve their already assigned canonical mapping.
-                    if map.contains_key(old) {
-                        continue;
-                    }
-                    map_id(map, old, uuid::Uuid::new_v4().to_string());
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_aggregate_id_namespaces(
-    snapshot: &LearningEvidenceSnapshot,
-    program: &LearningProgramDto,
-    outcome_rows: &[serde_json::Value],
-) -> Result<()> {
-    let mut core = HashMap::<String, &'static str>::new();
-    let mut register = |id: &str, namespace: &'static str| -> Result<()> {
-        if core.insert(id.to_owned(), namespace).is_some() {
-            return Err(invalid("Pack reuses an ID across core entity types."));
-        }
-        Ok(())
-    };
-    register(&program.summary.id, "program")?;
-    for module in &program.modules {
-        register(&module.id, "module")?;
-        for lesson in &module.lessons {
-            register(&lesson.id, "lesson")?;
-            for question in &lesson.questions {
-                register(&question.id, "question")?;
-            }
-        }
-    }
-    for source in &program.sources {
-        register(&source.id, "source_version")?;
-    }
-    for attempt in &program.attempts {
-        register(&attempt.id, "attempt")?;
-    }
-    for row in outcome_rows {
-        register(value_str(row, "id")?, "outcome")?;
-    }
-    let mut seen = HashMap::<String, String>::new();
-    for table in &snapshot.tables {
-        for row in &table.rows {
-            for (key, namespace) in [("id", table.table.as_str()), ("operation_id", "operation")] {
-                let Some(id) = row.get(key).and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
-                if let Some(previous) = seen.insert(id.to_owned(), namespace.to_owned()) {
-                    if previous != namespace {
-                        return Err(invalid(
-                            "Pack aggregate reuses an identifier across entity types.",
-                        ));
-                    }
-                }
-                if let Some(core_namespace) = core.get(id) {
-                    let expected_alias = (table.table == "learning_attempts"
-                        && key == "id"
-                        && *core_namespace == "attempt")
-                        || (table.table == "learning_outcome_definitions"
-                            && key == "id"
-                            && *core_namespace == "outcome");
-                    if !expected_alias {
-                        return Err(invalid(
-                            "Pack aggregate identifier collides with another imported entity type.",
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 async fn insert_evidence_snapshot(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -416,12 +327,6 @@ async fn insert_evidence_snapshot(
     }
     Ok(())
 }
-fn hash<T: Serialize>(v: &T) -> Result<String> {
-    Ok(format!("{:x}", Sha256::digest(json(v)?)))
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
 fn managed_dir(container: &crate::interfaces::di::Container) -> PathBuf {
     container.core.data_dir().join("learning-packs")
 }
@@ -509,8 +414,6 @@ struct PracticalPackSnapshot {
     simulations: Vec<serde_json::Value>,
     simulation_turns: Vec<serde_json::Value>,
     run_snapshots: Vec<serde_json::Value>,
-    simulation_operations: Vec<serde_json::Value>,
-    practical_operations: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,12 +421,10 @@ struct PracticalPackSnapshot {
 struct CanvasPackSnapshot {
     canvases: Vec<serde_json::Value>,
     snapshots: Vec<serde_json::Value>,
-    operations: Vec<serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SourceHistorySnapshot {
-    operations: Vec<serde_json::Value>,
     checks: Vec<serde_json::Value>,
 }
 
@@ -580,15 +481,11 @@ const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_assessment_response_revisions", filter: "form_id IN (SELECT id FROM learning_assessment_forms WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_assessment_submissions", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_assessment_item_results", filter: "form_id IN (SELECT form_id FROM learning_assessment_submissions WHERE program_id=?)" },
-    AggregateTableSpec { table: "learning_assessment_operations", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_curriculum_revisions", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_curriculum_changes", filter: "revision_id IN (SELECT id FROM learning_curriculum_revisions WHERE program_id=?)" },
-    AggregateTableSpec { table: "learning_curriculum_operations", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_diagnostic_attempts", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_diagnostic_operations", filter: "diagnostic_id IN (SELECT id FROM learning_diagnostic_attempts WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_practice_sessions", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_practice_artifact_revisions", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_practice_operations", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_practice_assistance", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_practice_tutor_turns", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_practice_proposals", filter: "program_id=?" },
@@ -603,9 +500,7 @@ const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_recall_card_profiles", filter: "program_id=?" },
     AggregateTableSpec { table: "learning_recall_card_versions", filter: "card_id IN (SELECT card_id FROM learning_recall_card_profiles WHERE program_id=?)" },
     AggregateTableSpec { table: "learning_recall_duplicate_suggestions", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_recall_scheduler_transitions", filter: "card_id IN (SELECT card_id FROM learning_recall_card_profiles WHERE program_id=?)" },
-    AggregateTableSpec { table: "learning_recall_scheduler_migrations", filter: "program_id=?" },
-    AggregateTableSpec { table: "learning_recall_operations", filter: "program_id=?" },
+    AggregateTableSpec { table: "learning_operations", filter: "program_id=? AND scope<>'portability'" },
 ];
 
 async fn record_external_id_conflict(
@@ -749,7 +644,9 @@ impl LearningPackRepository {
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(&payload).bind(decoded.manifest.version as i64).bind(&decoded.manifest.root_sha256).bind(path.to_string_lossy().to_string()).bind(json_string(&decoded.manifest.privacy)?).bind(json_string(&decoded.manifest.entries)?).bind(json_string(&decoded.manifest)?).bind(created).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'export',?,?,?)").bind(&req.operation_id).bind(&req.program_id).bind(&payload).bind(&id).bind(created).execute(&mut *tx).await.map_err(db)?;
+        pack_operation(&req.operation_id, "export", &payload)
+            .record(&mut *tx, &path.to_string_lossy())
+            .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -779,9 +676,7 @@ impl LearningPackRepository {
         )?;
         validate_program(&program)?;
         let mut warnings = Vec::<String>::new();
-        if provenance::decode(&decoded, &program)?.is_none() {
-            warnings.push("This older pack contains no saved outline citations or lesson verification reports. Imported lessons will have no verification history.".into());
-        }
+        provenance::decode(&decoded, &program)?;
         if let Some(bytes) = decoded.entries.get(PRACTICAL_ENTRY) {
             let snapshot: PracticalPackSnapshot = parse(bytes)?;
             if snapshot.activities.iter().any(|activity| {
@@ -982,10 +877,7 @@ impl LearningPackRepository {
         }
         if let Some(bytes) = decoded.entries.get("sources/history.json") {
             let history: SourceHistorySnapshot = parse(bytes)?;
-            for (table, rows) in [
-                ("learning_source_operations", history.operations),
-                ("learning_source_refresh_checks", history.checks),
-            ] {
+            for (table, rows) in [("learning_source_refresh_checks", history.checks)] {
                 for row in rows {
                     let id = value_str(&row, "operationId")?;
                     if checked_ids.insert((table.into(), id.into())) {
@@ -1054,7 +946,7 @@ impl LearningPackRepository {
                 let id = value_str(raw, "operationId")?;
                 can_apply &= record_external_id_conflict(
                     &self.pool,
-                    "learning_practical_run_operations",
+                    "learning_practical_runs",
                     "operation_id",
                     id,
                     &program.summary.id,
@@ -1064,65 +956,19 @@ impl LearningPackRepository {
                 )
                 .await?;
             }
-            for operation in &snapshot.practical_operations {
-                let table = value_str(operation, "table")?;
-                if !matches!(
-                    table,
-                    "learning_practical_activity_operations" | "learning_practical_run_operations"
-                ) {
-                    return Err(invalid("Pack practical operation table is invalid."));
-                }
-                let id = value_str(operation, "operationId")?;
-                if checked_ids.insert((table.into(), id.into())) {
-                    can_apply &= record_external_id_conflict(
-                        &self.pool,
-                        table,
-                        "operation_id",
-                        id,
-                        &program.summary.id,
-                        table,
-                        req.conflict_policy,
-                        &mut conflicts,
-                    )
-                    .await?;
-                }
-            }
-            for operation in &snapshot.simulation_operations {
-                can_apply &= record_external_id_conflict(
-                    &self.pool,
-                    "learning_simulation_operations",
-                    "operation_id",
-                    value_str(operation, "operationId")?,
-                    &program.summary.id,
-                    "Simulation operation",
-                    req.conflict_policy,
-                    &mut conflicts,
-                )
-                .await?;
-            }
         }
         if let Some(bytes) = decoded.entries.get(CANVAS_ENTRY) {
             let snapshot: CanvasPackSnapshot = parse(bytes)?;
-            for (table, rows, column) in [
-                ("learning_canvases", &snapshot.canvases, "id"),
-                ("learning_canvas_snapshots", &snapshot.snapshots, "id"),
-                (
-                    "learning_canvas_operations",
-                    &snapshot.operations,
-                    "operationId",
-                ),
+            for (table, rows) in [
+                ("learning_canvases", &snapshot.canvases),
+                ("learning_canvas_snapshots", &snapshot.snapshots),
             ] {
                 for row in rows {
-                    let id = if column == "id" {
-                        value_str(row, "id")?
-                    } else {
-                        value_str(row, "operationId")?
-                    };
                     can_apply &= record_external_id_conflict(
                         &self.pool,
                         table,
-                        if column == "id" { "id" } else { "operation_id" },
-                        id,
+                        "id",
+                        value_str(row, "id")?,
                         &program.summary.id,
                         table,
                         req.conflict_policy,
@@ -1195,6 +1041,27 @@ impl LearningPackRepository {
         if let Some(bytes) = decoded.entries.get("evidence/learning-aggregate.json") {
             let snapshot: LearningEvidenceSnapshot = parse(bytes)?;
             for table in &snapshot.tables {
+                if table.table == "learning_operations" {
+                    for row in &table.rows {
+                        let Some(id) = row.get("operation_id").and_then(serde_json::Value::as_str)
+                        else {
+                            continue;
+                        };
+                        if checked_ids.insert((table.table.clone(), id.into())) {
+                            can_apply &= record_joined_id_conflict(
+                                &self.pool,
+                                &table.table,
+                                id,
+                                "SELECT COALESCE(program_id,'') FROM learning_operations WHERE operation_id=?",
+                                &program.summary.id,
+                                req.conflict_policy,
+                                &mut conflicts,
+                            )
+                            .await?;
+                        }
+                    }
+                    continue;
+                }
                 if table.columns.iter().any(|column| column == "program_id") {
                     continue;
                 }
@@ -1202,7 +1069,6 @@ impl LearningPackRepository {
                     "study_decks" => "SELECT COALESCE(m.program_id,'') FROM study_decks d LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE d.id=?",
                     "study_cards" => "SELECT COALESCE(m.program_id,'') FROM study_cards c JOIN study_decks d ON d.id=c.deck_id LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE c.id=?",
                     "study_reviews" => "SELECT COALESCE(m.program_id,'') FROM study_reviews r JOIN study_cards c ON c.id=r.card_id JOIN study_decks d ON d.id=c.deck_id LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE r.id=?",
-                    "learning_recall_scheduler_transitions" => "SELECT COALESCE(p.program_id,'') FROM learning_recall_scheduler_transitions t LEFT JOIN learning_recall_card_profiles p ON p.card_id=t.card_id WHERE t.id=?",
                     _ => continue,
                 };
                 for row in &table.rows {
@@ -1235,7 +1101,9 @@ impl LearningPackRepository {
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
             .bind(&id).bind(&req.operation_id).bind(&payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&program.summary.title).bind(policy_str(req.conflict_policy)).bind(json_string(&conflicts)?).bind(json_string(&changes)?).bind(json_string(&warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'preview_import',?,?,?)").bind(&req.operation_id).bind(&result_program_id).bind(&payload).bind(&id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        pack_operation(&req.operation_id, "preview_import", &payload)
+            .record(&mut *tx, &id)
+            .await?;
         tx.commit().await.map_err(db)?;
         let mut w = self.workspace(&result_program_id).await?;
         if !can_apply {
@@ -1273,7 +1141,9 @@ impl LearningPackRepository {
         }
         let program_id: String = row.get("program_id");
         sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'cancel_import',?,?,?)").bind(&req.operation_id).bind(&program_id).bind(&payload).bind(&req.preview_id).bind(now).execute(&mut *tx).await.map_err(db)?;
+        pack_operation(&req.operation_id, "cancel_import", &payload)
+            .record(&mut *tx, &req.preview_id)
+            .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&program_id).await
     }
@@ -1388,10 +1258,10 @@ impl LearningPackRepository {
                 validate_aggregate_id_namespaces(snapshot, &program, &outcome_rows)?;
             }
             if let Some(history) = &source_history {
-                for op in &history.operations {
+                for check in &history.checks {
                     map_id(
                         &mut id_map,
-                        value_str(op, "operationId")?,
+                        value_str(check, "operationId")?,
                         uuid::Uuid::new_v4().to_string(),
                     );
                 }
@@ -1473,20 +1343,6 @@ impl LearningPackRepository {
                         uuid::Uuid::new_v4().to_string(),
                     );
                 }
-                for operation in &snapshot.simulation_operations {
-                    map_id(
-                        &mut id_map,
-                        value_str(operation, "operationId")?,
-                        uuid::Uuid::new_v4().to_string(),
-                    );
-                }
-                for operation in &snapshot.practical_operations {
-                    map_id(
-                        &mut id_map,
-                        value_str(operation, "operationId")?,
-                        uuid::Uuid::new_v4().to_string(),
-                    );
-                }
             }
             if let Some(snapshot) = &canvas_snapshot {
                 for row in &snapshot.canvases {
@@ -1500,13 +1356,6 @@ impl LearningPackRepository {
                     map_id(
                         &mut id_map,
                         value_str(row, "id")?,
-                        uuid::Uuid::new_v4().to_string(),
-                    );
-                }
-                for row in &snapshot.operations {
-                    map_id(
-                        &mut id_map,
-                        value_str(row, "operationId")?,
                         uuid::Uuid::new_v4().to_string(),
                     );
                 }
@@ -1637,16 +1486,6 @@ impl LearningPackRepository {
                     remap_json_string_field(turn, "citations", &id_map)?;
                 }
             }
-            for operation in &mut snapshot.simulation_operations {
-                remap_json_field(operation, "operationId", &id_map)?;
-                remap_json_field(operation, "sessionId", &id_map)?;
-                remap_json_field(operation, "resultId", &id_map)?;
-            }
-            for operation in &mut snapshot.practical_operations {
-                remap_json_field(operation, "operationId", &id_map)?;
-                remap_json_field(operation, "activityId", &id_map)?;
-                remap_json_field(operation, "runId", &id_map)?;
-            }
             insert_practical_snapshot(&mut tx, &program.summary.id, snapshot).await?;
         }
         if let Some(snapshot) = &mut canvas_snapshot {
@@ -1763,9 +1602,7 @@ impl LearningPackRepository {
             }
         }
         let result_id = uuid::Uuid::new_v4().to_string();
-        if let Some(snapshot) = provenance {
-            provenance::restore(&mut tx, &program.summary.id, snapshot, &id_map).await?;
-        }
+        provenance::restore(&mut tx, &program.summary.id, provenance, &id_map).await?;
         let timestamp = now();
         let changes: Vec<LearningPackChangeDto> =
             parse(preview.get::<String, _>("changes_json").as_bytes())?;
@@ -1779,7 +1616,9 @@ impl LearningPackRepository {
         .execute(&mut *tx)
         .await
         .map_err(db)?;
-        sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'apply_import',?,?,?)").bind(&req.operation_id).bind(&program.summary.id).bind(&payload).bind(&result_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        pack_operation(&req.operation_id, "apply_import", &payload)
+            .record(&mut *tx, &result_id)
+            .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&program.summary.id).await
     }
@@ -1792,17 +1631,30 @@ impl LearningPackRepository {
                 .map_err(db)?;
         self.workspace(&pid).await
     }
+    /// What an earlier identical pack request produced: the export's file
+    /// path, the preview ID, or the imported program ID.
     async fn replay(&self, id: &str, kind: &str, payload: &str) -> Result<Option<String>> {
-        let row=sqlx::query("SELECT kind,payload_hash,result_id FROM learning_portability_operations WHERE operation_id=?").bind(id).fetch_optional(&self.pool).await.map_err(db)?;
-        if let Some(r) = row {
-            if r.get::<String, _>("kind") != kind || r.get::<String, _>("payload_hash") != payload {
-                return Err(invalid(
-                    "Operation ID was reused with a different pack request.",
-                ));
-            }
-            return Ok(r.get("result_id"));
-        }
-        Ok(None)
+        pack_operation(id, kind, payload)
+            .replay::<String, _>(&self.pool)
+            .await
+    }
+}
+
+/// Pack requests are not program data: a preview or import may name a program
+/// that does not exist yet, so their ledger rows belong to no program.
+fn pack_operation<'a>(
+    operation_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "portability",
+        kind,
+        program_id: None,
+        subject_id: None,
+        payload_hash,
+        conflict: "Operation ID was reused with a different pack request.",
     }
 }
 
@@ -1817,154 +1669,6 @@ fn policy_str(v: LearningPackConflictPolicy) -> &'static str {
         LearningPackConflictPolicy::MergeSafe => "merge_safe",
         LearningPackConflictPolicy::ReplaceAfterBackup => "replace_after_backup",
     }
-}
-fn validate_program(p: &LearningProgramDto) -> Result<()> {
-    validate_uuid(&p.summary.id, "program")?;
-    let mut ids = HashSet::new();
-    ids.insert(p.summary.id.as_str());
-    let mut sources = HashSet::new();
-    for source in &p.sources {
-        validate_source_id(&source.id)?;
-        if !ids.insert(source.id.as_str()) {
-            return Err(invalid("Pack has duplicate entity IDs."));
-        }
-        sources.insert(source.id.as_str());
-    }
-    let mut modules = HashSet::new();
-    let mut lessons = HashSet::new();
-    let mut questions = HashMap::<&str, usize>::new();
-    for m in &p.modules {
-        validate_uuid(&m.id, "module")?;
-        if !ids.insert(m.id.as_str()) {
-            return Err(invalid("Pack has duplicate module IDs."));
-        }
-        if m.prerequisite_module_ids
-            .iter()
-            .any(|id| !modules.contains(id.as_str()))
-            || m.prerequisite_module_ids
-                .iter()
-                .collect::<HashSet<_>>()
-                .len()
-                != m.prerequisite_module_ids.len()
-        {
-            return Err(invalid(
-                "Pack prerequisites must reference distinct earlier modules.",
-            ));
-        }
-        if let Some(project) = &m.project {
-            crate::features::learning::teaching::validate_project(project)?;
-        }
-        modules.insert(m.id.as_str());
-        for l in &m.lessons {
-            validate_uuid(&l.id, "lesson")?;
-            if !ids.insert(l.id.as_str()) {
-                return Err(invalid("Pack has duplicate entity IDs."));
-            }
-            lessons.insert(l.id.as_str());
-            for block in &l.blocks {
-                crate::features::learning::teaching::validate_saved_rubric(&block.rubric)?;
-                if block
-                    .source_ids
-                    .iter()
-                    .any(|id| !sources.contains(id.as_str()))
-                {
-                    return Err(invalid(
-                        "Pack lesson block refers to an unknown source version.",
-                    ));
-                }
-            }
-            for q in &l.questions {
-                validate_uuid(&q.id, "question")?;
-                if !ids.insert(q.id.as_str()) {
-                    return Err(invalid("Pack has duplicate entity IDs."));
-                }
-                if !(2..=8).contains(&q.options.len())
-                    || q.options.iter().any(|o| o.trim().is_empty())
-                    || q.options.iter().collect::<HashSet<_>>().len() != q.options.len()
-                {
-                    return Err(invalid("Pack question choices are invalid."));
-                }
-                if q.source_ids.iter().any(|id| !sources.contains(id.as_str())) {
-                    return Err(invalid(
-                        "Pack question refers to an unknown source version.",
-                    ));
-                }
-                questions.insert(q.id.as_str(), q.options.len());
-            }
-        }
-    }
-    if p.summary
-        .current_lesson_id
-        .as_deref()
-        .is_some_and(|id| !lessons.contains(id))
-    {
-        return Err(invalid(
-            "Pack current lesson is missing from its curriculum.",
-        ));
-    }
-    for attempt in &p.attempts {
-        validate_uuid(&attempt.id, "attempt")?;
-        if !ids.insert(attempt.id.as_str())
-            || !modules.contains(attempt.module_id.as_str())
-            || attempt
-                .lesson_id
-                .as_deref()
-                .is_some_and(|id| !lessons.contains(id))
-        {
-            return Err(invalid(
-                "Pack attempt has an invalid or duplicate curriculum reference.",
-            ));
-        }
-        for r in &attempt.results {
-            if !questions.contains_key(r.question_id.as_str())
-                || r.correct_index >= r.options.len()
-                || r.selected_index >= r.options.len()
-                || r.source_ids.iter().any(|id| !sources.contains(id.as_str()))
-            {
-                return Err(invalid(
-                    "Pack attempt evidence has an invalid reference or answer index.",
-                ));
-            }
-        }
-    }
-    if p.modules.is_empty()
-        || p.modules.len() > 100
-        || p.modules.iter().map(|m| m.lessons.len()).sum::<usize>() > 1000
-    {
-        return Err(invalid("Pack curriculum exceeds import limits."));
-    }
-    Ok(())
-}
-fn validate_answer_keys(program: &LearningProgramDto, keys: &[PrivateAnswerKey]) -> Result<()> {
-    let question_options: HashMap<&str, usize> = program
-        .modules
-        .iter()
-        .flat_map(|m| m.lessons.iter())
-        .flat_map(|l| l.questions.iter())
-        .map(|q| (q.id.as_str(), q.options.len()))
-        .collect();
-    let mut seen = HashSet::new();
-    for key in keys {
-        let Some(count) = question_options.get(key.question_id.as_str()) else {
-            return Err(invalid("Pack answer key refers to an unknown question."));
-        };
-        if !seen.insert(key.question_id.as_str())
-            || key.correct_index >= *count
-            || key.explanation.trim().is_empty()
-        {
-            return Err(invalid("Pack answer key data is invalid."));
-        }
-    }
-    if seen.len() != question_options.len() {
-        return Err(invalid("Pack omits one or more assessment answer keys."));
-    }
-    Ok(())
-}
-fn validate_source_id(id: &str) -> Result<()> {
-    if id.trim().is_empty() || id.len() > 300 || id.chars().any(char::is_control) {
-        return Err(invalid("Pack source version ID is invalid."));
-    }
-    Ok(())
 }
 fn source_body_path(id: &str) -> String {
     format!(
@@ -2057,17 +1761,6 @@ async fn insert_canvas_snapshot(
         let _: serde_json::Value = parse(scene.as_bytes())?;
         sqlx::query("INSERT INTO learning_canvas_snapshots(id,program_id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(value_str(row,"id")?).bind(program_id).bind(value_str(row,"canvasId")?).bind(value_str(row,"name")?).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(value_i64(row,"elementCount")?).bind(value_i64(row,"canvasRevision")?).bind(value_i64(row,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
-    }
-    for row in &mut snapshot.operations {
-        remap_json_field(row, "operationId", map)?;
-        remap_json_field(row, "canvasId", map)?;
-        remap_json_field(row, "resultSnapshotId", map)?;
-        let kind = value_str(row, "kind")?;
-        if !matches!(kind, "create" | "save" | "snapshot" | "restore") {
-            return Err(invalid("Pack canvas operation kind is invalid."));
-        }
-        sqlx::query("INSERT INTO learning_canvas_operations(operation_id,program_id,canvas_id,kind,payload_hash,result_revision,result_snapshot_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(value_str(row,"operationId")?).bind(program_id).bind(value_str(row,"canvasId")?).bind(kind).bind(value_str(row,"payloadHash")?).bind(value_i64(row,"resultRevision")?).bind(row.get("resultSnapshotId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_i64(row,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
@@ -2277,29 +1970,6 @@ async fn insert_practical_snapshot(
             sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,?,?,?,?,?)").bind(&run.id).bind(ordinal as i64).bind(&check.name).bind(status).bind(&check.message).bind(check.duration_ms).execute(&mut **tx).await.map_err(db)?;
         }
     }
-    for operation in &snapshot.practical_operations {
-        let table = value_str(operation, "table")?;
-        let operation_id = value_str(operation, "operationId")?;
-        let kind = value_str(operation, "kind")?;
-        if table == "learning_practical_activity_operations" {
-            if !matches!(kind, "generate" | "revise" | "retire") {
-                return Err(invalid("Practical activity operation kind is invalid."));
-            }
-            sqlx::query("INSERT INTO learning_practical_activity_operations(operation_id,program_id,activity_id,kind,payload_hash,result_revision,created_at) VALUES(?,?,?,?,?,?,?)")
-                .bind(operation_id).bind(program_id).bind(value_str(operation,"activityId")?).bind(kind).bind(value_str(operation,"payloadHash")?).bind(value_i64(operation,"resultRevision")?).bind(value_i64(operation,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
-        } else if table == "learning_practical_run_operations" {
-            if !matches!(kind, "start" | "cancel") {
-                return Err(invalid("Practical run operation kind is invalid."));
-            }
-            let run = value_str(operation, "runId")?;
-            sqlx::query("INSERT INTO learning_practical_run_operations(operation_id,program_id,run_id,kind,payload_hash,created_at) VALUES(?,?,?,?,?,?)")
-                .bind(operation_id).bind(program_id).bind(run).bind(kind).bind(value_str(operation,"payloadHash")?).bind(value_i64(operation,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
-        } else {
-            return Err(invalid(
-                "Pack contains an unknown practical operation table.",
-            ));
-        }
-    }
     for session in &snapshot.simulations {
         let id = value_str(session, "id")?;
         let activity = value_str(session, "activityId")?;
@@ -2323,14 +1993,6 @@ async fn insert_practical_snapshot(
         let _: serde_json::Value = parse(citations.as_bytes())?;
         sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             .bind(value_str(turn,"id")?).bind(program_id).bind(value_str(turn,"sessionId")?).bind(value_str(turn,"operationId")?).bind(value_str(turn,"payloadHash")?).bind(value_i64(turn,"ordinal")?).bind(speaker).bind(value_str(turn,"content")?).bind(citations).bind(turn.get("modelName").and_then(serde_json::Value::as_str)).bind(value_i64(turn,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
-    }
-    for operation in &snapshot.simulation_operations {
-        let kind = value_str(operation, "kind")?;
-        if !matches!(kind, "start" | "turn" | "finish" | "cancel") {
-            return Err(invalid("Simulation operation kind is invalid."));
-        }
-        sqlx::query("INSERT INTO learning_simulation_operations(operation_id,program_id,session_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,?,?,?,?)")
-            .bind(value_str(operation,"operationId")?).bind(program_id).bind(value_str(operation,"sessionId")?).bind(kind).bind(value_str(operation,"payloadHash")?).bind(operation.get("resultId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_i64(operation,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
@@ -2408,20 +2070,6 @@ async fn insert_source_history(
     history: &mut SourceHistorySnapshot,
     map: &HashMap<String, String>,
 ) -> Result<()> {
-    for operation in &mut history.operations {
-        remap_json_field(operation, "operationId", map)?;
-        remap_json_field(operation, "sourceId", map)?;
-        remap_json_field(operation, "resultVersionId", map)?;
-        let kind = value_str(operation, "kind")?;
-        if !matches!(
-            kind,
-            "add_web" | "add_document" | "add_text" | "refresh" | "adopt" | "policy"
-        ) {
-            return Err(invalid("Pack source operation kind is invalid."));
-        }
-        sqlx::query("INSERT INTO learning_source_operations(operation_id,program_id,source_id,kind,payload_hash,result_version_id,result_revision,created_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(value_str(operation,"operationId")?).bind(program_id).bind(value_str(operation,"sourceId")?).bind(kind).bind(value_str(operation,"payloadHash")?).bind(operation.get("resultVersionId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_i64(operation,"resultRevision")?).bind(value_i64(operation,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
-    }
     for check in &mut history.checks {
         remap_json_field(check, "operationId", map)?;
         remap_json_field(check, "sourceId", map)?;
@@ -2436,177 +2084,6 @@ async fn insert_source_history(
     Ok(())
 }
 
-fn map_id(map: &mut HashMap<String, String>, from: &str, to: String) {
-    // Do not let a later entity silently change the destination of an earlier
-    // mapping. Duplicate namespaces are rejected by the aggregate/core
-    // validators; deliberate repeated references reuse the first mapping.
-    map.entry(from.to_owned()).or_insert(to);
-}
-fn remap(map: &HashMap<String, String>, value: &str) -> String {
-    map.get(value).cloned().unwrap_or_else(|| value.to_owned())
-}
-fn remap_refs(map: &HashMap<String, String>, values: &mut Vec<String>) {
-    for value in values {
-        *value = remap(map, value);
-    }
-}
-fn remap_json_field(
-    value: &mut serde_json::Value,
-    key: &str,
-    map: &HashMap<String, String>,
-) -> Result<()> {
-    if let Some(old) = value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-    {
-        value[key] = serde_json::Value::String(remap(map, &old));
-    }
-    Ok(())
-}
-fn remap_json_string_field(
-    value: &mut serde_json::Value,
-    key: &str,
-    map: &HashMap<String, String>,
-) -> Result<()> {
-    let Some(serialized) = value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-    else {
-        return Ok(());
-    };
-    let mut nested: serde_json::Value = parse(serialized.as_bytes())?;
-    remap_nested_value(&mut nested, map);
-    value[key] = serde_json::Value::String(json_string(&nested)?);
-    Ok(())
-}
-fn remap_nested_value(value: &mut serde_json::Value, map: &HashMap<String, String>) {
-    match value {
-        serde_json::Value::String(_) => {}
-        serde_json::Value::Array(values) => {
-            values
-                .iter_mut()
-                .for_each(|child| remap_nested_value(child, map));
-        }
-        serde_json::Value::Object(values) => {
-            for (key, child) in values.iter_mut() {
-                if matches!(
-                    key.as_str(),
-                    "id" | "programId"
-                        | "moduleId"
-                        | "lessonId"
-                        | "questionId"
-                        | "sourceId"
-                        | "versionId"
-                        | "sourceVersionId"
-                        | "outcomeId"
-                        | "activityId"
-                        | "runId"
-                        | "sessionId"
-                        | "revisesSessionId"
-                        | "cardId"
-                        | "operationId"
-                        | "resultId"
-                        | "snapshotId"
-                        | "canvasId"
-                        | "deckId"
-                        | "reviewId"
-                        | "blueprintId"
-                        | "candidateId"
-                        | "formId"
-                        | "revisionId"
-                        | "jobId"
-                        | "diagnosticId"
-                        | "practiceSessionId"
-                        | "tutorTurnId"
-                        | "proposalId"
-                        | "evidenceEventId"
-                        | "predecessorId"
-                        | "replacementLessonId"
-                        | "retryOfJobId"
-                        | "acceptedCardId"
-                        | "possibleDuplicateCardId"
-                        | "sourceIds"
-                        | "sourceVersionIds"
-                        | "outcomeIds"
-                        | "prerequisiteModuleIds"
-                        | "evidenceEventIds"
-                ) {
-                    remap_scalar_or_id_array(child, map);
-                } else {
-                    remap_nested_value(child, map);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-fn remap_scalar_or_id_array(value: &mut serde_json::Value, map: &HashMap<String, String>) {
-    match value {
-        serde_json::Value::String(old) => {
-            if let Some(new) = map.get(old) {
-                *old = new.clone()
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for child in values {
-                if let serde_json::Value::String(old) = child {
-                    if let Some(new) = map.get(old) {
-                        *old = new.clone();
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-}
-fn remap_id_array(value: &mut serde_json::Value, map: &HashMap<String, String>) -> Result<()> {
-    let values = value
-        .as_array_mut()
-        .ok_or_else(|| invalid("Pack ID list must be a JSON array."))?;
-    for child in values {
-        let old = child
-            .as_str()
-            .ok_or_else(|| invalid("Pack ID list contains a non-text value."))?;
-        *child = serde_json::Value::String(remap(map, old));
-    }
-    Ok(())
-}
-fn rewrite_program(program: &mut LearningProgramDto, map: &HashMap<String, String>) {
-    program.summary.id = remap(map, &program.summary.id);
-    program.summary.current_lesson_id = program
-        .summary
-        .current_lesson_id
-        .as_deref()
-        .map(|id| remap(map, id));
-    for module in &mut program.modules {
-        module.id = remap(map, &module.id);
-        remap_refs(map, &mut module.prerequisite_module_ids);
-        for lesson in &mut module.lessons {
-            lesson.id = remap(map, &lesson.id);
-            for block in &mut lesson.blocks {
-                remap_refs(map, &mut block.source_ids);
-            }
-            for question in &mut lesson.questions {
-                question.id = remap(map, &question.id);
-                remap_refs(map, &mut question.source_ids);
-            }
-        }
-    }
-    for source in &mut program.sources {
-        source.id = remap(map, &source.id);
-    }
-    for attempt in &mut program.attempts {
-        attempt.id = remap(map, &attempt.id);
-        attempt.module_id = remap(map, &attempt.module_id);
-        attempt.lesson_id = attempt.lesson_id.as_deref().map(|id| remap(map, id));
-        for result in &mut attempt.results {
-            result.question_id = remap(map, &result.question_id);
-            remap_refs(map, &mut result.source_ids);
-        }
-    }
-}
 fn parse_policy(value: &str) -> Result<LearningPackConflictPolicy> {
     match value {
         "create_copy" => Ok(LearningPackConflictPolicy::CreateCopy),

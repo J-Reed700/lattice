@@ -40,6 +40,8 @@ mod assessment;
 pub use assessment::*;
 mod practical;
 pub use practical::*;
+mod study;
+pub use study::*;
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
@@ -118,7 +120,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_learning_recall_workspace,
             save_learning_recall_card,
             decide_learning_recall_duplicate,
-            change_learning_recall_scheduler,
             review_learning_recall_card,
             get_learning_practice_workspace,
             get_learning_practice_session,
@@ -151,7 +152,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             cancel_learning_practical_run,
             start_learning_simulation,
             send_learning_simulation_turn,
-            finish_learning_simulation
+            finish_learning_simulation,
+            list_study_decks,
+            get_study_deck,
+            generate_study_deck,
+            generate_conversation_study_deck,
+            review_study_card,
+            update_study_card,
+            delete_study_deck
         ])
         .build()
 }

@@ -550,14 +550,6 @@ export const learningApi = {
       { request },
     ),
 
-  changeLearningRecallScheduler: (
-    request: Wire.ChangeLearningRecallSchedulerRequestDto,
-  ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>
-    learningCall<Wire.LearningRecallWorkspaceDto>(
-      'change_learning_recall_scheduler',
-      { request },
-    ),
-
   reviewLearningRecallCard: (
     request: Wire.ReviewLearningRecallCardRequestDto,
   ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>

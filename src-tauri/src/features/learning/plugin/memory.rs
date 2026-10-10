@@ -26,7 +26,7 @@ pub(super) async fn learning_memory(
     let now = chrono::Utc::now().timestamp_millis();
     let (study_deck, due_count) = match state.deck_id.as_deref() {
         Some(deck_id) => {
-            let deck = crate::features::study::repository::StudyRepository::new(
+            let deck = crate::features::learning::recall::study_repository::StudyRepository::new(
                 container.db_pool().clone(),
             )
             .get(deck_id)
@@ -44,7 +44,6 @@ pub(super) async fn learning_memory(
         drafts: state.drafts,
         accepted_cards: state.accepted_cards,
         due_count,
-        scheduler_version: "expanding_v1".into(),
     })
 }
 

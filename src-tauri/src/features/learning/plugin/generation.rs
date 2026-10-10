@@ -63,13 +63,18 @@ pub(super) fn generation_worker(
 ) -> crate::features::learning::generation_jobs::LessonGenerationWorker {
     let model_container = container.clone();
     let source_container = container.clone();
-    let embedding_container = container.clone();
+    let library_container = container.clone();
     crate::features::learning::generation_jobs::LessonGenerationWorker {
         research_web: Some(container.web_service()),
         pool: container.db_pool().clone(),
-        load_embedding: std::sync::Arc::new(move || {
-            let container = embedding_container.clone();
-            Box::pin(async move { container.get_or_load_embedding().await.ok() })
+        load_library: std::sync::Arc::new(move || {
+            let container = library_container.clone();
+            Box::pin(async move {
+                // The library queries with the loaded model; without one,
+                // references are ranked by keyword.
+                container.get_or_load_embedding().await.ok()?;
+                Some(container.library_passages())
+            })
         }),
         load_llm: std::sync::Arc::new(move || {
             let container = model_container.clone();

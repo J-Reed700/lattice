@@ -46,7 +46,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
-            load_embedding: Arc::new(|| Box::pin(async { None })),
+            load_library: Arc::new(|| Box::pin(async { None })),
             refresh_sources: Arc::new(move |_| {
                 let error = error.clone();
                 Box::pin(async move { Err(error) })

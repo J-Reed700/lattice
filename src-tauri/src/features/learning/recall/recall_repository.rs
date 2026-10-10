@@ -1,40 +1,30 @@
 //! Program-scoped source selectors, retrieval and versioned recall cards.
+use super::{
+    recall_content::validate_content,
+    schedule::answered,
+    study_dto::*,
+    study_repository::{record_review, CardReview, ReviewOutcome},
+};
 use crate::features::learning::{
+    operations::Operation,
+    persistence::{db, encode as json, hash as payload_hash, now},
     portability_dto::*,
     source_library::LearningSourceLibraryRepository,
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use crate::{
-    application::ports::EmbeddingPort,
-    features::{study::dto::*, study::schedule::next_review},
+    application::ports::LibraryPassagesPort,
     shared::error::{AppError, Result},
 };
-use fsrs::{MemoryState, FSRS};
-use serde::{Deserialize, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashSet;
 
 const MAX_CARDS: i64 = 2_000;
 const MAX_QUERY_CHARS: usize = 240;
-const DAY_MS: i64 = 86_400_000;
+const SCHEDULER_DISCLOSURE: &str = "Cards are scheduled with FSRS 6 and its default parameters. A review interval is not a promise or measurement of retention.";
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
-fn json<T: Serialize>(value: &T) -> Result<String> {
-    serde_json::to_string(value).map_err(|error| AppError::Serialization(error.to_string()))
-}
-fn payload_hash<T: Serialize>(value: &T) -> Result<String> {
-    use sha2::Digest;
-    let bytes =
-        serde_json::to_vec(value).map_err(|error| AppError::Serialization(error.to_string()))?;
-    Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
 }
 fn validate_uuid(value: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
@@ -46,21 +36,6 @@ fn validate_owned_id(value: &str, label: &str) -> Result<()> {
         return Err(invalid(format!("Invalid {label} ID.")));
     }
     Ok(())
-}
-fn scheduler_name(value: LearningRecallSchedulerVersion) -> &'static str {
-    match value {
-        LearningRecallSchedulerVersion::ExpandingV1 => "expanding_v1",
-        LearningRecallSchedulerVersion::Fsrs6V1 => "fsrs_6_v1",
-    }
-}
-fn parse_scheduler(value: &str) -> Result<LearningRecallSchedulerVersion> {
-    match value {
-        "expanding_v1" => Ok(LearningRecallSchedulerVersion::ExpandingV1),
-        "fsrs_6_v1" => Ok(LearningRecallSchedulerVersion::Fsrs6V1),
-        _ => Err(AppError::InvalidState(
-            "Unknown recall scheduler version.".into(),
-        )),
-    }
 }
 fn format_name(value: LearningRecallCardFormat) -> &'static str {
     match value {
@@ -83,67 +58,15 @@ fn parse_format(value: &str) -> Result<LearningRecallCardFormat> {
         _ => Err(AppError::InvalidState("Unknown recall card format.".into())),
     }
 }
-fn rating_name(rating: StudyRating) -> &'static str {
-    match rating {
-        StudyRating::Again => "again",
-        StudyRating::Hard => "hard",
-        StudyRating::Good => "good",
-        StudyRating::Easy => "easy",
-    }
-}
-fn parse_rating(value: &str) -> Result<StudyRating> {
-    match value {
-        "again" => Ok(StudyRating::Again),
-        "hard" => Ok(StudyRating::Hard),
-        "good" => Ok(StudyRating::Good),
-        "easy" => Ok(StudyRating::Easy),
-        _ => Err(AppError::InvalidState(
-            "Unknown stored recall rating.".into(),
-        )),
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SchedulerState {
-    version: LearningRecallSchedulerVersion,
-    stability: Option<f64>,
-    difficulty: Option<f64>,
-    last_reviewed_at: Option<i64>,
-    due_at: i64,
-    interval_days: i64,
-    review_count: i64,
-}
-impl SchedulerState {
-    fn dto(&self) -> LearningRecallSchedulerStateDto {
-        LearningRecallSchedulerStateDto {
-            scheduler_version: self.version,
-            stability: self.stability,
-            difficulty: self.difficulty,
-            last_reviewed_at: self.last_reviewed_at,
-            due_at: self.due_at,
-            interval_days: self.interval_days,
-            review_count: self.review_count,
-        }
-    }
-    fn from_json(value: &str) -> Result<Self> {
-        let state: Self = serde_json::from_str(value)
-            .map_err(|error| AppError::InvalidState(format!("Invalid scheduler state: {error}")))?;
-        if !state.stability.is_none_or(f64::is_finite)
-            || !state.difficulty.is_none_or(f64::is_finite)
-            || state.review_count < 0
-            || state.interval_days < 0
-        {
-            return Err(AppError::InvalidState(
-                "Invalid recall scheduler state.".into(),
-            ));
-        }
-        Ok(state)
-    }
-    fn fsrs_memory(&self) -> Option<MemoryState> {
-        Some(MemoryState {
-            stability: self.stability? as f32,
-            difficulty: self.difficulty? as f32,
-        })
+/// The card's FSRS schedule as the recall workspace reports it.
+fn scheduler_dto(row: &sqlx::sqlite::SqliteRow) -> LearningRecallSchedulerStateDto {
+    LearningRecallSchedulerStateDto {
+        stability: row.get("stability"),
+        difficulty: row.get("difficulty"),
+        last_reviewed_at: row.get("last_reviewed_at"),
+        due_at: row.get("due_at"),
+        interval_days: row.get("interval_days"),
+        review_count: row.get("review_count"),
     }
 }
 
@@ -196,18 +119,16 @@ impl LearningRecallRepository {
         let hash = payload_hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
-        if let Some(existing) = operation_replay(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "create_selector",
-            &hash,
-        )
-        .await?
-        {
-            let selector_id = existing.ok_or_else(|| {
-                AppError::InvalidState("Selector operation has no result ID.".into())
-            })?;
+        let operation = Operation {
+            id: &req.operation_id,
+            scope: "portability",
+            kind: "create_selector",
+            program_id: Some(&req.program_id),
+            subject_id: None,
+            payload_hash: &hash,
+            conflict: "Operation ID was reused with different recall data.",
+        };
+        if let Some(selector_id) = operation.replay::<String, _>(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.get_selector(&req.program_id, &selector_id).await;
         }
@@ -239,16 +160,7 @@ impl LearningRecallRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        record_operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "create_selector",
-            &hash,
-            Some(&req.selector_id),
-            timestamp,
-        )
-        .await?;
+        operation.record(&mut *tx, &req.selector_id).await?;
         tx.commit().await.map_err(db)?;
         self.get_selector(&req.program_id, &req.selector_id).await
     }
@@ -298,7 +210,7 @@ impl LearningRecallRepository {
     pub async fn search_sources(
         &self,
         req: &SearchLearningSourcesSemanticallyRequestDto,
-        embedder: Option<&dyn EmbeddingPort>,
+        library: Option<&dyn LibraryPassagesPort>,
     ) -> Result<Vec<LearningSourceSemanticSearchResultDto>> {
         validate_uuid(&req.program_id, "program")?;
         let query = req.query.trim();
@@ -307,18 +219,18 @@ impl LearningRecallRepository {
                 "Source search query must contain 1–240 characters.",
             ));
         }
-        let library = LearningSourceLibraryRepository::new(self.pool.clone());
-        let sources = library.verification_sources(&req.program_id).await?;
+        let snapshots = LearningSourceLibraryRepository::new(self.pool.clone());
+        let sources = snapshots.verification_sources(&req.program_id).await?;
         let collection =
             crate::features::learning::reference_collection::ReferenceCollection::load(
                 &self.pool,
                 &req.program_id,
                 &sources,
-                embedder,
+                library,
             )
             .await?;
         let passages = collection.retrieve(query, req.limit).await?;
-        let workspace = library.workspace(&req.program_id).await?;
+        let workspace = snapshots.workspace(&req.program_id).await?;
         let mut results = Vec::new();
         for passage in passages {
             let item = workspace
@@ -363,7 +275,7 @@ impl LearningRecallRepository {
         if program_exists.is_none() {
             return Err(AppError::NotFound("Learning program not found.".into()));
         }
-        self.bootstrap_legacy_cards(program_id).await?;
+        self.bootstrap_deck_cards(program_id).await?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
@@ -377,11 +289,10 @@ impl LearningRecallRepository {
                 cards: vec![],
                 duplicates: vec![],
                 due_count: 0,
-                fsrs_available: true,
-                scheduler_disclosure: "FSRS 6 scheduling is available. Scheduler changes replay the complete Study review history and can be reversed.".into(),
+                scheduler_disclosure: SCHEDULER_DISCLOSURE.into(),
             });
         };
-        let rows = sqlx::query("SELECT p.*,c.deck_id,c.question,c.answer,c.explanation,c.options_json,c.correct_index,c.due_at,c.interval_days,c.review_count,c.lapses,c.source_json FROM learning_recall_card_profiles p JOIN study_cards c ON c.id=p.card_id WHERE p.program_id=? AND c.deck_id=? ORDER BY p.created_at,c.id")
+        let rows = sqlx::query("SELECT p.*,c.deck_id,c.due_at,c.interval_days,c.review_count,c.stability,c.difficulty,c.last_reviewed_at FROM learning_recall_card_profiles p JOIN study_cards c ON c.id=p.card_id WHERE p.program_id=? AND c.deck_id=? ORDER BY p.created_at,c.id")
             .bind(program_id)
             .bind(&deck_id)
             .fetch_all(&self.pool)
@@ -393,12 +304,6 @@ impl LearningRecallRepository {
             let format = parse_format(row.get("format"))?;
             let content = content_from_row(row, format)?;
             let versions = self.card_versions(&card_id).await?;
-            let state = SchedulerState::from_json(row.get("scheduler_state_json"))?;
-            if state.version != parse_scheduler(row.get("scheduler_version"))? {
-                return Err(AppError::InvalidState(
-                    "Recall scheduler version does not match its state.".into(),
-                ));
-            }
             cards.push(LearningRecallCardDto {
                 id: card_id,
                 format,
@@ -408,7 +313,7 @@ impl LearningRecallRepository {
                         AppError::InvalidState(format!("Invalid recall source references: {error}"))
                     })?,
                 content_revision: row.get("content_revision"),
-                scheduler: state.dto(),
+                scheduler: scheduler_dto(row),
                 versions,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
@@ -424,12 +329,13 @@ impl LearningRecallRepository {
             cards,
             duplicates,
             due_count,
-            fsrs_available: true,
-            scheduler_disclosure: "FSRS 6 scheduling is available. Scheduler changes replay the complete Study review history and can be reversed.".into(),
+            scheduler_disclosure: SCHEDULER_DISCLOSURE.into(),
         })
     }
 
-    async fn bootstrap_legacy_cards(&self, program_id: &str) -> Result<()> {
+    /// Give cards accepted into the program deck their recall profile and
+    /// first content version.
+    async fn bootstrap_deck_cards(&self, program_id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
@@ -449,8 +355,7 @@ impl LearningRecallRepository {
             .map_err(db)?;
         for row in rows {
             let card_id: String = row.get("id");
-            let study_format =
-                crate::features::study::repository::parse_card_format(row.get("format"))?;
+            let study_format = super::study_repository::parse_card_format(row.get("format"))?;
             let format = match study_format {
                 StudyCardFormat::MultipleChoice => LearningRecallCardFormat::MultipleChoice,
                 StudyCardFormat::QuestionAnswer => LearningRecallCardFormat::QuestionAnswer,
@@ -471,32 +376,16 @@ impl LearningRecallRepository {
             let source_ids = self
                 .card_source_versions(&mut tx, program_id, &card_id)
                 .await?;
-            let last_reviewed: Option<i64> =
-                sqlx::query_scalar("SELECT max(reviewed_at) FROM study_reviews WHERE card_id=?")
-                    .bind(&card_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?;
-            let state = SchedulerState {
-                version: LearningRecallSchedulerVersion::ExpandingV1,
-                stability: None,
-                difficulty: None,
-                last_reviewed_at: last_reviewed,
-                due_at: row.get("due_at"),
-                interval_days: row.get("interval_days"),
-                review_count: row.get("review_count"),
-            };
             let timestamp = now();
             let prompt_json = json(&content.prompt)?;
             let answer_json = json(&content)?;
-            sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,scheduler_version,scheduler_state_json,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,'expanding_v1',?,1,?,?)")
+            sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)")
                 .bind(&card_id)
                 .bind(program_id)
                 .bind(format_name(format))
                 .bind(prompt_json)
                 .bind(answer_json)
                 .bind(json(&source_ids)?)
-                .bind(json(&state)?)
                 .bind(timestamp)
                 .bind(timestamp)
                 .execute(&mut *tx)
@@ -508,73 +397,13 @@ impl LearningRecallRepository {
                 .bind(json(&content.prompt)?)
                 .bind(json(&content)?)
                 .bind(json(&source_ids)?)
-                .bind("Imported from the existing Learning Studio Study deck")
+                .bind("Accepted into the program's recall deck")
                 .bind(timestamp)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-            self.replay_bootstrap_history(
-                &mut tx,
-                &card_id,
-                LearningRecallSchedulerVersion::ExpandingV1,
-            )
-            .await?;
         }
         tx.commit().await.map_err(db)
-    }
-
-    async fn replay_bootstrap_history(
-        &self,
-        tx: &mut Transaction<'_, Sqlite>,
-        card_id: &str,
-        scheduler: LearningRecallSchedulerVersion,
-    ) -> Result<()> {
-        let reviews = sqlx::query("SELECT id,reviewed_at,rating FROM study_reviews WHERE card_id=? ORDER BY reviewed_at,id")
-            .bind(card_id)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?;
-        let mut state = SchedulerState {
-            version: scheduler,
-            stability: None,
-            difficulty: None,
-            last_reviewed_at: None,
-            due_at: 0,
-            interval_days: 0,
-            review_count: 0,
-        };
-        for review in reviews {
-            let review_id: String = review.get("id");
-            let reviewed_at: i64 = review.get("reviewed_at");
-            let rating = parse_rating(review.get("rating"))?;
-            let prior = state.clone();
-            state = next_scheduler_state(&state, rating, reviewed_at)?;
-            state.review_count += 1;
-            let transition_id = uuid::Uuid::new_v4().to_string();
-            sqlx::query("INSERT OR IGNORE INTO learning_recall_scheduler_transitions(id,card_id,review_id,scheduler_version,prior_state_json,rating,next_state_json,due_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
-                .bind(transition_id)
-                .bind(card_id)
-                .bind(&review_id)
-                .bind(scheduler_name(scheduler))
-                .bind(json(&prior)?)
-                .bind(rating_name(rating))
-                .bind(json(&state)?)
-                .bind(state.due_at)
-                .bind(reviewed_at)
-                .execute(&mut **tx)
-                .await
-                .map_err(db)?;
-        }
-        if state.review_count > 0 {
-            sqlx::query("UPDATE learning_recall_card_profiles SET scheduler_version=?,scheduler_state_json=? WHERE card_id=?")
-                .bind(scheduler_name(scheduler))
-                .bind(json(&state)?)
-                .bind(card_id)
-                .execute(&mut **tx)
-                .await
-                .map_err(db)?;
-        }
-        Ok(())
     }
 
     async fn card_source_versions(
@@ -637,16 +466,9 @@ impl LearningRecallRepository {
         let hash = payload_hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
-        if let Some(result) = recall_replay(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "save_card",
-            &hash,
-        )
-        .await?
-        {
-            if result.as_deref() != Some(req.card_id.as_str()) {
+        let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
+        if let Some(card_id) = operation.replay::<String, _>(&mut *tx).await? {
+            if card_id != req.card_id {
                 return Err(invalid("Operation replay does not match this card."));
             }
             tx.commit().await.map_err(db)?;
@@ -668,7 +490,7 @@ impl LearningRecallRepository {
                 ));
             }
         }
-        let prior: Option<sqlx::sqlite::SqliteRow> = sqlx::query("SELECT content_revision,scheduler_version,scheduler_state_json FROM learning_recall_card_profiles WHERE card_id=? AND program_id=?")
+        let prior: Option<sqlx::sqlite::SqliteRow> = sqlx::query("SELECT content_revision FROM learning_recall_card_profiles WHERE card_id=? AND program_id=?")
             .bind(&req.card_id)
             .bind(&req.program_id)
             .fetch_optional(&mut *tx)
@@ -698,22 +520,20 @@ impl LearningRecallRepository {
             }
             1
         };
-        let state = if let Some(row) = prior {
-            SchedulerState::from_json(row.get("scheduler_state_json"))?
-        } else {
-            SchedulerState {
-                version: LearningRecallSchedulerVersion::ExpandingV1,
-                stability: None,
-                difficulty: None,
-                last_reviewed_at: None,
-                due_at: now(),
-                interval_days: 0,
-                review_count: 0,
-            }
-        };
-        let sources = self
+        let mut sources = self
             .canonical_sources(&mut tx, &req.program_id, &req.source_version_ids)
             .await?;
+        if sources.is_empty() {
+            // A deck card always names a source; this one is the learner's own.
+            sources.push(StudySourceDto {
+                chunk_id: format!("learning-recall:{}", req.card_id),
+                document_id: String::new(),
+                file_name: "Personal recall card".into(),
+                file_path: String::new(),
+                excerpt: "Learner-authored recall card without an external source.".into(),
+                url: None,
+            });
+        }
         let source_json = json(&sources)?;
         let study_format = match req.format {
             LearningRecallCardFormat::MultipleChoice => "multiple_choice",
@@ -740,7 +560,7 @@ impl LearningRecallRepository {
                     "A Learning recall deck can contain at most 2,000 cards.",
                 ));
             }
-            sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format,scheduler_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,'expanding_v1')")
+            sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&deck_id)
                 .bind(req.content.prompt.trim())
@@ -750,20 +570,18 @@ impl LearningRecallRepository {
                 .bind(req.content.explanation.trim())
                 .bind(source_json)
                 .bind("Learning Recall")
-                .bind(state.due_at)
+                .bind(timestamp)
                 .bind(study_format)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-            sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,scheduler_version,scheduler_state_json,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+            sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&req.program_id)
                 .bind(format_name(req.format))
                 .bind(json(&req.content.prompt)?)
                 .bind(json(&req.content)?)
                 .bind(json(&req.source_version_ids)?)
-                .bind(scheduler_name(state.version))
-                .bind(json(&state)?)
                 .bind(revision)
                 .bind(timestamp)
                 .bind(timestamp)
@@ -816,17 +634,7 @@ impl LearningRecallRepository {
             timestamp,
         )
         .await?;
-        recall_record(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.card_id),
-            "save_card",
-            &hash,
-            &req.card_id,
-            timestamp,
-        )
-        .await?;
+        operation.record(&mut *tx, &req.card_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -841,16 +649,13 @@ impl LearningRecallRepository {
         let hash = payload_hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
-        if recall_replay(
-            &mut tx,
+        let operation = recall_operation(
             &req.operation_id,
             &req.program_id,
             "decide_duplicate",
             &hash,
-        )
-        .await?
-        .is_some()
-        {
+        );
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&req.program_id).await;
         }
@@ -868,17 +673,7 @@ impl LearningRecallRepository {
                 "Pending duplicate suggestion not found in this program.".into(),
             ));
         }
-        recall_record(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            None,
-            "decide_duplicate",
-            &hash,
-            &req.suggestion_id,
-            now(),
-        )
-        .await?;
+        operation.record(&mut *tx, &req.suggestion_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -893,7 +688,7 @@ impl LearningRecallRepository {
         if req.expected_review_count < 0 {
             return Err(invalid("Expected review count cannot be negative."));
         }
-        self.bootstrap_legacy_cards(&req.program_id).await?;
+        self.bootstrap_deck_cards(&req.program_id).await?;
         let hash = payload_hash(&(
             &req.program_id,
             &req.card_id,
@@ -903,25 +698,23 @@ impl LearningRecallRepository {
         ))?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
-        if recall_replay(&mut tx, &req.review_id, &req.program_id, "review", &hash)
-            .await?
-            .is_some()
-        {
+        let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&req.program_id).await;
         }
-        let row = sqlx::query("SELECT c.*,p.scheduler_state_json,p.scheduler_version FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
+        let row = sqlx::query("SELECT c.format,c.options_json,c.correct_index FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
             .bind(&req.card_id)
             .bind(&req.program_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Recall card not found in this program.".into()))?;
-        let format = parse_format(row.get("format"))?;
+        let multiple_choice = row.get::<String, _>("format") == "multiple_choice";
         let options: Vec<String> = serde_json::from_str(row.get("options_json"))
             .map_err(|error| AppError::InvalidState(format!("Invalid recall options: {error}")))?;
-        let correct_index: i64 = row.get("correct_index");
-        if (format == LearningRecallCardFormat::MultipleChoice) != req.selected_option.is_some() {
+        let correct_index = row.get::<i64, _>("correct_index").max(0) as usize;
+        if multiple_choice != req.selected_option.is_some() {
             return Err(invalid(
                 "Choose an answer only for multiple-choice recall cards.",
             ));
@@ -932,249 +725,34 @@ impl LearningRecallRepository {
         {
             return Err(invalid("Selected answer is outside the card's options."));
         }
-        let correct = req
-            .selected_option
-            .map(|index| index as i64 == correct_index);
-        let rating = match correct {
-            Some(true) => StudyRating::Good,
-            Some(false) => StudyRating::Again,
-            None => req.rating,
-        };
-        let state = SchedulerState::from_json(row.get("scheduler_state_json"))?;
-        if state.review_count != req.expected_review_count {
-            return Err(invalid("Recall card changed; reload and retry."));
-        }
+        let (correct, rating) = answered(req.selected_option, correct_index, req.rating);
         let timestamp = now();
-        let prior = state.clone();
-        let mut next = next_scheduler_state(&state, rating, timestamp)?;
-        next.review_count = state.review_count + 1;
-        let rating_text = rating_name(rating);
-        let correct_text = correct.map(i64::from);
-        let mode = if correct.is_some() {
-            "quiz"
-        } else {
-            "flashcard"
-        };
-        let existing = sqlx::query("SELECT card_id,rating,mode,correct,selected_option,scheduler_version FROM study_reviews WHERE id=?")
-            .bind(&req.review_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-        if let Some(existing) = existing {
-            let matches = existing.get::<String, _>("card_id") == req.card_id
-                && existing.get::<String, _>("rating") == rating_text
-                && existing.get::<String, _>("mode") == mode
-                && existing.get::<Option<i64>, _>("correct") == correct_text
-                && existing.get::<Option<i64>, _>("selected_option")
-                    == req.selected_option.map(|x| x as i64)
-                && existing.get::<String, _>("scheduler_version") == scheduler_name(state.version);
-            if !matches {
-                return Err(invalid(
-                    "Review ID was already used with different review data.",
-                ));
-            }
-            recall_record(
-                &mut tx,
-                &req.review_id,
-                &req.program_id,
-                Some(&req.card_id),
-                "review",
-                &hash,
-                &req.review_id,
-                timestamp,
-            )
-            .await?;
-            tx.commit().await.map_err(db)?;
-            return self.workspace(&req.program_id).await;
-        }
-        sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option,scheduler_version) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(&req.review_id)
-            .bind(&req.card_id)
-            .bind(timestamp)
-            .bind(rating_text)
-            .bind(mode)
-            .bind(correct_text)
-            .bind(req.selected_option.map(|x| x as i64))
-            .bind(scheduler_name(state.version))
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("INSERT INTO learning_recall_scheduler_transitions(id,card_id,review_id,scheduler_version,prior_state_json,rating,next_state_json,due_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(&req.card_id)
-            .bind(&req.review_id)
-            .bind(scheduler_name(state.version))
-            .bind(json(&prior)?)
-            .bind(rating_text)
-            .bind(json(&next)?)
-            .bind(next.due_at)
-            .bind(timestamp)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("UPDATE learning_recall_card_profiles SET scheduler_state_json=?,updated_at=? WHERE card_id=? AND program_id=?")
-            .bind(json(&next)?)
-            .bind(timestamp)
-            .bind(&req.card_id)
-            .bind(&req.program_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("UPDATE study_cards SET scheduler_version=?,due_at=?,interval_days=?,review_count=review_count+1,lapses=lapses+? WHERE id=?")
-            .bind(scheduler_name(state.version))
-            .bind(next.due_at)
-            .bind(next.interval_days)
-            .bind(i64::from(rating == StudyRating::Again))
-            .bind(&req.card_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        recall_record(
+        let outcome = record_review(
             &mut tx,
-            &req.review_id,
-            &req.program_id,
-            Some(&req.card_id),
-            "review",
-            &hash,
-            &req.review_id,
+            &CardReview {
+                review_id: &req.review_id,
+                card_id: &req.card_id,
+                rating,
+                correct,
+                selected_option: req.selected_option,
+                expected_reviews: req.expected_review_count,
+            },
             timestamp,
         )
         .await?;
-        tx.commit().await.map_err(db)?;
-        self.workspace(&req.program_id).await
-    }
-
-    pub async fn change_scheduler(
-        &self,
-        req: &ChangeLearningRecallSchedulerRequestDto,
-    ) -> Result<LearningRecallWorkspaceDto> {
-        validate_uuid(&req.operation_id, "operation")?;
-        validate_uuid(&req.program_id, "program")?;
-        validate_uuid(&req.card_id, "card")?;
-        if req.expected_review_count < 0 {
-            return Err(invalid("Expected review count cannot be negative."));
-        }
-        let hash = payload_hash(&(
-            &req.program_id,
-            &req.card_id,
-            req.scheduler_version,
-            req.expected_review_count,
-        ))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_active_program(&mut tx, &req.program_id).await?;
-        if recall_replay(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "change_scheduler",
-            &hash,
-        )
-        .await?
-        .is_some()
-        {
-            tx.commit().await.map_err(db)?;
-            return self.workspace(&req.program_id).await;
-        }
-        let row = sqlx::query("SELECT scheduler_state_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id=?")
-            .bind(&req.program_id)
-            .bind(&req.card_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Recall card not found in this program.".into()))?;
-        let previous = SchedulerState::from_json(row.get("scheduler_state_json"))?;
-        if previous.review_count != req.expected_review_count {
+        if outcome == ReviewOutcome::Stale {
             return Err(invalid("Recall card changed; reload and retry."));
         }
-        if previous.version == req.scheduler_version {
-            return Err(invalid("Card already uses this scheduler."));
-        }
-        let migration_id = uuid::Uuid::new_v4().to_string();
-        let mut state = SchedulerState {
-            version: req.scheduler_version,
-            stability: None,
-            difficulty: None,
-            last_reviewed_at: None,
-            due_at: 0,
-            interval_days: 0,
-            review_count: 0,
-        };
-        let reviews = sqlx::query("SELECT id,reviewed_at,rating FROM study_reviews WHERE card_id=? ORDER BY reviewed_at,id")
-            .bind(&req.card_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
-        for review in reviews {
-            let review_id: String = review.get("id");
-            let timestamp: i64 = review.get("reviewed_at");
-            let rating = parse_rating(review.get("rating"))?;
-            let prior = state.clone();
-            state = next_scheduler_state(&state, rating, timestamp)?;
-            state.review_count += 1;
-            sqlx::query("INSERT OR IGNORE INTO learning_recall_scheduler_transitions(id,card_id,review_id,scheduler_version,prior_state_json,rating,next_state_json,due_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(&req.card_id)
-                .bind(&review_id)
-                .bind(scheduler_name(req.scheduler_version))
-                .bind(json(&prior)?)
-                .bind(rating_name(rating))
-                .bind(json(&state)?)
-                .bind(state.due_at)
+        if outcome == ReviewOutcome::Recorded {
+            sqlx::query("UPDATE learning_recall_card_profiles SET updated_at=? WHERE card_id=? AND program_id=?")
                 .bind(timestamp)
+                .bind(&req.card_id)
+                .bind(&req.program_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if state.review_count != req.expected_review_count {
-            return Err(AppError::InvalidState(
-                "Study review history does not match the card's review count.".into(),
-            ));
-        }
-        let timestamp = now();
-        sqlx::query("INSERT INTO learning_recall_scheduler_migrations(id,operation_id,program_id,card_id,from_version,to_version,prior_state_json,next_state_json,replayed_review_count,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-            .bind(migration_id)
-            .bind(&req.operation_id)
-            .bind(&req.program_id)
-            .bind(&req.card_id)
-            .bind(scheduler_name(previous.version))
-            .bind(scheduler_name(req.scheduler_version))
-            .bind(json(&previous)?)
-            .bind(json(&state)?)
-            .bind(state.review_count)
-            .bind(timestamp)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("UPDATE learning_recall_card_profiles SET scheduler_version=?,scheduler_state_json=?,updated_at=? WHERE program_id=? AND card_id=?")
-            .bind(scheduler_name(req.scheduler_version))
-            .bind(json(&state)?)
-            .bind(timestamp)
-            .bind(&req.program_id)
-            .bind(&req.card_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query(
-            "UPDATE study_cards SET scheduler_version=?,due_at=?,interval_days=? WHERE id=?",
-        )
-        .bind(scheduler_name(req.scheduler_version))
-        .bind(state.due_at)
-        .bind(state.interval_days)
-        .bind(&req.card_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        recall_record(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.card_id),
-            "change_scheduler",
-            &hash,
-            &req.card_id,
-            timestamp,
-        )
-        .await?;
+        operation.record(&mut *tx, &req.review_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -1347,139 +925,6 @@ fn content_from_row(
     Ok(content)
 }
 
-pub(in crate::features::learning) fn validate_content(
-    format: LearningRecallCardFormat,
-    content: &LearningRecallContentDto,
-) -> Result<()> {
-    if content.prompt.trim().is_empty()
-        || content.prompt.chars().count() > 2_000
-        || content.answer.trim().is_empty()
-        || content.answer.chars().count() > 1_000
-        || content.explanation.chars().count() > 3_000
-    {
-        return Err(invalid(
-            "Recall prompt, answer, or explanation is outside its allowed bounds.",
-        ));
-    }
-    let invalid_multiple_choice = !(2..=8).contains(&content.options.len())
-        || content
-            .options
-            .iter()
-            .any(|choice| choice.trim().is_empty() || choice.chars().count() > 500)
-        || content
-            .options
-            .iter()
-            .map(|choice| choice.trim().to_lowercase())
-            .collect::<HashSet<_>>()
-            .len()
-            != content.options.len()
-        || content
-            .correct_option_index
-            .is_none_or(|index| index >= content.options.len())
-        || content
-            .correct_option_index
-            .and_then(|index| content.options.get(index))
-            .is_none_or(|choice| choice.trim() != content.answer.trim());
-    match format {
-        LearningRecallCardFormat::MultipleChoice if invalid_multiple_choice => {
-            return Err(invalid(
-                "Multiple-choice recall needs 2–8 unique options and a valid correct option.",
-            ));
-        }
-        LearningRecallCardFormat::MultipleChoice => {}
-        _ if !content.options.is_empty() || content.correct_option_index.is_some() => {
-            return Err(invalid(
-                "Only multiple-choice recall cards can contain answer options.",
-            ));
-        }
-        _ => {}
-    }
-    if format == LearningRecallCardFormat::Cloze {
-        if content.cloze_deletions.is_empty()
-            || content.cloze_deletions.len() > 12
-            || content
-                .cloze_deletions
-                .iter()
-                .any(|deletion| deletion.trim().is_empty() || !content.prompt.contains(deletion))
-            || content
-                .cloze_deletions
-                .iter()
-                .map(|deletion| deletion.trim().to_lowercase())
-                .collect::<HashSet<_>>()
-                .len()
-                != content.cloze_deletions.len()
-        {
-            return Err(invalid(
-                "Cloze deletions must be unique, non-empty text present in the prompt.",
-            ));
-        }
-    } else if !content.cloze_deletions.is_empty() {
-        return Err(invalid("Only cloze cards can contain cloze deletions."));
-    }
-    if format == LearningRecallCardFormat::CodePrediction
-        && content
-            .language
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty() || value.chars().count() > 48)
-    {
-        return Err(invalid("Code-prediction cards require a language name."));
-    }
-    if format != LearningRecallCardFormat::CodePrediction && content.language.is_some() {
-        return Err(invalid(
-            "Only code-prediction cards can name a programming language.",
-        ));
-    }
-    Ok(())
-}
-
-fn next_scheduler_state(
-    previous: &SchedulerState,
-    rating: StudyRating,
-    timestamp: i64,
-) -> Result<SchedulerState> {
-    let (due_at, interval_days, stability, difficulty) = match previous.version {
-        LearningRecallSchedulerVersion::ExpandingV1 => {
-            let (due, days) = next_review(rating, previous.interval_days, timestamp);
-            (due, days, previous.stability, previous.difficulty)
-        }
-        LearningRecallSchedulerVersion::Fsrs6V1 => {
-            let fsrs = FSRS::default();
-            let elapsed_days = previous
-                .last_reviewed_at
-                .map(|last| timestamp.saturating_sub(last).max(0) / DAY_MS)
-                .unwrap_or(0)
-                .min(u32::MAX as i64) as u32;
-            let next_states = fsrs
-                .next_states(previous.fsrs_memory(), 0.9, elapsed_days)
-                .map_err(|error| {
-                    AppError::InvalidState(format!("FSRS scheduling failed: {error}"))
-                })?;
-            let next = match rating {
-                StudyRating::Again => next_states.again,
-                StudyRating::Hard => next_states.hard,
-                StudyRating::Good => next_states.good,
-                StudyRating::Easy => next_states.easy,
-            };
-            let days = (f64::from(next.interval).round() as i64).clamp(1, 36_500);
-            (
-                timestamp.saturating_add(days.saturating_mul(DAY_MS)),
-                days,
-                Some(f64::from(next.memory.stability)),
-                Some(f64::from(next.memory.difficulty)),
-            )
-        }
-    };
-    Ok(SchedulerState {
-        version: previous.version,
-        stability,
-        difficulty,
-        last_reviewed_at: Some(timestamp),
-        due_at,
-        interval_days,
-        review_count: previous.review_count,
-    })
-}
-
 fn parse_selector(row: &sqlx::sqlite::SqliteRow) -> Result<SourceSelectorRecord> {
     let status = match row.get::<String, _>("status").as_str() {
         "exact" => crate::features::learning::source_selector::LearningQuoteMatchStatus::Exact,
@@ -1553,101 +998,21 @@ async fn lock_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str)
     }
     Ok(())
 }
-async fn operation_replay(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    kind: &str,
-    hash: &str,
-) -> Result<Option<Option<String>>> {
-    let row = sqlx::query("SELECT program_id,kind,payload_hash,result_id FROM learning_portability_operations WHERE operation_id=?")
-        .bind(operation_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    if row.get::<Option<String>, _>("program_id").as_deref() == Some(program_id)
-        && row.get::<String, _>("kind") == kind
-        && row.get::<String, _>("payload_hash") == hash
-    {
-        return Ok(Some(row.get("result_id")));
+fn recall_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "recall",
+        kind,
+        program_id: Some(program_id),
+        subject_id: None,
+        payload_hash,
+        conflict: "Operation ID was reused with different recall data.",
     }
-    Err(invalid(
-        "Operation ID was reused with different recall data.",
-    ))
-}
-async fn record_operation(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    kind: &str,
-    hash: &str,
-    result_id: Option<&str>,
-    timestamp: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,?,?,?)")
-        .bind(operation_id)
-        .bind(program_id)
-        .bind(kind)
-        .bind(hash)
-        .bind(result_id)
-        .bind(timestamp)
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
-    Ok(())
-}
-
-async fn recall_replay(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    kind: &str,
-    hash: &str,
-) -> Result<Option<Option<String>>> {
-    let row = sqlx::query("SELECT program_id,kind,payload_hash,result_id FROM learning_recall_operations WHERE operation_id=?")
-        .bind(operation_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    if row.get::<String, _>("program_id") == program_id
-        && row.get::<String, _>("kind") == kind
-        && row.get::<String, _>("payload_hash") == hash
-    {
-        return Ok(Some(row.get("result_id")));
-    }
-    Err(invalid(
-        "Operation ID was reused with different recall data.",
-    ))
-}
-
-async fn recall_record(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    card_id: Option<&str>,
-    kind: &str,
-    hash: &str,
-    result_id: &str,
-    timestamp: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_recall_operations(operation_id,program_id,card_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,?,?,?,?)")
-        .bind(operation_id)
-        .bind(program_id)
-        .bind(card_id)
-        .bind(kind)
-        .bind(hash)
-        .bind(result_id)
-        .bind(timestamp)
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
-    Ok(())
 }
 
 async fn memory_deck(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<String> {

@@ -6,7 +6,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 const REVIEW_VERSION: &str = "outline-incremental-review-v1";
@@ -21,7 +20,7 @@ pub(in crate::features::learning) struct ReviewReceipt {
 }
 
 fn hash(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(value.to_string().as_bytes()))
+    crate::features::learning::persistence::hash_text(&value.to_string())
 }
 
 impl ReviewReceipt {

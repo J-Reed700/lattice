@@ -1,8 +1,6 @@
-use super::{dto::*, repository::StudyRepository, service};
-use crate::{interfaces::di::Container, shared::ipc::ApiError};
-use tauri::{
-    plugin::{Builder, TauriPlugin},
-    Runtime, State,
+use super::*;
+use crate::features::learning::recall::{
+    study_dto::*, study_repository::StudyRepository, study_service as service,
 };
 
 #[tauri::command]
@@ -36,6 +34,7 @@ pub async fn generate_study_deck(
     let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
     service::generate_deck(
         &StudyRepository::new(container.db_pool().clone()),
+        container.library_passages().as_ref(),
         llm.as_ref(),
         request,
     )
@@ -87,17 +86,4 @@ pub async fn delete_study_deck(
         .delete_deck(&id)
         .await
         .map_err(ApiError::from)
-}
-pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("study")
-        .invoke_handler(tauri::generate_handler![
-            list_study_decks,
-            get_study_deck,
-            generate_study_deck,
-            generate_conversation_study_deck,
-            review_study_card,
-            update_study_card,
-            delete_study_deck
-        ])
-        .build()
 }

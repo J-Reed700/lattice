@@ -16,9 +16,7 @@ use std::str::FromStr;
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
-fn db(e: sqlx::Error) -> AppError {
-    AppError::Database(e.to_string())
-}
+use crate::features::learning::persistence::db;
 async fn migrated(path: Option<&std::path::Path>) -> Result<SqlitePool> {
     let pool = if let Some(path) = path {
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))

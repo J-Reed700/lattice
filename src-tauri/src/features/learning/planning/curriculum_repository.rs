@@ -8,6 +8,8 @@ use crate::features::learning::{
         LearningCurriculumModule, LearningCurriculumRevision, LearningGenerationJob,
         LearningGenerationJobKind, LearningGenerationJobStatus,
     },
+    operations::Operation,
+    persistence::{db, decode, encode, hash, hash_text, now},
     plan_dto::*,
     repository::LearningRepository,
 };
@@ -15,7 +17,6 @@ use crate::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob},
 };
-use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 
 #[path = "generation_recovery.rs"]
@@ -46,25 +47,42 @@ pub(crate) fn stable_job_operation_id(program_id: &str, lesson_id: &str, revisio
     uuid::Uuid::from_bytes(bytes).to_string()
 }
 
-fn db(error: sqlx::Error) -> AppError {
-    match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
-            "The learning database is temporarily busy. Saved work is retained.".into(),
-        ),
-        error => AppError::Database(error.to_string()),
+fn curriculum_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+    conflict: &'static str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "curriculum",
+        kind,
+        program_id: Some(program_id),
+        subject_id: None,
+        payload_hash,
+        conflict,
     }
 }
-fn encode<T: serde::Serialize>(v: &T) -> Result<String> {
-    serde_json::to_string(v).map_err(|e| AppError::Serialization(e.to_string()))
-}
-fn decode<T: serde::de::DeserializeOwned>(v: &str) -> Result<T> {
-    serde_json::from_str(v).map_err(|e| AppError::Serialization(e.to_string()))
-}
-fn hash(v: &str) -> String {
-    format!("{:x}", Sha256::digest(v.as_bytes()))
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+fn diagnostic_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "diagnostic",
+        kind,
+        program_id: Some(program_id),
+        subject_id: None,
+        payload_hash,
+        conflict: if kind == "submit" {
+            "Operation ID was reused with different diagnostic answers."
+        } else {
+            "Operation ID was reused with a different diagnostic request."
+        },
+    }
 }
 fn validate_operation_id(value: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
@@ -173,7 +191,7 @@ impl LearningCurriculumRepository {
         };
         curriculum::validate_curriculum(&revision)?;
         let json = encode(&revision)?;
-        let digest = hash(&json);
+        let digest = hash_text(&json);
         let required = revision
             .modules
             .iter()
@@ -325,11 +343,16 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningPlanDto> {
         validate_operation_id(&request.operation_id)?;
         self.seed_accepted(&request.program_id).await?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row) = sqlx::query("SELECT payload_hash,result_id FROM learning_curriculum_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash") != payload { return Err(AppError::InvalidInput("Operation ID was reused with a different curriculum request.".into())); }
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            "create_revision",
+            &payload,
+            "Operation ID was reused with a different curriculum request.",
+        );
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.plan(&request.program_id).await;
         }
@@ -358,7 +381,7 @@ impl LearningCurriculumRepository {
             },
         )?;
         let json = encode(&result.revision)?;
-        let digest = hash(&json);
+        let digest = hash_text(&json);
         let existing_draft: Option<String> = sqlx::query_scalar(
             "SELECT id FROM learning_curriculum_revisions WHERE program_id=? AND status='draft'",
         )
@@ -416,8 +439,7 @@ impl LearningCurriculumRepository {
             sqlx::query("INSERT INTO learning_curriculum_changes(revision_id,ordinal,operation,lesson_id,before_json,after_json,explanation) VALUES(?,?,?,?,?,?,?)")
                 .bind(&result.revision.id).bind(ordinal as i64).bind(op).bind(&change.lesson_id).bind(change.from_module_id.as_deref()).bind(encode(change)?).bind(&change.description).execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'create_revision',?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(payload).bind(&result.revision.id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &result.revision.id).await?;
         tx.commit().await.map_err(db)?;
         self.plan(&request.program_id).await
     }
@@ -436,21 +458,16 @@ impl LearningCurriculumRepository {
         request: &LearningCurriculumRevisionActionRequestDto,
     ) -> Result<()> {
         validate_operation_id(&request.operation_id)?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row) = sqlx::query(
-            "SELECT payload_hash FROM learning_curriculum_operations WHERE operation_id=?",
-        )
-        .bind(&request.operation_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
-        {
-            if row.get::<String, _>("payload_hash") != payload {
-                return Err(AppError::InvalidInput(
-                    "Operation ID was reused with different curriculum data.".into(),
-                ));
-            }
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            "accept_revision",
+            &payload,
+            "Operation ID was reused with different curriculum data.",
+        );
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(());
         }
@@ -477,8 +494,7 @@ impl LearningCurriculumRepository {
         sqlx::query("UPDATE learning_curriculum_revisions SET status='accepted',accepted_at=? WHERE id=? AND status='draft'").bind(now()).bind(&request.revision_id).execute(&mut *tx).await.map_err(db)?;
         materialize(&mut tx, &accepted).await?;
         sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=?").bind(sqlx::query_scalar::<_,Option<String>>("SELECT resume_lesson_id FROM learning_curriculum_revisions WHERE id=?").bind(&request.revision_id).fetch_one(&mut *tx).await.map_err(db)?).bind(&request.program_id).bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'accept_revision',?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(payload).bind(&request.revision_id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &request.revision_id).await?;
         tx.commit().await.map_err(db)
     }
 
@@ -487,21 +503,16 @@ impl LearningCurriculumRepository {
         request: &DiscardLearningCurriculumRevisionRequestDto,
     ) -> Result<LearningPlanDto> {
         validate_operation_id(&request.operation_id)?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row) = sqlx::query(
-            "SELECT payload_hash FROM learning_curriculum_operations WHERE operation_id=?",
-        )
-        .bind(&request.operation_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
-        {
-            if row.get::<String, _>("payload_hash") != payload {
-                return Err(AppError::InvalidInput(
-                    "Operation ID was reused with different discard data.".into(),
-                ));
-            }
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            "discard_revision",
+            &payload,
+            "Operation ID was reused with different discard data.",
+        );
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.plan(&request.program_id).await;
         }
@@ -522,22 +533,29 @@ impl LearningCurriculumRepository {
                 "Draft curriculum revision not found".into(),
             ));
         }
-        sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'discard_revision',?,?,?)").bind(&request.operation_id).bind(&request.program_id).bind(payload).bind(&request.revision_id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &request.revision_id).await?;
         tx.commit().await.map_err(db)?;
         self.plan(&request.program_id).await
     }
 
+    /// The attempt an earlier identical diagnostic request produced, checked
+    /// before any model work starts.
     pub async fn diagnostic_replay<T: serde::Serialize>(
         &self,
         operation_id: &str,
+        program_id: &str,
+        kind: &'static str,
         request: &T,
     ) -> Result<Option<LearningDiagnosticAttemptDto>> {
         validate_operation_id(operation_id)?;
-        if let Some(row) = sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(operation_id).fetch_optional(&self.pool).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash") != hash(&encode(request)?) { return Err(AppError::InvalidInput("Operation ID was reused with different diagnostic data.".into())); }
-            return Ok(Some(self.diagnostic(&row.get::<String,_>("diagnostic_id")).await?));
+        let payload = hash(request)?;
+        match diagnostic_operation(operation_id, program_id, kind, &payload)
+            .replay::<String, _>(&self.pool)
+            .await?
+        {
+            Some(id) => Ok(Some(self.diagnostic(&id).await?)),
+            None => Ok(None),
         }
-        Ok(None)
     }
 
     pub async fn diagnostic_for_program(
@@ -588,11 +606,17 @@ impl LearningCurriculumRepository {
         let program = LearningRepository::new(self.pool.clone())
             .get(&request.program_id)
             .await?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with a different diagnostic request.".into())); }
-            let id:String=row.get("diagnostic_id"); tx.commit().await.map_err(db)?; return self.diagnostic(&id).await;
+        let operation = diagnostic_operation(
+            &request.operation_id,
+            &request.program_id,
+            "start",
+            &payload,
+        );
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.diagnostic(&id).await;
         }
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_programs WHERE id=? AND status='active'",
@@ -675,8 +699,7 @@ impl LearningCurriculumRepository {
         let created = now();
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at,evaluation_json) VALUES(?,?,?,'active',?,'[]','[]','[]',?,NULL,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(encode(&prompts)?).bind(created).bind(encode(&tasks.unwrap_or_default())?).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_diagnostic_operations(operation_id,program_id,diagnostic_id,kind,payload_hash,created_at) VALUES(?,?,?,'start',?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&id).bind(payload).bind(created).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &id).await?;
         tx.commit().await.map_err(db)?;
         self.diagnostic(&id).await
     }
@@ -695,7 +718,12 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         if let Some(replay) = self
-            .diagnostic_replay(&request.operation_id, request)
+            .diagnostic_replay(
+                &request.operation_id,
+                &request.program_id,
+                "submit",
+                request,
+            )
             .await?
         {
             return Ok(replay);
@@ -721,11 +749,17 @@ impl LearningCurriculumRepository {
                 "A self-inventory cannot be presented as a scored diagnostic.".into(),
             ));
         }
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with different diagnostic answers.".into())); }
-            let id:String=row.get("diagnostic_id"); tx.commit().await.map_err(db)?; return self.diagnostic(&id).await;
+        let operation = diagnostic_operation(
+            &request.operation_id,
+            &request.program_id,
+            "submit",
+            &payload,
+        );
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.diagnostic(&id).await;
         }
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&request.program_id)
@@ -795,8 +829,7 @@ impl LearningCurriculumRepository {
         }
         sqlx::query("UPDATE learning_diagnostic_attempts SET status=?,response_json=?,findings_json=?,source_coverage_gaps_json=?,submitted_at=?,revision=revision+1 WHERE id=? AND status='active'")
             .bind(if request.save_only { "active" } else { "submitted" }).bind(responses_json).bind(encode(&findings.unwrap_or_default())?).bind(encode(&gaps)?).bind(if request.save_only { None } else { Some(now()) }).bind(&request.diagnostic_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_diagnostic_operations(operation_id,program_id,diagnostic_id,kind,payload_hash,created_at) VALUES(?,?,?,'submit',?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.diagnostic_id).bind(payload).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &request.diagnostic_id).await?;
         tx.commit().await.map_err(db)?;
         self.diagnostic(&request.diagnostic_id).await
     }
@@ -806,11 +839,13 @@ impl LearningCurriculumRepository {
         request: &SkipLearningDiagnosticRequestDto,
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT diagnostic_id,payload_hash FROM learning_diagnostic_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with a different diagnostic request.".into())); }
-            let id:String=row.get("diagnostic_id"); tx.commit().await.map_err(db)?; return self.diagnostic(&id).await;
+        let operation =
+            diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.diagnostic(&id).await;
         }
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_programs WHERE id=? AND status='active'",
@@ -830,8 +865,7 @@ impl LearningCurriculumRepository {
         let prompts = serde_json::json!([]);
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at) VALUES(?,?,?,'skipped',?,'[]','[]','[]',?,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(prompts.to_string()).bind(created).bind(created).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_diagnostic_operations(operation_id,program_id,diagnostic_id,kind,payload_hash,created_at) VALUES(?,?,?,'skip',?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&id).bind(payload).bind(created).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &id).await?;
         tx.commit().await.map_err(db)?;
         self.diagnostic(&id).await
     }
@@ -962,12 +996,19 @@ impl LearningCurriculumRepository {
                 "A job must name one to three unique lessons matching progressTotal.".into(),
             ));
         }
-        let digest = hash(&encode(&parsed)?);
-        let payload = hash(&encode(request)?);
+        let digest = hash(&parsed)?;
+        let payload = hash(request)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT payload_hash,result_id FROM learning_curriculum_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with different job data.".into())); }
-            let id:String=row.get("result_id"); tx.commit().await.map_err(db)?; return self.job(&id).await;
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            "start_job",
+            &payload,
+            "Operation ID was reused with different job data.",
+        );
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.job(&id).await;
         }
         let program = sqlx::query(
             "SELECT revision,status,content_revision FROM learning_programs WHERE id=?",
@@ -1039,8 +1080,7 @@ impl LearningCurriculumRepository {
                     "A selected lesson already has preparation in progress. Let that job finish or cancel it before starting an overlapping batch.".into(),
                 ));
             }
-            sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'start_job',?,?,?)")
-                .bind(&request.operation_id).bind(&request.program_id).bind(&payload).bind(&existing.id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+            operation.record(&mut *tx, &existing.id).await?;
             tx.commit().await.map_err(db)?;
             return self.job(&existing.id).await;
         }
@@ -1062,7 +1102,7 @@ impl LearningCurriculumRepository {
                 .bind(&admitted.id).bind(&request.program_id).bind(request.expected_revision).bind(content_revision)
                 .execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'start_job',?,?,?)").bind(&request.operation_id).bind(&request.program_id).bind(payload).bind(&admitted.id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &admitted.id).await?;
         tx.commit().await.map_err(db)?;
         self.job(&admitted.id).await
     }
@@ -1090,11 +1130,18 @@ impl LearningCurriculumRepository {
         retry: bool,
     ) -> Result<LearningGenerationJob> {
         validate_operation_id(&request.operation_id)?;
-        let payload = hash(&encode(request)?);
+        let payload = hash(request)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT payload_hash,result_id FROM learning_curriculum_operations WHERE operation_id=?").bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("payload_hash")!=payload { return Err(AppError::InvalidInput("Operation ID was reused with different job action data.".into())); }
-            let id:String=row.get("result_id"); tx.commit().await.map_err(db)?; return self.job(&id).await;
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            if retry { "retry_job" } else { "cancel_job" },
+            &payload,
+            "Operation ID was reused with different job action data.",
+        );
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.job(&id).await;
         }
         let program =
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
@@ -1145,8 +1192,7 @@ impl LearningCurriculumRepository {
             JobStore::cancel_in(&mut tx, &request.job_id).await?;
             request.job_id.clone()
         };
-        let op_kind = if retry { "retry_job" } else { "cancel_job" };
-        sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,?,?,?)").bind(&request.operation_id).bind(&request.program_id).bind(op_kind).bind(payload).bind(&result_id).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &result_id).await?;
         tx.commit().await.map_err(db)?;
         self.job(&result_id).await
     }
@@ -1391,7 +1437,7 @@ impl LearningCurriculumRepository {
         snapshot.created_at = now();
         curriculum::validate_curriculum(&snapshot)?;
         let snapshot_json = encode(&snapshot)?;
-        let snapshot_hash = hash(&snapshot_json);
+        let snapshot_hash = hash_text(&snapshot_json);
         let required = snapshot
             .modules
             .iter()

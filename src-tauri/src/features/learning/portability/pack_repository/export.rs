@@ -117,13 +117,6 @@ pub(super) async fn snapshot_on(
         let raw_runs=sqlx::query("SELECT id,operation_id,payload_hash,activity_snapshot_json FROM learning_practical_runs WHERE program_id=? ORDER BY created_at,id")
                 .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let run_snapshots:Vec<serde_json::Value>=raw_runs.into_iter().map(|r|serde_json::json!({"runId":r.get::<String,_>("id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"activitySnapshot":r.get::<String,_>("activity_snapshot_json")})).collect();
-        let sim_ops=sqlx::query("SELECT operation_id,session_id,kind,payload_hash,result_id,created_at FROM learning_simulation_operations WHERE program_id=? ORDER BY created_at,operation_id")
-                .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        let simulation_operations:Vec<serde_json::Value>=sim_ops.into_iter().map(|r|serde_json::json!({"operationId":r.get::<String,_>("operation_id"),"sessionId":r.get::<String,_>("session_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"resultId":r.get::<Option<String>,_>("result_id"),"createdAt":r.get::<i64,_>("created_at")})).collect();
-        let activity_ops=sqlx::query("SELECT operation_id,activity_id,kind,payload_hash,result_revision,created_at FROM learning_practical_activity_operations WHERE program_id=? ORDER BY created_at,operation_id").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        let mut practical_operations:Vec<serde_json::Value>=activity_ops.into_iter().map(|r|serde_json::json!({"table":"learning_practical_activity_operations","operationId":r.get::<String,_>("operation_id"),"activityId":r.get::<String,_>("activity_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"resultRevision":r.get::<i64,_>("result_revision"),"createdAt":r.get::<i64,_>("created_at")})).collect();
-        let run_ops=sqlx::query("SELECT operation_id,run_id,kind,payload_hash,created_at FROM learning_practical_run_operations WHERE program_id=? ORDER BY created_at,operation_id").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        practical_operations.extend(run_ops.into_iter().map(|r|serde_json::json!({"table":"learning_practical_run_operations","operationId":r.get::<String,_>("operation_id"),"runId":r.get::<String,_>("run_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"createdAt":r.get::<i64,_>("created_at")})));
         let snapshot = PracticalPackSnapshot {
             // Export saved data; availability is recomputed on the receiving device.
             activities: practical.workspace.activities,
@@ -131,8 +124,6 @@ pub(super) async fn snapshot_on(
             simulations,
             simulation_turns,
             run_snapshots,
-            simulation_operations,
-            practical_operations,
         };
         entries.push(LearningPackEntry {
             path: PRACTICAL_ENTRY.into(),
@@ -173,14 +164,12 @@ pub(super) async fn snapshot_on(
         kind: LearningPackEntryKind::SourceMetadata,
         bytes: json(&source_workspace)?,
     });
-    let operations=sqlx::query("SELECT operation_id,source_id,kind,payload_hash,result_version_id,result_revision,created_at FROM learning_source_operations WHERE program_id=? ORDER BY created_at,operation_id").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-    let operations:Vec<serde_json::Value>=operations.into_iter().map(|r|serde_json::json!({"operationId":r.get::<String,_>("operation_id"),"sourceId":r.get::<String,_>("source_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"resultVersionId":r.get::<Option<String>,_>("result_version_id"),"resultRevision":r.get::<i64,_>("result_revision"),"createdAt":r.get::<i64,_>("created_at")})).collect();
     let check_rows=sqlx::query("SELECT operation_id,source_id,status,checked_at,active_digest,pending_version_id,message FROM learning_source_refresh_checks WHERE program_id=? ORDER BY checked_at,rowid").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
     let checks:Vec<serde_json::Value>=check_rows.into_iter().map(|r|serde_json::json!({"operationId":r.get::<String,_>("operation_id"),"sourceId":r.get::<String,_>("source_id"),"status":r.get::<String,_>("status"),"checkedAt":r.get::<i64,_>("checked_at"),"activeDigest":r.get::<Option<String>,_>("active_digest"),"pendingVersionId":r.get::<Option<String>,_>("pending_version_id"),"message":r.get::<Option<String>,_>("message")})).collect();
     entries.push(LearningPackEntry {
         path: "sources/history.json".into(),
         kind: LearningPackEntryKind::SourceMetadata,
-        bytes: json(&SourceHistorySnapshot { operations, checks })?,
+        bytes: json(&SourceHistorySnapshot { checks })?,
     });
     if req.include_evidence {
         let canvas_rows=sqlx::query("SELECT id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at FROM learning_canvases WHERE program_id=? ORDER BY created_at,id")
@@ -189,16 +178,12 @@ pub(super) async fn snapshot_on(
         let snapshot_rows=sqlx::query("SELECT id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at FROM learning_canvas_snapshots WHERE program_id=? ORDER BY created_at,id")
             .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let snapshots:Vec<serde_json::Value>=snapshot_rows.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"canvasId":r.get::<String,_>("canvas_id"),"name":r.get::<String,_>("name"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"sceneJson":r.get::<String,_>("scene_json"),"elementCount":r.get::<i64,_>("element_count"),"canvasRevision":r.get::<i64,_>("canvas_revision"),"createdAt":r.get::<i64,_>("created_at")})).collect();
-        let operation_rows=sqlx::query("SELECT operation_id,canvas_id,kind,payload_hash,result_revision,result_snapshot_id,created_at FROM learning_canvas_operations WHERE program_id=? ORDER BY created_at,operation_id")
-            .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        let operations:Vec<serde_json::Value>=operation_rows.into_iter().map(|r|serde_json::json!({"operationId":r.get::<String,_>("operation_id"),"canvasId":r.get::<String,_>("canvas_id"),"kind":r.get::<String,_>("kind"),"payloadHash":r.get::<String,_>("payload_hash"),"resultRevision":r.get::<i64,_>("result_revision"),"resultSnapshotId":r.get::<Option<String>,_>("result_snapshot_id"),"createdAt":r.get::<i64,_>("created_at")})).collect();
         entries.push(LearningPackEntry {
             path: CANVAS_ENTRY.into(),
             kind: LearningPackEntryKind::Canvas,
             bytes: json(&CanvasPackSnapshot {
                 canvases,
                 snapshots,
-                operations,
             })?,
         });
     }

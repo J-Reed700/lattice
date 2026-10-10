@@ -15,7 +15,7 @@ use std::path::{Component, Path};
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
 // v2 carries durable course provenance. Older importers must reject it rather
 // than silently drop verification history; this reader still accepts v1.
-pub const LEARNING_PACK_VERSION: u32 = 2;
+pub const LEARNING_PACK_VERSION: u32 = 3;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
@@ -533,9 +533,7 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
             .ok_or_else(|| invalid("A learning pack has no manifest."))?,
     )
     .map_err(|error| AppError::InvalidData(error.to_string()))?;
-    if manifest.format != LEARNING_PACK_FORMAT
-        || !(1..=LEARNING_PACK_VERSION).contains(&manifest.version)
-    {
+    if manifest.format != LEARNING_PACK_FORMAT || manifest.version != LEARNING_PACK_VERSION {
         return Err(invalid("This learning-pack version is not supported."));
     }
     uuid::Uuid::parse_str(&manifest.pack_id)
@@ -684,20 +682,15 @@ mod tests {
     }
 
     #[test]
-    fn version_two_exports_and_version_one_imports_remain_explicit() -> anyhow::Result<()> {
+    fn only_the_current_pack_version_imports() -> anyhow::Result<()> {
         let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-        assert_eq!(decoded.manifest.version, 2);
+        assert_eq!(decoded.manifest.version, LEARNING_PACK_VERSION);
         let mut manifest = decoded.manifest.clone();
-        manifest.version = 1;
-        assert_eq!(
-            decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)?
-                .manifest
-                .version,
-            1
-        );
-        for unsupported in [0, 3] {
+        for unsupported in [0, 1, 2, LEARNING_PACK_VERSION + 1] {
             manifest.version = unsupported;
-            assert!(decode_learning_pack(&rearchive(&manifest, &decoded.entries)?).is_err());
+            let error = decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)
+                .expect_err("only the current pack version imports");
+            assert!(error.to_string().contains("version is not supported"));
         }
         Ok(())
     }

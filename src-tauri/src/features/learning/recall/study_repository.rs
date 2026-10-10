@@ -1,19 +1,19 @@
 //! Canonical storage for decks, cards and review history.
-use super::{dto::*, schedule::next_review};
-use crate::features::qa::dto::SourceDto;
+use super::{
+    schedule::{answered, CardSchedule},
+    study_dto::*,
+};
+use crate::features::learning::persistence::db;
 use crate::shared::error::{AppError, Result};
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 #[derive(Clone)]
 pub struct StudyRepository {
     pool: SqlitePool,
 }
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 fn json(error: serde_json::Error) -> AppError {
     AppError::InvalidState(format!("Invalid stored study data: {error}"))
 }
@@ -33,10 +33,32 @@ struct StoredVerification {
     supported_claim_notes: Vec<String>,
 }
 
+/// The parts of a chat answer's stored source list a claim card cites.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredSource {
+    document_id: String,
+    chunk_id: String,
+    content: String,
+    file_name: String,
+    file_path: String,
+    #[serde(default)]
+    excerpt: Option<String>,
+    #[serde(default)]
+    chunk_excerpts: Option<Vec<StoredChunkExcerpt>>,
+    #[serde(default)]
+    citation_id: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct StoredChunkExcerpt {
+    excerpt: String,
+}
+
 #[derive(Default, Deserialize)]
 struct StoredMessageMetadata {
     #[serde(default)]
-    sources: Vec<SourceDto>,
+    sources: Vec<StoredSource>,
     #[serde(default)]
     verification: StoredVerification,
 }
@@ -130,7 +152,7 @@ fn terms(value: &str) -> std::collections::HashSet<String> {
         .collect()
 }
 
-fn best_source_index(claim: &str, sources: &[SourceDto]) -> Option<usize> {
+fn best_source_index(claim: &str, sources: &[StoredSource]) -> Option<usize> {
     let claim_terms = terms(claim);
     sources
         .iter()
@@ -142,7 +164,7 @@ fn best_source_index(claim: &str, sources: &[SourceDto]) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
-fn study_source(source: &SourceDto) -> StudySourceDto {
+fn study_source(source: &StoredSource) -> StudySourceDto {
     let excerpt = source
         .excerpt
         .as_deref()
@@ -177,7 +199,6 @@ fn card(row: &SqliteRow) -> Result<StudyCardDto> {
     Ok(StudyCardDto {
         id: row.get("id"),
         format: parse_card_format(row.get("format"))?,
-        scheduler_version: parse_scheduler_version(row.get("scheduler_version"))?,
         deck_id: row.get("deck_id"),
         question: row.get("question"),
         answer: row.get("answer"),
@@ -194,28 +215,177 @@ fn card(row: &SqliteRow) -> Result<StudyCardDto> {
     })
 }
 
-pub(crate) fn parse_card_format(
-    value: &str,
-) -> Result<crate::features::study::dto::StudyCardFormat> {
+pub(super) fn parse_card_format(value: &str) -> Result<StudyCardFormat> {
     match value {
-        "multiple_choice" => Ok(crate::features::study::dto::StudyCardFormat::MultipleChoice),
-        "question_answer" => Ok(crate::features::study::dto::StudyCardFormat::QuestionAnswer),
+        "multiple_choice" => Ok(StudyCardFormat::MultipleChoice),
+        "question_answer" => Ok(StudyCardFormat::QuestionAnswer),
         _ => Err(AppError::InvalidState(
             "A study card has an unsupported format".into(),
         )),
     }
 }
 
-pub(super) fn parse_scheduler_version(
-    value: &str,
-) -> Result<crate::features::study::dto::StudySchedulerVersion> {
-    match value {
-        "expanding_v1" => Ok(crate::features::study::dto::StudySchedulerVersion::ExpandingV1),
-        "fsrs_6_v1" => Ok(crate::features::study::dto::StudySchedulerVersion::Fsrs6V1),
-        _ => Err(AppError::InvalidState(
-            "A study card uses an unsupported scheduler version".into(),
-        )),
+fn format_name(format: StudyCardFormat) -> &'static str {
+    match format {
+        StudyCardFormat::MultipleChoice => "multiple_choice",
+        StudyCardFormat::QuestionAnswer => "question_answer",
     }
+}
+
+fn rating_name(rating: StudyRating) -> &'static str {
+    match rating {
+        StudyRating::Again => "again",
+        StudyRating::Hard => "hard",
+        StudyRating::Good => "good",
+        StudyRating::Easy => "easy",
+    }
+}
+
+fn schedule(row: &SqliteRow) -> CardSchedule {
+    CardSchedule {
+        stability: row.get("stability"),
+        difficulty: row.get("difficulty"),
+        last_reviewed_at: row.get("last_reviewed_at"),
+        due_at: row.get("due_at"),
+        interval_days: row.get("interval_days"),
+        review_count: row.get("review_count"),
+        lapses: row.get("lapses"),
+    }
+}
+
+/// One answer to one card. A quiz answer has already been turned into its
+/// rating: right is Good, wrong is Again.
+pub(in crate::features::learning) struct CardReview<'a> {
+    pub review_id: &'a str,
+    pub card_id: &'a str,
+    pub rating: StudyRating,
+    pub correct: Option<bool>,
+    pub selected_option: Option<usize>,
+    pub expected_reviews: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::features::learning) enum ReviewOutcome {
+    Recorded,
+    /// The same review ID was already recorded with the same answer.
+    Replayed,
+    /// The card was reviewed since the caller loaded it.
+    Stale,
+}
+
+/// Record a review and move the card's FSRS schedule, inside the caller's
+/// transaction. Every review of every card goes through here. A review ID
+/// already recorded with a different answer is refused.
+pub(in crate::features::learning) async fn record_review(
+    tx: &mut Transaction<'_, Sqlite>,
+    review: &CardReview<'_>,
+    now: i64,
+) -> Result<ReviewOutcome> {
+    let mode = if review.correct.is_some() {
+        "quiz"
+    } else {
+        "flashcard"
+    };
+    let selected_option = review.selected_option.map(|index| index as i64);
+    let existing = sqlx::query(
+        "SELECT card_id,rating,mode,correct,selected_option FROM study_reviews WHERE id=?",
+    )
+    .bind(review.review_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db)?;
+    if let Some(existing) = existing {
+        let matches = existing.get::<String, _>("card_id") == review.card_id
+            && existing.get::<String, _>("rating") == rating_name(review.rating)
+            && existing.get::<String, _>("mode") == mode
+            && existing.get::<Option<i64>, _>("correct") == review.correct.map(i64::from)
+            && existing.get::<Option<i64>, _>("selected_option") == selected_option;
+        if !matches {
+            return Err(AppError::InvalidInput(
+                "Review ID was already used with different review data.".into(),
+            ));
+        }
+        return Ok(ReviewOutcome::Replayed);
+    }
+    let row = sqlx::query("SELECT stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses FROM study_cards WHERE id=?")
+        .bind(review.card_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
+    let current = schedule(&row);
+    if current.review_count != review.expected_reviews {
+        return Ok(ReviewOutcome::Stale);
+    }
+    let next = current.review(review.rating, now)?;
+    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
+        .bind(review.review_id)
+        .bind(review.card_id)
+        .bind(now)
+        .bind(rating_name(review.rating))
+        .bind(mode)
+        .bind(review.correct)
+        .bind(selected_option)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+    sqlx::query("UPDATE study_cards SET stability=?,difficulty=?,last_reviewed_at=?,due_at=?,interval_days=?,review_count=?,lapses=? WHERE id=?")
+        .bind(next.stability)
+        .bind(next.difficulty)
+        .bind(next.last_reviewed_at)
+        .bind(next.due_at)
+        .bind(next.interval_days)
+        .bind(next.review_count)
+        .bind(next.lapses)
+        .bind(review.card_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+    Ok(ReviewOutcome::Recorded)
+}
+
+/// Insert a card row. Its schedule starts as a new FSRS card due at `due_at`.
+async fn insert_card(
+    tx: &mut Transaction<'_, Sqlite>,
+    deck_id: &str,
+    card: &StudyCardDto,
+) -> Result<()> {
+    match card.format {
+        StudyCardFormat::MultipleChoice
+            if card.options.is_empty() || card.correct_index >= card.options.len() =>
+        {
+            return Err(AppError::InvalidInput(
+                "Multiple-choice cards need a valid answer option.".into(),
+            ));
+        }
+        StudyCardFormat::QuestionAnswer if !card.options.is_empty() => {
+            return Err(AppError::InvalidInput(
+                "Question-answer cards do not have answer choices.".into(),
+            ));
+        }
+        _ => {}
+    }
+    let citations = if card.citations.is_empty() {
+        std::slice::from_ref(&card.source)
+    } else {
+        &card.citations
+    };
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(&card.id)
+        .bind(deck_id)
+        .bind(&card.question)
+        .bind(&card.answer)
+        .bind(serde_json::to_string(&card.options).map_err(json)?)
+        .bind(card.correct_index as i64)
+        .bind(&card.explanation)
+        .bind(serde_json::to_string(citations).map_err(json)?)
+        .bind(&card.topic)
+        .bind(card.due_at)
+        .bind(format_name(card.format))
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
+    Ok(())
 }
 
 impl StudyRepository {
@@ -240,107 +410,12 @@ impl StudyRepository {
         Ok(())
     }
 
-    /// Insert a Learning-origin card into the normal Study scheduler's deck.
-    /// Review scheduling and history remain exclusively owned by Study.
+    /// Insert a Learning-origin card into its program's deck.
     pub async fn insert_learning_card_in_transaction(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         card: &StudyCardDto,
     ) -> Result<()> {
-        match card.format {
-            StudyCardFormat::MultipleChoice
-                if card.options.is_empty() || card.correct_index >= card.options.len() =>
-            {
-                return Err(AppError::InvalidInput(
-                    "Multiple-choice cards need a valid answer option.".into(),
-                ));
-            }
-            StudyCardFormat::QuestionAnswer if !card.options.is_empty() => {
-                return Err(AppError::InvalidInput(
-                    "Question-answer cards do not have answer choices.".into(),
-                ));
-            }
-            _ => {}
-        }
-        let citations = if card.citations.is_empty() {
-            std::slice::from_ref(&card.source)
-        } else {
-            &card.citations
-        };
-        sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format,scheduler_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&card.id).bind(&card.deck_id).bind(&card.question).bind(&card.answer)
-            .bind(serde_json::to_string(&card.options).map_err(json)?)
-            .bind(card.correct_index as i64).bind(&card.explanation)
-            .bind(serde_json::to_string(citations).map_err(json)?)
-            .bind(&card.topic).bind(card.due_at).bind(match card.format { StudyCardFormat::MultipleChoice => "multiple_choice", StudyCardFormat::QuestionAnswer => "question_answer" })
-            .bind("expanding_v1")
-            .execute(&mut **tx).await.map_err(db)?;
-        Ok(())
-    }
-
-    pub async fn sources(&self, ids: &[String], focus: &str) -> Result<Vec<StudySourceDto>> {
-        let terms: Vec<_> = focus
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|word| {
-                word.len() >= 4 && !["with", "from", "this", "that", "about"].contains(word)
-            })
-            .take(8)
-            .map(str::to_lowercase)
-            .collect();
-        let mut sources = Vec::new();
-        let per_document = (24 / ids.len().max(1)).max(4) as i64;
-        for id in ids {
-            let count: i64 =
-                sqlx::query_scalar("SELECT count(*) FROM text_chunks WHERE document_id = ?")
-                    .bind(id)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(db)?;
-            if count == 0 {
-                return Err(AppError::InvalidInput(
-                    "A selected document has no indexed text yet. Let its import finish first."
-                        .into(),
-                ));
-            }
-            let mut query = QueryBuilder::<Sqlite>::new("SELECT c.id, c.document_id, d.file_name, d.file_path, c.content FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ");
-            query.push_bind(id);
-            if terms.is_empty() {
-                query
-                    .push(" AND c.chunk_index % ")
-                    .push_bind((count / per_document).max(1))
-                    .push(" = 0");
-            } else {
-                query.push(" AND (");
-                let mut separated = query.separated(" OR ");
-                for term in &terms {
-                    separated
-                        .push("instr(lower(c.content), ")
-                        .push_bind_unseparated(term)
-                        .push_unseparated(") > 0");
-                }
-                query.push(")");
-            }
-            query
-                .push(" ORDER BY c.chunk_index LIMIT ")
-                .push_bind(per_document);
-            for row in query.build().fetch_all(&self.pool).await.map_err(db)? {
-                let content: String = row.get("content");
-                sources.push(StudySourceDto {
-                    chunk_id: row.get("id"),
-                    document_id: row.get("document_id"),
-                    file_name: row.get("file_name"),
-                    file_path: row.get("file_path"),
-                    excerpt: content.chars().take(2400).collect(),
-                    url: None,
-                });
-            }
-        }
-        if sources.is_empty() {
-            return Err(AppError::InvalidInput(
-                "No passages matched that focus in the selected documents. Try a broader topic."
-                    .into(),
-            ));
-        }
-        Ok(sources)
+        insert_card(tx, &card.deck_id, card).await
     }
 
     pub(super) async fn conversation_claims(
@@ -433,31 +508,8 @@ impl StudyRepository {
         .execute(&mut *tx)
         .await
         .map_err(db)?;
-        for c in &deck.cards {
-            match c.format {
-                StudyCardFormat::MultipleChoice
-                    if c.options.is_empty() || c.correct_index >= c.options.len() =>
-                {
-                    return Err(AppError::InvalidInput(
-                        "Multiple-choice cards need a valid answer option.".into(),
-                    ))
-                }
-                StudyCardFormat::QuestionAnswer if !c.options.is_empty() => {
-                    return Err(AppError::InvalidInput(
-                        "Question-answer cards do not have answer choices.".into(),
-                    ))
-                }
-                _ => {}
-            }
-            sqlx::query("INSERT INTO study_cards (id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format,scheduler_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(&c.id).bind(&deck.id).bind(&c.question).bind(&c.answer).bind(serde_json::to_string(&c.options).map_err(json)?)
-                .bind(c.correct_index as i64).bind(&c.explanation).bind(serde_json::to_string(if c.citations.is_empty() { std::slice::from_ref(&c.source) } else { &c.citations }).map_err(json)?).bind(&c.topic).bind(c.due_at)
-                .bind(match c.format { StudyCardFormat::MultipleChoice => "multiple_choice", StudyCardFormat::QuestionAnswer => "question_answer" })
-                .bind(match c.scheduler_version {
-                    StudySchedulerVersion::ExpandingV1 => "expanding_v1",
-                    StudySchedulerVersion::Fsrs6V1 => "fsrs_6_v1",
-                })
-                .execute(&mut *tx).await.map_err(db)?;
+        for card in &deck.cards {
+            insert_card(&mut tx, &deck.id, card).await?;
         }
         tx.commit().await.map_err(db)
     }
@@ -517,12 +569,6 @@ impl StudyRepository {
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
         let current = card(&row)?;
-        if current.scheduler_version == StudySchedulerVersion::Fsrs6V1 {
-            return Err(AppError::InvalidInput(
-                "This recall card uses FSRS 6. Review it from the Learning Recall workspace."
-                    .into(),
-            ));
-        }
         if current.format == StudyCardFormat::QuestionAnswer && request.selected_option.is_some() {
             return Err(AppError::InvalidInput(
                 "Question-answer recall cards do not accept quiz choices.".into(),
@@ -536,69 +582,29 @@ impl StudyRepository {
                 "Choose one of this question's answers".into(),
             ));
         }
-        let correct = request
-            .selected_option
-            .map(|index| index == current.correct_index);
-        let rating = match correct {
-            Some(true) => StudyRating::Good,
-            Some(false) => StudyRating::Again,
-            None => request.rating,
-        };
-        let rating_name = match rating {
-            StudyRating::Again => "again",
-            StudyRating::Hard => "hard",
-            StudyRating::Good => "good",
-            StudyRating::Easy => "easy",
-        };
-        let mode = if correct.is_some() {
-            "quiz"
-        } else {
-            "flashcard"
-        };
-        let existing = sqlx::query("SELECT card_id,rating,mode,correct,selected_option,scheduler_version FROM study_reviews WHERE id=?")
-            .bind(&request.review_id).fetch_optional(&mut *tx).await.map_err(db)?;
-        if let Some(existing) = existing {
-            let matches = existing.get::<String, _>("card_id") == current.id
-                && existing.get::<String, _>("rating") == rating_name
-                && existing.get::<String, _>("mode") == mode
-                && existing.get::<Option<i64>, _>("correct") == correct.map(i64::from)
-                && existing.get::<Option<i64>, _>("selected_option")
-                    == request.selected_option.map(|i| i as i64)
-                && existing.get::<String, _>("scheduler_version") == "expanding_v1";
-            if !matches {
-                return Err(AppError::InvalidInput(
-                    "Review ID was already used with different review data.".into(),
-                ));
-            }
-            let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
-                .bind(&current.id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
-            let result = card(&row)?;
-            tx.commit().await.map_err(db)?;
-            return Ok(result);
-        }
-        if current.review_count != request.expected_reviews {
+        let (correct, rating) = answered(
+            request.selected_option,
+            current.correct_index,
+            request.rating,
+        );
+        let outcome = record_review(
+            &mut tx,
+            &CardReview {
+                review_id: &request.review_id,
+                card_id: &current.id,
+                rating,
+                correct,
+                selected_option: request.selected_option,
+                expected_reviews: request.expected_reviews,
+            },
+            now,
+        )
+        .await?;
+        if outcome == ReviewOutcome::Stale {
             return Err(AppError::InvalidState(
                 "This card was already reviewed. Reopen the deck to refresh it.".into(),
             ));
         }
-        let (due_at, interval) = match current.scheduler_version {
-            StudySchedulerVersion::ExpandingV1 => next_review(rating, current.interval_days, now),
-            StudySchedulerVersion::Fsrs6V1 => {
-                return Err(AppError::InvalidInput(
-                    "This recall card uses FSRS 6. Review it from the Learning Recall workspace."
-                        .into(),
-                ));
-            }
-        };
-        sqlx::query("INSERT INTO study_reviews (id,card_id,reviewed_at,rating,mode,correct,selected_option,scheduler_version) VALUES (?,?,?,?,?,?,?,?)")
-            .bind(&request.review_id).bind(&current.id).bind(now).bind(rating_name).bind(mode)
-            .bind(correct).bind(request.selected_option.map(|i| i as i64)).bind("expanding_v1")
-            .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("UPDATE study_cards SET due_at=?, interval_days=?, review_count=review_count+1, lapses=lapses+? WHERE id=?")
-            .bind(due_at).bind(interval).bind(i64::from(matches!(rating, StudyRating::Again))).bind(&current.id).execute(&mut *tx).await.map_err(db)?;
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&current.id)
             .fetch_one(&mut *tx)

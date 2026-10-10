@@ -1,5 +1,5 @@
 //! Generate questions from bounded passages and require an attributable excerpt.
-use super::dto::*;
+use super::study_dto::*;
 use crate::application::ports::{
     llm_port::{CompletionInput, CompletionRequest},
     LLMPort,
@@ -90,8 +90,7 @@ pub(super) fn parse_cards(
         let mut source = source.clone();
         source.excerpt = item.quote.trim().to_owned();
         Ok(StudyCardDto {
-            id: uuid::Uuid::new_v4().to_string(), format: crate::features::study::dto::StudyCardFormat::MultipleChoice,
-            scheduler_version: crate::features::study::dto::StudySchedulerVersion::ExpandingV1,
+            id: uuid::Uuid::new_v4().to_string(), format: StudyCardFormat::MultipleChoice,
             deck_id: deck_id.to_owned(), question: item.question.trim().to_owned(),
             answer, options: item.options.into_iter().map(|o| o.trim().to_owned()).collect(), correct_index: item.correct_index,
             explanation: item.explanation.trim().to_owned(), citations: vec![source.clone()], source, topic: item.topic.trim().to_owned(),
@@ -186,8 +185,7 @@ pub(super) fn parse_conversation_cards(
         if let Some(slot) = generated.get_mut(item.claim_index) {
             *slot = Some(StudyCardDto {
                 id: uuid::Uuid::new_v4().to_string(),
-                format: crate::features::study::dto::StudyCardFormat::MultipleChoice,
-                scheduler_version: crate::features::study::dto::StudySchedulerVersion::ExpandingV1,
+                format: StudyCardFormat::MultipleChoice,
                 deck_id: deck_id.to_owned(),
                 question: item.question.trim().to_owned(),
                 answer: claim.answer.clone(),

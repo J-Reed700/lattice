@@ -278,68 +278,6 @@ async fn variant(path: &str, edit: impl FnOnce(&mut LearningPackInput)) -> Resul
 }
 
 #[tokio::test]
-async fn older_packs_still_import_and_explain_missing_verification_history() -> Result<()> {
-    let pool = pool().await?;
-    let original = ready_course(&pool).await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let path = export_without_activity(&packs, &container, &original).await?;
-    let legacy = variant(&path, |input| {
-        input.entries.retain(|entry| entry.path != PROVENANCE)
-    })
-    .await?;
-    // Re-create an actual v1 archive, not a malformed v2 pack without its
-    // required provenance entry. The content checksums are unchanged.
-    let mut decoded = decode_learning_pack(&tokio::fs::read(&legacy).await?)?;
-    decoded.manifest.version = 1;
-    let encoder = zstd::stream::write::Encoder::new(Vec::new(), 1)?;
-    let mut archive = tar::Builder::new(encoder);
-    decoded.entries.insert(
-        "manifest.json".into(),
-        serde_json::to_vec(&decoded.manifest)?,
-    );
-    for (path, bytes) in decoded.entries {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o600);
-        header.set_cksum();
-        archive.append_data(&mut header, path, std::io::Cursor::new(bytes))?;
-    }
-    tokio::fs::write(&legacy, archive.into_inner()?.finish()?).await?;
-    let preview = packs
-        .preview(&PreviewLearningPackImportRequestDto {
-            operation_id: id(),
-            preview_id: id(),
-            source_path: legacy.clone(),
-            conflict_policy: LearningPackConflictPolicy::CreateCopy,
-        })
-        .await?;
-    assert!(preview.import_previews[0]
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("no saved outline citations")));
-    let applied = apply_path(
-        &packs,
-        &container,
-        legacy,
-        LearningPackConflictPolicy::CreateCopy,
-    )
-    .await?;
-    let copy = LearningRepository::new(pool.clone())
-        .get(&applied.program_id)
-        .await?;
-    assert!(
-        lesson_evidence::get(&pool, &applied.program_id, &copy.modules[0].lessons[0].id)
-            .await?
-            .is_none()
-    );
-    assert!(outline_evidence_view::get(&pool, &applied.program_id)
-        .await?
-        .is_none());
-    Ok(())
-}
-
-#[tokio::test]
 async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() -> Result<()> {
     let pool = pool().await?;
     let original = ready_course(&pool).await?;

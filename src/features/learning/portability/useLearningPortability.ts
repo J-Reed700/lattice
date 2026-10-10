@@ -6,7 +6,6 @@ import VaultAPI from '@/lib/api';
 import type {
   ApplyLearningPackImportRequestDto,
   CancelLearningPackImportPreviewRequestDto,
-  ChangeLearningRecallSchedulerRequestDto,
   CreateLearningSourceSelectorRequestDto,
   DecideLearningRecallDuplicateRequestDto,
   DeleteLearningSourceRequestDto,
@@ -89,7 +88,6 @@ export const useReimportLearningSource = (programId: string) => usePortabilityMu
 export const useCreateLearningSourceSelector = (programId: string) => usePortabilityMutation<CreateLearningSourceSelectorRequestDto, LearningSourceSelectorDto>(VaultAPI.createLearningSourceSelector, programId);
 export const useSaveLearningRecallCard = (programId: string) => usePortabilityMutation<SaveLearningRecallCardRequestDto, LearningRecallWorkspaceDto>(VaultAPI.saveLearningRecallCard, programId);
 export const useDecideLearningRecallDuplicate = (programId: string) => usePortabilityMutation<DecideLearningRecallDuplicateRequestDto, LearningRecallWorkspaceDto>(VaultAPI.decideLearningRecallDuplicate, programId);
-export const useChangeLearningRecallScheduler = (programId: string) => usePortabilityMutation<ChangeLearningRecallSchedulerRequestDto, LearningRecallWorkspaceDto>(VaultAPI.changeLearningRecallScheduler, programId);
 export const useReviewLearningRecallCard = (programId: string) => usePortabilityMutation<ReviewLearningRecallCardRequestDto, LearningRecallWorkspaceDto>(VaultAPI.reviewLearningRecallCard, programId);
 
 export function useSearchLearningSourcesSemantically(request: SearchLearningSourcesSemanticallyRequestDto | null) {

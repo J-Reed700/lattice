@@ -89,20 +89,13 @@ impl ProvenanceSnapshot {
 pub(super) fn decode(
     pack: &DecodedLearningPack,
     program: &LearningProgramDto,
-) -> Result<Option<ProvenanceSnapshot>> {
-    let snapshot: Option<ProvenanceSnapshot> = pack
+) -> Result<ProvenanceSnapshot> {
+    let bytes = pack
         .entries
         .get(ENTRY)
-        .map(|bytes| parse(bytes))
-        .transpose()?;
-    if snapshot.is_none() && pack.manifest.version >= 2 {
-        return Err(invalid(
-            "This v2 pack is missing its required course provenance entry.",
-        ));
-    }
-    if let Some(snapshot) = &snapshot {
-        snapshot.validate(program)?;
-    }
+        .ok_or_else(|| invalid("This pack is missing its required course provenance entry."))?;
+    let snapshot: ProvenanceSnapshot = parse(bytes)?;
+    snapshot.validate(program)?;
     Ok(snapshot)
 }
 

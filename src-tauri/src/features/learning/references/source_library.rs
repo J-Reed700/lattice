@@ -3,23 +3,21 @@ use crate::features::learning::{
     dto::*,
     portability_dto::{DeleteLearningSourceRequestDto, ReimportLearningSourceRequestDto},
 };
+use crate::features::learning::{
+    operations::Operation,
+    persistence::{db, hash, hash_text, now},
+};
 use crate::shared::error::{AppError, Result};
 use futures::TryStreamExt;
-use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use std::collections::HashMap;
 
 const MAX_EXCERPT_CHARS: usize = 2_400;
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
 const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn digest(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 fn normalized(text: &str) -> String {
     text.replace("\r\n", "\n")
@@ -33,9 +31,6 @@ fn excerpt(text: &str) -> String {
 fn words(text: &str) -> usize {
     text.split_whitespace().count()
 }
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
 fn uuid(value: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
         .map(|_| ())
@@ -46,10 +41,6 @@ fn owned_id(value: &str, label: &str) -> Result<()> {
         return Err(invalid(format!("Invalid {label} ID")));
     }
     Ok(())
-}
-fn json_hash<T: serde::Serialize>(value: &T) -> Result<String> {
-    let bytes = serde_json::to_vec(value).map_err(|e| AppError::Serialization(e.to_string()))?;
-    Ok(digest(&String::from_utf8_lossy(&bytes)))
 }
 fn policy(value: &LearningSourcePolicy) -> &'static str {
     match value {
@@ -134,59 +125,9 @@ impl LearningSourceLibraryRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let row=sqlx::query("SELECT program_id,source_id,kind,payload_hash FROM learning_source_operations WHERE operation_id=?")
-            .bind(operation_id).fetch_optional(&self.pool).await.map_err(db)?;
-        let Some(row) = row else {
-            return Ok(false);
-        };
-        if row.get::<String, _>("program_id") == program_id
-            && row.get::<String, _>("source_id") == source_id
-            && row.get::<String, _>("kind") == kind
-            && row.get::<String, _>("payload_hash") == payload_hash
-        {
-            return Ok(true);
-        }
-        Err(invalid(
-            "Operation ID was already used with different source data.",
-        ))
-    }
-
-    /// Capture every indexed chunk in order, under one consistent snapshot.
-    pub async fn library_document_text(
-        &self,
-        document_id: &str,
-    ) -> Result<Option<(String, Vec<String>)>> {
-        // Do not silently capture a prefix if an import updates concurrently.
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let status: Option<String> = sqlx::query_scalar("SELECT status FROM documents WHERE id=?")
-            .bind(document_id)
-            .fetch_optional(&mut *tx)
+        source_operation(operation_id, program_id, source_id, kind, payload_hash)
+            .seen(&self.pool)
             .await
-            .map_err(db)?;
-        if status.is_none() {
-            return Ok(None);
-        }
-        if status.as_deref() != Some("indexed") {
-            return Err(invalid("The document is not fully indexed. Let its import finish before adding it as a reference."));
-        }
-        let rows = sqlx::query(
-            "SELECT d.file_name, c.content FROM documents d
-             JOIN text_chunks c ON c.document_id = d.id
-             WHERE d.id = ? ORDER BY c.chunk_index",
-        )
-        .bind(document_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
-        let Some(first) = rows.first() else {
-            return Ok(None);
-        };
-        let title: String = first.try_get("file_name").map_err(db)?;
-        let chunks = rows
-            .iter()
-            .map(|row| row.try_get::<String, _>("content").map_err(db))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Some((title, chunks)))
     }
 
     pub async fn preflight_new_source(
@@ -238,7 +179,7 @@ impl LearningSourceLibraryRepository {
             let id: String = row.get("id");
             let text: String = row.get("full_text");
             sqlx::query("UPDATE learning_source_versions SET content_sha256=?,word_count=? WHERE program_id=? AND id=? AND extraction_version=? AND content_sha256='' ")
-                .bind(digest(&text)).bind(words(&text) as i64).bind(program_id).bind(id).bind(LEGACY_EXTRACTION).execute(&self.pool).await.map_err(db)?;
+                .bind(hash_text(&text)).bind(words(&text) as i64).bind(program_id).bind(id).bind(LEGACY_EXTRACTION).execute(&self.pool).await.map_err(db)?;
         }
         Ok(())
     }
@@ -539,16 +480,15 @@ impl LearningSourceLibraryRepository {
         };
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, program_id).await?;
-        if replay(
-            &mut tx,
+        if source_operation(
             operation_id,
             program_id,
             source_id,
             operation_kind,
             &payload_hash,
         )
+        .seen(&mut *tx)
         .await?
-        .is_some()
         {
             return Ok(());
         }
@@ -570,7 +510,7 @@ impl LearningSourceLibraryRepository {
             ));
         }
         let (text, truncated) = (full_text, captured.truncated);
-        let text_digest = digest(&text);
+        let text_digest = hash_text(&text);
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,0,?,?)")
             .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).execute(&mut *tx).await.map_err(db)?;
         insert_version(
@@ -600,16 +540,19 @@ impl LearningSourceLibraryRepository {
             acquired,
         )
         .await?;
-        record_operation(
-            &mut tx,
+        source_operation(
             operation_id,
             program_id,
             source_id,
             operation_kind,
             &payload_hash,
-            Some(version_id),
-            0,
-            acquired,
+        )
+        .record(
+            &mut *tx,
+            &SourceOperationResult {
+                version_id: Some(version_id),
+                revision: 0,
+            },
         )
         .await?;
         tx.commit().await.map_err(db)
@@ -666,19 +609,18 @@ impl LearningSourceLibraryRepository {
                 uuid(v, label)?;
             }
         }
-        let payload_hash = json_hash(req)?;
+        let payload_hash = hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
-        if replay(
-            &mut tx,
+        if source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "refresh",
             &payload_hash,
         )
+        .seen(&mut *tx)
         .await?
-        .is_some()
         {
             return Ok(());
         }
@@ -737,7 +679,7 @@ impl LearningSourceLibraryRepository {
                     Some("The page did not contain valid source metadata and text.".into()),
                 )
             } else {
-                let new_digest = digest(&text);
+                let new_digest = hash_text(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)
                 } else {
@@ -802,16 +744,19 @@ impl LearningSourceLibraryRepository {
             }
         }
         let result_version = pending_id.as_deref();
-        record_operation(
-            &mut tx,
+        source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "refresh",
             &payload_hash,
-            result_version,
-            next_revision,
-            checked,
+        )
+        .record(
+            &mut *tx,
+            &SourceOperationResult {
+                version_id: result_version,
+                revision: next_revision,
+            },
         )
         .await?;
         sqlx::query("INSERT INTO learning_source_refresh_checks(operation_id,program_id,source_id,status,checked_at,active_digest,pending_version_id,message) VALUES(?,?,?,?,?,?,?,?)")
@@ -832,19 +777,18 @@ impl LearningSourceLibraryRepository {
                 uuid(v, label)?;
             }
         }
-        let hash = json_hash(req)?;
+        let hash = hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
-        if replay(
-            &mut tx,
+        if source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "adopt",
             &hash,
         )
+        .seen(&mut *tx)
         .await?
-        .is_some()
         {
             return Ok(());
         }
@@ -871,16 +815,19 @@ impl LearningSourceLibraryRepository {
                 return Err(invalid("Source changed; reload and retry."));
             }
         }
-        record_operation(
-            &mut tx,
+        source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "adopt",
             &hash,
-            Some(&req.version_id),
-            next_revision,
-            now(),
+        )
+        .record(
+            &mut *tx,
+            &SourceOperationResult {
+                version_id: Some(&req.version_id),
+                revision: next_revision,
+            },
         )
         .await?;
         tx.commit().await.map_err(db)
@@ -898,19 +845,18 @@ impl LearningSourceLibraryRepository {
                 uuid(v, label)?;
             }
         }
-        let hash = json_hash(req)?;
+        let hash = hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
-        if replay(
-            &mut tx,
+        if source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "policy",
             &hash,
         )
+        .seen(&mut *tx)
         .await?
-        .is_some()
         {
             return Ok(());
         }
@@ -938,16 +884,19 @@ impl LearningSourceLibraryRepository {
                 return Err(invalid("Source changed; reload and retry."));
             }
         }
-        record_operation(
-            &mut tx,
+        source_operation(
             &req.operation_id,
             &req.program_id,
             &req.source_id,
             "policy",
             &hash,
-            None,
-            next,
-            now(),
+        )
+        .record(
+            &mut *tx,
+            &SourceOperationResult {
+                version_id: None,
+                revision: next,
+            },
         )
         .await?;
         tx.commit().await.map_err(db)
@@ -969,18 +918,12 @@ impl LearningSourceLibraryRepository {
         if reason.is_empty() || reason.chars().count() > 500 {
             return Err(invalid("Deletion reason must contain 1–500 characters."));
         }
-        let hash = json_hash(req)?;
+        let hash = hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
-        if portability_replay(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "delete_source",
-            &hash,
-        )
-        .await?
-        .is_some()
+        if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
+            .seen(&mut *tx)
+            .await?
         {
             return Ok(());
         }
@@ -1015,16 +958,9 @@ impl LearningSourceLibraryRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Source changed; reload and retry."));
         }
-        record_portability_operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "delete_source",
-            &hash,
-            Some(&req.source_id),
-            timestamp,
-        )
-        .await?;
+        portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
+            .record(&mut *tx, &Some(&req.source_id))
+            .await?;
         tx.commit().await.map_err(db)
     }
 
@@ -1048,18 +984,12 @@ impl LearningSourceLibraryRepository {
         {
             return Err(invalid("Replacement source text must not be empty."));
         }
-        let hash = json_hash(req)?;
+        let hash = hash(req)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
-        if portability_replay(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "reimport_source",
-            &hash,
-        )
-        .await?
-        .is_some()
+        if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
+            .seen(&mut *tx)
+            .await?
         {
             return Ok(());
         }
@@ -1101,7 +1031,7 @@ impl LearningSourceLibraryRepository {
         if text.trim().is_empty() {
             return Err(invalid("Re-imported source text must not be empty."));
         }
-        let digest_value = digest(&text);
+        let digest_value = hash_text(&text);
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT id FROM learning_source_versions WHERE program_id=? AND source_id=? AND content_sha256=?",
         )
@@ -1183,16 +1113,9 @@ impl LearningSourceLibraryRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Source changed; reload and retry."));
         }
-        record_portability_operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            "reimport_source",
-            &hash,
-            Some(&active_version),
-            timestamp,
-        )
-        .await?;
+        portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
+            .record(&mut *tx, &Some(&active_version))
+            .await?;
         tx.commit().await.map_err(db)
     }
 
@@ -1211,6 +1134,19 @@ impl LearningSourceLibraryRepository {
                 excerpt: r.get("excerpt"),
                 acquired_at: r.get("acquired_at"),
             })
+            .collect())
+    }
+    /// The library document each of the program's document snapshots was
+    /// captured from, keyed by snapshot version ID.
+    pub async fn library_documents(&self, program_id: &str) -> Result<HashMap<String, String>> {
+        let rows = sqlx::query("SELECT v.id,l.origin FROM learning_source_versions v JOIN learning_source_library l ON l.program_id=v.program_id AND l.id=v.source_id WHERE v.program_id=? AND l.kind='document'")
+            .bind(program_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get("id"), row.get("origin")))
             .collect())
     }
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
@@ -1281,47 +1217,48 @@ async fn lock_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Res
     }
     Ok(())
 }
-async fn replay(
-    tx: &mut Transaction<'_, Sqlite>,
-    op: &str,
-    program: &str,
-    source: &str,
-    kind: &str,
-    hash: &str,
-) -> Result<Option<()>> {
-    let row=sqlx::query("SELECT program_id,source_id,kind,payload_hash FROM learning_source_operations WHERE operation_id=?")
-        .bind(op).fetch_optional(&mut **tx).await.map_err(db)?;
-    if let Some(r) = row {
-        if r.get::<String, _>("program_id") == program
-            && r.get::<String, _>("source_id") == source
-            && r.get::<String, _>("kind") == kind
-            && r.get::<String, _>("payload_hash") == hash
-        {
-            return Ok(Some(()));
-        }
-        return Err(invalid(
-            "Operation ID was already used with different source data.",
-        ));
+fn source_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    source_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "source",
+        kind,
+        program_id: Some(program_id),
+        subject_id: Some(source_id),
+        payload_hash,
+        conflict: "Operation ID was already used with different source data.",
     }
-    Ok(None)
 }
-// Operation identity, result, revision, and timestamp are recorded atomically
-// with the source mutation, so these transaction details stay explicit here.
-#[allow(clippy::too_many_arguments)]
-async fn record_operation(
-    tx: &mut Transaction<'_, Sqlite>,
-    op: &str,
-    program: &str,
-    source: &str,
-    kind: &str,
-    hash: &str,
-    version: Option<&str>,
+
+/// What a source operation produced: the version it captured, if any, and
+/// the source revision it left.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceOperationResult<'a> {
+    version_id: Option<&'a str>,
     revision: i64,
-    at: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_source_operations(operation_id,program_id,source_id,kind,payload_hash,result_version_id,result_revision,created_at) VALUES(?,?,?,?,?,?,?,?)")
-        .bind(op).bind(program).bind(source).bind(kind).bind(hash).bind(version).bind(revision).bind(at).execute(&mut **tx).await.map_err(db)?;
-    Ok(())
+}
+
+fn portability_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "portability",
+        kind,
+        program_id: Some(program_id),
+        subject_id: None,
+        payload_hash,
+        conflict: "Operation ID was reused with different source data.",
+    }
 }
 
 async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
@@ -1339,55 +1276,6 @@ async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &s
     Ok(())
 }
 
-async fn portability_replay(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    kind: &str,
-    payload_hash: &str,
-) -> Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT program_id,kind,payload_hash,result_id FROM learning_portability_operations WHERE operation_id=?",
-    )
-    .bind(operation_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    if row.get::<Option<String>, _>("program_id").as_deref() == Some(program_id)
-        && row.get::<String, _>("kind") == kind
-        && row.get::<String, _>("payload_hash") == payload_hash
-    {
-        return Ok(row.get("result_id"));
-    }
-    Err(invalid(
-        "Operation ID was reused with different source data.",
-    ))
-}
-
-async fn record_portability_operation(
-    tx: &mut Transaction<'_, Sqlite>,
-    operation_id: &str,
-    program_id: &str,
-    kind: &str,
-    payload_hash: &str,
-    result_id: Option<&str>,
-    timestamp: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_portability_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,?,?,?)")
-        .bind(operation_id)
-        .bind(program_id)
-        .bind(kind)
-        .bind(payload_hash)
-        .bind(result_id)
-        .bind(timestamp)
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
-    Ok(())
-}
 // Version snapshots persist each source field alongside its immutable hash.
 #[allow(clippy::too_many_arguments)]
 async fn insert_version(

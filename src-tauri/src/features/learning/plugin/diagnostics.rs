@@ -10,7 +10,12 @@ pub async fn start_learning_diagnostic(
         container.db_pool().clone(),
     );
     if let Some(replay) = repo
-        .diagnostic_replay(&request.operation_id, &request)
+        .diagnostic_replay(
+            &request.operation_id,
+            &request.program_id,
+            "start",
+            &request,
+        )
         .await
         .map_err(ApiError::from)?
     {
@@ -59,7 +64,12 @@ pub async fn submit_learning_diagnostic(
         container.db_pool().clone(),
     );
     if let Some(replay) = repo
-        .diagnostic_replay(&request.operation_id, &request)
+        .diagnostic_replay(
+            &request.operation_id,
+            &request.program_id,
+            "submit",
+            &request,
+        )
         .await
         .map_err(ApiError::from)?
     {

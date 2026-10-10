@@ -1,10 +1,10 @@
-#![cfg(test)]
 use super::{
-    dto::*,
-    generation::{parse_cards, parse_conversation_cards},
-    repository::StudyRepository,
-    schedule::next_review,
-    service,
+    super::reference_collection::tests::FakeLibrary,
+    schedule::DAY_MS,
+    study_dto::*,
+    study_generation::{parse_cards, parse_conversation_cards},
+    study_repository::StudyRepository,
+    study_service as service,
 };
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use serde_json::json;
@@ -96,18 +96,8 @@ fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
     assert!(cards.iter().all(|card| card.options.len() == 5));
 }
 #[test]
-fn review_schedule_uses_recall_and_bounds_intervals() {
-    assert_eq!(next_review(StudyRating::Again, 20, 1000), (601000, 0));
-    assert_eq!(next_review(StudyRating::Good, 0, 0), (86400000, 1));
-    assert_eq!(next_review(StudyRating::Easy, 0, 0), (345600000, 4));
-    assert_eq!(next_review(StudyRating::Good, 6, 0).1, 12);
-    assert_eq!(next_review(StudyRating::Easy, i64::MAX, 0).1, 365);
-}
-
-#[test]
-fn study_rejects_unknown_persisted_card_and_scheduler_versions() {
-    assert!(super::repository::parse_card_format("future_format").is_err());
-    assert!(super::repository::parse_scheduler_version("future_scheduler").is_err());
+fn study_rejects_unknown_persisted_card_formats() {
+    assert!(super::study_repository::parse_card_format("future_format").is_err());
 }
 #[tokio::test]
 async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result<()> {
@@ -136,10 +126,12 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
         rating: StudyRating::Easy,
     };
     let reviewed = repo.review(&request, 2000).await?;
-    assert_eq!(
-        (reviewed.review_count, reviewed.lapses, reviewed.due_at),
-        (1, 1, 602000)
+    assert_eq!((reviewed.review_count, reviewed.lapses), (1, 1));
+    assert!(
+        reviewed.interval_days >= 1,
+        "FSRS schedules a wrong answer for a later day"
     );
+    assert_eq!(reviewed.due_at, 2000 + reviewed.interval_days * DAY_MS);
     assert_eq!(
         repo.review(&request, 3000).await?.review_count,
         1,
@@ -160,11 +152,12 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
         ),
         (0, 1, 0)
     );
-    assert_eq!(repo.list(603000).await?[0].due_count, 1);
+    assert_eq!(repo.list(reviewed.due_at).await?[0].due_count, 1);
     let mut correct = stale;
     correct.expected_reviews = 1;
     correct.selected_option = Some(0);
-    assert_eq!(repo.review(&correct, 603000).await?.interval_days, 1);
+    let recalled = repo.review(&correct, reviewed.due_at).await?;
+    assert!(recalled.due_at > reviewed.due_at);
     let edit = UpdateStudyCardRequestDto {
         card_id: c.id.clone(),
         question: "Revised question".into(),
@@ -179,7 +172,7 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
     );
     assert_eq!(reopened.study_goal, "Understand the process");
     assert_eq!(reopened.cards[0].review_count, 2);
-    assert_eq!(repo.list(603001).await?[0].quiz_correct, 1);
+    assert_eq!(repo.list(reviewed.due_at + 1).await?[0].quiz_correct, 1);
     repo.delete_deck(&d.id).await?;
     assert!(repo.get(&d.id).await.is_err());
     assert_eq!(
@@ -309,42 +302,37 @@ async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
 }
 #[tokio::test]
 async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("sources.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
     let selected = uuid::Uuid::new_v4().to_string();
     let other = uuid::Uuid::new_v4().to_string();
-    for id in [&selected, &other] {
-        sqlx::query("INSERT INTO documents (id,file_path,file_name,size_bytes,modified_at,checksum) VALUES (?,?,?,100,'2026-09-15',?)")
-            .bind(id).bind(format!("/library/{id}.pdf")).bind("chapter.pdf").bind(id).execute(db.pool()).await?;
-        for i in 0..40 {
-            sqlx::query(
-                "INSERT INTO text_chunks (id,document_id,content,chunk_index) VALUES (?,?,?,?)",
-            )
-            .bind(format!("{id}-{i}"))
-            .bind(id)
-            .bind(if i == 30 {
+    let chunks: Vec<&str> = (0..40)
+        .map(|i| {
+            if i == 30 {
                 PASSAGE
             } else {
                 "Another passage about disclosure."
-            })
-            .bind(i)
-            .execute(db.pool())
-            .await?;
-        }
-    }
-    let sources = repo
-        .sources(std::slice::from_ref(&selected), "petition")
-        .await?;
+            }
+        })
+        .collect();
+    let library = FakeLibrary::default()
+        .with_document(&selected, &chunks)
+        .with_document(&other, &chunks);
+    let sources = service::passages(&library, std::slice::from_ref(&selected), "petition").await?;
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].document_id, selected);
     assert_eq!(sources[0].excerpt, PASSAGE);
-    assert!(repo
-        .sources(std::slice::from_ref(&selected), "unmatchedxyz")
-        .await
-        .is_err());
-    assert!(repo.sources(&[selected], "").await?.len() <= 24);
+    assert!(
+        service::passages(&library, std::slice::from_ref(&selected), "unmatchedxyz")
+            .await
+            .is_err()
+    );
+    let sampled = service::passages(&library, std::slice::from_ref(&selected), "").await?;
+    assert!(!sampled.is_empty() && sampled.len() <= 24);
+    assert!(sampled.iter().all(|source| source.document_id == selected));
+    assert!(
+        service::passages(&library, &[uuid::Uuid::new_v4().to_string()], "")
+            .await
+            .is_err()
+    );
     Ok(())
 }
 
@@ -362,8 +350,7 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     let repo = StudyRepository::new(db.pool().clone());
     let id = uuid::Uuid::new_v4().to_string();
     let passage = "Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs the light used in photosynthesis.";
-    sqlx::query("INSERT INTO documents (id,file_path,file_name,size_bytes,modified_at,checksum) VALUES (?,'/library/biology.md','biology.md',100,'2026-09-15',?)").bind(&id).bind(&id).execute(db.pool()).await?;
-    sqlx::query("INSERT INTO text_chunks (id,document_id,content,chunk_index) VALUES ('biology-chunk',?,?,0)").bind(&id).bind(passage).execute(db.pool()).await?;
+    let library = FakeLibrary::default().with_document(&id, &[passage]);
     let response = json!({"cards":[
         {"question":"Which energy conversion occurs in photosynthesis?","options":["Light to chemical energy","Chemical to light energy","Heat to sound","Sound to light","Heat to motion"],"correctIndex":0,"explanation":"The first sentence names light as the input and chemical energy as the output.","sourceIndex":0,"quote":"Photosynthesis converts light energy into chemical energy.","topic":"Energy conversion"},
         {"question":"What absorbs the light used in photosynthesis?","options":["Water","Chlorophyll","Oxygen","Glucose","Carbon dioxide"],"correctIndex":1,"explanation":"The second sentence identifies chlorophyll as the light absorber.","sourceIndex":0,"quote":"Chlorophyll absorbs the light used in photosynthesis.","topic":"Chlorophyll"}
@@ -389,6 +376,7 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     for goal in ["", "High school biology exam"] {
         let deck = service::generate_deck(
             &repo,
+            &library,
             &llm,
             GenerateStudyDeckRequestDto {
                 title: "Biology".into(),
@@ -405,7 +393,7 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
         assert!(saved
             .cards
             .iter()
-            .all(|card| card.source.file_name == "biology.md"
+            .all(|card| card.source.file_name == format!("{id}.md")
                 && passage.contains(&card.source.excerpt)));
     }
     let requests = server.received_requests().await.unwrap();
@@ -432,7 +420,7 @@ fn source_budget_shares_context_between_documents_and_reserves_output_space() {
     let mut second = source();
     second.document_id = "second".into();
     let sources = vec![first.clone(), first, second];
-    let selected = super::generation::bounded_sources(&sources, 2, 328, |_| 50);
+    let selected = super::study_generation::bounded_sources(&sources, 2, 328, |_| 50);
     assert_eq!(
         selected
             .iter()
@@ -440,7 +428,7 @@ fn source_budget_shares_context_between_documents_and_reserves_output_space() {
             .collect::<Vec<_>>(),
         ["first", "second"]
     );
-    assert!(super::generation::bounded_sources(&sources, 2, 100, |_| 50).is_empty());
+    assert!(super::study_generation::bounded_sources(&sources, 2, 100, |_| 50).is_empty());
 }
 
 #[test]
@@ -449,4 +437,87 @@ fn a_reply_whose_only_closing_brace_precedes_the_opening_one_is_rejected_not_a_p
     let raw = "} and then {\"cards\": [";
     assert!(parse_cards(raw, std::slice::from_ref(&s), "deck", 6, 0).is_err());
     assert!(parse_conversation_cards(raw, &[], "deck", 0).is_err());
+}
+
+#[tokio::test]
+async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Result<()> {
+    const CONSOLIDATION: &str = "20261009150000";
+    let dir = tempfile::tempdir()?;
+    let earlier = dir.path().join("migrations");
+    std::fs::create_dir(&earlier)?;
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))? {
+        let path = entry?.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.as_str() < CONSOLIDATION {
+            std::fs::copy(&path, earlier.join(&name))?;
+        }
+    }
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await?;
+    sqlx::migrate::Migrator::new(earlier.as_path())
+        .await?
+        .run(&pool)
+        .await?;
+    for statement in [
+        "INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,created_at) VALUES('program','Recall','Remember','active',1,'',30,'model',0)",
+        "INSERT INTO study_decks(id,title,focus,study_goal,model_name,created_at) VALUES('deck','Deck','Focus','','model',0)",
+        "INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,interval_days,review_count,lapses,format,scheduler_version) VALUES('expanding','deck','Q','A','[]',0,'E','{\"chunkId\":\"c\",\"documentId\":\"d\",\"fileName\":\"f\",\"filePath\":\"p\",\"excerpt\":\"e\"}','t',5000,3,2,1,'question_answer','expanding_v1')",
+        "INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,interval_days,review_count,lapses,format,scheduler_version) VALUES('fsrs','deck','Q','A','[]',0,'E','{}','t',9000,2,1,0,'question_answer','fsrs_6_v1')",
+        "INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option,scheduler_version) VALUES('r1','expanding',1000,'good','flashcard',NULL,NULL,'expanding_v1'),('r2','expanding',2000,'again','flashcard',NULL,NULL,'expanding_v1')",
+        "INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,scheduler_version,scheduler_state_json,content_revision,created_at,updated_at) VALUES('fsrs','program','question_answer','\"Q\"','{}','[]','fsrs_6_v1','{\"version\":\"fsrs_6_v1\",\"stability\":4.5,\"difficulty\":5.25,\"last_reviewed_at\":7000,\"due_at\":9000,\"interval_days\":2,\"review_count\":1}',1,0,0)",
+    ] {
+        sqlx::query(statement).execute(&pool).await?;
+    }
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let card = |id: &'static str| {
+        sqlx::query_as::<_, (Option<f64>, Option<f64>, Option<i64>, i64, i64, i64)>(
+            "SELECT stability,difficulty,last_reviewed_at,due_at,review_count,lapses FROM study_cards WHERE id=?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+    };
+    // The retired scheduler's card starts FSRS as a new card, keeping its
+    // due date, counts and history.
+    assert_eq!(
+        card("expanding").await?,
+        (None, None, Some(2000), 5000, 2, 1)
+    );
+    // A card already on FSRS keeps its memory.
+    assert_eq!(
+        card("fsrs").await?,
+        (Some(4.5), Some(5.25), Some(7000), 9000, 1, 0)
+    );
+    let reviews: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM study_reviews WHERE card_id='expanding'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(reviews, 2);
+    let scheduler_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pragma_table_info('study_cards') WHERE name='scheduler_version'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(scheduler_columns, 0);
+
+    let reviewed = StudyRepository::new(pool.clone())
+        .review(
+            &ReviewStudyCardRequestDto {
+                review_id: uuid::Uuid::new_v4().to_string(),
+                card_id: "expanding".into(),
+                expected_reviews: 2,
+                selected_option: None,
+                rating: StudyRating::Good,
+            },
+            6000,
+        )
+        .await?;
+    assert_eq!(reviewed.review_count, 3);
+    assert!(card("expanding").await?.0.is_some());
+    Ok(())
 }

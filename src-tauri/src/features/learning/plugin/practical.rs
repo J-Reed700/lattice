@@ -154,7 +154,12 @@ pub async fn generate_learning_practical_activity(
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     let repo = practical_repo(&container);
     if let Some(replayed) = repo
-        .replay_activity_operation(&request.program_id, &request.operation_id, &hash)
+        .replay_activity_operation(
+            &request.program_id,
+            &request.activity_id,
+            &request.operation_id,
+            &hash,
+        )
         .await
         .map_err(ApiError::from)?
     {
@@ -291,6 +296,7 @@ pub async fn send_learning_simulation_turn(
         .replay_simulation_operation(
             &request.program_id,
             &request.session_id,
+            "turn",
             &request.operation_id,
             &hash,
         )
@@ -361,6 +367,7 @@ pub async fn finish_learning_simulation(
         .replay_simulation_operation(
             &request.program_id,
             &request.session_id,
+            "finish",
             &request.operation_id,
             &hash,
         )

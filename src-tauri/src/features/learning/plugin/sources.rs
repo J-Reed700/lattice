@@ -102,10 +102,12 @@ pub async fn add_learning_document_source(
     repo.preflight_new_source(&request.program_id, &request.source_id, &request.version_id)
         .await
         .map_err(ApiError::from)?;
-    let captured =
-        crate::features::learning::sources::capture_document(&repo, &request.document_id)
-            .await
-            .map_err(ApiError::from)?;
+    let captured = crate::features::learning::sources::capture_document(
+        container.library_passages().as_ref(),
+        &request.document_id,
+    )
+    .await
+    .map_err(ApiError::from)?;
     repo.add(
         &request.operation_id,
         &request.source_id,
@@ -352,11 +354,16 @@ pub async fn search_learning_sources_semantically(
     request: SearchLearningSourcesSemanticallyRequestDto,
     container: State<'_, Container>,
 ) -> Result<Vec<LearningSourceSemanticSearchResultDto>, ApiError> {
-    let embedding = container.get_or_load_embedding().await.ok();
+    // The library queries with the loaded model; without one, sources are
+    // ranked by keyword.
+    let library = match container.get_or_load_embedding().await {
+        Ok(_) => Some(container.library_passages()),
+        Err(_) => None,
+    };
     crate::features::learning::recall_repository::LearningRecallRepository::new(
         container.db_pool().clone(),
     )
-    .search_sources(&request, embedding.as_deref())
+    .search_sources(&request, library.as_deref())
     .await
     .map_err(ApiError::from)
 }

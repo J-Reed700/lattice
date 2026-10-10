@@ -31,12 +31,12 @@ const program: LearningProgramDto = {
 const note: WorkspaceNoteDto = { revision: 0, id: 'note-1', title: 'The central idea', journalId: 'journal-1', content: '', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: '2026-09-30T12:00:00Z', updatedAt: '2026-09-30T12:00:00Z' };
 const secondLesson = { ...lesson, id: 'lesson-2', title: 'A second idea', objective: 'Explain another idea' };
 const secondNote: WorkspaceNoteDto = { ...note, id: 'note-2', title: secondLesson.title };
-const card: StudyCardDto = { id: 'card-1', format: 'question_answer', schedulerVersion: 'expanding_v1', deckId: 'deck-1', question: 'What is the central idea?', answer: 'A practical explanation.', options: [], correctIndex: 0, explanation: 'The source explains why.', source: { chunkId: '', documentId: '', fileName: 'Field guide', filePath: '', excerpt: source.excerpt }, topic: 'The central idea', dueAt: 0, intervalDays: 1, reviewCount: 0, lapses: 0 };
+const card: StudyCardDto = { id: 'card-1', format: 'question_answer', deckId: 'deck-1', question: 'What is the central idea?', answer: 'A practical explanation.', options: [], correctIndex: 0, explanation: 'The source explains why.', source: { chunkId: '', documentId: '', fileName: 'Field guide', filePath: '', excerpt: source.excerpt }, topic: 'The central idea', dueAt: 0, intervalDays: 1, reviewCount: 0, lapses: 0 };
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 
 function memory(overrides: Partial<LearningMemoryDto> = {}): LearningMemoryDto {
-  return { programId: program.summary.id, journalId: 'journal-1', lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, schedulerVersion: 'expanding_v1', ...overrides };
+  return { programId: program.summary.id, journalId: 'journal-1', lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, ...overrides };
 }
 
 function NotebookHarness({ enabled = true, lessonId = lesson.id }: { enabled?: boolean; lessonId?: string }) {

@@ -233,7 +233,8 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
             .await?,
         card_id
     );
-    let study = crate::features::study::repository::StudyRepository::new(pool.clone());
+    let study =
+        crate::features::learning::recall::study_repository::StudyRepository::new(pool.clone());
     let state = repo.memory_state(&program.summary.id).await?;
     let deck = study
         .get(state.deck_id.as_deref().ok_or_else(|| {
@@ -247,17 +248,17 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .ok_or_else(|| crate::shared::error::AppError::NotFound("accepted card".into()))?;
     assert_eq!(
         card.format,
-        crate::features::study::dto::StudyCardFormat::QuestionAnswer
+        crate::features::learning::recall::study_dto::StudyCardFormat::QuestionAnswer
     );
     assert!(card.options.is_empty());
     let reviewed = study
         .review(
-            &crate::features::study::dto::ReviewStudyCardRequestDto {
+            &crate::features::learning::recall::study_dto::ReviewStudyCardRequestDto {
                 review_id: id(),
                 card_id: card_id.clone(),
                 expected_reviews: 0,
                 selected_option: None,
-                rating: crate::features::study::dto::StudyRating::Good,
+                rating: crate::features::learning::recall::study_dto::StudyRating::Good,
             },
             chrono::Utc::now().timestamp_millis(),
         )
@@ -624,30 +625,6 @@ async fn completion_advances_resume_to_first_incomplete_lesson() -> Result<()> {
         repo.get(&p.summary.id).await?.summary.revision,
         completed.summary.revision
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn selected_document_falls_back_when_goal_words_do_not_match() -> Result<()> {
-    let pool = pool().await?;
-    let document_id = id();
-    sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum,status) VALUES(?,?,?,?,?,?,?)")
-        .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Selected notes.txt")
-        .bind(22_i64).bind("2026-09-30").bind("checksum").bind("ready")
-        .execute(&pool).await.map_err(|e|crate::shared::error::AppError::Database(e.to_string()))?;
-    sqlx::query("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES(?,?,?,?)")
-        .bind(id())
-        .bind(&document_id)
-        .bind("The passage discusses coastal erosion and sediment transport.")
-        .bind(0_i64)
-        .execute(&pool)
-        .await
-        .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
-    let sources = LearningRepository::new(pool)
-        .acquire_document_sources(&[document_id], "unrelated quantum mechanics goal")
-        .await?;
-    assert_eq!(sources.len(), 1);
-    assert!(sources[0].excerpt.contains("coastal erosion"));
     Ok(())
 }
 
@@ -1247,62 +1224,6 @@ async fn initially_generated_sources_are_normalized_and_persisted_as_active_vers
         active.first().map(|s| s.excerpt.as_str()),
         Some("First line.\nSecond line.")
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn library_document_capture_keeps_full_ordered_text_and_rejects_incomplete_documents(
-) -> Result<()> {
-    use super::source_library::LearningSourceLibraryRepository;
-    let pool = pool().await?;
-    let db = |e: sqlx::Error| crate::shared::error::AppError::Database(e.to_string());
-    let document_id = id();
-    sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum,status) VALUES(?,?,?,?,?,?,?)")
-        .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")
-        .bind(22_i64).bind("2026-10-02").bind("checksum").bind("indexed")
-        .execute(&pool).await.map_err(db)?;
-    for (index, content) in [
-        (1_i64, "second".to_string()),
-        (0, "first".to_string()),
-        (2, "x".repeat(70_000)),
-    ] {
-        sqlx::query("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES(?,?,?,?)")
-            .bind(id())
-            .bind(&document_id)
-            .bind(content)
-            .bind(index)
-            .execute(&pool)
-            .await
-            .map_err(db)?;
-    }
-    let library = LearningSourceLibraryRepository::new(pool.clone());
-    let (title, text) = library
-        .library_document_text(&document_id)
-        .await?
-        .expect("indexed text");
-    assert_eq!(title, "Field notes.txt");
-    assert_eq!(text.len(), 3);
-    assert_eq!((text[0].as_str(), text[1].as_str()), ("first", "second"));
-    assert_eq!(text[2].chars().count(), 70_000);
-    assert!(library.library_document_text(&id()).await?.is_none());
-    sqlx::query("UPDATE text_chunks SET content=? WHERE document_id=? AND chunk_index=2")
-        .bind("x".repeat(2_000_001))
-        .bind(&document_id)
-        .execute(&pool)
-        .await
-        .map_err(db)?;
-    let (_, captured) = library
-        .library_document_text(&document_id)
-        .await?
-        .expect("complete large document");
-    assert_eq!(captured[2].len(), 2_000_001);
-
-    sqlx::query("UPDATE documents SET status='processing' WHERE id=?")
-        .bind(&document_id)
-        .execute(&pool)
-        .await
-        .map_err(db)?;
-    assert!(library.library_document_text(&document_id).await.is_err());
     Ok(())
 }
 

@@ -362,7 +362,7 @@ async fn run_and_confirm(
             let llm: Arc<dyn LLMPort> = live.clone();
             Box::pin(async move { Ok(llm) })
         }),
-        load_embedding: Arc::new(|| Box::pin(async { None })),
+        load_library: Arc::new(|| Box::pin(async { None })),
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,

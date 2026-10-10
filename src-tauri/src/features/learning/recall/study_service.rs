@@ -1,7 +1,7 @@
 //! Study validation and orchestration. Persisted state belongs to the repository.
-use super::{dto::*, repository::StudyRepository};
+use super::{study_dto::*, study_repository::StudyRepository};
 use crate::{
-    application::ports::LLMPort,
+    application::ports::{LLMPort, LibraryPassagesPort},
     shared::error::{AppError, Result},
 };
 
@@ -43,18 +43,79 @@ pub fn validate_generation(request: &GenerateStudyDeckRequestDto) -> Result<()> 
     Ok(())
 }
 
+/// Passages for a deck, read from the library: each selected document's
+/// chunks that mention the focus, or an even sample of it when there is no
+/// focus.
+pub async fn passages(
+    library: &dyn LibraryPassagesPort,
+    ids: &[String],
+    focus: &str,
+) -> Result<Vec<StudySourceDto>> {
+    let terms: Vec<_> = focus
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.len() >= 4 && !["with", "from", "this", "that", "about"].contains(word))
+        .take(8)
+        .map(str::to_lowercase)
+        .collect();
+    let per_document = (24 / ids.len().max(1)).max(4);
+    let mut sources = Vec::new();
+    for id in ids {
+        let document = library
+            .document_text(id)
+            .await?
+            .filter(|document| !document.chunks.is_empty())
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "A selected document has no indexed text yet. Let its import finish first."
+                        .into(),
+                )
+            })?;
+        let stride = (document.chunks.len() / per_document).max(1);
+        let chosen = document
+            .chunks
+            .iter()
+            .enumerate()
+            .filter(|(index, chunk)| {
+                if terms.is_empty() {
+                    index % stride == 0
+                } else {
+                    let text = chunk.text.to_lowercase();
+                    terms.iter().any(|term| text.contains(term.as_str()))
+                }
+            })
+            .take(per_document);
+        for (_, chunk) in chosen {
+            sources.push(StudySourceDto {
+                chunk_id: chunk.id.clone(),
+                document_id: id.clone(),
+                file_name: document.title.clone(),
+                file_path: document.file_path.clone(),
+                excerpt: chunk.text.chars().take(2400).collect(),
+                url: None,
+            });
+        }
+    }
+    if sources.is_empty() {
+        return Err(AppError::InvalidInput(
+            "No passages matched that focus in the selected documents. Try a broader topic.".into(),
+        ));
+    }
+    Ok(sources)
+}
+
 pub async fn generate_deck(
     repo: &StudyRepository,
+    library: &dyn LibraryPassagesPort,
     llm: &dyn LLMPort,
     request: GenerateStudyDeckRequestDto,
 ) -> Result<StudyDeckDto> {
     validate_generation(&request)?;
-    let sources = repo.sources(&request.document_ids, &request.focus).await?;
+    let sources = passages(library, &request.document_ids, &request.focus).await?;
     let now = chrono::Utc::now().timestamp_millis();
     let id = uuid::Uuid::new_v4().to_string();
     let cards = tokio::time::timeout(
         std::time::Duration::from_secs(180),
-        super::generation::generate(llm, &request, &sources, &id, now),
+        super::study_generation::generate(llm, &request, &sources, &id, now),
     )
     .await
     .map_err(|_| {
@@ -86,7 +147,7 @@ pub async fn generate_conversation_deck(
     let claims = repo.conversation_claims(&request.conversation_id).await?;
     let now = chrono::Utc::now().timestamp_millis();
     let id = uuid::Uuid::new_v4().to_string();
-    let cards = super::generation::generate_from_conversation(llm, &claims, &id, now).await?;
+    let cards = super::study_generation::generate_from_conversation(llm, &claims, &id, now).await?;
     let deck = StudyDeckDto {
         id,
         title: request.title.trim().into(),

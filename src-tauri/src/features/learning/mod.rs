@@ -4,6 +4,8 @@ pub mod assessment;
 pub mod canvas;
 pub mod dto;
 pub mod lessons;
+pub(crate) mod operations;
+pub(crate) mod persistence;
 pub mod planning;
 pub mod plugin;
 pub mod portability;
