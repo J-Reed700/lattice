@@ -1,23 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 
-import { useDownloadedModels } from '@/hooks/useDownloadedModels';
-import VaultAPI from '@/lib/api';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { useModelDownloadedQuery } from '@/features/model/hooks/useModelDownloadedQuery';
 
 export function UtilityModelNotice() {
   const { downloadedModels, isLoading, error } = useDownloadedModels();
   const utility = downloadedModels.find(model => model.is_active_for_utility);
-  const readiness = useQuery({
-    queryKey: ['utility-model-download-ready', utility?.model_id],
-    enabled: Boolean(utility && utility.backend !== 'ollama'),
-    queryFn: async () => {
-      const result = await VaultAPI.isModelDownloaded(utility!.model_id);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-    staleTime: 15_000,
-    refetchInterval: 15_000,
-  });
+  const readiness = useModelDownloadedQuery(utility?.model_id, Boolean(utility && utility.backend !== 'ollama'));
 
   if (isLoading) return null;
   let message: string;

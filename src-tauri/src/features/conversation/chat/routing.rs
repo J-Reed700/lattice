@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
     pub(super) force_kb_search: bool,
     pub(super) force_web_search: bool,

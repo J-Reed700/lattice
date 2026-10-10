@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import * as Dialog from '@radix-ui/react-dialog';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Bookmark, Loader2, MessageSquare, Search } from 'lucide-react';
 
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { normalizeHexColor } from '@/features/spaces/model/spaces';
 import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationDto, ConversationMessageBookmarkDto } from '@/types';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { formatChatTimestamp } from '@/utils/dateUtils';
@@ -158,99 +158,50 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
   }, [activateResult, combinedResults, isOpen, selectedIndex]);
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Overlay
-          className="fixed inset-0 z-50 bg-[hsl(var(--overlay))] data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-        />
-        <Dialog.Content
-          className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-subtle bg-surface-raised shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
-          aria-label="Conversation Spotlight"
-        >
-          <Dialog.Title className="sr-only">Search conversations and references</Dialog.Title>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        unstyled
+        hideClose
+        overlayClassName="fixed inset-0 z-50 bg-[hsl(var(--overlay))] data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-subtle bg-surface-raised shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+        aria-label="Conversation Spotlight"
+      >
+        <DialogTitle asChild><h2 className="sr-only">Search conversations and references</h2></DialogTitle>
 
-          <div className="flex items-center gap-3 border-b border-subtle px-4 py-3">
-            <Search className="h-4 w-4 text-[hsl(var(--text-muted))]" aria-hidden="true" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search conversations and references"
-              className="flex-1 bg-transparent text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden"
-            />
-            <kbd className="rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-xxs text-[hsl(var(--text-muted))]">
-              Esc
-            </kbd>
-          </div>
+        <div className="flex items-center gap-3 border-b border-subtle px-4 py-3">
+          <Search className="h-4 w-4 text-[hsl(var(--text-muted))]" aria-hidden="true" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search conversations and references"
+            className="flex-1 bg-transparent text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden"
+          />
+          <kbd className="rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-xxs text-[hsl(var(--text-muted))]">
+            Esc
+          </kbd>
+        </div>
 
-          <div className="max-h-[60vh] overflow-y-auto">
-            {isLoading ? (
-              <div className="flex h-28 items-center justify-center text-[hsl(var(--text-muted))]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-              </div>
-            ) : combinedResults.length === 0 ? (
-              <div className="flex h-28 flex-col items-center justify-center gap-2 text-[hsl(var(--text-muted))]">
-                <Search className="h-4 w-4" />
-                <p className="text-sm">No matches.</p>
-                <p className="text-xs">Try a different term.</p>
-              </div>
-            ) : (
-              <ul role="listbox">
-                {combinedResults.map((item, idx) => {
-                  const isSelected = idx === selectedIndex;
+        <div className="max-h-[60vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="flex h-28 items-center justify-center text-[hsl(var(--text-muted))]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          ) : combinedResults.length === 0 ? (
+            <div className="flex h-28 flex-col items-center justify-center gap-2 text-[hsl(var(--text-muted))]">
+              <Search className="h-4 w-4" />
+              <p className="text-sm">No matches.</p>
+              <p className="text-xs">Try a different term.</p>
+            </div>
+          ) : (
+            <ul role="listbox">
+              {combinedResults.map((item, idx) => {
+                const isSelected = idx === selectedIndex;
 
-                  if (item.kind === 'conversation') {
-                    const accent = item.conversation.spaceId
-                      ? spaceAccentById.get(item.conversation.spaceId) ?? null
-                      : null;
-                    return (
-                      <li key={item.key} role="option" aria-selected={isSelected}>
-                        <button
-                          type="button"
-                          onClick={() => void activateResult(item)}
-                          onMouseEnter={() => setSelectedIndex(idx)}
-                          className={`relative w-full px-4 py-3 text-left transition-colors duration-fast ${
-                            isSelected ? 'bg-surface' : 'hover:bg-surface'
-                          }`}
-                        >
-                          {isSelected && (
-                            prefersReducedMotion ? (
-                              <span
-                                className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <motion.span
-                                layoutId="spotlight-selection"
-                                className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
-                                aria-hidden="true"
-                                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                              />
-                            )
-                          )}
-                          <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-primary))]">
-                            <MessageSquare className="h-4 w-4 text-[hsl(var(--text-tertiary))]" aria-hidden="true" />
-                            {accent && (
-                              <span
-                                className="h-2 w-2 shrink-0 rounded-full"
-                                style={{ backgroundColor: accent }}
-                                aria-hidden="true"
-                              />
-                            )}
-                            <span className="truncate">{item.conversation.title}</span>
-                          </div>
-                          <p className="mt-0.5 truncate pl-6 text-xs text-[hsl(var(--text-muted))]">
-                            {item.conversation.spaceId
-                              ? `${spaceNameById.get(item.conversation.spaceId) ?? item.conversation.spaceId} · `
-                              : ''}
-                            Conversation · {formatChatTimestamp(item.conversation.updatedAt)}
-                          </p>
-                        </button>
-                      </li>
-                    );
-                  }
-
-                  const accent = spaceAccentById.get(item.bookmark.spaceId) ?? null;
+                if (item.kind === 'conversation') {
+                  const accent = item.conversation.spaceId
+                    ? spaceAccentById.get(item.conversation.spaceId) ?? null
+                    : null;
                   return (
                     <li key={item.key} role="option" aria-selected={isSelected}>
                       <button
@@ -277,7 +228,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
                           )
                         )}
                         <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-primary))]">
-                          <Bookmark className="h-4 w-4 text-[hsl(var(--accent))]" aria-hidden="true" />
+                          <MessageSquare className="h-4 w-4 text-[hsl(var(--text-tertiary))]" aria-hidden="true" />
                           {accent && (
                             <span
                               className="h-2 w-2 shrink-0 rounded-full"
@@ -285,22 +236,69 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
                               aria-hidden="true"
                             />
                           )}
-                          <span className="truncate">
-                            {item.bookmark.title || item.bookmark.conversationTitle}
-                          </span>
+                          <span className="truncate">{item.conversation.title}</span>
                         </div>
                         <p className="mt-0.5 truncate pl-6 text-xs text-[hsl(var(--text-muted))]">
-                          {(spaceNameById.get(item.bookmark.spaceId) ?? item.bookmark.spaceId)} · {item.bookmark.conversationTitle} · {item.bookmark.messagePreview}
+                          {item.conversation.spaceId
+                            ? `${spaceNameById.get(item.conversation.spaceId) ?? item.conversation.spaceId} · `
+                            : ''}
+                          Conversation · {formatChatTimestamp(item.conversation.updatedAt)}
                         </p>
                       </button>
                     </li>
                   );
-                })}
-              </ul>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+                }
+
+                const accent = spaceAccentById.get(item.bookmark.spaceId) ?? null;
+                return (
+                  <li key={item.key} role="option" aria-selected={isSelected}>
+                    <button
+                      type="button"
+                      onClick={() => void activateResult(item)}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                      className={`relative w-full px-4 py-3 text-left transition-colors duration-fast ${
+                        isSelected ? 'bg-surface' : 'hover:bg-surface'
+                      }`}
+                    >
+                      {isSelected && (
+                        prefersReducedMotion ? (
+                          <span
+                            className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <motion.span
+                            layoutId="spotlight-selection"
+                            className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                            aria-hidden="true"
+                            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                          />
+                        )
+                      )}
+                      <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-primary))]">
+                        <Bookmark className="h-4 w-4 text-[hsl(var(--accent))]" aria-hidden="true" />
+                        {accent && (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: accent }}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="truncate">
+                          {item.bookmark.title || item.bookmark.conversationTitle}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate pl-6 text-xs text-[hsl(var(--text-muted))]">
+                        {(spaceNameById.get(item.bookmark.spaceId) ?? item.bookmark.spaceId)} · {item.bookmark.conversationTitle} · {item.bookmark.messagePreview}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

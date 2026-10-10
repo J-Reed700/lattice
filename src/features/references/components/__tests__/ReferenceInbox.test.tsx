@@ -29,7 +29,7 @@ vi.mock('@/lib/api', () => {
 
 // The preview modal pulls in the PDF renderer; the inbox's selection behaviour
 // does not need it.
-vi.mock('@/features/chat/components/FilePreviewModal', () => ({
+vi.mock('@/features/reading/components/FilePreviewModal', () => ({
   FilePreviewModal: () => null,
 }));
 

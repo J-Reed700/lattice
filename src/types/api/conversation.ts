@@ -123,41 +123,9 @@ export interface ListConversationsResponse {
 }
 
 /**
- * Request to synthesize multiple journal conversations into one structured summary.
- */
-export interface SynthesizeJournalEntriesRequest {
-  /** Ordered conversation IDs to include in synthesis. Empty for the 'week' scope. */
-  conversationIds: string[];
-  /** Scope label for synthesis metadata */
-  scope?: 'current' | 'deck' | 'pinned' | 'conversation' | 'week' | string;
-  /** Optional cap for backend processing */
-  maxEntries?: number;
-}
-
-/**
  * One source a synthesis drew on.
  */
 export type SynthesisCitationDto = import('../../lib/bindings').SynthesisCitationDto;
-
-/**
- * Response from journal synthesis command.
- */
-export interface SynthesizeJournalEntriesResponse {
-  /** Final synthesis markdown */
-  synthesis: string;
-  /** Scope echoed by backend */
-  scope: string;
-  /** Entries actually synthesized */
-  entryCount: number;
-  /** Number of map chunks processed */
-  chunkCount: number;
-  /** Conversation IDs used in synthesis */
-  conversationIds: string[];
-  /** Sources the synthesis drew on. Optional: older backends omit it. */
-  citations?: SynthesisCitationDto[];
-  /** Full source snapshots, with citation IDs used by the synthesis text. */
-  sources?: import('../../lib/bindings').SourceDto[];
-}
 
 /**
  * Conversation space/environment DTO.

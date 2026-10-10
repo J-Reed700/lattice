@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
-import { FilePreviewModal } from '@/features/chat/components/FilePreviewModal';
-import { SourceReaderBody } from '@/features/chat/components/reader/SourceReaderBody';
-import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLocator';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
 import {
   READER_DEFAULT_WIDTH,
   READER_MAX_WIDTH,
   READER_MIN_CHAT_WIDTH,
   READER_MIN_WIDTH,
   useChatReaderStore,
-} from '@/stores/chatReaderStore';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
-import { useConversationsStore } from '@/stores/conversationsStore';
+} from '@/features/reading/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLocator';
 
 
 /**

@@ -6,8 +6,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningLessonDto, LearningPracticeSessionDto, LearningProgramDto } from '@/lib/bindings';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 
 const mocks = vi.hoisted(() => ({

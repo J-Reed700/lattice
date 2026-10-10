@@ -85,7 +85,7 @@ fn is_zero(value: &usize) -> bool {
 /// must not claim to have read the whole vault.
 ///
 /// Shared by streaming events, persisted message metadata, and generated bindings.
-#[derive(Debug, Clone, Serialize, Default, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievalTraceDto {
     pub searched_documents: usize,
@@ -182,7 +182,7 @@ impl ChatStreamEventDto {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolPreferences {
     #[serde(default)]

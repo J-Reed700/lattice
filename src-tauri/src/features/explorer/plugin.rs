@@ -16,6 +16,10 @@ use tauri::{
     AppHandle, Manager, Runtime, State,
 };
 
+/// Carries the open folder's `FolderIndexStatusDto` when the watcher's
+/// updates move it. Builds report on `jobs://status`.
+pub const FOLDER_CHANGED_EVENT: &str = "explorer://folder-changed";
+
 /// Default and ceiling for a viewer search; the model's tool asks for fewer.
 const DEFAULT_SEARCH_RESULTS: u32 = 500;
 const MAX_SEARCH_RESULTS: u32 = 2_000;
@@ -304,6 +308,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let container = app.state::<Container>().inner().clone();
             // Registration resumes the builds the last process left running.
             if let Some(manager) = container.folder_index() {
+                let window = app.clone();
+                manager.on_folder_changed(Arc::new(move |status: &FolderIndexStatusDto| {
+                    use tauri::Emitter;
+                    if let Err(error) = window.emit(FOLDER_CHANGED_EVENT, status) {
+                        tracing::debug!(%error, "Could not publish a folder index update");
+                    }
+                }));
                 tauri::async_runtime::block_on(manager.register())?;
             }
             Ok(())

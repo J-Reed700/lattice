@@ -4,14 +4,14 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useJournalsQuery, useCapturedReferencesQuery, WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { rememberedJournalPageId } from '@/features/journal/hooks/useJournalNote';
-import { useBookmarkMutations, useInboxBookmarksQuery } from '@/features/references/api/queries';
-import { mergeInboxItems, type InboxItem } from '@/features/references/model/inboxItems';
-import { useSpacesQuery } from '@/features/spaces/api/queries';
 import {
   useDeletePassageReferenceMutation,
   usePassageReferencesQuery,
   useUpdatePassageReferenceMutation,
-} from '@/hooks/queries/usePassageReferencesQuery';
+} from '@/features/reading/hooks/usePassageReferencesQuery';
+import { useBookmarkMutations, useInboxBookmarksQuery } from '@/features/references/api/queries';
+import { mergeInboxItems, type InboxItem } from '@/features/references/model/inboxItems';
+import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useDebounce } from '@/hooks/useDebounce';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessageBookmarkDto } from '@/types';

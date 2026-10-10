@@ -315,8 +315,8 @@ windows the rail shows labels and the tooltip is hidden.
 
 ### 2. Toolbars and sidebar headers
 
-Location: `src/components/FileBrowser/LibraryToolbar.tsx`,
-`src/components/FileBrowser/LibraryRail.tsx`, `src/components/Explorer/ExplorerChat.tsx`
+Location: `src/features/files/components/FileBrowser/LibraryToolbar.tsx`,
+`src/features/files/components/FileBrowser/LibraryRail.tsx`, `src/features/explorer/components/ExplorerChat.tsx`
 
 ```tsx
 <IconButton label={isRailOpen ? 'Hide sidebar' : 'Show sidebar'} onClick={onToggleRail}>

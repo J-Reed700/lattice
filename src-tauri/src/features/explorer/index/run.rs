@@ -41,7 +41,8 @@ const COUNT_CEILING_FACTOR: usize = 10;
 /// The walk reports how many files it has found once per this many.
 const SCAN_REPORT_EVERY: usize = 200;
 
-/// Where a status goes as it moves: a build job's progress, while one runs.
+/// Where a status goes as it moves: a build job's progress while one runs,
+/// and the window while the watcher updates the open folder.
 pub type StatusSink = Arc<dyn Fn(&FolderIndexStatusDto) + Send + Sync>;
 
 /// A folder index's status, and the throttle on reporting it to a sink.
@@ -62,8 +63,14 @@ impl StatusCell {
 
     /// Sends every later change to `sink`, starting with the current status.
     pub fn attach(&self, sink: StatusSink) {
-        *self.sink.lock() = Some(sink);
+        self.forward(sink);
         self.announce();
+    }
+
+    /// Sends every later change to `sink`; the current status is already
+    /// known where it goes.
+    pub fn forward(&self, sink: StatusSink) {
+        *self.sink.lock() = Some(sink);
     }
 
     pub fn detach(&self) {

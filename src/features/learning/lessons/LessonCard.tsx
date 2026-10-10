@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react';
 
 import { ArrowRight, Check, CheckCircle2, Clock3, Play } from 'lucide-react';
 
-import { MarkdownViewer } from '@/features/chat/components/viewers/MarkdownViewer';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
+import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 const blockLabels: Record<LearningBlockKind, string> = {
   explanation: 'Understand the idea', worked_example: 'Worked example', guided_practice: 'Try it with guidance',

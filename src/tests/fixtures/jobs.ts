@@ -1,5 +1,5 @@
+import type { FolderIndexStatus } from '@/features/explorer/stores/explorerStore';
 import type { JobDto } from '@/lib/bindings';
-import type { FolderIndexStatus } from '@/stores/explorerStore';
 
 /** A job as `jobs://status` carries it. */
 export function jobFixture(overrides: Partial<JobDto> = {}): JobDto {

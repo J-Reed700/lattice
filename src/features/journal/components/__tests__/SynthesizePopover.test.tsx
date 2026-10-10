@@ -1,9 +1,22 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement, ReactNode } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as renderElement, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SynthesizePopover } from '@/features/journal/components/SynthesizePopover';
-import { useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
+import { synthesisKeys } from '@/features/journal/synthesis/api';
+import { useSynthesisPanel } from '@/features/journal/synthesis/synthesisPanel';
+import { jobFixture } from '@/tests/fixtures/jobs';
+
+vi.mock('@/shared/ipc/transport', () => ({ apiCall: vi.fn(async () => ({ ok: true, data: [] })) }));
+
+let client: QueryClient;
+function render(element: ReactElement) {
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return renderElement(element, { wrapper });
+}
 
 async function openPopover(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /synthesize…/i }));
@@ -13,7 +26,9 @@ async function openPopover(user: ReturnType<typeof userEvent.setup>) {
 describe('SynthesizePopover', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useSynthesisStore.setState({ job: null, minimized: false });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(synthesisKeys.list, []);
+    useSynthesisPanel.setState({ minimized: false, autoSave: [], saving: {}, saved: null });
   });
 
   it('shows four scopes and defaults to "current" without a conversation', async () => {
@@ -118,12 +133,15 @@ describe('SynthesizePopover', () => {
   it('shows progress instead of starting a second synthesis after a remount', async () => {
     const user = userEvent.setup();
     const onSynthesize = vi.fn();
-    useSynthesisStore.setState({ minimized: true, job: {
-      id: 'running', title: 'Research', conversationIds: ['entry_1'], status: 'running', stage: 'writing', startedAt: Date.now(),
-    } });
+    useSynthesisPanel.setState({ minimized: true });
+    client.setQueryData(synthesisKeys.list, [{
+      job: jobFixture({ id: 'running', kind: 'journal.synthesis', subjectId: 'capture' }),
+      title: 'Research', heading: 'Research', destination: { kind: 'capture' }, conversationIds: ['entry_1'],
+      activity: { stage: 'writing', entryCount: 1, chunkIndex: null, chunkCount: 1 },
+    }]);
     render(<SynthesizePopover selectedEntryId="entry_1" pinnedCount={1} deckCount={2} onSynthesize={onSynthesize} />);
     await user.click(screen.getByRole('button', { name: 'Synthesizing…' }));
-    expect(useSynthesisStore.getState().minimized).toBe(false);
+    expect(useSynthesisPanel.getState().minimized).toBe(false);
     expect(onSynthesize).not.toHaveBeenCalled();
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
   });

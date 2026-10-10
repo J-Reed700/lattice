@@ -1,11 +1,9 @@
 //! Strict, bounded source-grounded assessment candidate authoring. Answer keys
 //! remain internal and never appear in renderer DTOs.
+use crate::features::learning::model_call;
 use crate::features::learning::{assessment_engine as engine, dto::*};
 use crate::{
-    application::ports::{
-        llm_port::{CompletionInput, CompletionRequest},
-        LLMPort,
-    },
+    application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
@@ -55,44 +53,26 @@ pub async fn generate(
     let system="Author source-grounded assessment items. Return only JSON. For each item give requirementIndex, prompt, an explanation/rationale, options, answerIndex, acceptedAnswers, orderedValues, sourceIndex, an exact quote from that source, and rubric. Rubric has two to four task-specific criteria for open formats (title, description, dimension), or an empty array for objectively keyed items. Criteria must state observable incomplete, adequate and strong performance without leaking the answer. Include a concrete scenario and deliverable that require the outcome, not a request to repeat its title. If there are no sources, author from the supplied lesson material and outcomes, set sourceIndex to null and quote to an empty string; never invent citations. MCQ uses answerIndex; short_answer uses acceptedAnswers and empty options; ordering uses options as the shuffled values and orderedValues as the correct permutation; open formats use empty options/keys. Do not include extra fields.";
     let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":slots.len(),"maxItems":slots.len(),"items":{"type":"object","additionalProperties":false,"required":["requirementIndex","prompt","explanation","options","answerIndex","acceptedAnswers","orderedValues","sourceIndex","quote","rubric"],"properties":{"requirementIndex":{"type":"integer","minimum":0,"maximum":request.requirements.len().saturating_sub(1)},"prompt":{"type":"string","minLength":8,"maxLength":8000},"explanation":{"type":"string","minLength":8,"maxLength":1200},"options":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}},"answerIndex":{"type":"integer","minimum":0,"maximum":7},"acceptedAnswers":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}},"orderedValues":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":500}},"sourceIndex":if sources.is_empty() {serde_json::json!({"type":"null"})} else {serde_json::json!({"type":"integer","minimum":0,"maximum":sources.len()-1})},"rubric":crate::features::learning::teaching::rubric_schema(),"quote":{"type":"string","minLength":if sources.is_empty(){0}else{12},"maxLength":700}}}}}});
     let output_tokens = (slots.len() * 1100 + 600).min(16_000);
-    let raw = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.count_tokens(system) + llm.count_tokens(&prompt) + output_tokens
-            > llm.max_context_tokens()
-        {
-            return Err(AppError::InvalidInput(
-                "Assessment authoring request exceeds the model context window.".into(),
-            ));
-        }
-        let response = llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.into(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt.clone(),
-                    },
-                ],
-                json_schema: Some(schema.clone()),
-                reasoning_effort: Some("low".into()),
-                max_output_tokens: Some(output_tokens as u32),
-                ..Default::default()
-            })
-            .await?;
-        if ["length", "max_tokens", "incomplete", "content_filter"]
-            .iter()
-            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
-        {
-            return Err(AppError::InvalidInput(
-                "Assessment authoring output was incomplete.".into(),
-            ));
-        }
-        Ok(response.text)
-    })
-    .await
-    .map_err(|_| AppError::ServiceNotAvailable("Assessment authoring timed out.".into()))??;
+    let response = model_call::send(
+        llm,
+        model_call::structured(system, prompt.clone(), schema.clone(), output_tokens, "low"),
+        None,
+        Some(model_call::Deadline {
+            after: Duration::from_secs(120),
+            message: "Assessment authoring timed out.",
+        }),
+        "Assessment authoring request exceeds the model context window.",
+    )
+    .await?;
+    if ["length", "max_tokens", "incomplete", "content_filter"]
+        .iter()
+        .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
+    {
+        return Err(AppError::InvalidInput(
+            "Assessment authoring output was incomplete.".into(),
+        ));
+    }
+    let raw = response.text;
     let raw = crate::features::learning::teaching::review_and_repair(
         llm,
         system,
@@ -306,43 +286,26 @@ pub async fn grade_open(
     let prompt = serde_json::json!({"items":items}).to_string();
     let system="Grade learner responses provisionally against the supplied rubric. Return strict JSON with every item and every criterion exactly once. Scores may be null when evidence is uncertain; never infer mastery. Artifact quotes must be exact substrings of the submitted text; use null where no quote applies.";
     let schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","minItems":open.len(),"maxItems":open.len(),"items":{"type":"object","additionalProperties":false,"required":["itemId","criteria"],"properties":{"itemId":{"type":"string"},"criteria":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["criterionId","score","maxPoints","observation","artifactQuote"],"properties":{"criterionId":{"type":"string"},"score":{"type":["integer","null"]},"maxPoints":{"type":"integer"},"observation":{"type":"string"},"artifactQuote":{"type":["string","null"]}}}}}}}}});
-    if llm.count_tokens(system) + llm.count_tokens(&prompt) + 1500 > llm.max_context_tokens() {
+    let response = model_call::send(
+        llm,
+        model_call::structured(system, prompt, schema, 1500, "low"),
+        None,
+        Some(model_call::Deadline {
+            after: Duration::from_secs(120),
+            message: "Assessment grading timed out.",
+        }),
+        "Assessment grading exceeds the model context window.",
+    )
+    .await?;
+    if ["length", "max_tokens", "incomplete", "content_filter"]
+        .iter()
+        .any(|s| response.finish_reason.to_ascii_lowercase().contains(s))
+    {
         return Err(AppError::InvalidInput(
-            "Assessment grading exceeds the model context window.".into(),
+            "Assessment grading output was incomplete.".into(),
         ));
     }
-
-    let raw = tokio::time::timeout(Duration::from_secs(120), async {
-        let r = llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.into(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt,
-                    },
-                ],
-                json_schema: Some(schema),
-                reasoning_effort: Some("low".into()),
-                max_output_tokens: Some(1500),
-                ..Default::default()
-            })
-            .await?;
-        if ["length", "max_tokens", "incomplete", "content_filter"]
-            .iter()
-            .any(|s| r.finish_reason.to_ascii_lowercase().contains(s))
-        {
-            return Err(AppError::InvalidInput(
-                "Assessment grading output was incomplete.".into(),
-            ));
-        }
-        Ok(r.text)
-    })
-    .await
-    .map_err(|_| AppError::ServiceNotAvailable("Assessment grading timed out.".into()))??;
+    let raw = response.text;
     if raw.chars().count() > 30_000 {
         return Err(AppError::InvalidInput(
             "Assessment grading output is too large.".into(),

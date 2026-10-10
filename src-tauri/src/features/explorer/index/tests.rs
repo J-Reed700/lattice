@@ -1447,4 +1447,51 @@ mod builds {
         assert_eq!(job.error_code.as_deref(), Some("folder_missing"));
         assert!(embedder.embedded().is_empty());
     }
+
+    /// After its build, the open folder follows saves through its watcher.
+    /// Those updates are not jobs, so they are announced on their own.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watcher_update_after_the_build_is_announced_without_a_job() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = rig.manager(&embedder).await;
+        let announced = Arc::new(Mutex::new(Vec::<FolderIndexStatusDto>::new()));
+        let sink = Arc::clone(&announced);
+        manager.on_folder_changed(Arc::new(move |status: &FolderIndexStatusDto| {
+            sink.lock().push(status.clone())
+        }));
+        let root = rig.project("watched", &[("src/retry.rs", RETRY_RS)]);
+        let opened = open_settled(&manager, &root).await;
+        assert_eq!(opened.files_indexed, 1);
+        let builds = builds_of(&manager, &root).await.len();
+
+        write(&root, "src/parser.rs", PARSER_RS);
+
+        let status = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let found = announced
+                    .lock()
+                    .iter()
+                    .rev()
+                    .find(|status| {
+                        status.state == FolderIndexState::Ready && status.files_indexed == 2
+                    })
+                    .cloned();
+                if let Some(status) = found {
+                    return status;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the watcher's update was never announced");
+        assert_eq!(status.root, text(&root));
+        assert_eq!(status.passages_embedded, 2);
+        assert_eq!(
+            builds_of(&manager, &root).await.len(),
+            builds,
+            "a small change is no job of its own"
+        );
+        manager.close().await;
+    }
 }

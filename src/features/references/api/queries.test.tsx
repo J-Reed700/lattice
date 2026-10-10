@@ -4,11 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor, cleanup } from '@testing-library/react';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 
+import { createConversationLifecycleRegistry } from '@/features/chat/controller/lifecycleRegistry';
+import { useConversationActions } from '@/features/chat/controller/useConversationActions';
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useReferenceInbox } from '@/features/references/hooks/useReferenceInbox';
-import { createConversationLifecycleRegistry } from '@/hooks/conversations/lifecycleRegistry';
-import { useConversationActions } from '@/hooks/conversations/useConversationActions';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
-import { conversationUiStore } from '@/stores/conversationUiStore';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 
 const api = vi.hoisted(() => ({
  listMessageBookmarks: vi.fn(), listWorkspaceNotes: vi.fn(), listConversationSpaces: vi.fn(), listJournals: vi.fn(),

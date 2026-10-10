@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
-import { useChatNavigationStore } from '@/stores/chatNavigationStore';
+import { useChatNavigationStore } from '@/features/chat/stores/chatNavigationStore';
 import type { ConversationMessage, OptimisticMessage } from '@/types/conversation';
 
 

@@ -188,6 +188,7 @@ fn summary_request(
         // left to it can spend the whole budget before writing a word.
         sampling: Some(SamplingOverride::deterministic()),
         time_budget: Some(CALL_TIME_BUDGET),
+        ..Default::default()
     };
     request
 }

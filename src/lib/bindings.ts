@@ -3166,9 +3166,62 @@ async listJournalEntryPins(journalSpaceId: string) : Promise<Result<string[], Ap
     else return { status: "error", error: e  as any };
 }
 },
-async synthesizeJournalEntries(request: SynthesizeJournalEntriesRequestDto, onProgress: TAURI_CHANNEL<SynthesisProgressDto>) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
+/**
+ * Starts a journal synthesis as a job. Its progress arrives on
+ * `jobs://status`; once it completes, its result is read with
+ * `get_journal_synthesis_result` and saved by the renderer.
+ */
+async synthesizeJournalEntries(request: StartJournalSynthesisRequestDto) : Promise<Result<JournalSynthesisDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|synthesize_journal_entries", { request, onProgress }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|synthesize_journal_entries", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every synthesis not yet saved or dismissed: running, finished, or ended
+ * without a result.
+ */
+async listJournalSyntheses() : Promise<Result<JournalSynthesisDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|list_journal_syntheses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getJournalSynthesisResult(jobId: string) : Promise<Result<SynthesizeJournalEntriesResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|get_journal_synthesis_result", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Records that a finished synthesis was saved to its destination. False when
+ * it already had been.
+ */
+async markJournalSynthesisApplied(jobId: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|mark_journal_synthesis_applied", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dismissJournalSynthesis(jobId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|dismiss_journal_synthesis", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async retryJournalSynthesis(jobId: string) : Promise<Result<JournalSynthesisDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:conversation|retry_journal_synthesis", { jobId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6043,6 +6096,15 @@ export type IndexingStatus = { active: boolean; progress: number }
  */
 export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
+/**
+ * A synthesis job and what it was asked: live, finished and waiting to be
+ * saved, or ended without a result.
+ */
+export type JournalSynthesisDto = { job: JobDto; title: string; heading: string; destination: SynthesisDestinationDto; conversationIds: string[];
+/**
+ * The job's activity, typed; later changes arrive on `jobs://status`.
+ */
+activity: SynthesisActivityDto | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
 export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
 /**
@@ -7691,6 +7753,15 @@ export type StartBatchUrlImportResponseDto = {
  */
 jobId: string }
 export type StartDownloadRequest = { url: string; destination: string; checksum: ChecksumRequest | null; auth_token: string | null; model_name: string | null; model_id: string | null }
+export type StartJournalSynthesisRequestDto = { request: SynthesizeJournalEntriesRequestDto; destination: SynthesisDestinationDto;
+/**
+ * What the progress panel calls it.
+ */
+title: string;
+/**
+ * The heading the saved block opens with.
+ */
+heading: string }
 export type StartLearningAssessmentFormRequestDto = { operationId: string; formId: string; programId: string; blueprintId: string; blueprintRevision: number; retakeOfFormId: string | null }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
@@ -7742,14 +7813,31 @@ autoSync: boolean;
  */
 syncOnStartup: boolean }
 /**
+ * Where a synthesis job is, as its activity: actual work boundaries, rather
+ * than an estimated completion percent.
+ */
+export type SynthesisActivityDto = { stage: SynthesisStage; entryCount: number | null; chunkIndex: number | null; chunkCount: number | null }
+/**
  * One source a synthesis drew on. `kind` is "conversation", "reference" or
  * "note"; `id` is that source's own id.
  */
 export type SynthesisCitationDto = { kind: string; id: string; title: string }
 /**
- * Actual synthesis work boundaries, rather than an estimated completion percent.
+ * Where a finished synthesis is saved. Fixed when the synthesis starts.
  */
-export type SynthesisProgressDto = { stage: SynthesisStage; entryCount: number | null; chunkIndex: number | null; chunkCount: number | null }
+export type SynthesisDestinationDto =
+/**
+ * A new quick-capture page.
+ */
+{ kind: "capture" } |
+/**
+ * The end of an existing journal page.
+ */
+{ kind: "note"; noteId: string } |
+/**
+ * The week's page, by title, created when it does not exist.
+ */
+{ kind: "week"; title: string }
 export type SynthesisStage = "gathering" | "reading" | "writing"
 export type SynthesizeJournalEntriesRequestDto = { conversationIds: string[]; scope: string | null; maxEntries: number | null }
 export type SynthesizeJournalEntriesResponseDto = { synthesis: string; scope: string; entryCount: number; chunkCount: number; conversationIds: string[]; citations: SynthesisCitationDto[];

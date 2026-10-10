@@ -4,14 +4,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { FolderIndexStatus } from '@/features/explorer/stores/explorerStore';
 import { JOB_STATUS_EVENT, type JobDto } from '@/features/jobs/api';
-import type { FolderIndexStatus } from '@/stores/explorerStore';
 import { folderBuildFixture } from '@/tests/fixtures/jobs';
 
 import {
   explorerKeys,
+  FOLDER_CHANGED_EVENT,
   FOLDER_INDEX_JOB,
   useExplorerFolderMutations,
+  useExplorerFoldersQuery,
   useExplorerIndexCommands,
   useExplorerIndexStatus,
   useExplorerIndexStatusEvents,
@@ -110,6 +112,25 @@ describe('index status in the query cache', () => {
     expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
     emit({ ...build(status({ root: OTHER, indexRoot: OTHER })), kind: 'batch.file_import' });
     expect(client.getQueryData(explorerKeys.indexStatus(OTHER))).toBeUndefined();
+  });
+
+  it("a watcher update after the build reaches the folder's status and the folders list", async () => {
+    mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: '/Users/me', folders: [folder(ROOT)] } });
+    renderHook(() => useExplorerIndexStatusEvents(), { wrapper });
+    const open = renderHook(() => useExplorerIndexStatus(ROOT), { wrapper });
+    renderHook(() => useExplorerFoldersQuery(), { wrapper });
+    await waitFor(() => expect(mocks.listeners.get(FOLDER_CHANGED_EVENT)?.size).toBe(1));
+    emit(build(status({ state: 'ready', filesIndexed: 10, passagesEmbedded: 100 }), { status: 'completed', finishedAt: 2 }));
+    await waitFor(() => expect(mocks.api.explorerFoldersList).toHaveBeenCalledTimes(1));
+
+    // A save in the folder: no job, just the watcher's update.
+    const saved = status({ state: 'ready', filesTotal: 11, filesIndexed: 11, passagesTotal: 104, passagesEmbedded: 104 });
+    act(() => {
+      for (const handler of mocks.listeners.get(FOLDER_CHANGED_EVENT) ?? []) handler({ payload: saved });
+    });
+
+    await waitFor(() => expect(open.result.current).toEqual(saved));
+    await waitFor(() => expect(mocks.api.explorerFoldersList).toHaveBeenCalledTimes(2));
   });
 
   it('the folders list ignores a status older than its own read', () => {

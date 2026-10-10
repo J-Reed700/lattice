@@ -153,6 +153,12 @@ impl ChatPolicy for Container {
     }
 }
 
+impl ChatJobs for Container {
+    fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime> {
+        Arc::clone(Container::jobs(self))
+    }
+}
+
 impl ChatRuntime for Container {
     fn share(&self) -> Arc<dyn ChatRuntime> {
         Arc::new(self.clone())

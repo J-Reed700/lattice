@@ -38,10 +38,14 @@ use tauri::{
     State,
 };
 
+use crate::features::conversation::chat::ports::ChatRuntime;
 pub use crate::features::conversation::plugin_impl::{
     ConversationLinkedDocumentDto, ConversationWebSourceDto, DocumentSpaceMembershipDto,
-    SpaceDocumentDto, SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
+    JournalSynthesisDto, SpaceDocumentDto, StartJournalSynthesisRequestDto,
+    SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
 };
+use crate::features::conversation::{chat, synthesis};
+use std::sync::Arc;
 
 #[tauri::command]
 #[specta::specta]
@@ -514,21 +518,64 @@ pub async fn list_journal_conversations(
     conversation_impl::list_journal_conversations_impl(query, container.inner()).await
 }
 
+/// Starts a journal synthesis as a job. Its progress arrives on
+/// `jobs://status`; once it completes, its result is read with
+/// `get_journal_synthesis_result` and saved by the renderer.
 #[tauri::command]
 #[specta::specta]
 pub async fn synthesize_journal_entries(
-    request: SynthesizeJournalEntriesRequestDto,
-    on_progress: tauri::ipc::Channel<super::workspace_dto::SynthesisProgressDto>,
+    request: StartJournalSynthesisRequestDto,
     container: State<'_, Container>,
-    window: tauri::Window,
+) -> Result<JournalSynthesisDto, ApiError> {
+    Ok(conversation_impl::synthesize_journal_entries_impl(request, container.jobs()).await?)
+}
+
+/// Every synthesis not yet saved or dismissed: running, finished, or ended
+/// without a result.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_syntheses(
+    container: State<'_, Container>,
+) -> Result<Vec<JournalSynthesisDto>, ApiError> {
+    Ok(conversation_impl::list_journal_syntheses_impl(container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_journal_synthesis_result(
+    job_id: String,
+    container: State<'_, Container>,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    conversation_impl::synthesize_journal_entries_impl(
-        request,
-        container.inner(),
-        window,
-        on_progress,
-    )
-    .await
+    Ok(conversation_impl::get_journal_synthesis_result_impl(&job_id, container.jobs()).await?)
+}
+
+/// Records that a finished synthesis was saved to its destination. False when
+/// it already had been.
+#[tauri::command]
+#[specta::specta]
+pub async fn mark_journal_synthesis_applied(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<bool, ApiError> {
+    Ok(conversation_impl::mark_journal_synthesis_applied_impl(&job_id, container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dismiss_journal_synthesis(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    Ok(conversation_impl::dismiss_journal_synthesis_impl(&job_id, container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn retry_journal_synthesis(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<JournalSynthesisDto, ApiError> {
+    Ok(conversation_impl::retry_journal_synthesis_impl(&job_id, container.jobs()).await?)
 }
 
 /// Delete every message after `message_id` (and it too when `inclusive`),
@@ -652,6 +699,31 @@ pub async fn compact_conversation(
 
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
+        .setup(|app, _api| {
+            use tauri::Manager;
+            let container = app.state::<Container>().inner().clone();
+            let jobs = Arc::clone(container.jobs());
+            // Registration settles research turns and syntheses the last
+            // process left running, then resumes them from their checkpoints.
+            tauri::async_runtime::block_on(async {
+                jobs.register(
+                    chat::DEEP_RESEARCH,
+                    Arc::new(chat::DeepResearchJob::new(
+                        container.share(),
+                        chat::app_event_sink(app.clone()),
+                    )),
+                    chat::research_job_config(),
+                )
+                .await?;
+                jobs.register(
+                    synthesis::JOURNAL_SYNTHESIS,
+                    Arc::new(synthesis::JournalSynthesisJob::new(container.clone())),
+                    synthesis::synthesis_job_config(),
+                )
+                .await
+            })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_conversation,
             get_conversation,
@@ -698,6 +770,11 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             set_journal_entry_pinned,
             list_journal_entry_pins,
             synthesize_journal_entries,
+            list_journal_syntheses,
+            get_journal_synthesis_result,
+            mark_journal_synthesis_applied,
+            dismiss_journal_synthesis,
+            retry_journal_synthesis,
             truncate_conversation_after,
             fork_conversation,
             create_conversation_tangent,

@@ -3,8 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
-import { useConversationUiStore } from '@/stores/conversationUiStore';
 
 
 const api = vi.hoisted(() => ({ spaces: vi.fn(), documents: vi.fn() }));

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
-import { ContentViewer } from '@/components/ContentViewer/ContentViewer';
 import { Button } from '@/components/ui/button';
+import { ContentViewer } from '@/features/reading/components/ContentViewer/ContentViewer';
 import type { StudySourceDto } from '@/lib/bindings';
 
 function safeExternalHref(value?: string | null) {

@@ -46,7 +46,7 @@ use tracing::{info, warn};
 
 mod desktop;
 pub mod ports;
-pub use desktop::chat_with_conversation_impl;
+pub use desktop::{app_event_sink, chat_with_conversation_impl};
 
 /// Transport-independent delivery of a typed chat event.
 pub type ChatEventSink = Arc<dyn Fn(ChatStreamEventDto) -> Result<()> + Send + Sync>;
@@ -67,7 +67,9 @@ mod prompting;
 pub(crate) mod source_snapshots;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
 // sufficiency judgement instead of reimplementing it.
+mod research_job;
 pub mod retrieval;
+pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
 mod tool_loop;
 pub mod turn_record;
 mod verification;
@@ -78,7 +80,7 @@ use self::attachments::{build_turn_attachments, TurnAttachments};
 /// How much of an attachment the web-query rewriter is shown. Enough to name
 /// the subject, small enough that the utility model stays fast.
 const ATTACHMENT_DIGEST_CHARS: usize = 900;
-use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
+use self::cancellation::{begin_turn_within, finish_turn, is_cancel_requested};
 use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
@@ -109,8 +111,13 @@ struct TurnCancellationGuard {
 }
 
 impl TurnCancellationGuard {
-    fn start(request_id: String, conversation_id: &str) -> Result<Self> {
-        if !begin_turn(&request_id, conversation_id) {
+    /// `parent` is the stop of the job running the turn, if one is.
+    fn start(
+        request_id: String,
+        conversation_id: &str,
+        parent: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<Self> {
+        if !begin_turn_within(&request_id, conversation_id, parent) {
             return Err(AppError::InvalidState(
                 "A generation with this request ID is already in flight.".to_string(),
             ));
@@ -140,6 +147,28 @@ use prompt_settings::*;
 use routing::*;
 use tools::*;
 use turn::run_turn;
+
+/// Runs a turn no window watches, such as a part of a journal synthesis: its
+/// stream goes nowhere and only its answer is used.
+pub(crate) async fn run_unwatched_turn(
+    container: &dyn ChatRuntime,
+    conversation_id: String,
+    message: String,
+    tool_preferences: ToolPreferences,
+) -> Result<ChatResponse> {
+    run_turn(
+        container,
+        Some(conversation_id),
+        message,
+        Some(tool_preferences),
+        None,
+        None,
+        None,
+        None,
+        Arc::new(|_| Ok(())),
+    )
+    .await
+}
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
@@ -221,5 +250,7 @@ fn generate_title(message: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod test_runtime;
 #[cfg(test)]
 mod tests;

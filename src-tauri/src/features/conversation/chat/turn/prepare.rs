@@ -5,6 +5,7 @@ use crate::application::ports::LLMPort;
 use crate::domain::conversation::DocumentReference;
 use crate::features::conversation::chat::ports::SettingsDto;
 use crate::features::conversation::ConversationServiceTrait;
+use tokio_util::sync::CancellationToken;
 
 /// The turn as it stands once the conversation is open and its history read.
 pub(super) struct PreparedTurn {
@@ -31,6 +32,8 @@ pub(super) struct PreparedTurn {
     /// Conversation prompt, else the space's, else the global one.
     pub(super) system_prompt: String,
     pub(super) budget: TurnBudget,
+    /// Messages of history the turn was planned with.
+    pub(super) history_len: usize,
     /// Held for the whole turn: dropping it unregisters the turn's stop button.
     _guard: TurnCancellationGuard,
 }
@@ -50,15 +53,18 @@ impl PreparedTurn {
 }
 
 pub(super) fn cancelled() -> AppError {
-    AppError::InvalidState("Generation cancelled by user.".to_string())
+    cancellation::cancelled_error()
 }
 
+/// `parent` is the stop of the job running the turn, if one is.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,
     message: &str,
     request_id: Option<String>,
     tool_preferences: Option<&ToolPreferences>,
+    parent: Option<&CancellationToken>,
     emit: &ChatEventSink,
     metrics: &mut ConversationFlowTimingMetrics,
 ) -> Result<PreparedTurn> {
@@ -77,7 +83,7 @@ pub(super) async fn prepare_turn(
     // until its id exists.
     let mut turn_guard = match conversation_id.as_deref() {
         Some(id) if !id.trim().is_empty() => {
-            Some(TurnCancellationGuard::start(turn_id.clone(), id)?)
+            Some(TurnCancellationGuard::start(turn_id.clone(), id, parent)?)
         }
         _ => None,
     };
@@ -112,7 +118,7 @@ pub(super) async fn prepare_turn(
         get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
     let guard = match turn_guard.take() {
         Some(guard) => guard,
-        None => TurnCancellationGuard::start(turn_id.clone(), &conv_id)?,
+        None => TurnCancellationGuard::start(turn_id.clone(), &conv_id, parent)?,
     };
     metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
     if is_cancel_requested(&turn_id) {
@@ -121,14 +127,7 @@ pub(super) async fn prepare_turn(
 
     // Both emits and accumulates: everything below reports what it is doing
     // through this, and the same list is what the finished answer carries.
-    let recorder = TurnRecorder::with_emitter(&conv_id, &turn_id, {
-        let emit = Arc::clone(emit);
-        Box::new(move |payload| {
-            if let Err(error) = emit(payload) {
-                warn!(%error, "Failed to emit a turn step");
-            }
-        })
-    });
+    let recorder = TurnRecorder::with_emitter(&conv_id, &turn_id, step_emitter(emit));
     if search_flags.deep_research_mode {
         recorder.note(
             turn_record::TurnStepKind::DeepResearch,
@@ -205,6 +204,7 @@ pub(super) async fn prepare_turn(
         settings.llm.bounded_conversation_memory,
     );
 
+    let history_len = context.len();
     Ok(PreparedTurn {
         turn_id,
         conv_id,
@@ -223,7 +223,98 @@ pub(super) async fn prepare_turn(
         linked_web_sources_context,
         system_prompt,
         budget,
+        history_len,
         _guard: guard,
+    })
+}
+
+/// A research turn carrying on after a restart: the conversation, the model
+/// and the turn's settings, without reading history or planning again. What
+/// it had planned and found is in `saved`.
+pub(super) async fn resume_turn(
+    container: &dyn ChatRuntime,
+    request: &TurnRequest,
+    saved: &Saved,
+    parent: &CancellationToken,
+    emit: &ChatEventSink,
+) -> Result<PreparedTurn> {
+    let (Some(conv_id), Some(turn_id)) =
+        (request.conversation_id.clone(), request.request_id.clone())
+    else {
+        return Err(AppError::InvalidInput(
+            "A saved research turn names its conversation and request.".into(),
+        ));
+    };
+    let guard = TurnCancellationGuard::start(turn_id.clone(), &conv_id, Some(parent))?;
+    let llm = container.get_or_load_llm().await?;
+    if is_cancel_requested(&turn_id) {
+        return Err(cancelled());
+    }
+    let preferences = request.tool_preferences.as_ref();
+    let flags = saved.assembled.flags;
+    let recorder = TurnRecorder::resumed(
+        &conv_id,
+        &turn_id,
+        step_emitter(emit),
+        saved.steps(),
+        saved.elapsed_ms(),
+    );
+    let focus = FocusScope::resolve(
+        container,
+        &conv_id,
+        preferences.and_then(|preferences| preferences.focus_document_ids.as_ref()),
+        flags.closed_book,
+    )
+    .await;
+    let explorer = container
+        .explorer_turn(
+            &conv_id,
+            preferences.and_then(|preferences| preferences.explorer_focus.as_ref()),
+        )
+        .await;
+    let settings = container.settings().await.unwrap_or_default();
+    let prompt_settings = normalize_prompt_settings(settings.llm.prompts.clone());
+    let highlight_terms = extract_highlight_terms(
+        &request.message,
+        settings.llm.tool_output.highlight_terms_max as usize,
+    );
+    let budget = TurnBudget::plan(
+        llm.as_ref(),
+        "",
+        &request.message,
+        &[],
+        settings.llm.bounded_conversation_memory,
+    );
+    Ok(PreparedTurn {
+        turn_id,
+        conv_id,
+        llm,
+        message: request.message.clone(),
+        requested_flags: flags,
+        recorder,
+        focus,
+        explorer,
+        conv_service: container.conversation_service(),
+        settings,
+        prompt_settings,
+        highlight_terms,
+        context: Vec::new(),
+        document_context: Vec::new(),
+        linked_web_sources_context: None,
+        system_prompt: String::new(),
+        budget,
+        history_len: saved.assembled.history_len,
+        _guard: guard,
+    })
+}
+
+/// Turn steps go out on the turn's stream as they happen.
+fn step_emitter(emit: &ChatEventSink) -> Box<dyn Fn(ChatStreamEventDto) + Send + Sync> {
+    let emit = Arc::clone(emit);
+    Box::new(move |payload| {
+        if let Err(error) = emit(payload) {
+            warn!(%error, "Failed to emit a turn step");
+        }
     })
 }
 
@@ -256,7 +347,8 @@ impl PreparedTurn {
             document_context: Vec::new(),
             linked_web_sources_context: None,
             system_prompt: String::new(),
-            _guard: TurnCancellationGuard::start(turn_id.to_string(), conv_id)?,
+            history_len: 0,
+            _guard: TurnCancellationGuard::start(turn_id.to_string(), conv_id, None)?,
         })
     }
 }

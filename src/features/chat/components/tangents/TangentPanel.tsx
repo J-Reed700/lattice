@@ -4,15 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, MessageSquarePlus, Square, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
+import { fetchBookmarks, fetchConversationDetail, fetchMessages, unwrap } from '@/features/chat/api/conversationQueryData';
 import { Message } from '@/features/chat/components/Message';
-import { deriveMessageMetadata } from '@/hooks/conversations/messageMetadata';
-import { reconcilePersistedFailedMessages } from '@/hooks/conversations/optimisticMessages';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
-import { fetchBookmarks, fetchConversationDetail, fetchMessages, unwrap } from '@/hooks/queries/conversationQueryData';
+import { deriveMessageMetadata } from '@/features/chat/controller/messageMetadata';
+import { reconcilePersistedFailedMessages } from '@/features/chat/controller/optimisticMessages';
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
-import { ConversationSnapshotProvider, useConversationsStore } from '@/stores/conversationsStore';
-import { conversationUiStore } from '@/stores/conversationUiStore';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
+import { ConversationSnapshotProvider, useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessage, ToolPreferences } from '@/types/conversation';
 

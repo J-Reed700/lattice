@@ -5,7 +5,7 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import { Bold, Highlighter, Italic, Link as LinkIcon } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { clipboardUrl } from '../../QuickCapture/clipboard';
+import { clipboardUrl } from '@/utils/clipboard';
 
 import type { Editor } from '@tiptap/react';
 

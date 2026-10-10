@@ -7,9 +7,9 @@ import {
   journalEntryPinsQueryOptions,
   useSetJournalEntryPinnedMutation,
 } from '@/features/journal/api/queries';
+import { useVaultImportStore } from '@/features/vault/stores/vaultImportStore';
 import VaultAPI from '@/lib/api';
 import { toast } from '@/stores/toastStore';
-import { useVaultImportStore } from '@/stores/vaultImportStore';
 import type { ConversationDto, MessageDto } from '@/types/api/conversation';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import type { ConversationMessage as ChatConversationMessage } from '@/types/conversation';

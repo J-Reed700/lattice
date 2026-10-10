@@ -5,8 +5,6 @@ import { MemoryRouter } from 'react-router';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it, vi } from 'vitest';
 
-import { sentencesByOccurrence } from '@/features/chat/components/reader/answerSentences';
-
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
 import { TiptapEditor } from '../TiptapEditor';
@@ -158,23 +156,6 @@ describe('CitationMarks', () => {
     const chips = drawnChips('Kale bolts in heat [1]. Chard does not [2]. Both want nitrogen [1].');
 
     expect(chips.map((chip) => `${chip.number}@${chip.at}`)).toEqual(['1@0', '2@0', '1@1']);
-  });
-
-  // The reader is told "mark k of source n" and looks the sentence up in the raw
-  // answer. If the two ever count differently, a click opens the wrong passage.
-  it('agrees with the reader about which sentence each mark sits in', () => {
-    for (const number of [2, 6]) {
-      const sentences = sentencesByOccurrence(ANSWER, number);
-      const chips = drawnChips(ANSWER).filter((chip) => chip.number === number);
-
-      expect(chips).toHaveLength(sentences.length);
-      for (const chip of chips) {
-        const sentence = sentences[chip.at]!;
-        // Inline code is dropped from the sentence but kept in the block.
-        const words = sentence.split(/\s*;\s*/).pop()!;
-        expect(chip.block).toContain(lettersOnly(words));
-      }
-    }
   });
 
   it('opens the mapped citation with the occurrence of the clicked inline mark', async () => {

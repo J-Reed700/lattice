@@ -27,7 +27,7 @@ use super::build::{self, BuildRequest, LiveIndex};
 use super::dto::{
     FolderIndexState, FolderIndexStatusDto, FolderIndexSummaryDto, FolderIndexSummaryState,
 };
-use super::run::{Indexer, Limits, Outcome, StatusCell};
+use super::run::{Indexer, Limits, Outcome, StatusCell, StatusSink};
 use super::search::FolderSearch;
 use super::store::{self, Counts, FolderStore, IndexEntry, TooLarge};
 use super::watcher::{self, Change, FolderWatcher};
@@ -118,6 +118,8 @@ pub struct FolderIndexManager {
     /// The open folder's build, which runs before any other.
     first: parking_lot::Mutex<Option<String>>,
     live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
+    /// Where the open folder's status goes when the watcher updates it.
+    folder_changes: parking_lot::Mutex<Option<StatusSink>>,
     me: Weak<FolderIndexManager>,
 }
 
@@ -213,8 +215,16 @@ impl FolderIndexManager {
             view: Arc::default(),
             first: parking_lot::Mutex::new(None),
             live: tokio::sync::Mutex::new(HashMap::new()),
+            folder_changes: parking_lot::Mutex::new(None),
             me: me.clone(),
         })
+    }
+
+    /// Sends the open folder's status to `sink` whenever the watcher's
+    /// updates move it. A build reports through its job instead; these
+    /// updates are too small and too frequent to be jobs of their own.
+    pub fn on_folder_changed(&self, sink: StatusSink) {
+        *self.folder_changes.lock() = Some(sink);
     }
 
     /// Registers the build job kind. Builds the last process left running
@@ -512,6 +522,9 @@ impl FolderIndexManager {
             FolderIndexState::Scanning,
             counts,
         )));
+        if let Some(sink) = self.folder_changes.lock().clone() {
+            status.forward(sink);
+        }
         self.show(&root, &status);
 
         // Watching starts before the build, so a save made during a long

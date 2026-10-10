@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
 
 const mocks = vi.hoisted(() => ({ models: vi.fn(), downloaded: vi.fn() }));
-vi.mock('@/hooks/useDownloadedModels', () => ({ useDownloadedModels: mocks.models }));
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: mocks.models }));
 vi.mock('@/lib/api', () => ({ default: { isModelDownloaded: mocks.downloaded } }));
 
 function show() {

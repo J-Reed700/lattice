@@ -33,13 +33,13 @@ import {
   TIME_BUCKET_ORDER,
   TimeBucketKey,
 } from '@/features/chat/components/sidebar/sidebarUtils';
-import type { ConversationExportActions } from '@/features/chat/components/sidebar/useConversationExport';
 import type { useConversationSynthesis } from '@/features/chat/components/sidebar/useConversationSynthesis';
-import { useForkLineage } from '@/features/chat/components/sidebar/useForkLineage';
 import { useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import type { ConversationExportActions } from '@/features/chat/hooks/useConversationExport';
+import { useForkLineage } from '@/features/chat/hooks/useForkLineage';
 import { useGenerateConversationFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
 import { normalizeHexColor } from '@/features/spaces/model/spaces';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';

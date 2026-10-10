@@ -7,7 +7,7 @@ import { TangentSelectionContext } from '@/features/chat/components/tangents/Tan
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
-vi.mock('@/hooks/useDownloadedModels', () => ({
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: [] }),
 }));
 

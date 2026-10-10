@@ -3,10 +3,10 @@ import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Search, X } from 'lucide-react';
 
+import { useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import VaultAPI from '@/lib/api';
-import { useConversationUiStore } from '@/stores/conversationUiStore';
 
 export type LearningDocumentSelection = { id: string; title: string; spaceName: string };
 

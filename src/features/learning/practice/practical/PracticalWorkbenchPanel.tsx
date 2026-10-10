@@ -22,6 +22,7 @@ import { ActivityComposer, modeCopy } from "@/features/learning/practice/practic
 import { LearningCodeEditor } from "@/features/learning/practice/practical/LearningCodeEditor";
 import { RuntimeSetupPanel } from "@/features/learning/practice/practical/RuntimeSetupPanel";
 import { useLearningLabDraft } from "@/features/learning/practice/practical/useLearningLabDraft";
+import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
 import VaultAPI from "@/lib/api";
 import type {
   GenerateLearningPracticalActivityRequestDto,
@@ -38,7 +39,6 @@ import type {
   LearningLessonDto,
   LearningProgramDto,
 } from "@/lib/bindings";
-import { useCitationDisplayStore } from "@/stores/citationDisplayStore";
 
 function uuid() {
   return (

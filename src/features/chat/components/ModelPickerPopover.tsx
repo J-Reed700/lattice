@@ -3,7 +3,7 @@ import { type ReactNode, useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Check } from 'lucide-react';
 
-import { useDownloadedModels } from '@/hooks/useDownloadedModels';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
 /**

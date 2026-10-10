@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
-use crate::application::services::claim_verification::ClaimVerdict;
+use crate::application::ports::llm_port::InferencePriority;
 use async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -180,34 +180,75 @@ async fn evidence_room_shrinks_by_what_the_task_and_history_take() {
 }
 
 #[tokio::test]
-async fn a_requested_claim_check_reports_a_verdict_against_the_carried_evidence() {
-    let llm = Scripted::new(8192, "Water boils at 100 C.");
-    let judge: Arc<dyn LLMPort> = Arc::new(Scripted::new(
-        8192,
-        "supported\nReason: the passage states it.\nSource passage: passage-0",
-    ));
-    let mut request = GroundedRequest::new("", "When does water boil?");
-    request.evidence = vec![passage(
-        "c1",
-        "[1]",
-        "Water boils at 100 C at sea level.",
-        1.0,
-    )];
-    request.verification = Some(ClaimCheck {
-        policy: CheckPolicy::Chat,
-        claims: Vec::new(),
-        judge: Some(judge),
-    });
+async fn structured_call_options_reach_the_model_unchanged() {
+    let llm = Scripted::new(8192, "{}");
+    let mut request = GroundedRequest::new("Return JSON.", "Draft a card.");
+    request.output_tokens = 1000;
+    request.call = CallOptions {
+        priority: InferencePriority::Verification,
+        cache_key: Some("course-1".into()),
+        no_time_limit: true,
+        json_schema: Some(serde_json::json!({"type": "object"})),
+        reasoning_effort: Some("low".into()),
+        ..Default::default()
+    };
 
     let output = generate(&llm, request).await.unwrap();
 
-    let verdicts = output.verdicts.expect("verdicts");
-    assert_eq!(verdicts.len(), 1);
-    assert_eq!(verdicts[0].claim, "Water boils at 100 C.");
-    assert!(matches!(
-        &verdicts[0].judgment,
-        ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported
-    ));
+    let sent = llm.first_request();
+    assert_eq!(sent.priority, InferencePriority::Verification);
+    assert_eq!(sent.cache_key.as_deref(), Some("course-1"));
+    assert!(sent.no_time_limit);
+    assert_eq!(
+        sent.json_schema,
+        Some(serde_json::json!({"type": "object"}))
+    );
+    assert_eq!(sent.reasoning_effort.as_deref(), Some("low"));
+    assert_eq!(sent.max_output_tokens, Some(1000));
+    assert_eq!(output.finish_reason, "stop");
+}
+
+#[tokio::test]
+async fn an_answer_that_fills_the_window_gets_the_room_the_input_left() {
+    let llm = Scripted::new(8192, "{}");
+    let mut request = GroundedRequest::new("Return JSON.", "Draft an outline.");
+    request.output_tokens = 1000;
+    request.output_fills_window = true;
+
+    let output = generate(&llm, request).await.unwrap();
+
+    let max_output = llm.first_request().max_output_tokens.unwrap() as usize;
+    let margin = output.accounting.safety_margin;
+    assert_eq!(max_output + output.accounting.total_input + margin, 8192);
+    assert!(max_output > 1000);
+}
+
+#[tokio::test]
+async fn streaming_delivers_text_and_retries_through_the_callers_callbacks() {
+    let llm = Scripted::new(8192, "partial answer");
+    let received = Mutex::new(Vec::new());
+    let on_text = |text: String| {
+        received.lock().unwrap().push(text);
+        Ok(())
+    };
+    let on_retry = |_: usize| Ok(());
+
+    let output = generate_streaming(
+        &llm,
+        GroundedRequest::new("", "Write."),
+        &Streaming {
+            on_text: &on_text,
+            on_retry: Some(&on_retry),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(output.text, "partial answer");
+    assert_eq!(
+        *received.lock().unwrap(),
+        vec!["partial answer".to_string()]
+    );
 }
 
 #[test]

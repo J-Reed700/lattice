@@ -18,14 +18,14 @@ import { ConversationList } from '@/features/chat/components/sidebar/Conversatio
 import { SidebarReferences } from '@/features/chat/components/sidebar/SidebarReferences';
 import { SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
 import { SpacesPanel } from '@/features/chat/components/sidebar/SpacesPanel';
-import { useConversationExport } from '@/features/chat/components/sidebar/useConversationExport';
 import { useConversationSynthesis } from '@/features/chat/components/sidebar/useConversationSynthesis';
 import { useJournalSelection } from '@/features/chat/components/sidebar/useJournalSelection';
 import { useNewSpaceForm } from '@/features/chat/components/sidebar/useNewSpaceForm';
 import { useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
+import { useConversationExport } from '@/features/chat/hooks/useConversationExport';
 import { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 

@@ -19,13 +19,14 @@ import {
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 
-import { OPEN_PALETTE_EVENT } from '@/hooks/useCommandPalette';
+import { IndexingStatusRail } from '@/features/files/components/IndexingStatus/IndexingStatusRail';
+import { DownloadsDrawer } from '@/features/model/components/Downloads/DownloadsDrawer';
+import { DrawerTrigger } from '@/features/model/components/Downloads/DrawerTrigger';
+import { HeaderDownloadsIndicator } from '@/features/model/components/Downloads/HeaderDownloadsIndicator';
+import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
 import { cn } from '@/lib/utils';
 
-import { DownloadsDrawer } from '../Downloads/DownloadsDrawer';
-import { DrawerTrigger } from '../Downloads/DrawerTrigger';
-import { HeaderDownloadsIndicator } from '../Downloads/HeaderDownloadsIndicator';
-import { IndexingStatusRail } from '../IndexingStatus/IndexingStatusRail';
+
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 /**

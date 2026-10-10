@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
-import { useChatReaderStore } from '@/stores/chatReaderStore';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 
 
 vi.mock('@/components/TiptapEditor', () => ({
@@ -19,7 +19,7 @@ vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
   HIGHLIGHT_CHAR_LIMIT: 500,
 }));
 vi.mock('@/features/journal/components/EntryActionRail', () => ({ EntryActionRail: () => <div>Actions</div> }));
-vi.mock('@/features/chat/components/FilePreviewModal', () => ({
+vi.mock('@/features/reading/components/FilePreviewModal', () => ({
   FilePreviewModal: (props: { source: { documentId: string; chunkId: string; pageNumber?: number; content: string }; citationContent?: string; occurrence?: number | null }) => (
     <div data-testid="source-reader" data-document={props.source?.documentId} data-chunk={props.source?.chunkId} data-page={props.source?.pageNumber}
       data-occurrence={props.occurrence ?? ''} data-content={props.citationContent} data-passage={props.source?.content} />

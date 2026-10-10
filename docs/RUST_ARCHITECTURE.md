@@ -329,10 +329,29 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   `learning_*` migrations dated `20260930020000` onward. Design:
   `docs/design/2026-09-30-learning-studio.md`; test evidence:
   `docs/development/learning-studio-verification.md`.
-- Lab code runs without a host shell: embedded language providers
-  (`embedded_runtime.rs`; CPython as a WASI guest in `python_runtime.rs`) or
-  fixed container presets (`runtime_catalog.rs`, `lab_runtime.rs`). Portability packs are stored under
-  `<data_dir>/learning-packs/`.
+- Every Learning generator — lessons, outlines and their reviews, content
+  verification, assessments, practice, practical activities, study decks — sends
+  its strict-JSON call through `learning/model_call.rs` into
+  `application/services/grounded_generation`, so the context assembler's
+  `BudgetAllocation` decides whether a prompt fits and what the answer may use.
+  Generators state an output reservation and, where they choose sources before
+  writing the prompt, ask the planner for the room left (`source_room`); none
+  does window arithmetic of its own. Claim judging stays on the shared
+  `claim_verification` service.
+- Lab code runs without a host shell and never in the app's process: built-in
+  JavaScript (QuickJS) and Python (CPython as a WASI guest on Wasmtime) run in
+  the lab runner (`runtime/lab_runner.rs`), a child copy of the app executable
+  started with `--lattice-lab-runner`, which `main.rs` hands off before Tauri
+  starts. The child gets an empty environment and the run's scratch directory,
+  speaks length-prefixed JSON over stdin/stdout, and is killed on cancellation
+  or when it outlives its limits; the engines' own limits (fuel, epochs, store
+  and QuickJS memory, read-only mounts) still apply inside it. The engines
+  live in `runtime/guest/` behind the default-on `learning-labs` cargo feature;
+  without it the built-in runtimes report themselves unavailable. The compiled
+  interpreter is cached under the OS cache directory
+  (`lattice/learning-python/`). Container presets (`runtime_catalog.rs`,
+  `lab_runtime.rs`) run fixed argv templates under Docker or Podman.
+  Portability packs are stored under `<data_dir>/learning-packs/`.
 - Flashcards are the `study` plugin (`features/study`, `study_*` tables). It
   has no surface of its own; the renderer shows decks inside Learning Studio,
   and Recall schedules its cards through `study_cards` and

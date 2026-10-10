@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { SearchInterface } from '@/components/SearchInterface';
+import { SearchInterface } from '@/features/search/components/SearchInterface';
 import VaultAPI from '@/lib/api';
 import type { ApiResult, SearchResult } from '@/types';
 
@@ -11,7 +11,7 @@ import { deferred } from '../deferred';
 vi.mock('@/lib/api', () => ({ default: { searchHybrid: vi.fn(), openFileById: vi.fn(), openFile: vi.fn() } }));
 // PDF canvas rendering has separate renderer and browser tests. Keep search,
 // debounce, QueryClient, query keys, grouping and result actions real here.
-vi.mock('@/components/ContentViewer', () => ({ ContentViewer: ({ filePath }: { filePath: string }) => <div aria-label="Opened file">{filePath}</div> }));
+vi.mock('@/features/reading/components/ContentViewer', () => ({ ContentViewer: ({ filePath }: { filePath: string }) => <div aria-label="Opened file">{filePath}</div> }));
 
 let client: QueryClient;
 beforeEach(() => {

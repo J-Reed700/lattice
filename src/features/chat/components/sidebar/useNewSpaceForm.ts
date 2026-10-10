@@ -10,7 +10,7 @@ import {
 import { useCreateJournalMutation, useJournalsQuery } from '@/features/chat/components/sidebar/workspaceQueries';
 import type { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
 import { uniqueName } from '@/features/spaces/model/spaces';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
 /**

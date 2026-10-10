@@ -176,6 +176,11 @@ pub trait ChatPolicy: Send + Sync {
     fn consolidate_after_turn(&self, id: String);
 }
 
-pub trait ChatRuntime: ChatModels + ChatStorage + ChatRetrieval + ChatPolicy {
+/// Where work that outlives a request runs: a deep research turn is a job.
+pub trait ChatJobs: Send + Sync {
+    fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime>;
+}
+
+pub trait ChatRuntime: ChatModels + ChatStorage + ChatRetrieval + ChatPolicy + ChatJobs {
     fn share(&self) -> Arc<dyn ChatRuntime>;
 }

@@ -1,10 +1,8 @@
 //! Bounded strict-JSON prompts for the grounded practice tutor and grader.
 use crate::features::learning::dto::*;
+use crate::features::learning::model_call;
 use crate::{
-    application::ports::{
-        llm_port::{CompletionInput, CompletionRequest},
-        LLMPort,
-    },
+    application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
@@ -35,36 +33,19 @@ async fn complete_json(
     schema: serde_json::Value,
     max_tokens: usize,
 ) -> Result<String> {
-    if llm.count_tokens(system) + llm.count_tokens(&prompt) + max_tokens > llm.max_context_tokens()
-    {
-        return Err(invalid(
-            "Practice request exceeds this model's context window.",
-        ));
-    }
-    let output = tokio::time::timeout(Duration::from_secs(120), async {
-        let r = llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.into(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt,
-                    },
-                ],
-                json_schema: Some(schema),
-                reasoning_effort: Some("low".into()),
-                max_output_tokens: Some(max_tokens as u32),
-                ..Default::default()
-            })
-            .await?;
-        complete_reason(&r.finish_reason)?;
-        Ok::<_, AppError>(r.text)
-    })
-    .await
-    .map_err(|_| AppError::ServiceNotAvailable("Practice model request timed out.".into()))??;
+    let response = model_call::send(
+        llm,
+        model_call::structured(system, prompt, schema, max_tokens, "low"),
+        None,
+        Some(model_call::Deadline {
+            after: Duration::from_secs(120),
+            message: "Practice model request timed out.",
+        }),
+        "Practice request exceeds this model's context window.",
+    )
+    .await?;
+    complete_reason(&response.finish_reason)?;
+    let output = response.text;
     if output.chars().count() > 20_000 {
         return Err(invalid(
             "The model response exceeded the structured-output limit.",

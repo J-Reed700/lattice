@@ -1,139 +1,13 @@
 //! Stage tests against a fake runtime: no database, no model, no container.
 use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
+use super::research::{self, AssembledTurn, ResearchJournal, ResearchRound, Rounds};
 use super::*;
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
-use crate::application::ports::{EmbeddingPort, LLMPort};
-use crate::features::conversation::chat::ports::*;
+use crate::application::ports::LLMPort;
+use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
 use crate::features::conversation::mocks::MockConversationService;
-use crate::features::conversation::repository::ConversationRepository;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
 use std::sync::Mutex;
-
-/// The narrow runtime a stage needs, and nothing behind it: every dependency a
-/// stage under test should not reach fails the test if it does.
-struct FakeRuntime;
-
-const UNUSED: &str = "not reached by the stage under test";
-
-#[async_trait::async_trait]
-impl ChatModels for FakeRuntime {
-    async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        unreachable!("{UNUSED}")
-    }
-    async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        unreachable!("{UNUSED}")
-    }
-    fn utility_llm_loader(&self) -> crate::application::ports::llm_port::OptionalLlmLoader {
-        Arc::new(|| Box::pin(async { Ok(None) }))
-    }
-    async fn get_or_load_embedding(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        Err(AppError::ServiceNotAvailable("no embedding model".into()))
-    }
-}
-
-#[async_trait::async_trait]
-impl ChatStorage for FakeRuntime {
-    fn conversation_service(
-        &self,
-    ) -> Arc<dyn crate::features::conversation::ConversationServiceTrait> {
-        Arc::new(MockConversationService::new())
-    }
-    fn conversation_history(&self) -> Arc<dyn crate::application::ports::ConversationHistoryPort> {
-        unreachable!("{UNUSED}")
-    }
-    fn conversation_context(
-        &self,
-    ) -> Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
-        unreachable!("{UNUSED}")
-    }
-    fn document_scope(
-        &self,
-    ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
-        unreachable!("{UNUSED}")
-    }
-    fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository> {
-        unreachable!("{UNUSED}")
-    }
-    fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort> {
-        unreachable!("{UNUSED}")
-    }
-    fn chat_records(&self) -> Arc<dyn ChatRecords> {
-        // Never queried unless the model calls a history tool.
-        Arc::new(ConversationRepository::new(
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_lazy("sqlite::memory:")
-                .unwrap(),
-        ))
-    }
-    async fn explorer_turn(
-        &self,
-        _conversation_id: &str,
-        _focus: Option<&crate::features::explorer::dto::ExplorerFocusDto>,
-    ) -> Option<crate::features::explorer::prompt::ExplorerTurn> {
-        None
-    }
-}
-
-struct NoTools;
-
-#[async_trait::async_trait]
-impl ChatTools for NoTools {
-    fn list_tools(&self) -> Vec<ToolDefinition> {
-        Vec::new()
-    }
-    async fn execute(&self, _call: FunctionCall) -> Result<FunctionResult> {
-        unreachable!("{UNUSED}")
-    }
-}
-
-#[async_trait::async_trait]
-impl ChatRetrieval for FakeRuntime {
-    fn tools(&self) -> Arc<dyn ChatTools> {
-        Arc::new(NoTools)
-    }
-    fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
-        unreachable!("{UNUSED}")
-    }
-    fn page_reader(&self) -> Arc<dyn PageReader> {
-        unreachable!("{UNUSED}")
-    }
-    async fn summary_search(
-        &self,
-    ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
-        None
-    }
-}
-
-#[async_trait::async_trait]
-impl ChatPolicy for FakeRuntime {
-    async fn settings(&self) -> Result<crate::features::settings::dto::SettingsDto> {
-        Ok(Default::default())
-    }
-    async fn validate_message(&self, message: &str) -> Result<String> {
-        Ok(message.to_string())
-    }
-    async fn create_conversation(
-        &self,
-        _request: crate::features::conversation::dto::CreateConversationRequestDto,
-    ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto> {
-        unreachable!("{UNUSED}")
-    }
-    async fn compact_for_turn(
-        &self,
-        _id: &str,
-        _cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<()> {
-        unreachable!("{UNUSED}")
-    }
-    fn consolidate_after_turn(&self, _id: String) {}
-}
-
-impl ChatRuntime for FakeRuntime {
-    fn share(&self) -> Arc<dyn ChatRuntime> {
-        Arc::new(FakeRuntime)
-    }
-}
 
 /// A model that never answers, and says when it has been asked.
 struct Unanswering {
@@ -218,12 +92,14 @@ async fn stopping_the_turn_ends_the_generate_stage_while_the_model_is_still_gene
             Some("stage-cancel-turn")
         ));
     };
+    let runtime = FakeRuntime::default();
     let generate = generate::generate_answer(
-        &FakeRuntime,
+        &runtime,
         &turn,
         flags,
         prompt(),
         planned,
+        None,
         &sink,
         &mut metrics,
     );
@@ -261,11 +137,12 @@ async fn a_router_answer_skips_the_model_entirely() {
     canned.short_circuit_response = Some("Hello!".into());
 
     let generated = generate::generate_answer(
-        &FakeRuntime,
+        &FakeRuntime::default(),
         &turn,
         SearchFlags::from_preferences(None),
         canned,
         planned,
+        None,
         &sink,
         &mut metrics,
     )
@@ -274,4 +151,237 @@ async fn a_router_answer_skips_the_model_entirely() {
 
     assert_eq!(generated.response, "Hello!");
     assert!(metrics.generation_subtimings.is_some());
+}
+
+fn deep_research() -> SearchFlags {
+    SearchFlags::from_preferences(Some(&ToolPreferences {
+        deep_research_mode: true,
+        ..Default::default()
+    }))
+}
+
+/// The model asks to search the web for `query`.
+fn searches(id: &str, query: &str) -> CompletionResponse {
+    let call = CompletionInput::ToolCall {
+        id: id.into(),
+        name: "web_search".into(),
+        arguments: serde_json::json!({ "query": query }),
+    };
+    CompletionResponse {
+        tool_calls: vec![call.clone()],
+        replay: vec![call],
+        finish_reason: "tool_calls".into(),
+        ..Default::default()
+    }
+}
+
+/// Answers every search with one page about it.
+struct FakeWeb;
+
+#[async_trait::async_trait]
+impl crate::features::conversation::chat::ports::ChatTools for FakeWeb {
+    fn list_tools(&self) -> Vec<crate::features::function_calling::domain::ToolDefinition> {
+        Vec::new()
+    }
+    async fn execute(
+        &self,
+        call: crate::features::function_calling::domain::FunctionCall,
+    ) -> Result<crate::features::function_calling::domain::FunctionResult> {
+        let query = call.arguments["query"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        Ok(
+            crate::features::function_calling::domain::FunctionResult::success(serde_json::json!({
+                "results": [{
+                    "title": format!("About {query}"),
+                    "url": format!("https://example.com/{}", query.replace(' ', "-")),
+                    "snippet": format!("What the web says about {query}."),
+                }],
+                "query": query,
+                "result_count": 1,
+            })),
+        )
+    }
+}
+
+/// Keeps every save a research turn makes.
+#[derive(Default)]
+struct RecordingJournal {
+    rounds: Mutex<Vec<ResearchRound>>,
+}
+
+#[async_trait::async_trait]
+impl ResearchJournal for RecordingJournal {
+    async fn assembled(&self, _turn: &AssembledTurn) -> Result<()> {
+        Ok(())
+    }
+    async fn round(&self, round: &ResearchRound) -> Result<()> {
+        self.rounds.lock().unwrap().push(round.clone());
+        Ok(())
+    }
+    async fn resumes_later(&self) -> bool {
+        false
+    }
+}
+
+fn research_request(turn: &PreparedTurn) -> PlannedRequest {
+    PlannedRequest {
+        tools: vec![crate::application::ports::ToolDefinition {
+            name: "web_search".into(),
+            description: "Search the web".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+            }),
+        }],
+        ..request(turn)
+    }
+}
+
+#[tokio::test]
+async fn a_research_turn_saves_each_round_it_finishes() {
+    let llm = Scripted::new([
+        searches("call-1", "battery recycling"),
+        searches("call-2", "lithium recovery rates"),
+        CompletionResponse::from_text("Recovery rates vary by process."),
+    ]);
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(FakeWeb)),
+        ..FakeRuntime::default()
+    };
+    let turn = PreparedTurn::for_test(
+        "research-save-conversation",
+        "research-save-turn",
+        llm.clone(),
+        runtime.conversations.clone(),
+    )
+    .unwrap();
+    let (sink, _) = recording_sink();
+    let journal = RecordingJournal::default();
+    let mut metrics = ConversationFlowTimingMetrics::default();
+
+    let generated = generate::generate_answer(
+        &runtime,
+        &turn,
+        deep_research(),
+        prompt(),
+        research_request(&turn),
+        Some(Rounds {
+            journal: &journal,
+            start: None,
+        }),
+        &sink,
+        &mut metrics,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(generated.response, "Recovery rates vary by process.");
+    let rounds = journal.rounds.lock().unwrap();
+    // The answering round is not a research round: nothing is left to resume.
+    assert_eq!(rounds.len(), 2);
+    assert_eq!(rounds[0].completed, 1);
+    assert_eq!(rounds[1].completed, 2);
+    assert_eq!(
+        rounds[1].queries,
+        ["battery recycling", "lithium recovery rates"]
+    );
+    // Each save carries every round so far: both calls and both results.
+    let results = rounds[1]
+        .transcript
+        .iter()
+        .filter(|item| matches!(item, CompletionInput::ToolResult { .. }))
+        .count();
+    assert_eq!(results, 2);
+    assert_eq!(rounds[1].transcript.len(), 4);
+    assert!(
+        !rounds[1].steps.is_empty(),
+        "the turn record so far is saved"
+    );
+}
+
+#[tokio::test]
+async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
+    let llm = Scripted::new([CompletionResponse::from_text("Both searches agree [1].")]);
+    // No tools: a resumed turn that searched again would fail the test.
+    let runtime = FakeRuntime::default();
+    let turn = PreparedTurn::for_test(
+        "research-resume-conversation",
+        "research-resume-turn",
+        llm.clone(),
+        runtime.conversations.clone(),
+    )
+    .unwrap();
+    let saved = vec![
+        CompletionInput::ToolCall {
+            id: "call-1".into(),
+            name: "web_search".into(),
+            arguments: serde_json::json!({ "query": "first" }),
+        },
+        CompletionInput::ToolResult {
+            id: "call-1".into(),
+            output: "What the web says about first.".into(),
+        },
+        CompletionInput::ToolCall {
+            id: "call-2".into(),
+            name: "web_search".into(),
+            arguments: serde_json::json!({ "query": "second" }),
+        },
+        CompletionInput::ToolResult {
+            id: "call-2".into(),
+            output: "What the web says about second.".into(),
+        },
+    ];
+    let start = research::LoopStart {
+        rounds: 2,
+        transcript: saved.clone(),
+        queries: vec!["first".into(), "second".into()],
+        fetched: Vec::new(),
+        timings: ToolLoopTimingMetrics {
+            iterations: 2,
+            tool_call_count: 2,
+            ..Default::default()
+        },
+    };
+    let planned = research_request(&turn);
+    let planned_len = planned.input.len();
+    let (sink, _) = recording_sink();
+    let journal = RecordingJournal::default();
+    let mut metrics = ConversationFlowTimingMetrics::default();
+
+    let generated = generate::generate_answer(
+        &runtime,
+        &turn,
+        deep_research(),
+        prompt(),
+        planned,
+        Some(Rounds {
+            journal: &journal,
+            start: Some(start),
+        }),
+        &sink,
+        &mut metrics,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(generated.response, "Both searches agree [1].");
+    let requests = llm.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "one round, to answer: nothing is searched again"
+    );
+    // The planned request, then the saved rounds' calls and results.
+    assert_eq!(requests[0].input.len(), planned_len + saved.len());
+    assert!(matches!(
+        &requests[0].input[planned_len + 3],
+        CompletionInput::ToolResult { output, .. } if output == "What the web says about second."
+    ));
+    // Counting goes on from the saved rounds.
+    let timings = metrics.generation_subtimings.unwrap();
+    assert_eq!(timings.iterations, 3);
+    assert_eq!(timings.tool_call_count, 2);
+    assert!(journal.rounds.lock().unwrap().is_empty());
 }

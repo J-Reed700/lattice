@@ -3,13 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, GitBranch, Loader2, X } from 'lucide-react';
 
-import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { IconButton } from '@/components/ui/IconButton';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
-import { unwrap } from '@/hooks/queries/conversationQueryData';
+import { unwrap } from '@/features/chat/api/conversationQueryData';
+import { conversationUiStore, useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
-import { conversationUiStore, useConversationUiStore } from '@/stores/conversationUiStore';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { toast } from '@/stores/toastStore';
 import type { ToolPreferences } from '@/types';
 

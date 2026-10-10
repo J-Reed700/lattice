@@ -14,6 +14,7 @@
 //! It answers a repeat from memory and states the dead list each round so the
 //! model can route around it.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Enough room for a turn's worth of dead links without letting a model that
@@ -25,7 +26,7 @@ const MAX_REMEMBERED_FAILURES: usize = 64;
 const MAX_REMEMBERED_PAGES: usize = 32;
 
 /// How much of a page the model has been given so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::features::conversation::chat) enum Delivery {
     /// Everything that was extracted is already in front of the model.
     Whole,
@@ -43,15 +44,16 @@ pub(in crate::features::conversation::chat) enum Recall {
     Remainder { text: String, shown_chars: usize },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RememberedPage {
     text: String,
     delivery: Delivery,
 }
 
 /// Every page this turn tried to read: the ones it could not, and why, and the
-/// ones it could, and how much of each the model has seen.
-#[derive(Debug, Default)]
+/// ones it could, and how much of each the model has seen. A research turn
+/// saves it with each round, so a resumed turn still knows what it read.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(in crate::features::conversation::chat) struct FetchMemory {
     failures: BTreeMap<String, String>,
     pages: BTreeMap<String, RememberedPage>,

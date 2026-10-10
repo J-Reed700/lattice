@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
-import type { LearningLessonDto, LearningProgramDto, MessageDto, ModelCategoryDto } from '../src/lib/bindings';
+import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
@@ -234,6 +234,7 @@ for (const width of [1440, 620]) {
       let note = { id: 'synthesis-note', title: 'Forest notes', journalId: 'research-journal', content: '', revision: 0, linkedDocumentIds: [], linkedConversationIds: [] as string[], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: stamp, updatedAt: stamp };
       let captureAttempts = 0;
       let synthesisCalls = 0;
+      const results = new Map<string, SynthesizeJournalEntriesResponseDto>();
       return {
         get_settings: () => settings,
         list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
@@ -253,17 +254,26 @@ for (const width of [1440, 620]) {
           document.documentElement.dataset.synthesisSavedPage = note.id;
           return note;
         },
-        synthesize_journal_entries: async (args) => {
+        // A synthesis is a job: it reports on jobs://status and stages its result.
+        synthesize_journal_entries: (args) => {
           synthesisCalls += 1;
           document.documentElement.dataset.synthesisCalls = String(synthesisCalls);
-          const report = (stage: string, chunkIndex: number | null) => ipc.send(args.onProgress, { stage, entryCount: 1, chunkCount: 2, chunkIndex });
-          report('gathering', null);
+          const { request } = args as { request: StartJournalSynthesisRequestDto };
+          const id = `synthesis-${synthesisCalls}`;
+          results.set(id, { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] });
+          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null };
+          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch }; ipc.emit('jobs://status', job); };
+          const report = (stage: string, chunkIndex: number | null) => publish({ status: 'running', activity: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
+          setTimeout(() => report('gathering', null), 0);
           window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
           window.addEventListener('test:synthesis-second', () => report('reading', 2), { once: true });
           window.addEventListener('test:synthesis-writing', () => report('writing', null), { once: true });
-          await new Promise<void>(resolve => window.addEventListener('test:synthesis-finish', () => resolve(), { once: true }));
-          return { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] };
+          window.addEventListener('test:synthesis-finish', () => publish({ status: 'completed', resultRef: 'destination', finishedAt: Date.now() }), { once: true });
+          return { job, title: request.title, heading: request.heading, destination: request.destination, conversationIds: request.request.conversationIds, activity: null };
         },
+        list_journal_syntheses: () => [],
+        get_journal_synthesis_result: (args) => results.get((args as { jobId: string }).jobId) ?? {},
+        mark_journal_synthesis_applied: (args) => results.delete((args as { jobId: string }).jobId),
         quick_capture: async (args) => {
           captureAttempts += 1;
           if (captureAttempts === 1) throw new Error('The journal could not be saved.');

@@ -647,7 +647,7 @@ pub fn materialize_workspace(root: &Path, spec: &LearningLabExecutionSpec) -> Re
     Ok(())
 }
 
-async fn bounded_read<R: AsyncRead + Unpin>(
+pub(super) async fn bounded_read<R: AsyncRead + Unpin>(
     mut reader: R,
     limit: usize,
 ) -> std::io::Result<(Vec<u8>, bool)> {

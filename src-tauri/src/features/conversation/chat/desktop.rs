@@ -7,6 +7,18 @@ use crate::{
 use std::sync::Arc;
 use tauri::Emitter;
 
+/// The event every chat stream goes out on; each payload names its turn.
+const STREAM_EVENT: &str = "llm-stream";
+
+/// Streams to every window: for a turn no window is waiting on, such as a
+/// research turn resumed after a restart.
+pub fn app_event_sink<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> super::ChatEventSink {
+    Arc::new(move |payload| {
+        app.emit(STREAM_EVENT, payload)
+            .map_err(|error| AppError::InvalidState(format!("Frontend disconnected: {error}")))
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     container: &Container,
@@ -21,7 +33,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 ) -> Result<ChatResponse> {
     let emit = Arc::new(move |payload| {
         window
-            .emit("llm-stream", payload)
+            .emit(STREAM_EVENT, payload)
             .map_err(|error| AppError::InvalidState(format!("Frontend disconnected: {error}")))
     });
     super::run_turn(

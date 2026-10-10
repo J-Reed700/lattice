@@ -14,16 +14,16 @@ import { useJournalEntries } from '@/features/journal/hooks/useJournalEntries';
 import { useJournalNavigationGuard } from '@/features/journal/hooks/useJournalNavigationGuard';
 import { UNTITLED_PAGE, useJournalNote } from '@/features/journal/hooks/useJournalNote';
 import { useJournalSources } from '@/features/journal/hooks/useJournalSources';
+import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
-import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
+import { useActiveSynthesis } from '@/features/journal/synthesis/synthesisPanel';
+import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
-import { useWeeklySynthesisCandidatesQuery } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
-import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 import VaultAPI from '@/lib/api';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
-import { useConversationsStore } from '@/stores/conversationsStore';
-import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
@@ -132,7 +132,7 @@ export function JournalWorkspace() {
 
   const { data: weekCandidates } =
     useWeeklySynthesisCandidatesQuery();
-  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
+  const isSynthesizing = useActiveSynthesis() !== null;
 
   const queryClient = useQueryClient();
   const journalsQuery = useJournalsQuery();

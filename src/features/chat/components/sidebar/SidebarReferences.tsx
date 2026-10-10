@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router';
 import { IconButton } from '@/components/ui/IconButton';
 import { formatRoleLabel, formatShortRelativeTime, isReferenceInboxEnabled } from '@/features/chat/components/sidebar/sidebarUtils';
 import { useCapturedReferencesQuery, useSidebarBookmarksQuery } from '@/features/chat/components/sidebar/workspaceQueries';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import {

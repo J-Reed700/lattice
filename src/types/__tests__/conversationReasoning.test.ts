@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeStep } from '@/hooks/conversations/messageMetadata';
+import { mergeStep } from '@/features/chat/controller/messageMetadata';
 import { TurnStepSchema } from '@/types/conversation';
 
 const step = {

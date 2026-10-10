@@ -102,7 +102,7 @@ pub(super) async fn finalize_turn(
         user_message_id,
         &turn.message,
         assistant_response,
-        turn.context.len(),
+        turn.history_len,
         sources,
         verification_metadata,
         memory_usage,

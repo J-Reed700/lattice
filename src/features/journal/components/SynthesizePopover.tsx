@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Combine, Loader2 } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
+import { useActiveSynthesis, useSynthesisPanel } from '@/features/journal/synthesis/synthesisPanel';
 
 export type SynthesisScope = 'current' | 'pinned' | 'deck' | 'week' | 'conversation';
 
@@ -72,7 +72,7 @@ export function SynthesizePopover({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
-  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
+  const isSynthesizing = useActiveSynthesis() !== null;
   const busy = isSubmitting || isSynthesizing;
 
   useEffect(() => {
@@ -130,14 +130,12 @@ export function SynthesizePopover({
   ];
 
   const handleSubmit = async () => {
-    if (submitting.current || useSynthesisStore.getState().job?.status === 'running') return;
+    if (submitting.current || isSynthesizing) return;
     submitting.current = true;
     setIsSubmitting(true);
     setError(null);
     try {
-      const operation = onSynthesize(scope);
-      if (useSynthesisStore.getState().job?.status === 'running') setIsOpen(false);
-      const ok = await operation;
+      const ok = await onSynthesize(scope);
       if (ok) setIsOpen(false);
       else setError('Synthesis failed. Try again.');
     } catch (failure) {
@@ -153,7 +151,7 @@ export function SynthesizePopover({
       open={isOpen}
       onOpenChange={(next) => {
         if (next && isSynthesizing) {
-          useSynthesisStore.getState().setMinimized(false);
+          useSynthesisPanel.getState().setMinimized(false);
           return;
         }
         setIsOpen(next);

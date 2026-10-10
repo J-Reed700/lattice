@@ -1,6 +1,7 @@
 //! Stage 6: the model writes the answer, calling tools as it goes.
 use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
+use super::research::Rounds;
 use super::*;
 use crate::features::conversation::chat::tool_loop::LoopRequest;
 
@@ -14,12 +15,16 @@ pub(super) struct GeneratedAnswer {
     pub(super) memory_usage: Option<serde_json::Value>,
 }
 
+/// `research` saves each round of a research turn, and resumes one after the
+/// rounds it saved.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate_answer(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     flags: SearchFlags,
     prompt: RenderedPrompt,
     request: PlannedRequest,
+    research: Option<Rounds<'_>>,
     emit: &ChatEventSink,
     metrics: &mut ConversationFlowTimingMetrics,
 ) -> Result<GeneratedAnswer> {
@@ -61,6 +66,7 @@ pub(super) async fn generate_answer(
                     flags.deep_research_mode,
                     turn.explorer.is_some(),
                 ),
+                research,
             },
             &turn.highlight_terms,
             &turn.settings.llm.tool_output,

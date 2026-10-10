@@ -4,15 +4,13 @@
 //! gathered, each passage under a stable id. [`BudgetAllocation`] divides the
 //! model's window — instructions, history, evidence and the output
 //! reservation — and this service selects the evidence that fits, renders one
-//! typed request, calls the model at the caller's priority, and, when asked,
-//! checks claims in the answer against the evidence it was given.
+//! typed request and calls the model at the caller's priority.
 //!
 //! Nothing is clipped. A request whose fixed parts, or whose required
 //! evidence, do not fit is refused with a typed [`PromptBudgetExceeded`], and
 //! evidence that selection left out is reported by id rather than dropped
 //! quietly.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -21,15 +19,11 @@ use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use crate::application::ports::LLMPort;
-use crate::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimJudgment};
 use crate::application::services::context_assembler::{
     BudgetAllocation, BudgetError, BudgetRequest, ContextAccounting, EvidenceBudget, HistoryCharge,
     ModelCapacity, PromptBudgetExceeded, TokenAccounting, MESSAGE_FRAMING_TOKENS,
 };
 use crate::shared::error::AppError;
-
-/// Output allowance for one claim verdict: a label and two short lines.
-const JUDGE_MAX_OUTPUT_TOKENS: u32 = 512;
 
 /// One piece of evidence, under the id its caller resolves it by.
 #[derive(Debug, Clone, PartialEq)]
@@ -129,15 +123,20 @@ pub struct CallOptions {
     pub cache_key: Option<String>,
     pub sampling: Option<SamplingOverride>,
     pub time_budget: Option<Duration>,
+    /// No elapsed-time limit, for cancellable work a slow model must not
+    /// fail. Stall detection and retry limits still apply.
+    pub no_time_limit: bool,
+    /// Constrains the answer to this JSON schema.
+    pub json_schema: Option<serde_json::Value>,
+    pub reasoning_effort: Option<String>,
 }
 
-/// Claims to check against the evidence the answer was given.
-pub(crate) struct ClaimCheck {
-    pub policy: CheckPolicy,
-    /// Checked in order. Empty checks the whole answer as one claim.
-    pub claims: Vec<String>,
-    /// The judge. `None` lets the generating model judge its own answer.
-    pub judge: Option<Arc<dyn LLMPort>>,
+/// Where answer text goes while the model writes it.
+pub(crate) struct Streaming<'a> {
+    pub on_text: &'a (dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
+    /// Set to have a broken connection retried. Hears each new attempt, after
+    /// which the text delivered so far is void.
+    pub on_retry: Option<&'a (dyn Fn(usize) -> crate::shared::error::Result<()> + Send + Sync)>,
 }
 
 /// Everything one grounded call needs.
@@ -157,10 +156,14 @@ pub(crate) struct GroundedRequest {
     pub closing: String,
     /// Sent whole ahead of the task; part of the request's fixed cost.
     pub history: Vec<HistoryItem>,
-    /// Generation reservation, enforced on the request.
+    /// Generation reservation, enforced on the request. Zero takes the
+    /// planner's default for the model.
     pub output_tokens: usize,
+    /// The answer may also use the input room the request leaves unused, so a
+    /// reasoning model writing long structured output is not cut off by an
+    /// estimate. `output_tokens` is then the least it is promised.
+    pub output_fills_window: bool,
     pub call: CallOptions,
-    pub verification: Option<ClaimCheck>,
 }
 
 impl GroundedRequest {
@@ -176,19 +179,10 @@ impl GroundedRequest {
             closing: String::new(),
             history: Vec::new(),
             output_tokens: 0,
+            output_fills_window: false,
             call: CallOptions::default(),
-            verification: None,
         }
     }
-}
-
-/// One claim and the judge's ruling on it.
-#[derive(Debug, Clone)]
-// Read by the generators that ask for a claim check; this wave's callers do not.
-#[allow(dead_code)]
-pub(crate) struct ClaimVerdictRecord {
-    pub claim: String,
-    pub judgment: ClaimJudgment,
 }
 
 /// The answer, and what it was built from.
@@ -198,10 +192,10 @@ pub(crate) struct GroundedOutput {
     /// Ids of the passages the request carried, in the order given.
     pub used_evidence_ids: Vec<String>,
     pub accounting: ContextAccounting,
-    /// Present when the request asked for a claim check.
-    // Read by the generators that ask for a claim check; this wave's callers do not.
-    #[allow(dead_code)]
-    pub verdicts: Option<Vec<ClaimVerdictRecord>>,
+    /// Why the model stopped, as the provider reported it.
+    pub finish_reason: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -386,7 +380,7 @@ fn render_user_message(request: &GroundedRequest, carried: &[&EvidencePassage]) 
     .join("\n\n")
 }
 
-/// Plan, select, call and optionally check one grounded request.
+/// Plan, select and call one grounded request.
 ///
 /// # Errors
 ///
@@ -398,6 +392,27 @@ fn render_user_message(request: &GroundedRequest, carried: &[&EvidencePassage]) 
 pub(crate) async fn generate(
     llm: &dyn LLMPort,
     request: GroundedRequest,
+) -> Result<GroundedOutput, GroundedGenerationError> {
+    run(llm, request, None).await
+}
+
+/// [`generate`], delivering the answer's text as it arrives.
+///
+/// # Errors
+///
+/// As [`generate`]; an error a callback returns fails the call.
+pub(crate) async fn generate_streaming(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    streaming: &Streaming<'_>,
+) -> Result<GroundedOutput, GroundedGenerationError> {
+    run(llm, request, Some(streaming)).await
+}
+
+async fn run(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    streaming: Option<&Streaming<'_>>,
 ) -> Result<GroundedOutput, GroundedGenerationError> {
     let Planned {
         allocation,
@@ -463,65 +478,59 @@ pub(crate) async fn generate(
         content: render_user_message(&request, &carried),
     });
 
-    let call = request.call.clone();
-    let response = llm
-        .complete(&CompletionRequest {
-            input,
-            priority: call.priority,
-            cancel: call.cancel,
-            cache_key: call.cache_key,
-            sampling: call.sampling,
-            time_budget: call.time_budget,
-            max_output_tokens: u32::try_from(allocation.output_reserved).ok(),
-            ..Default::default()
-        })
-        .await
-        .map_err(GroundedGenerationError::Model)?;
+    // Room the input leaves unused goes to the answer only when asked: the
+    // margin stays reserved either way.
+    let output_tokens = if request.output_fills_window {
+        allocation.output_reserved
+            + allocation
+                .input_budget
+                .saturating_sub(accounting.total_input)
+    } else {
+        allocation.output_reserved
+    };
+    let call = request.call;
+    let completion = CompletionRequest {
+        input,
+        priority: call.priority,
+        cancel: call.cancel,
+        cache_key: call.cache_key,
+        sampling: call.sampling,
+        time_budget: call.time_budget,
+        no_time_limit: call.no_time_limit,
+        json_schema: call.json_schema,
+        reasoning_effort: call.reasoning_effort,
+        max_output_tokens: u32::try_from(output_tokens).ok(),
+        ..Default::default()
+    };
+    let response = match streaming {
+        None => llm.complete(&completion).await,
+        Some(Streaming {
+            on_text,
+            on_retry: None,
+        }) => llm.complete_with_progress(&completion, on_text).await,
+        Some(Streaming {
+            on_text,
+            on_retry: Some(on_retry),
+        }) => {
+            llm.complete_with_retry_progress(&completion, on_text, on_retry)
+                .await
+        }
+    }
+    .map_err(GroundedGenerationError::Model)?;
     if !response.tool_calls.is_empty() {
         return Err(GroundedGenerationError::Model(AppError::InvalidState(
             "Unexpected tool call in grounded generation".into(),
         )));
     }
 
-    let verdicts = match &request.verification {
-        Some(check) => Some(verify(llm, check, &response.text, &carried).await),
-        None => None,
-    };
     Ok(GroundedOutput {
         text: response.text,
         used_evidence_ids: carried.iter().map(|passage| passage.id.clone()).collect(),
         accounting,
-        verdicts,
+        finish_reason: response.finish_reason,
+        input_tokens: response.input_tokens,
+        output_tokens: response.output_tokens,
     })
-}
-
-async fn verify(
-    llm: &dyn LLMPort,
-    check: &ClaimCheck,
-    answer: &str,
-    carried: &[&EvidencePassage],
-) -> Vec<ClaimVerdictRecord> {
-    let judge = check.judge.as_deref().unwrap_or(llm);
-    let checker = ClaimChecker::new(
-        judge,
-        SamplingOverride::deterministic(),
-        JUDGE_MAX_OUTPUT_TOKENS,
-        check.policy,
-    );
-    let passages: Vec<String> = carried.iter().map(|passage| passage.text.clone()).collect();
-    let claims: Vec<String> = if check.claims.is_empty() {
-        vec![answer.trim().to_string()]
-    } else {
-        check.claims.clone()
-    };
-    let mut verdicts = Vec::with_capacity(claims.len());
-    for claim in claims {
-        let judgment = checker
-            .check_passages_without_deadline(&claim, &passages)
-            .await;
-        verdicts.push(ClaimVerdictRecord { claim, judgment });
-    }
-    verdicts
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { MarkdownViewer } from '@/features/chat/components/viewers/MarkdownViewer';
 import { useLearningPlan, useSkipLearningDiagnostic, useStartLearningDiagnostic, useSubmitLearningDiagnostic } from '@/features/learning/curriculum/useLearningPlan';
 import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
+import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import type { SubmitLearningDiagnosticRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 

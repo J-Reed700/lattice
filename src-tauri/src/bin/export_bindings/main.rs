@@ -373,6 +373,11 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::conversation::plugin::set_journal_entry_pinned,
             lattice::features::conversation::plugin::list_journal_entry_pins,
             lattice::features::conversation::plugin::synthesize_journal_entries,
+            lattice::features::conversation::plugin::list_journal_syntheses,
+            lattice::features::conversation::plugin::get_journal_synthesis_result,
+            lattice::features::conversation::plugin::mark_journal_synthesis_applied,
+            lattice::features::conversation::plugin::dismiss_journal_synthesis,
+            lattice::features::conversation::plugin::retry_journal_synthesis,
             // Batch plugin
             lattice::features::batch::plugin::batch_import_files,
             lattice::features::batch::plugin::batch_import_urls,

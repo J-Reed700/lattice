@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useSpaceMutations } from '@/features/spaces/api/queries';
 import {
   buildSpaceToolPreferencesJson,
@@ -8,9 +10,7 @@ import {
   parseSpaceToolPreferences,
   uniqueName,
 } from '@/features/spaces/model/spaces';
-import { useSettingsQuery } from '@/hooks/queries/useSettingsQuery';
-import { useDownloadedModels } from '@/hooks/useDownloadedModels';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));

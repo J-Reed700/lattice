@@ -36,7 +36,11 @@ pub use super::branching::{
     promote_conversation_tangent_impl, regenerate_response_impl, truncate_conversation_after_impl,
 };
 pub use super::handoff::continue_in_new_conversation_impl;
-pub use super::synthesis::synthesize_journal_entries_impl;
+pub use super::synthesis::{
+    dismiss_journal_synthesis_impl, get_journal_synthesis_result_impl, list_journal_syntheses_impl,
+    mark_journal_synthesis_applied_impl, retry_journal_synthesis_impl,
+    synthesize_journal_entries_impl,
+};
 pub use super::workspace_dto::*;
 
 pub async fn create_conversation_impl(

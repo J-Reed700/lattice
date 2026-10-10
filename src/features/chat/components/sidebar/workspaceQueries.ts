@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createJournal } from '@/features/journal/api/queries';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { VaultAPI } from '@/lib/api';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 
 export { useJournalsQuery, useCapturedReferencesQuery, JOURNALS_QUERY_KEY } from '@/features/journal/api/queries';

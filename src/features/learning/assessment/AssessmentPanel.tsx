@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CircleHelp, RotateCcw } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningAssessmentKind, LearningAttemptDto, LearningQuestionDto, LearningSourceDto } from '@/lib/bindings';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 export type FormSnapshot = { answers: Record<string, number>; attemptId: string | null; fingerprint: string | null };
 

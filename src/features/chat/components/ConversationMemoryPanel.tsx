@@ -24,12 +24,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import * as Dialog from '@radix-ui/react-dialog';
-import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, X } from 'lucide-react';
 
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { KnowledgePanel } from '@/features/chat/components/KnowledgePanel';
-import { VaultAPI } from '@/lib/api';
+import { useConversationMemoryQuery } from '@/features/chat/hooks/useConversationMemoryQuery';
 import type {
   ConversationMemoryDetailsDto,
   ConversationMemoryItemDto,
@@ -266,17 +265,7 @@ export function ConversationMemoryPanel({
     }
   }, [isOpen]);
 
-  const memoryQuery = useQuery({
-    queryKey: ['conversationMemory', conversationId, includeHistory],
-    enabled: isOpen && !!conversationId,
-    refetchInterval: isOpen ? 5000 : false,
-    retry: false,
-    queryFn: async () => {
-      const result = await VaultAPI.getConversationMemory(conversationId!, includeHistory);
-      if (!result.ok) throw new Error(result.error);
-      return result.data;
-    },
-  });
+  const memoryQuery = useConversationMemoryQuery(conversationId, includeHistory, isOpen);
   const details = isOpen ? memoryQuery.data ?? null : null;
   const error = memoryQuery.error?.message ?? null;
   const isLoading = memoryQuery.isFetching;
@@ -324,145 +313,171 @@ export function ConversationMemoryPanel({
   const status = details ? describeStatus(details) : null;
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-[hsl(var(--overlay))]" />
-        <Dialog.Content
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
-          }}
-          className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[560px] flex-col border-l border-[hsl(var(--border-default))] bg-bg shadow-sheet"
-        >
-          <header className="flex items-start gap-3 border-b border-[hsl(var(--border-subtle))] px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <Dialog.Title className="font-serif text-[17px] font-medium tracking-[-0.01em] text-text-primary">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        unstyled
+        hideClose
+        overlayClassName="fixed inset-0 z-50 bg-[hsl(var(--overlay))]"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+        }}
+        className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[560px] flex-col border-l border-[hsl(var(--border-default))] bg-bg shadow-sheet"
+      >
+        <header className="flex items-start gap-3 border-b border-[hsl(var(--border-subtle))] px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <DialogTitle asChild>
+              <h2 className="font-serif text-[17px] font-medium tracking-[-0.01em] text-text-primary">
                 Conversation memory
-              </Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs leading-relaxed text-text-muted">
-                Read-only. There is no editor here on purpose: an item you could
-                type would be a requirement with nothing behind it.
-              </Dialog.Description>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close conversation memory"
-              className="pressable rounded-md p-1.5 text-text-tertiary hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-secondary"
+              </h2>
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs leading-relaxed text-text-muted" asChild><p>
+              Read-only. There is no editor here on purpose: an item you could
+              type would be a requirement with nothing behind it.
+            </p></DialogDescription>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close conversation memory"
+            className="pressable rounded-md p-1.5 text-text-tertiary hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-secondary"
+          >
+            <X className="h-4 w-4" strokeWidth={1.7} />
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {isLoading && !details && (
+            <p className="text-ui text-text-muted">Reading memory…</p>
+          )}
+
+          {error && (
+            <div
+              className="rounded-lg border border-[hsl(var(--danger)/0.4)] bg-[hsl(var(--danger)/0.08)] p-3"
+              role="alert"
             >
-              <X className="h-4 w-4" strokeWidth={1.7} />
-            </button>
-          </header>
-
-          <div className="flex-1 overflow-y-auto px-5 py-4">
-            {isLoading && !details && (
-              <p className="text-ui text-text-muted">Reading memory…</p>
-            )}
-
-            {error && (
-              <div
-                className="rounded-lg border border-[hsl(var(--danger)/0.4)] bg-[hsl(var(--danger)/0.08)] p-3"
-                role="alert"
+              <p className="text-ui font-medium text-text-primary">Couldn&apos;t read memory</p>
+              <p className="mt-1 text-xs leading-relaxed text-text-secondary">{error}</p>
+              <button
+                type="button"
+                onClick={() => void memoryQuery.refetch()}
+                className="pressable mt-2 inline-flex h-7 items-center rounded-md bg-action px-2.5 text-xs font-medium text-action-fg"
               >
-                <p className="text-ui font-medium text-text-primary">Couldn&apos;t read memory</p>
-                <p className="mt-1 text-xs leading-relaxed text-text-secondary">{error}</p>
-                <button
-                  type="button"
-                  onClick={() => void memoryQuery.refetch()}
-                  className="pressable mt-2 inline-flex h-7 items-center rounded-md bg-action px-2.5 text-xs font-medium text-action-fg"
-                >
-                  Try again
-                </button>
+                Try again
+              </button>
+            </div>
+          )}
+
+          {details && status && (
+            <>
+              <div
+                className={`rounded-lg border p-3 ${TONE_CLASS[status.tone]}`}
+                data-testid="memory-status"
+                data-tone={status.tone}
+              >
+                <p className="text-ui font-medium text-text-primary">{status.heading}</p>
+                <p className="mt-1 text-xs leading-relaxed text-text-secondary">{status.body}</p>
               </div>
-            )}
 
-            {details && status && (
-              <>
-                <div
-                  className={`rounded-lg border p-3 ${TONE_CLASS[status.tone]}`}
-                  data-testid="memory-status"
-                  data-tone={status.tone}
-                >
-                  <p className="text-ui font-medium text-text-primary">{status.heading}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-text-secondary">{status.body}</p>
+              <dl className="mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
+                  <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
+                    Required (every prompt)
+                  </dt>
+                  <dd className="mt-0.5 text-ui font-medium text-text-primary">
+                    {details.activeMandatoryCount}
+                  </dd>
                 </div>
+                <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
+                  <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
+                    Optional (when relevant)
+                  </dt>
+                  <dd className="mt-0.5 text-ui font-medium text-text-primary">
+                    {details.activeOptionalCount}
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
+                  <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
+                    Needs your attention
+                  </dt>
+                  <dd className="mt-0.5 text-ui font-medium text-text-primary">
+                    {details.conflictCount}
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
+                  <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
+                    Processed through message
+                  </dt>
+                  <dd className="mt-0.5 text-ui font-medium text-text-primary">
+                    {details.processedThroughSequence}
+                  </dd>
+                  <dd className="mt-0.5 text-xxs leading-relaxed text-text-muted">
+                    Everything up to here was submitted for extraction — not a
+                    claim that every fact in it was noticed.
+                  </dd>
+                </div>
+              </dl>
 
-                <dl className="mt-4 grid grid-cols-2 gap-2">
-                  <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
-                    <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
-                      Required (every prompt)
-                    </dt>
-                    <dd className="mt-0.5 text-ui font-medium text-text-primary">
-                      {details.activeMandatoryCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
-                    <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
-                      Optional (when relevant)
-                    </dt>
-                    <dd className="mt-0.5 text-ui font-medium text-text-primary">
-                      {details.activeOptionalCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
-                    <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
-                      Needs your attention
-                    </dt>
-                    <dd className="mt-0.5 text-ui font-medium text-text-primary">
-                      {details.conflictCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-lg border border-[hsl(var(--border-subtle))] p-2.5">
-                    <dt className="text-xxs uppercase tracking-wide text-text-tertiary">
-                      Processed through message
-                    </dt>
-                    <dd className="mt-0.5 text-ui font-medium text-text-primary">
-                      {details.processedThroughSequence}
-                    </dd>
-                    <dd className="mt-0.5 text-xxs leading-relaxed text-text-muted">
-                      Everything up to here was submitted for extraction — not a
-                      claim that every fact in it was noticed.
-                    </dd>
-                  </div>
-                </dl>
+              {details.lastErrorCode && (
+                <p className="mt-3 text-xs text-[hsl(var(--warning-fg))]" role="status">
+                  Last extraction error: <code>{details.lastErrorCode}</code>
+                </p>
+              )}
 
-                {details.lastErrorCode && (
-                  <p className="mt-3 text-xs text-[hsl(var(--warning-fg))]" role="status">
-                    Last extraction error: <code>{details.lastErrorCode}</code>
+              <section className="mt-4">
+                <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
+                  Working summary — generated, and can be wrong
+                </h3>
+                {details.summary ? (
+                  <p className="mt-1.5 text-ui leading-relaxed text-text-secondary">
+                    {details.summary}
                   </p>
+                ) : (
+                  <p className="mt-1.5 text-xs italic text-text-muted">No summary yet.</p>
                 )}
+              </section>
 
-                <section className="mt-4">
-                  <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
-                    Working summary — generated, and can be wrong
-                  </h3>
-                  {details.summary ? (
-                    <p className="mt-1.5 text-ui leading-relaxed text-text-secondary">
-                      {details.summary}
-                    </p>
-                  ) : (
-                    <p className="mt-1.5 text-xs italic text-text-muted">No summary yet.</p>
-                  )}
-                </section>
+              {conversationId && <KnowledgePanel key={conversationId} conversationId={conversationId} onOpenConversation={onOpenConversation} />}
 
-                {conversationId && <KnowledgePanel key={conversationId} conversationId={conversationId} onOpenConversation={onOpenConversation} />}
-
-                <section className="mt-5">
-                  <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
-                    Items
-                  </h3>
-                  <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                    The line in plain type under each label is generated for
-                    scanning. The indented quotations come from the original messages;
-                    each names its author and source.
+              <section className="mt-5">
+                <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
+                  Items
+                </h3>
+                <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                  The line in plain type under each label is generated for
+                  scanning. The indented quotations come from the original messages;
+                  each names its author and source.
+                </p>
+                {details.items.length === 0 ? (
+                  <p className="mt-2 text-xs italic text-text-muted">
+                    Nothing has been recorded for this conversation.
                   </p>
-                  {details.items.length === 0 ? (
-                    <p className="mt-2 text-xs italic text-text-muted">
-                      Nothing has been recorded for this conversation.
+                ) : (
+                  <ul className="mt-2 flex list-none flex-col gap-2">
+                    {details.items.map((item) => (
+                      <MemoryItem
+                        key={item.id}
+                        item={item}
+                        onOpenSource={openSource}
+                        unreachableMessageId={unreachableMessageId}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="mt-5 border-t border-[hsl(var(--border-subtle))] pt-4">
+                <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
+                  Superseded and resolved
+                </h3>
+                {includeHistory ? (
+                  details.history.length === 0 ? (
+                    <p className="mt-1.5 text-xs italic text-text-muted">
+                      Nothing has been superseded or resolved yet.
                     </p>
                   ) : (
                     <ul className="mt-2 flex list-none flex-col gap-2">
-                      {details.items.map((item) => (
+                      {details.history.map((item) => (
                         <MemoryItem
                           key={item.id}
                           item={item}
@@ -471,60 +486,36 @@ export function ConversationMemoryPanel({
                         />
                       ))}
                     </ul>
-                  )}
-                </section>
+                  )
+                ) : (
+                  <>
+                    <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                      Older items that were replaced or closed out. Not in any
+                      prompt.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIncludeHistory(true)}
+                      className="pressable mt-2 inline-flex h-7 items-center rounded-md border border-[hsl(var(--border-default))] px-2.5 text-xs font-medium text-text-secondary hover:bg-[hsl(var(--text-primary)/0.05)]"
+                    >
+                      Show earlier versions
+                    </button>
+                  </>
+                )}
+              </section>
 
-                <section className="mt-5 border-t border-[hsl(var(--border-subtle))] pt-4">
-                  <h3 className="text-xxs uppercase tracking-wide text-text-tertiary">
-                    Superseded and resolved
-                  </h3>
-                  {includeHistory ? (
-                    details.history.length === 0 ? (
-                      <p className="mt-1.5 text-xs italic text-text-muted">
-                        Nothing has been superseded or resolved yet.
-                      </p>
-                    ) : (
-                      <ul className="mt-2 flex list-none flex-col gap-2">
-                        {details.history.map((item) => (
-                          <MemoryItem
-                            key={item.id}
-                            item={item}
-                            onOpenSource={openSource}
-                            unreachableMessageId={unreachableMessageId}
-                          />
-                        ))}
-                      </ul>
-                    )
-                  ) : (
-                    <>
-                      <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                        Older items that were replaced or closed out. Not in any
-                        prompt.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setIncludeHistory(true)}
-                        className="pressable mt-2 inline-flex h-7 items-center rounded-md border border-[hsl(var(--border-default))] px-2.5 text-xs font-medium text-text-secondary hover:bg-[hsl(var(--text-primary)/0.05)]"
-                      >
-                        Show earlier versions
-                      </button>
-                    </>
-                  )}
-                </section>
-
-                <p className="mt-5 text-xxs leading-relaxed text-text-tertiary">
-                  Schema {details.schemaVersion} · memory revision{' '}
-                  {details.memoryRevision} · transcript revision{' '}
-                  {details.transcriptRevision}
-                  {details.extractorModelIdentity
-                    ? ` · extracted by ${details.extractorModelIdentity}`
-                    : ''}
-                </p>
-              </>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+              <p className="mt-5 text-xxs leading-relaxed text-text-tertiary">
+                Schema {details.schemaVersion} · memory revision{' '}
+                {details.memoryRevision} · transcript revision{' '}
+                {details.transcriptRevision}
+                {details.extractorModelIdentity
+                  ? ` · extracted by ${details.extractorModelIdentity}`
+                  : ''}
+              </p>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -6,23 +6,23 @@ import {
   READER_DEFAULT_WIDTH,
   READER_MIN_WIDTH,
   useChatReaderStore,
-} from '@/stores/chatReaderStore';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
+} from '@/features/reading/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
 let activeConversationId: string | null = 'conversation-1';
 
-vi.mock('@/stores/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) =>
     selector({ activeConversationId }),
 }));
 // The document itself is `SourceReaderBody`'s business and is tested through
 // the reader it is shown in; this file is about the pane around it.
-vi.mock('@/features/chat/components/reader/SourceReaderBody', () => ({
+vi.mock('@/features/reading/components/SourceReaderBody', () => ({
   SourceReaderBody: () => <div data-testid="reader-body">Document</div>,
 }));
-vi.mock('@/features/chat/components/FilePreviewModal', () => ({
+vi.mock('@/features/reading/components/FilePreviewModal', () => ({
   FilePreviewModal: () => <div data-testid="reader-overlay">Document</div>,
 }));
 

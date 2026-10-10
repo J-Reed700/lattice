@@ -1,0 +1,129 @@
+import { X } from 'lucide-react';
+
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+
+interface KeyboardShortcutsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+interface Shortcut {
+  keys: string[];
+  description: string;
+}
+
+interface ShortcutGroup {
+  title: string;
+  shortcuts: Shortcut[];
+}
+
+/**
+ * KeyboardShortcutsModal — the reference sheet for every shortcut the app
+ * actually binds. Keep this in sync with RootLayout, ChatView, and the
+ * sidebars; a shortcut listed here that does nothing is a bug.
+ */
+export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
+  const cmd = isMac ? '⌘' : 'Ctrl';
+  const shift = isMac ? '⇧' : 'Shift';
+
+  const groups: ShortcutGroup[] = [
+    {
+      title: 'Everywhere',
+      shortcuts: [
+        { keys: [cmd, 'K'], description: 'Command palette' },
+        { keys: [cmd, 'N'], description: 'New conversation or entry' },
+        { keys: [cmd, shift, 'N'], description: 'Quick capture' },
+        { keys: [cmd, ','], description: 'Settings' },
+        { keys: ['Esc'], description: 'Close' },
+      ],
+    },
+    {
+      title: 'Go to',
+      shortcuts: [
+        { keys: [cmd, '0'], description: 'Home' },
+        { keys: [cmd, '1'], description: 'Search' },
+        { keys: [cmd, '2'], description: 'Library' },
+        { keys: [cmd, '3'], description: 'Journal' },
+        { keys: [cmd, '4'], description: 'Chat' },
+        { keys: [cmd, '5'], description: 'References' },
+        { keys: [cmd, '6'], description: 'Explorer' },
+        { keys: [cmd, '7'], description: 'Studio' },
+        { keys: [cmd, 'I'], description: 'Import' },
+      ],
+    },
+    {
+      title: 'Chat',
+      shortcuts: [
+        { keys: ['Enter'], description: 'Send' },
+        { keys: [shift, 'Enter'], description: 'New line' },
+        { keys: [cmd, shift, 'K'], description: 'Find in conversations and references' },
+        { keys: [cmd, '\\'], description: 'Hide or show the sidebar' },
+      ],
+    },
+    {
+      title: 'Explorer',
+      shortcuts: [
+        { keys: [cmd, 'F'], description: 'Find in the open file' },
+        { keys: [cmd, '['], description: 'Back to the previous file' },
+        { keys: [cmd, ']'], description: 'Forward to the next file' },
+        { keys: [cmd, '\\'], description: 'Hide or show the folder tree' },
+      ],
+    },
+  ];
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        hideClose
+        aria-describedby={undefined}
+        overlayClassName="z-9998"
+        className="z-9999 block max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border-subtle bg-surface-raised p-0 shadow-md"
+      >
+        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
+          <DialogTitle asChild>
+            <h2 className="font-serif text-base font-semibold text-text-primary">
+              Keyboard shortcuts
+            </h2>
+          </DialogTitle>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+
+        <div className="space-y-6 px-5 py-4">
+          {groups.map((group) => (
+            <section key={group.title}>
+              <h3 className="pb-1 text-xxs uppercase tracking-[0.08em] text-text-muted">{group.title}</h3>
+              <div className="border-t border-border-subtle">
+                {group.shortcuts.map((shortcut) => (
+                  <div
+                    key={shortcut.description}
+                    className="flex items-center justify-between border-b border-border-subtle py-2"
+                  >
+                    <span className="text-sm text-text-secondary">{shortcut.description}</span>
+                    <span className="flex gap-1">
+                      {shortcut.keys.map((key) => (
+                        <kbd
+                          key={key}
+                          className="inline-flex min-w-[24px] items-center justify-center rounded-sm border border-border-default bg-surface px-1.5 py-0.5 font-mono text-xs text-text-secondary"
+                        >
+                          {key}
+                        </kbd>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

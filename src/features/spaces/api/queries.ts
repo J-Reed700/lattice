@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import VaultAPI from '@/lib/api';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ConversationSpaceDto } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
 

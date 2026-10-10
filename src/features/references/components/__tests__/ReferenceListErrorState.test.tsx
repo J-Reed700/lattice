@@ -12,7 +12,7 @@ const passagesQuery = vi.hoisted(() => ({
   current: { isError: false, isFetching: false, refetch: () => {} },
 }));
 
-vi.mock('@/hooks/queries/usePassageReferencesQuery', () => ({
+vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({
   usePassageReferencesQuery: () => passagesQuery.current,
 }));
 

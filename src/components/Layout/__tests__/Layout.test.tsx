@@ -6,12 +6,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../ui/tooltip';
 import { Layout } from '../Layout';
 
-vi.mock('../../Downloads/DownloadsDrawer', () => ({ DownloadsDrawer: () => null }));
-vi.mock('../../Downloads/DrawerTrigger', () => ({ DrawerTrigger: () => null }));
-vi.mock('../../Downloads/HeaderDownloadsIndicator', () => ({
+vi.mock('@/features/model/components/Downloads/DownloadsDrawer', () => ({ DownloadsDrawer: () => null }));
+vi.mock('@/features/model/components/Downloads/DrawerTrigger', () => ({ DrawerTrigger: () => null }));
+vi.mock('@/features/model/components/Downloads/HeaderDownloadsIndicator', () => ({
   HeaderDownloadsIndicator: () => null,
 }));
-vi.mock('../../IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
+vi.mock('@/features/files/components/IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
 // this list is still the complete set of buttons Layout puts in the nav.

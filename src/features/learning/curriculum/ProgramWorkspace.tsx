@@ -2,7 +2,6 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 
 import { ArrowLeft, ArrowRight, Layers3 } from 'lucide-react';
 
-import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { useLearningOutlineEvidence } from '@/features/learning/api/evidenceQueries';
 import { AssessmentEvidencePanel } from '@/features/learning/assessment/AssessmentEvidencePanel';
 import { AssessmentPanel, AttemptReview, type FormSnapshot } from '@/features/learning/assessment/AssessmentPanel';
@@ -27,11 +26,12 @@ import { SourceLine } from '@/features/learning/sources/SourceLine';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
+import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 import type { LearningAssessmentKind, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 
 const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPanel'));

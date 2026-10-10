@@ -24,6 +24,29 @@ pub(super) struct RenderedPrompt {
     pub(super) attachment_ids: Vec<String>,
 }
 
+impl RenderedPrompt {
+    /// A saved research turn's prompt: what it cites and what it has read.
+    /// The request itself was saved whole, so nothing here is rendered again.
+    pub(super) fn resumed(
+        sources: Vec<SourceDto>,
+        retrieval_trace: Option<RetrievalTraceDto>,
+        short_circuit_response: Option<String>,
+        pages_read: FetchMemory,
+    ) -> Self {
+        Self {
+            enhanced_message: String::new(),
+            sources,
+            retrieval_trace,
+            short_circuit_response,
+            pages_read,
+            can_open_pages: false,
+            has_grounded_context: false,
+            attachment_names: Vec::new(),
+            attachment_ids: Vec::new(),
+        }
+    }
+}
+
 pub(super) fn render_prompt(
     turn: &PreparedTurn,
     flags: SearchFlags,

@@ -4,7 +4,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, ExternalLink, Library, Trash2 } from 'lucide-react';
 
 import { VaultAPI } from '@/lib/api';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 import { getSourceExternalUrl } from '@/utils/sourcePreview';

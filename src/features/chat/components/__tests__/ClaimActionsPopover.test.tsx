@@ -23,7 +23,7 @@ vi.mock('@/lib/api', () => ({
   default: { quickCapture },
 }));
 
-vi.mock('@/stores/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) =>
     selector({ conversations: [{ id: 'conv-1', title: 'Canopy cooling' }] }),
 }));

@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
-import { citationDisplayStore } from '@/stores/citationDisplayStore';
+import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 
 beforeEach(() => citationDisplayStore.getState().setVisible(true));

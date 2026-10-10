@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CompactionStatus, formatElapsed } from '@/features/chat/components/CompactionStatus';
-import { useCompactionStore } from '@/stores/compactionStore';
+import { useCompactionStore } from '@/features/chat/stores/compactionStore';
 import type { CompactionRecord } from '@/types/conversation';
 
 const record: CompactionRecord = {

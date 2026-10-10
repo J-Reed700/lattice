@@ -12,7 +12,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::{build_excerpt, safe_truncate};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,11 +26,12 @@ use super::retrieval::{
     build_web_source_citations, deduplicate_sources, fetched_page_text_room, format_tool_result,
     merge_tool_sources, record_tool_document_references,
 };
+use super::turn::{ResearchRound, Rounds};
 use super::turn_record::{TurnRecorder, TurnStepKind};
 use super::web_steps;
 use super::{ChatEventSink, ChatStreamEventDto};
 
-#[derive(Debug, Serialize, Clone, Default, specta::Type)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolLoopTimingMetrics {
     pub total_ms: u64,
@@ -70,6 +71,9 @@ pub(super) struct LoopRequest<'a> {
     pub(super) time_budget: Duration,
     /// Model rounds this turn may spend; see [`max_tool_rounds`].
     pub(super) max_tool_rounds: usize,
+    /// A research turn saves every round it finishes here, and a resumed one
+    /// starts after the last it saved.
+    pub(super) research: Option<Rounds<'a>>,
 }
 
 /// One call the model asked for this round.
@@ -169,16 +173,42 @@ pub(super) async fn run_agentic_tool_loop(
     use crate::application::ports::llm_port::{CompletionRequest, InferencePriority};
 
     let LoopRequest {
-        input,
+        mut input,
         tools: tools_ref,
         max_output_tokens,
         input_budget,
         time_budget,
         max_tool_rounds,
+        research,
     } = request;
     let max_tool_rounds = max_tool_rounds.max(1);
-    // One deadline for the whole turn: tool rounds and provider retries share it.
-    let deadline = Instant::now() + time_budget;
+    let (journal, start) = match research {
+        Some(Rounds { journal, start }) => (Some(journal), start),
+        None => (None, None),
+    };
+    // What the rounds add after the planned request is what a research turn
+    // saves; a resumed one sends its saved rounds after the request again.
+    let planned_len = input.len();
+    let mut timings = ToolLoopTimingMetrics::default();
+    let mut queries = Vec::new();
+    let mut fetched = Vec::new();
+    // The last round always answers, so a resumed turn has at least that one.
+    let mut first_round = 0;
+    if let Some(start) = start {
+        input.extend(start.transcript);
+        queries = start.queries;
+        fetched = start.fetched;
+        timings = start.timings;
+        first_round = start.rounds.min(max_tool_rounds - 1);
+    }
+    let spent = Duration::from_millis(
+        timings
+            .llm_stream_ms
+            .saturating_add(timings.tool_execution_ms),
+    );
+    // One deadline for the whole turn: tool rounds and provider retries share
+    // it, and a resumed turn has only what its saved rounds left.
+    let deadline = Instant::now() + time_budget.saturating_sub(spent);
     let budget_minutes = time_budget.as_secs().div_ceil(60);
     let budget_exhausted = || {
         AppError::ServiceNotAvailable(format!(
@@ -195,7 +225,6 @@ pub(super) async fn run_agentic_tool_loop(
     };
 
     let tool_loop_start = Instant::now();
-    let mut timings = ToolLoopTimingMetrics::default();
 
     tracing::info!(
         conversation_id = conv_id,
@@ -230,7 +259,7 @@ pub(super) async fn run_agentic_tool_loop(
             .filter(|budget| *budget > 0),
         ..Default::default()
     };
-    let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
+    let cancellation_error = super::cancellation::cancelled_error;
 
     // Pages are remembered for the whole turn, not just the round that found
     // them — and the turn started before this loop did: retrieval has usually
@@ -253,7 +282,7 @@ pub(super) async fn run_agentic_tool_loop(
     // Stop is honoured at this interval while a tool runs, as it is while the
     // model generates.
     let cancelled = || turn_cancel.cancelled();
-    for iteration in 0..max_tool_rounds {
+    for iteration in first_round..max_tool_rounds {
         timings.iterations = (iteration + 1) as u32;
         // The last round is for answering. A model still calling tools here
         // would otherwise end the turn with an error and lose every page and
@@ -578,6 +607,15 @@ pub(super) async fn run_agentic_tool_loop(
                     continue;
                 }
             }
+            if let Some(query) = tc
+                .arguments
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|query| !query.is_empty())
+            {
+                queries.push(query.to_string());
+            }
             let tool_step = recorder.begin_guarded_with_links(
                 tool_step_kind(resolved_tool),
                 tool_activity_label(resolved_tool, &tc.arguments),
@@ -783,6 +821,7 @@ pub(super) async fn run_agentic_tool_loop(
                                 Delivery::Clipped { shown_chars: room }
                             };
                             fetch_memory.record_page(url, text, delivery);
+                            fetched.push(url.to_string());
                             // A live read becomes the
                             // conversation's permanent archive;
                             // an archived one already is.
@@ -831,6 +870,26 @@ pub(super) async fn run_agentic_tool_loop(
             timings.tool_execution_ms = timings
                 .tool_execution_ms
                 .saturating_add(elapsed_ms(tool_call_start));
+        }
+        if let Some(journal) = journal {
+            journal
+                .round(&ResearchRound {
+                    completed: iteration + 1,
+                    transcript: native_request
+                        .input
+                        .get(planned_len..)
+                        .map(<[CompletionInput]>::to_vec)
+                        .unwrap_or_default(),
+                    queries: queries.clone(),
+                    fetched: fetched.clone(),
+                    sources: sources.clone(),
+                    retrieval_trace: retrieval_trace.clone(),
+                    pages_read: fetch_memory.clone(),
+                    steps: recorder.steps(),
+                    timings: timings.clone(),
+                    elapsed_ms: recorder.elapsed_ms(),
+                })
+                .await?;
         }
     }
 

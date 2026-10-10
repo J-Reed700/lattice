@@ -5,7 +5,7 @@ import { Columns3, Loader2, NotebookPen } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { ACTION_HEADING_CLASS, ACTION_ROW_CLASS, ACTION_SURFACE_CLASS } from '@/features/chat/components/actions/actionSurface';
-import { VaultAPI } from '@/lib/api';
+import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
 import { toast } from '@/stores/toastStore';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 import { answerToMarkdown, vaultDocumentIds } from '@/utils/conversationExport';
@@ -46,6 +46,7 @@ export function AnswerActionsMenu({
   align = 'start',
 }: AnswerActionsMenuProps) {
   const navigate = useNavigate();
+  const quickCapture = useQuickCapture();
   const [open, setOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -56,7 +57,7 @@ export function AnswerActionsMenu({
   const handleAddToJournal = async () => {
     setIsSaving(true);
     try {
-      const result = await VaultAPI.quickCapture(
+      const result = await quickCapture(
         answerToMarkdown({
           content: markdown,
           sources,

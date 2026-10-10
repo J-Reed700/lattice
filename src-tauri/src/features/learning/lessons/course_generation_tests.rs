@@ -1031,10 +1031,11 @@ impl LLMPort for DelayedOutlineModel {
                 _ => None,
             })
             .sum();
-        assert_eq!(
-            request.max_output_tokens,
-            Some((self.max_context_tokens() - input_tokens) as u32)
-        );
+        // The answer takes the window the prompt leaves, less only the
+        // planner's safety margin, and never runs past the window.
+        let max_output = request.max_output_tokens.unwrap() as usize;
+        assert!(max_output + input_tokens <= self.max_context_tokens());
+        assert!(max_output + input_tokens >= self.max_context_tokens() * 9 / 10);
         let prompt = request
             .input
             .iter()

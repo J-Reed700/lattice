@@ -9,12 +9,13 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
+import { listen } from '@tauri-apps/api/event';
 
+import type { FolderIndexStatus } from '@/features/explorer/stores/explorerStore';
 import { isJobFinished, useJobs, useJobStatus, type JobDto } from '@/features/jobs/api';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { VaultAPI } from '@/lib/api';
 import type { ExplorerFolderListDto } from '@/lib/bindings';
-import type { FolderIndexStatus } from '@/stores/explorerStore';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 import { unwrapApiResult } from '@/types/api/result';
 
@@ -139,11 +140,27 @@ function buildRoot(job: JobDto): string | null {
 }
 
 /**
+ * Carries the open folder's `FolderIndexStatusDto` when the watcher's updates
+ * move it, after its build is done. Builds report through their jobs.
+ */
+export const FOLDER_CHANGED_EVENT = 'explorer://folder-changed';
+
+/**
+ * Puts a watcher update into the cache: the folder's status, and the folders
+ * list, whose counts it changed.
+ */
+export function applyFolderChange(client: QueryClient, status: FolderIndexStatus): void {
+  client.setQueryData(explorerKeys.indexStatus(status.root), status);
+  void client.invalidateQueries({ queryKey: explorerKeys.folders });
+}
+
+/**
  * Puts the folder builds' statuses into the cache, one entry per folder: the
  * builds running when the page mounts, then each change the jobs report. A
  * build that is waiting its turn or was cancelled drops its entry, so the
- * folder shows what its index on disk holds. Mounted once, by the Explorer
- * page; everything that shows a status reads the cache.
+ * folder shows what its index on disk holds. The open folder's watcher
+ * updates arrive on their own event. Mounted once, by the Explorer page;
+ * everything that shows a status reads the cache.
  */
 export function useExplorerIndexStatusEvents(): void {
   const client = useQueryClient();
@@ -167,6 +184,11 @@ export function useExplorerIndexStatusEvents(): void {
   useEffect(() => {
     for (const job of running ?? []) if (job.status === 'running') apply(job);
   }, [running, apply]);
+  useEffect(() => {
+    const listening = listen<FolderIndexStatus>(FOLDER_CHANGED_EVENT, (event) => applyFolderChange(client, event.payload))
+      .catch(() => () => undefined);
+    return () => void listening.then((unlisten) => unlisten());
+  }, [client]);
 }
 
 const statusQuery = (root: string) =>

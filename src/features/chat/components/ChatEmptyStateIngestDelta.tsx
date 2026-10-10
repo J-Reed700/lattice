@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 
-import { useChatEmptyStateStats } from '@/hooks/queries/useChatEmptyStateStats';
+import { useChatEmptyStateStats } from '@/features/chat/hooks/useChatEmptyStateStats';
 
 /**
  * ChatEmptyStateIngestDelta

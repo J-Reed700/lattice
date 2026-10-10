@@ -10,9 +10,9 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::ChatStreamEventDto;
 
@@ -34,7 +34,7 @@ const MAX_STEP_LINKS: usize = 12;
 
 /// What kind of work a step was. Stable codes, not prose — the label is what a
 /// person reads, this is what the UI groups and tests match on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStepKind {
     /// The turn was asked to research rather than answer. Not work in itself:
@@ -57,7 +57,7 @@ pub enum TurnStepKind {
     Retry,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStepState {
     Running,
@@ -70,7 +70,7 @@ pub enum TurnStepState {
 /// A sentence like "10 results" says a search happened and nothing about where
 /// it led. On a research turn that runs for minutes, the addresses are the only
 /// evidence a reader has that the model is looking somewhere sensible.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStepLinkDto {
     pub url: String,
@@ -91,7 +91,7 @@ impl TurnStepLinkDto {
 }
 
 /// One thing the turn did, with how long it took and what came of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStepDto {
     /// Stable within the turn. A finish event carries the id of its start, and
@@ -161,7 +161,7 @@ pub struct TurnTokensDto {
 /// `resolve_router_decision` used to throw both of these away the moment it had
 /// them, so an answer could be steered by a 0.31-confidence guess and say
 /// nothing about it.
-#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnRouterDto {
     pub action: String,
@@ -237,6 +237,32 @@ impl TurnRecorder {
             emit,
             steps: Mutex::new(Vec::new()),
             next_id: AtomicUsize::new(0),
+        }
+    }
+
+    /// Carries on a turn saved after `elapsed_ms`: its steps stay on the
+    /// record, new ones are numbered after them, and offsets continue from
+    /// where it stopped rather than from zero.
+    pub(super) fn resumed(
+        conversation_id: &str,
+        request_id: &str,
+        emit: Box<dyn Fn(ChatStreamEventDto) + Send + Sync>,
+        steps: Vec<TurnStepDto>,
+        elapsed_ms: u64,
+    ) -> Self {
+        let recorder = Self::with_emitter(conversation_id, request_id, emit);
+        let next = steps
+            .iter()
+            .filter_map(|step| step.id.strip_prefix('s')?.parse::<usize>().ok())
+            .max()
+            .map_or(0, |last| last + 1);
+        Self {
+            started: Instant::now()
+                .checked_sub(Duration::from_millis(elapsed_ms))
+                .unwrap_or(recorder.started),
+            steps: Mutex::new(steps),
+            next_id: AtomicUsize::new(next),
+            ..recorder
         }
     }
 

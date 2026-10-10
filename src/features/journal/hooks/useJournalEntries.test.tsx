@@ -4,9 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook as renderBareHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { useVaultImportStore } from '@/features/vault/stores/vaultImportStore';
 import VaultAPI from '@/lib/api';
 import { toast } from '@/stores/toastStore';
-import { useVaultImportStore } from '@/stores/vaultImportStore';
 import { deferred } from '@/tests/deferred';
 
 import { useJournalEntries } from './useJournalEntries';
