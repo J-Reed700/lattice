@@ -659,10 +659,12 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
     const primary = page.getByRole("tablist", { name: "Program workspace" });
     expect(await primary.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
     if (viewport.width >= 800) {
-      const lessonCard = page.locator("main article").first();
-      const bounds = await lessonCard.boundingBox();
+      // The lesson to resume is on the first screen: its title shows without
+      // scrolling, below the module's evidence when citations are shown.
+      const lessonTitle = page.locator("main article").first().getByText("Compare observations", { exact: true });
+      const bounds = await lessonTitle.boundingBox();
       expect(bounds).not.toBeNull();
-      expect(bounds!.y).toBeLessThan(viewport.height - 140);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     }
     await page.screenshot({ path: test.info().outputPath(`studio-active-workspace-${viewport.width}px.png`), fullPage: true });
     const lessonsTab = workspace.getByRole("tab", { name: "Lessons", exact: true });
