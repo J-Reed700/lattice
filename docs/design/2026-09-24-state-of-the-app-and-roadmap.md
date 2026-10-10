@@ -2,6 +2,16 @@
 
 Date: 2026-09-24. Branch: `conversation-memory-release-readiness` (42 commits ahead of `main`, 16 files still uncommitted).
 
+> **Status (2026-10-10).** Superseded as the plan of record by
+> `2026-10-09-architecture-audit.md`, whose §5 tracks which phases remain.
+> Since this was written: the bundled sidecar runs tool calling for catalog
+> models; the grounding verifier judges up to three windows per source, keeps
+> an `unverified` state and has a 90 s budget; llama.cpp calls go through one
+> client and one scheduler per backend and use `/tokenize`, `id_slot` and
+> `cache_prompt`; the retrieval eval runs chat's orchestrator
+> (`HybridSearchUseCase`). The §2 rows "Agentic loop", "Context engineering"
+> and "Grounding check" are stale on those points.
+
 ## 1. Verdict in one paragraph
 
 The architecture is current. The retrieval core, the evidence-first chat surface, the provenance-backed memory and the archived web evidence are all designs a 2026 team would recognise as the right shape, and the retrieval half has real numbers behind it. The app works in daily use. What is not current is the **default configuration** and the **measurement**: the shipped local model runs with tool calling off, the reranker and sparse branch are off, token budgets are estimated as characters divided by four, the grounding checker is a lexical pass plus a one-window judge, and only retrieval has an eval that a change can move. The remaining work is optimisation and fixes: turn on, measure, and finish the modern things already built.
