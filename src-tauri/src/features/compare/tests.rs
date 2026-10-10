@@ -195,10 +195,7 @@ fn parses_nothing_from_prose_with_multibyte_characters() {
     assert!(cells.iter().all(|cell| cell.value.is_none()));
 }
 
-/// With no embedding model the scoped search errors: the row still gets the
-/// document's opening chunks, capped by the query, and says it is degraded.
-#[tokio::test]
-async fn a_search_failure_falls_back_to_opening_chunks_and_marks_the_row_degraded() {
+async fn container_with_chunks(contents: &[String]) -> crate::interfaces::di::Container {
     let container = crate::tests::common::setup_test_container()
         .await
         .expect("container");
@@ -210,28 +207,55 @@ async fn a_search_failure_falls_back_to_opening_chunks_and_marks_the_row_degrade
     .execute(&pool)
     .await
     .expect("document");
-    for index in 0..(super::use_case::MAX_CHUNKS_PER_DOCUMENT + 5) {
+    for (index, content) in contents.iter().enumerate() {
         sqlx::query(
             "INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES (?, 'doc', ?, ?)",
         )
         .bind(format!("c{index}"))
-        .bind(format!("passage {index}"))
+        .bind(content)
         .bind(index as i64)
         .execute(&pool)
         .await
         .expect("chunk");
     }
+    container
+}
+
+/// Columns are searched with the library's hybrid search, as chat searches
+/// it: with no embedding model the keyword branch still finds the passage a
+/// column names, so the row is not reduced to the document's opening.
+#[tokio::test]
+async fn without_an_embedding_model_the_keyword_branch_still_finds_the_column() {
+    let mut contents: Vec<String> = (0..12).map(|index| format!("passage {index}")).collect();
+    contents.push("The method was a randomised controlled trial.".to_string());
+    let container = container_with_chunks(&contents).await;
 
     let retrieved = super::retrieval::retrieve_for_document(&container, "doc", &columns())
         .await
         .expect("retrieve");
 
+    assert!(retrieved.degraded.is_none());
+    assert_eq!(retrieved.chunks[0].chunk_id, "c12");
+}
+
+/// A document the search finds nothing in still gets a row: its opening
+/// chunks, capped. The search worked, so the row is not marked degraded.
+#[tokio::test]
+async fn a_document_the_search_finds_nothing_in_falls_back_to_its_opening_chunks() {
+    let contents: Vec<String> = (0..(super::use_case::MAX_CHUNKS_PER_DOCUMENT + 5))
+        .map(|index| format!("passage {index}"))
+        .collect();
+    let container = container_with_chunks(&contents).await;
+
+    let retrieved = super::retrieval::retrieve_for_document(&container, "doc", &columns())
+        .await
+        .expect("retrieve");
+
+    assert!(retrieved.degraded.is_none());
     assert_eq!(
-        retrieved.degraded.as_deref(),
-        Some(super::retrieval::DEGRADED_NOTE)
+        retrieved.chunks.len(),
+        super::use_case::MAX_CHUNKS_PER_DOCUMENT
     );
-    assert!(!retrieved.chunks.is_empty());
-    assert!(retrieved.chunks.len() <= super::use_case::MAX_CHUNKS_PER_DOCUMENT);
     assert_eq!(retrieved.chunks[0].chunk_id, "c0");
 }
 
@@ -260,9 +284,10 @@ impl LLMPort for Recorder {
 #[tokio::test]
 async fn a_row_sends_its_passages_once_at_interactive_priority() {
     let llm = Recorder::default();
-    fill_row(&llm, "Sleep study", &columns(), &sample_chunks())
+    let (_, carried) = fill_row(&llm, "Sleep study", &columns(), &sample_chunks())
         .await
         .unwrap();
+    assert_eq!(carried.len(), 3, "an 8k window carries every passage");
     let sent = llm.0.lock().unwrap();
     assert_eq!(sent[0].priority, InferencePriority::Interactive);
     let [CompletionInput::Message { role, content }] = sent[0].input.as_slice() else {
@@ -275,4 +300,45 @@ async fn a_row_sends_its_passages_once_at_interactive_priority() {
             .count(),
         1
     );
+}
+
+/// A model with a small window that records what it was sent.
+struct SmallWindow(std::sync::Mutex<Vec<CompletionRequest>>);
+
+#[async_trait::async_trait]
+impl LLMPort for SmallWindow {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.lock().unwrap().push(request.clone());
+        Ok(CompletionResponse::from_text("{}"))
+    }
+    fn model_name(&self) -> &str {
+        "small-window"
+    }
+    fn max_context_tokens(&self) -> usize {
+        1_500
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The window, not a character cap, decides how much of a document a row
+/// reads: the best-ranked passages that fit go in, and a citation can only
+/// point at a passage the model was shown.
+#[tokio::test]
+async fn a_small_window_carries_the_best_passages_that_fit_and_reports_them() {
+    let llm = SmallWindow(std::sync::Mutex::new(Vec::new()));
+    let mut chunks = sample_chunks();
+    chunks.insert(1, chunk("chunk_long", &"filler sentence. ".repeat(400), 3));
+
+    let (_, carried) = fill_row(&llm, "Sleep study", &columns(), &chunks)
+        .await
+        .unwrap();
+
+    let carried_ids: Vec<&str> = carried.iter().map(|c| c.chunk_id.as_str()).collect();
+    assert_eq!(carried_ids, vec!["chunk_1", "chunk_2", "chunk_3"]);
+    let sent = llm.0.lock().unwrap();
+    let prompt = sent[0].user_text();
+    assert!(!prompt.contains("filler sentence."));
+    assert!(prompt.contains("Passages:\n[1] This paper reviews prior literature on sleep."));
 }

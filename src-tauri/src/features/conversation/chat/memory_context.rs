@@ -19,8 +19,8 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
-    BudgetAllocation, ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence,
-    TokenAccounting, TokenCounter,
+    ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence, TokenAccounting,
+    TokenCounter,
 };
 use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
@@ -96,38 +96,6 @@ fn incomplete_history(cause: Option<&AppError>) -> AppError {
          Configure a utility model if needed, run /compact to process the remaining history \
          and retry, or choose a larger-context model."
     ))
-}
-
-/// The history cost retrieval must budget around when bounded memory builds
-/// the prompt.
-///
-/// Retrieval is sized before the plan exists (the plan's current input *is*
-/// the retrieved material), and the string context it used to be sized against
-/// is filled to the whole window in a long chat — which left retrieval nothing.
-/// The plan never spends more on the system policy and history than the
-/// assembler's non-retrieval pools, so that is the ceiling here. The assembler's
-/// safety margin is added on top: retrieval must leave it free or the finished
-/// plan's fixed part overruns its input budget.
-///
-/// `context_history_tokens` is the string context's own total (system entry
-/// included). When the allocation itself cannot be made, the plan will fail
-/// with the actionable error; the string total is returned unchanged.
-pub fn history_tokens_for_rag_budget(
-    llm: &dyn LLMPort,
-    system_policy: &str,
-    question_tokens: usize,
-    context_history_tokens: usize,
-) -> usize {
-    let system_tokens = llm.count_tokens(system_policy);
-    let capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
-        .with_accounting(TokenAccounting::Estimated);
-    match BudgetAllocation::plan(&capacity, system_tokens + question_tokens) {
-        Ok(allocation) => {
-            let history_pools = allocation.available - allocation.rag_and_tools;
-            context_history_tokens.min(system_tokens + history_pools) + allocation.safety_margin
-        }
-        Err(_) => context_history_tokens,
-    }
 }
 
 /// Assemble a bounded typed plan for this turn, or `None` to leave the existing

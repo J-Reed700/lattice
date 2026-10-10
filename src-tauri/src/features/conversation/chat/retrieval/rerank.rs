@@ -26,7 +26,7 @@ pub(super) async fn apply_rerank_stage(
         query_max_chars: tuning.rerank_query_max_chars as usize,
     };
     let reranked = container
-        .hybrid_search_use_case()
+        .library_search()
         .rerank(search_response, &options)
         .await;
     (reranked.response, reranked.applied)

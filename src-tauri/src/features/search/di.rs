@@ -381,6 +381,16 @@ impl Container {
     pub fn document_repository(&self) -> Arc<dyn DocumentRepository> {
         Arc::clone(self.search.document_repo())
     }
+
+    /// Library chunks and scoped hybrid search for a feature that keeps its
+    /// own copy of library documents.
+    pub fn library_passages(&self) -> Arc<dyn crate::application::ports::LibraryPassagesPort> {
+        Arc::new(crate::features::search::use_cases::LibraryPassages::new(
+            self.hybrid_search_use_case(),
+            self.document_repository(),
+            self.chunk_repository(),
+        ))
+    }
 }
 
 /// Clear the post-restore marker once every chunk has a vector again, or say

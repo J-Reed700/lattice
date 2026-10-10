@@ -1,5 +1,7 @@
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
+use crate::features::conversation::repository::ConversationRepository;
+use crate::features::search::use_cases::HybridSearchUseCase;
 use std::sync::Arc;
 
 #[test]

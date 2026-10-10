@@ -71,7 +71,6 @@
 
 pub mod backup_port;
 pub mod backup_scheduler_port;
-pub mod batch_job_repository_port;
 pub mod chunk_repository_port;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
@@ -89,6 +88,7 @@ pub mod favorites_port;
 pub mod file_library;
 pub mod file_storage_port;
 pub mod file_system_port;
+pub mod library_passages;
 pub mod llm_port;
 pub mod loaded_chat_model;
 pub mod loaded_embedding_model;
@@ -113,9 +113,6 @@ pub mod vector_search_port;
 
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
-pub use batch_job_repository_port::{
-    BatchItemState, BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
-};
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::{
     is_blob_hash, BlobLease, BlobLeases, BlobReferenceCheck, BlobRemoval,
@@ -138,6 +135,9 @@ pub use embedding_repository_port::EmbeddingRepositoryPort;
 pub use favorites_port::FavoritesRepositoryPort;
 pub use file_storage_port::{FileMetadata, FileStoragePort};
 pub use file_system_port::FileSystemPort;
+pub use library_passages::{
+    LibraryChunk, LibraryDocumentText, LibraryPassageHit, LibraryPassagesPort,
+};
 pub use llm_port::{LLMPort, ToolDefinition};
 pub use loaded_chat_model::LoadedChatModelPort;
 pub use loaded_embedding_model::LoadedEmbeddingModelPort;

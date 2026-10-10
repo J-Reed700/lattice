@@ -15,7 +15,9 @@ use tokio_util::sync::CancellationToken;
 use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::vector_search_port::{VectorIndexEntry, VectorSearchPort};
 use crate::application::ports::{EmbeddingPort, LLMPort};
-use crate::application::services::completion_input::{complete_text, TextCall};
+use crate::application::services::grounded_generation::{
+    self, CallOptions, EvidenceSelection, GroundedRequest,
+};
 use crate::features::summaries::entity::{DocumentSummary, SummaryLevel};
 use crate::features::summaries::prompt::{
     self, DocumentPromptInput, SectionPromptInput, SummaryDraft,
@@ -116,28 +118,26 @@ impl GenerateDocumentSummariesUseCase {
                 self.identity
             )));
         }
-        let count = |text: &str| llm.count_tokens(text);
-
         let headings: Vec<String> = source
             .sections
             .iter()
             .map(|section| section.heading.clone())
             .collect();
-        let document_prompt = prompt::render_document_prompt(&DocumentPromptInput {
-            title: &source.title,
-            cluster_label: source.cluster_label.as_deref(),
-            section_headings: &headings,
-            body: &prompt::truncate_to_tokens(&source.body, prompt::DOCUMENT_BODY_TOKENS, count),
-        });
-        let mut summaries = Vec::new();
-        if let Some(draft) = ask(
-            llm.as_ref(),
-            &prompt::document_system_prompt(),
-            &document_prompt,
+        let document_request = summary_request(
+            prompt::document_system_prompt(),
+            prompt::render_document_task(&DocumentPromptInput {
+                title: &source.title,
+                cluster_label: source.cluster_label.as_deref(),
+                section_headings: &headings,
+            }),
+            prompt::DOCUMENT_BODY_HEADING,
+            document_id,
+            &source.body,
+            prompt::DOCUMENT_BODY_TOKENS,
             cancel,
-        )
-        .await
-        {
+        );
+        let mut summaries = Vec::new();
+        if let Some(draft) = ask(llm.as_ref(), document_request, cancel).await {
             summaries.push(DocumentSummary::new(
                 document_id,
                 None,
@@ -153,17 +153,20 @@ impl GenerateDocumentSummariesUseCase {
             let system = prompt::section_system_prompt();
             for section in source.sections.iter().take(prompt::MAX_SECTION_SUMMARIES) {
                 ensure_active(cancel)?;
-                let section_prompt = prompt::render_section_prompt(&SectionPromptInput {
-                    title: &source.title,
-                    section: &section.heading,
-                    cluster_label: source.cluster_label.as_deref(),
-                    body: &prompt::truncate_to_tokens(
-                        &section.text,
-                        prompt::SECTION_BODY_TOKENS,
-                        count,
-                    ),
-                });
-                if let Some(draft) = ask(llm.as_ref(), &system, &section_prompt, cancel).await {
+                let section_request = summary_request(
+                    system.clone(),
+                    prompt::render_section_task(&SectionPromptInput {
+                        title: &source.title,
+                        section: &section.heading,
+                        cluster_label: source.cluster_label.as_deref(),
+                    }),
+                    prompt::SECTION_BODY_HEADING,
+                    &format!("{document_id}#{}", section.heading),
+                    &section.text,
+                    prompt::SECTION_BODY_TOKENS,
+                    cancel,
+                );
+                if let Some(draft) = ask(llm.as_ref(), section_request, cancel).await {
                     summaries.push(DocumentSummary::new(
                         document_id,
                         Some(section.heading.clone()),
@@ -294,9 +297,6 @@ impl GenerateDocumentSummariesUseCase {
     }
 }
 
-/// One model call, parsed. `None` on timeout, transport failure, or output
-/// that carries no summary — all three mean "no summary", and the caller
-/// treats them identically.
 fn ensure_active(cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
         Err(AppError::Other("Summary generation cancelled".into()))
@@ -305,27 +305,55 @@ fn ensure_active(cancel: &CancellationToken) -> Result<()> {
     }
 }
 
-async fn ask(
-    llm: &dyn LLMPort,
-    system: &str,
-    user_prompt: &str,
+/// One grounded summary call: the task, then as much of the source text's
+/// opening as the window and `ceiling` allow, then the response contract.
+fn summary_request(
+    system: String,
+    task: String,
+    heading: &str,
+    source_id: &str,
+    text: &str,
+    ceiling: usize,
     cancel: &CancellationToken,
-) -> Option<SummaryDraft> {
-    // The system prompt goes in as context, matching `corpus_shape::labeling`.
-    // Upkeep: queued behind anyone waiting on the model.
-    let context = [system.to_string()];
-    let call = TextCall {
+) -> GroundedRequest {
+    let mut request = GroundedRequest::new(system, task);
+    request.evidence_heading = heading.to_string();
+    request.evidence =
+        grounded_generation::passages_from_text(source_id, text, prompt::BODY_PASSAGE_CHARS);
+    request.selection = EvidenceSelection::Prefix;
+    request.evidence_limit = Some(ceiling);
+    request.closing = prompt::response_contract().to_string();
+    request.call = CallOptions {
+        // Upkeep: queued behind anyone waiting on the model.
         priority: InferencePriority::Maintenance,
         cancel: Some(cancel.clone()),
-        cache_key: None,
+        ..Default::default()
     };
+    request
+}
+
+/// One model call, parsed. `None` on timeout, transport failure, a source the
+/// window cannot hold any of, or output that carries no summary — each means
+/// "no summary", and the caller treats them identically.
+async fn ask(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    cancel: &CancellationToken,
+) -> Option<SummaryDraft> {
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => return None,
-        result = tokio::time::timeout(CALL_TIMEOUT, complete_text(llm, user_prompt, &context, call)) => result,
+        result = tokio::time::timeout(CALL_TIMEOUT, grounded_generation::generate(llm, request)) => result,
     };
     let response = match result {
-        Ok(Ok(response)) => response,
+        Ok(Ok(output)) => {
+            tracing::debug!(
+                passages = output.used_evidence_ids.len(),
+                left_out = output.accounting.evicted.len(),
+                "Summary request planned"
+            );
+            output.text
+        }
         Ok(Err(error)) => {
             tracing::warn!(%error, "Summary generation call failed");
             return None;

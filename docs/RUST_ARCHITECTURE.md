@@ -172,13 +172,30 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   (recall). Application services depend on these traits only, so their tests use
   fakes while the SQL stays behind the repository barrier.
 - `application/services/context_assembler/{mod,budget,plan,render,tests}.rs` is
-  the single budget owner. `BudgetAllocation::plan` derives every pool from the
-  active model's capacity, and it is now shared by the chat path and the QA path;
-  the QA path previously carried its own percentage constants. Mandatory-memory
-  overflow is an explicit `ActiveMemoryBudgetExceeded` carrying required and
-  available counts, never a silent eviction. `plan.rs` returns the typed plan and
-  its token accounting; `render.rs` emits typed messages, so memory is never
-  spliced into the system prompt as a string.
+  the single budget owner. `BudgetAllocation::plan` takes the request's fixed
+  parts (system policy, tool schemas, current input) and how its history is paid
+  for (`HistoryCharge`: reserved memory pools, measured history, or history the
+  caller carries whole), and divides the active model's capacity into the output
+  reservation, safety margin, memory pools and the evidence pool. Fixed parts
+  that do not fit are a typed `PromptBudgetExceeded`, never a clipped
+  instruction; mandatory-memory overflow is an explicit
+  `ActiveMemoryBudgetExceeded`, never a silent eviction. `EvidenceBudget` hands
+  the evidence pool out claim by claim (`EvidenceShare` for attachments, an
+  Explorer folder, recalled evidence and web pages) and packs ranked passages
+  into what is left. `ContextAssembler::assemble` selects and renders memory,
+  history and recall against the same allocation; `plan.rs` returns the typed
+  plan and its accounting, and `render.rs` emits typed messages, so memory is
+  never spliced into the system prompt as a string.
+- `application/services/grounded_generation/` is the one path from gathered
+  evidence to an answer for every generator outside chat's tool loop: handoff
+  (continue in a new chat), compare and document summaries use it today. A
+  request carries instructions, a task, evidence passages under stable ids,
+  optional history, an output reservation, priority/cancel/cache key and an
+  optional `claim_verification` policy. It plans with `BudgetAllocation`,
+  selects evidence (`All`, `BestFirst` or `Prefix`), sends one typed call and
+  returns the text, the ids it carried, the accounting and any verdicts. Evidence
+  the window cannot hold is reported by id; a request whose fixed parts or
+  required evidence overflow is refused before any model call.
 - `application/services/conversation_memory/` (`mod`, `job`, `selection`,
   `prompts`, `extract`, `verify`, `summarize`, `segment`) is the only compaction
   implementation, with `mod.rs` as the façade. `CompactionJob` in `job.rs` must be a singleton: it
@@ -196,12 +213,29 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   `WHERE` clause of every query, and only `source = 'message'` rows are returned,
   so a title or bookmark note cannot be presented as something the user said.
   `memory_port.rs` is thin delegation to those inherent methods.
+- `features/conversation/chat/turn/` runs one chat turn as stages with typed
+  hand-offs: `prepare` (validate, load, open, read history, plan the
+  `TurnBudget`), `classify` (intent, then router), `carry` (attachments and the
+  Explorer folder, charged to the evidence budget), `retrieve` (recalled
+  evidence, then the retrieval pipeline), `assemble` (fit, number and render the
+  evidence; choose tools; plan the typed request), `generate` (the tool loop)
+  and `finalize` (persist, then start the background grounding check). The turn
+  has no budget arithmetic of its own: `TurnBudget` is one `BudgetAllocation`
+  planned before retrieval, and the tool loop grows its request only up to that
+  allocation's input budget. The stages reach infrastructure only through the
+  narrowed `chat/ports.rs` traits (`ChatRecords` for the conversation's own
+  rows, `LibrarySearchTrait`, `PageReader`, `ChatTools`), so `turn/tests.rs`
+  drives them with a fake runtime.
 - `features/conversation/chat/memory_context.rs` assembles one turn's bounded
-  typed input from memory plus recall, and returns nothing when the setting is
-  off or no memory has been extracted, so short conversations pay for none of it.
+  typed input from memory plus recall when the setting is on, and returns
+  nothing when it is off; the string history then goes out whole, already charged
+  whole by the turn's budget. Even a conversation with no extracted ledger is
+  planned, because its raw history may already exceed the window. A plan that
+  would drop unprocessed history compacts once, inline, and is planned again;
+  if that still does not fit, the turn fails with the user's message saved.
   `chat/history_tools.rs` owns both shapes of recovery: the two read-only tools a
-  continuation model may call, and the same retrieval run automatically for
-  providers and QA paths that have no tools.
+  continuation model may call, and the same retrieval run automatically when the
+  plan is assembled.
 - `features/conversation/memory_dto.rs` and `memory_details.rs` are the
   details view. `knowledge_dto.rs` and `repository/knowledge.rs` own explicit
   sharing, validity intervals and user corrections. A correction appends an exact

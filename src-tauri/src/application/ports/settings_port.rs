@@ -606,28 +606,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         }
         if !settings
             .llm
-            .prompts
-            .tool_followup_prompt_template
-            .contains("{question}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_followup_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .tool_followup_prompt_template
-            .contains("{previous_response}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_followup_prompt_template missing {previous_response} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
             .tool_output
             .templates
             .default_template

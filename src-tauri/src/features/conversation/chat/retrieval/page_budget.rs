@@ -8,19 +8,16 @@
 //!
 //! The room a page gets is a property of the model's context window, not a
 //! constant: a 131k-token model can hold several whole articles, an 8k one
-//! cannot hold what the old constant handed it. So the total is taken as a share
-//! of the turn's retrieval token budget and divided between the pages.
+//! cannot hold what the old constant handed it. So the total is the web pages'
+//! share of the turn's evidence budget, divided between the pages.
 
-/// Share of the turn's retrieval token budget that fetched pages may fill. The
-/// rest stays with the user's own documents, which the prompt ranks first.
-const WEB_PAGE_BUDGET_SHARE: f64 = 0.4;
+use crate::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
-/// The characters of page text a turn with `available_for_rag_tokens` can
+/// The characters of page text the turn's evidence budget lets fetched pages
 /// carry, erring short so dense text under-fills rather than overflows.
-pub(super) fn page_budget_chars(available_for_rag_tokens: usize) -> usize {
-    let tokens = (available_for_rag_tokens as f64 * WEB_PAGE_BUDGET_SHARE) as usize;
+pub(super) fn page_budget_chars(evidence: &EvidenceBudget) -> usize {
     crate::application::ports::llm_port::chars_within_tokens(
-        tokens,
+        evidence.allowance(EvidenceShare::WEB_PAGES),
         crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
     )
 }
@@ -70,7 +67,7 @@ mod tests {
     /// 131k-token model were each clipped to 6,000 characters. Both fit whole.
     #[test]
     fn a_large_context_carries_long_pages_whole() {
-        let budget = page_budget_chars(98_000);
+        let budget = page_budget_chars(&EvidenceBudget::new(98_000));
         let given = allocate(&[21_000, 8_400], budget, 50_000);
         assert_eq!(given, vec![21_000, 8_400]);
     }
@@ -79,7 +76,7 @@ mod tests {
     /// 8k-token model has nowhere near that much room.
     #[test]
     fn a_small_context_is_given_less_than_the_old_fixed_allowance() {
-        let budget = page_budget_chars(5_900);
+        let budget = page_budget_chars(&EvidenceBudget::new(5_900));
         assert!(budget < 18_000, "got {budget}");
         let given = allocate(&[21_000, 8_400, 12_000], budget, 50_000);
         assert!(given.iter().sum::<usize>() <= budget);
@@ -118,6 +115,6 @@ mod tests {
     fn nothing_to_divide_gives_nothing() {
         assert_eq!(allocate(&[5_000, 5_000], 0, 50_000), vec![0, 0]);
         assert_eq!(allocate(&[], 10_000, 50_000), Vec::<usize>::new());
-        assert_eq!(page_budget_chars(0), 0);
+        assert_eq!(page_budget_chars(&EvidenceBudget::default()), 0);
     }
 }

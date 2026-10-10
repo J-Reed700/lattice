@@ -17,7 +17,7 @@ use tracing::{info, warn};
 use crate::application::contracts::settings::LLMVerificationSettingsDto;
 use crate::application::ports::llm_port::OptionalLlmLoader;
 use crate::application::ports::LLMPort;
-use crate::features::conversation::repository::ConversationRepository;
+use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::trait_def::ConversationServiceTrait;
 use crate::features::qa::dto::SourceDto;
 #[cfg(test)]
@@ -52,7 +52,7 @@ pub struct VerificationReadyDto {
 /// Everything the check needs, owned, so it can outlive the turn.
 #[derive(Clone)]
 pub(in crate::features::conversation) struct BackgroundVerification {
-    pub conversation_repository: Arc<ConversationRepository>,
+    pub conversation_repository: Arc<dyn ChatRecords>,
     pub conversation_service: Arc<dyn ConversationServiceTrait>,
     pub load_utility_llm: OptionalLlmLoader,
     pub conversation_id: String,
@@ -117,7 +117,7 @@ impl BackgroundVerification {
                 return;
             }
             evidence = source_snapshots::with_archived_page_text(
-                &repository,
+                repository.as_ref(),
                 &conversation_id,
                 &sources,
             ) => evidence,
@@ -268,11 +268,13 @@ mod tests {
             links: vec![],
         });
         let verification = BackgroundVerification {
-            conversation_repository: Arc::new(ConversationRepository::new(
-                sqlx::sqlite::SqlitePoolOptions::new()
-                    .connect_lazy("sqlite::memory:")
-                    .unwrap(),
-            )),
+            conversation_repository: Arc::new(
+                crate::features::conversation::repository::ConversationRepository::new(
+                    sqlx::sqlite::SqlitePoolOptions::new()
+                        .connect_lazy("sqlite::memory:")
+                        .unwrap(),
+                ),
+            ),
             conversation_service: service,
             load_utility_llm,
             conversation_id: "conversation-1".to_string(),

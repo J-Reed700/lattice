@@ -6,9 +6,9 @@
 //! wins — and later reads of the same URL in the same conversation are served
 //! from the archive instead of the network.
 
-use crate::features::conversation::chat::ports::{ChatRuntime, ChatStorage};
-use crate::features::conversation::repository::ConversationRepository;
-use crate::features::function_calling::dto::FetchUrlContentOutput;
+use crate::features::conversation::chat::ports::{
+    ChatRecords, ChatRuntime, ChatStorage, FetchUrlContentOutput,
+};
 use crate::features::qa::dto::{SourceDto, WebSnapshotDto};
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
@@ -29,9 +29,9 @@ pub(super) async fn archived_page(
     conversation_id: &str,
     url: &str,
 ) -> Option<FetchUrlContentOutput> {
-    let repository = ConversationRepository::new(container.db_pool().clone());
-    let snapshot = match repository
-        .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
+    let snapshot = match container
+        .chat_records()
+        .web_source_snapshot(conversation_id, url)
         .await
     {
         Ok(snapshot) => snapshot?,
@@ -60,9 +60,9 @@ pub(super) async fn web_snapshot(
     conversation_id: &str,
     url: &str,
 ) -> Option<WebSnapshotDto> {
-    let repository = ConversationRepository::new(container.db_pool().clone());
-    let snapshot = match repository
-        .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
+    let snapshot = match container
+        .chat_records()
+        .web_source_snapshot(conversation_id, url)
         .await
     {
         Ok(snapshot) => snapshot?,
@@ -91,11 +91,11 @@ pub(super) async fn archive_page_for_url(
     let Some((content, clipped)) = capped_snapshot_text(&page.content) else {
         return;
     };
-    let repository = ConversationRepository::new(container.db_pool().clone());
-    if let Err(error) = repository
-        .store_conversation_web_source_snapshot(
-            conversation_id.to_string(),
-            citation_url.to_string(),
+    if let Err(error) = container
+        .chat_records()
+        .store_web_source_snapshot(
+            conversation_id,
+            citation_url,
             page.title.clone(),
             content,
             page.content_truncated || clipped,
@@ -119,7 +119,7 @@ pub(super) async fn archive_page_for_url(
 /// conversation archived is given that page's text for verification; the
 /// sources persisted with the message are left as they were.
 pub(super) async fn with_archived_page_text(
-    repository: &ConversationRepository,
+    repository: &dyn ChatRecords,
     conversation_id: &str,
     sources: &[SourceDto],
 ) -> Vec<SourceDto> {
@@ -130,9 +130,7 @@ pub(super) async fn with_archived_page_text(
             continue;
         }
         let url = url.to_string();
-        let snapshot = repository
-            .conversation_web_source_snapshot(conversation_id.to_string(), url)
-            .await;
+        let snapshot = repository.web_source_snapshot(conversation_id, &url).await;
         if let Ok(Some(snapshot)) = snapshot {
             if !snapshot.content.trim().is_empty() {
                 source.content = snapshot.content;
@@ -184,7 +182,7 @@ pub(super) async fn attach_cited_web_snapshots(
     let reads = stream::iter(pending.into_iter().map(|(url, indices)| async move {
         let result = tokio::time::timeout(
             CITATION_CAPTURE_TIMEOUT,
-            container.web_service().read_page(&url),
+            container.page_reader().read_page(&url),
         )
         .await;
         (url, indices, result)
@@ -196,7 +194,7 @@ pub(super) async fn attach_cited_web_snapshots(
         let Ok(Ok(read)) = result else {
             continue;
         };
-        archive_page_for_url(container, conversation_id, &url, &read.output).await;
+        archive_page_for_url(container, conversation_id, &url, &read).await;
         if let Some(snapshot) = web_snapshot(container, conversation_id, &url).await {
             for index in indices {
                 if let Some(source) = sources.get_mut(index) {

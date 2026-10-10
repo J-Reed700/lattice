@@ -443,39 +443,6 @@ async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruct
     );
 }
 
-#[test]
-fn retrieval_is_budgeted_against_the_plans_history_not_the_whole_window() {
-    use super::super::retrieval::available_rag_budget;
-
-    let llm = llm();
-    let window = llm.max_context_tokens();
-    let question = 10;
-    // A long chat: the string context was filled to (nearly) the whole window.
-    let string_history = window - 1_000;
-    assert_eq!(
-        available_rag_budget(window, question, string_history, 0),
-        0,
-        "the string total leaves retrieval nothing"
-    );
-
-    let history =
-        history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, string_history);
-    let rag = available_rag_budget(window, question, history, 0);
-    assert!(
-        rag > 0,
-        "bounded history must leave retrieval room: {history}"
-    );
-
-    // Retrieval sized this way still fits the plan's own input budget.
-    let capacity = ModelCapacity::new(llm.model_name(), window);
-    let allocation = BudgetAllocation::plan(&capacity, 0).unwrap();
-    assert!(llm.count_tokens("You are helpful.") + question + rag <= allocation.input_budget);
-
-    // A short chat is charged what it has, plus the plan's safety margin.
-    let short = history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, 100);
-    assert_eq!(short, 100 + allocation.safety_margin);
-}
-
 #[tokio::test]
 async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unprocessed_source() {
     let pool = database().await;

@@ -170,7 +170,7 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         kb_attempted: false,
         web_queries: Vec::new(),
         sources: Vec::new(),
-        available_for_rag: 0,
+        evidence: Default::default(),
         sub_timings: RetrievalSubTimingMetrics::default(),
         searched_documents: 0,
         scope_is_linked: false,

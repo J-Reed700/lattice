@@ -118,13 +118,16 @@ pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
 const TYPICAL_TURN_FIXED_TOKENS: usize = 1_200;
 
 fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
-    use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
+    use crate::application::services::context_assembler::{
+        BudgetAllocation, BudgetRequest, ModelCapacity,
+    };
     let capacity = ModelCapacity::new(model, context_tokens);
+    let plan = |fixed| BudgetAllocation::plan(&capacity, &BudgetRequest::new(fixed, 0, 0));
     // A window too small for the typical turn is planned with what it can
     // hold; the smaller pool is the safe side of the error.
-    BudgetAllocation::plan(&capacity, fixed)
-        .or_else(|_| BudgetAllocation::plan(&capacity, fixed / 2))
-        .or_else(|_| BudgetAllocation::plan(&capacity, 0))
+    plan(fixed)
+        .or_else(|_| plan(fixed / 2))
+        .or_else(|_| plan(0))
         .map(|allocation| allocation.summary)
         .unwrap_or(256)
 }
@@ -233,7 +236,9 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
-    use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
+    use crate::application::services::context_assembler::{
+        BudgetAllocation, BudgetRequest, ModelCapacity,
+    };
 
     /// On a 4k window the turn's fixed costs are most of the prompt; a pool
     /// sized against an empty prompt accepted summaries the turn then dropped.
@@ -241,8 +246,12 @@ mod tests {
     fn a_summary_pool_on_a_small_window_fits_the_turn_that_carries_it() {
         let capacity = ModelCapacity::new("small", 4_096);
         let fixed = 1_500;
-        let turn_pool = BudgetAllocation::plan(&capacity, fixed).unwrap().summary;
-        let empty_prompt_pool = BudgetAllocation::plan(&capacity, 0).unwrap().summary;
+        let turn_pool = BudgetAllocation::plan(&capacity, &BudgetRequest::new(fixed, 0, 0))
+            .unwrap()
+            .summary;
+        let empty_prompt_pool = BudgetAllocation::plan(&capacity, &BudgetRequest::new(0, 0, 0))
+            .unwrap()
+            .summary;
 
         let pool = summary_pool("small", 4_096, fixed);
 

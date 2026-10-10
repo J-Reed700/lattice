@@ -7,7 +7,8 @@
 //! # Features
 //!
 //! - **Conversation History**: Maintains persistent chat history
-//! - **Context Window Management**: Token-aware truncation (75% for context, 25% for generation)
+//! - **Context Window Management**: one budget from the context assembler for
+//!   the prompt's every pool and the generation reservation
 //! - **Auto-titling**: Generates conversation titles from first message
 //! - **Security**: Rate limiting, input validation, audit logging
 //!
@@ -72,7 +73,7 @@ pub mod turn_record;
 mod verification;
 mod web_steps;
 
-use self::attachments::{attachment_token_budget, build_turn_attachments, TurnAttachments};
+use self::attachments::{build_turn_attachments, TurnAttachments};
 
 /// How much of an attachment the web-query rewriter is shown. Enough to name
 /// the subject, small enough that the utility model stays fast.
@@ -85,9 +86,8 @@ use self::persistence::{
 use self::prompting::{build_kb_context, PromptMessageBuilder};
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    assign_citation_ids, available_rag_budget, citation_ids_by_chunk, confine_document_context,
-    deduplicate_sources, load_recent_document_metadata, response_token_budget,
-    run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
+    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
@@ -98,7 +98,7 @@ pub use self::turn_record::{
 };
 pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
-use crate::features::explorer::prompt::ExplorerTurn;
+pub(crate) use crate::features::explorer::prompt::ExplorerTurn;
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -143,13 +143,6 @@ use turn::run_turn;
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-/// Characters the Explorer folder block may take: a sixth of the window, so
-/// the open file is visible on a small local model without crowding out the
-/// question, its history and the reply. Three characters a token errs short.
-fn explorer_block_chars(context_tokens: usize) -> usize {
-    (context_tokens / 6).clamp(500, 8_000) * 3
 }
 
 /// Generation allowance for one turn, shared by tool rounds and provider retries.
@@ -207,25 +200,6 @@ async fn get_or_create_conversation_id(
             Ok(response.conversation.id)
         }
     }
-}
-
-fn budget_search_results_for_prompt<'a>(
-    search_results: &'a [crate::features::search::dto::SearchResultDto],
-    available_for_rag: usize,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-) -> Vec<&'a crate::features::search::dto::SearchResultDto> {
-    let mut rag_tokens_used = 0usize;
-    search_results
-        .iter()
-        .filter(|result| {
-            let chunk_tokens = llm.count_tokens(&result.content);
-            if rag_tokens_used + chunk_tokens > available_for_rag {
-                return false;
-            }
-            rag_tokens_used += chunk_tokens;
-            true
-        })
-        .collect()
 }
 
 /// Derive a conversation title from the user's first message.

@@ -2,7 +2,11 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
+use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::service::SearchResult;
+use crate::features::search::use_cases::{
+    HybridSearchUseCase, QueryBranches, RankedBranch, RerankOptions, Reranked,
+};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
@@ -210,4 +214,77 @@ pub trait SparseSearchTrait: Send + Sync {
         space_id: Option<&str>,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>>;
+}
+
+/// The library search a caller outside this feature drives: one scoped query,
+/// its separate branches and their fusion, and the cross-encoder stage.
+///
+/// Implemented by [`HybridSearchUseCase`], so every caller ranks the library
+/// the way the search command does.
+#[async_trait]
+pub trait LibrarySearchTrait: Send + Sync {
+    /// One query under an optional hard scope; see
+    /// [`HybridSearchUseCase::execute_scoped`].
+    async fn execute_scoped(
+        &self,
+        request: SearchRequestDto,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+    ) -> Result<SearchResponseDto>;
+
+    /// Every branch for `query`, unfused.
+    async fn search_branches(
+        &self,
+        query: &str,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        limit: usize,
+        vector_weight: f32,
+        bm25_weight: f32,
+    ) -> QueryBranches;
+
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto>;
+
+    async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked;
+}
+
+#[async_trait]
+impl LibrarySearchTrait for HybridSearchUseCase {
+    async fn execute_scoped(
+        &self,
+        request: SearchRequestDto,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+    ) -> Result<SearchResponseDto> {
+        HybridSearchUseCase::execute_scoped(self, request, space_id, allowed_document_ids).await
+    }
+
+    async fn search_branches(
+        &self,
+        query: &str,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        limit: usize,
+        vector_weight: f32,
+        bm25_weight: f32,
+    ) -> QueryBranches {
+        HybridSearchUseCase::search_branches(
+            self,
+            query,
+            space_id,
+            allowed_document_ids,
+            limit,
+            vector_weight,
+            bm25_weight,
+        )
+        .await
+    }
+
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+        HybridSearchUseCase::fuse(self, branches, limit)
+    }
+
+    async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
+        HybridSearchUseCase::rerank(self, response, options).await
+    }
 }

@@ -31,6 +31,16 @@ pub trait SummarySearchPort: Send + Sync {
         scope: &HashSet<String>,
         limit: usize,
     ) -> Result<Vec<SummaryHit>>;
+
+    /// Document-level summary text for `scope`, keyed by document id.
+    ///
+    /// Only whole-document summaries: a planner catalog describes documents,
+    /// and splicing a section summary in under a document's name would be
+    /// telling the planner a chapter is the book.
+    async fn document_summaries(
+        &self,
+        scope: &HashSet<String>,
+    ) -> Result<std::collections::HashMap<String, String>>;
 }
 
 pub struct SummarySearch {
@@ -53,13 +63,9 @@ impl SummarySearch {
     }
 }
 
-impl SummarySearch {
-    /// Document-level summary text for `scope`, keyed by document id.
-    ///
-    /// Only whole-document summaries: a planner catalog describes documents,
-    /// and splicing a section summary in under a document's name would be
-    /// telling the planner a chapter is the book.
-    pub async fn document_summaries(
+#[async_trait]
+impl SummarySearchPort for SummarySearch {
+    async fn document_summaries(
         &self,
         scope: &HashSet<String>,
     ) -> Result<std::collections::HashMap<String, String>> {
@@ -71,10 +77,7 @@ impl SummarySearch {
             &summaries,
         ))
     }
-}
 
-#[async_trait]
-impl SummarySearchPort for SummarySearch {
     async fn top_summaries(
         &self,
         query: &str,

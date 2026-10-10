@@ -2,12 +2,14 @@ mod document_evidence;
 mod document_progress;
 mod scoped_document_tools;
 
+use crate::application::ports::llm_port::CompletionInput;
+use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use crate::features::qa::dto::SourceDto;
-use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
+use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::{build_excerpt, safe_truncate};
 use serde::Serialize;
@@ -38,8 +40,6 @@ pub struct ToolLoopTimingMetrics {
     pub tool_call_count: u32,
     pub tool_success_count: u32,
     pub tool_failure_count: u32,
-    pub empty_response_retries: u32,
-    pub followup_prompt_build_ms: u64,
 }
 
 #[derive(Debug)]
@@ -52,6 +52,24 @@ pub struct ToolLoopOutcome {
     /// no tokens.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+}
+
+/// The request the turn assembled, as the loop sends its first round.
+pub(super) struct LoopRequest<'a> {
+    /// Policy, memory or history, and the turn's prompt, already planned
+    /// against the window by the context assembler.
+    pub(super) input: Vec<CompletionInput>,
+    /// The folder tools are only here in an Explorer turn.
+    pub(super) tools: Option<&'a [ToolDefinition]>,
+    /// The generation reservation the plan made. Sent with every round so the
+    /// provider holds exactly that back.
+    pub(super) max_output_tokens: usize,
+    /// What the request may occupy, in tokens, as tool results grow it.
+    pub(super) input_budget: usize,
+    /// One deadline for the whole turn: tool rounds and provider retries share it.
+    pub(super) time_budget: Duration,
+    /// Model rounds this turn may spend; see [`max_tool_rounds`].
+    pub(super) max_tool_rounds: usize,
 }
 
 /// One call the model asked for this round.
@@ -136,37 +154,28 @@ pub(super) async fn run_agentic_tool_loop(
     request_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     sink: &ChatEventSink,
-    context: &[String],
-    enhanced_message: &str,
-    prompt_settings: &LLMPromptSettingsDto,
+    request: LoopRequest<'_>,
     highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
     sources: &mut Vec<SourceDto>,
     retrieval_trace: &mut Option<super::RetrievalTraceDto>,
-    tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
-    time_budget: Duration,
     pages_already_read: FetchMemory,
     focus: &FocusScope,
     // The folder of an Explorer conversation; `None` for every other turn. The
-    // folder tools are only in `tools_ref` when this is set.
+    // folder tools are only in `request.tools` when this is set.
     explorer: Option<&crate::features::explorer::prompt::ExplorerTurn>,
     recorder: &TurnRecorder,
-    // A bounded typed plan from the shared context assembler, when bounded
-    // conversation memory is on for this turn. When present it *replaces* the
-    // string-context input: the point of the typed path is that memory is never
-    // promoted into system instructions by string parsing, and raw user bytes
-    // are never trimmed on the way in.
-    memory_plan: Option<&crate::application::services::context_assembler::ContextPlan>,
-    // Room reserved for the answer, the same figure the prompt was budgeted
-    // against. Sent with the request so the provider holds exactly that back.
-    response_token_budget: usize,
-    // Model rounds this turn may spend; see [`max_tool_rounds`].
-    max_tool_rounds: usize,
 ) -> Result<ToolLoopOutcome> {
-    use crate::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, InferencePriority,
-    };
+    use crate::application::ports::llm_port::{CompletionRequest, InferencePriority};
 
+    let LoopRequest {
+        input,
+        tools: tools_ref,
+        max_output_tokens,
+        input_budget,
+        time_budget,
+        max_tool_rounds,
+    } = request;
     let max_tool_rounds = max_tool_rounds.max(1);
     // One deadline for the whole turn: tool rounds and provider retries share it.
     let deadline = Instant::now() + time_budget;
@@ -209,33 +218,16 @@ pub(super) async fn run_agentic_tool_loop(
         cancel: Some(turn_cancel.clone()),
         // Every round of a conversation shares its prefix with the last one.
         cache_key: Some(conv_id.to_string()),
-        input: match memory_plan {
-            Some(plan) => plan.messages.clone(),
-            None => crate::application::services::completion_input::from_context(
-                &prompt_settings.system_prompt,
-                context,
-                enhanced_message,
-            ),
-        },
+        input,
         tools: tools_ref.unwrap_or(&[]).to_vec(),
         // The turn record can reveal provider-supplied reasoning on demand.
         // Providers that expose none simply leave the disclosure absent.
         include_reasoning: true,
         // Reserving output room and then not enforcing it is only bookkeeping:
         // the model could generate past what the budget set aside and overrun
-        // the window the prompt was measured against. Without a memory plan the
-        // turn used to ask for the provider's whole limit instead — on
-        // llama.cpp, which reserves prompt *plus* answer in one slot, that is
-        // what turned a large prompt into a failed batch rather than a short
-        // answer.
-        max_output_tokens: Some(
-            u32::try_from(match memory_plan {
-                Some(plan) => plan.max_output_tokens.min(response_token_budget),
-                None => response_token_budget,
-            })
-            .unwrap_or(u32::MAX),
-        )
-        .filter(|budget| *budget > 0),
+        // the window the prompt was measured against.
+        max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX))
+            .filter(|budget| *budget > 0),
         ..Default::default()
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
@@ -249,10 +241,9 @@ pub(super) async fn run_agentic_tool_loop(
     // not go through the space/focus scope path. The conversation id comes from
     // the turn, and `HistoryToolScope` has no setter, so no tool argument can
     // point it at another thread.
-    let history_port = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
-    )
-    .with_memory_embedding(container.get_or_load_embedding().await.ok());
+    let history_port = container
+        .chat_records()
+        .with_recall_embedding(container.get_or_load_embedding().await.ok());
     // One memo for the whole turn: a repeated read of a range already exhausted
     // answers with a reference instead of paying for the same text twice.
     let mut history_memo = super::history_tools::HistoryToolMemo::default();
@@ -272,7 +263,7 @@ pub(super) async fn run_agentic_tool_loop(
         // calls made now would come back cut to nothing.
         let window_full = iteration > 0
             && !window_has_room_for_a_result(
-                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
+                window_chars(input_budget, llm.chars_per_token()),
                 chars_in_flight(&native_request.input) + tool_schema_chars,
             );
         let final_round = iteration + 1 == max_tool_rounds || window_full;
@@ -468,8 +459,6 @@ pub(super) async fn run_agentic_tool_loop(
                 tool_call_count = timings.tool_call_count,
                 tool_success_count = timings.tool_success_count,
                 tool_failure_count = timings.tool_failure_count,
-                empty_response_retries = timings.empty_response_retries,
-                followup_prompt_build_ms = timings.followup_prompt_build_ms,
                 total_ms = elapsed_ms(tool_loop_start),
                 "chat_with_conversation: tool loop complete"
             );
@@ -490,7 +479,7 @@ pub(super) async fn run_agentic_tool_loop(
             // configured cap alone let one round of page
             // fetches outgrow a small model's entire context.
             let result_allowance = tool_result_allowance(
-                window_chars(llm.max_context_tokens(), llm.chars_per_token()),
+                window_chars(input_budget, llm.chars_per_token()),
                 chars_in_flight(&native_request.input) + tool_schema_chars,
                 tool_calls.len().saturating_sub(call_index),
                 tool_output_settings.max_chars as usize,
@@ -625,8 +614,13 @@ pub(super) async fn run_agentic_tool_loop(
                             deadline: Some(deadline),
                         },
                     );
-                    super::history_tools::execute(&history_port, &scope, &mut history_memo, call)
-                        .await
+                    super::history_tools::execute(
+                        history_port.as_ref(),
+                        &scope,
+                        &mut history_memo,
+                        call,
+                    )
+                    .await
                 } else if resolved_tool == "fetch_url_content" {
                     // A page this conversation already read is served
                     // from its permanent archive — the citation's
@@ -848,8 +842,6 @@ pub(super) async fn run_agentic_tool_loop(
         tool_call_count = timings.tool_call_count,
         tool_success_count = timings.tool_success_count,
         tool_failure_count = timings.tool_failure_count,
-        empty_response_retries = timings.empty_response_retries,
-        followup_prompt_build_ms = timings.followup_prompt_build_ms,
         total_ms = elapsed_ms(tool_loop_start),
         "Tool calling loop exhausted iterations"
     );
@@ -996,14 +988,11 @@ fn window_has_room_for_a_result(window_chars: usize, chars_in_flight: usize) -> 
     window_chars.saturating_sub(chars_in_flight) >= MIN_TOOL_RESULT_CHARS
 }
 
-/// The characters the prompt may fill: [`CONTEXT_FILL_LIMIT`] of the window,
-/// converted at the backend's calibrated characters per token and erring
-/// short, so dense text under-fills rather than overruns.
-fn window_chars(context_tokens: usize, chars_per_token: f64) -> usize {
-    crate::application::ports::llm_port::chars_within_tokens(
-        (context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize,
-        chars_per_token,
-    )
+/// The characters the prompt may fill: the plan's input budget, converted at
+/// the backend's calibrated characters per token and erring short, so dense
+/// text under-fills rather than overruns.
+fn window_chars(input_budget: usize, chars_per_token: f64) -> usize {
+    crate::application::ports::llm_port::chars_within_tokens(input_budget, chars_per_token)
 }
 
 /// The tool definitions as the provider receives them, for budgeting: the
@@ -1346,9 +1335,6 @@ fn tool_argument_summary(arguments: &serde_json::Value) -> String {
     }
 }
 
-/// Share of the context window the prompt may fill. The rest is the reply's.
-const CONTEXT_FILL_LIMIT: f64 = 0.75;
-
 /// A result cut shorter than this says too little to have been worth the round
 /// that asked for it, so a nearly full window still gets this much.
 const MIN_TOOL_RESULT_CHARS: usize = 1_500;
@@ -1445,7 +1431,20 @@ fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::{CompletionInput, DEFAULT_CHARS_PER_TOKEN};
+    use crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+
+    /// The input budget the context assembler plans for a model of this size.
+    fn input_budget(context_tokens: usize) -> usize {
+        use crate::application::services::context_assembler::{
+            BudgetAllocation, BudgetRequest, ModelCapacity,
+        };
+        BudgetAllocation::plan(
+            &ModelCapacity::new("test-model", context_tokens),
+            &BudgetRequest::default(),
+        )
+        .unwrap()
+        .input_budget
+    }
 
     #[test]
     fn stream_sink_keeps_turn_identity_and_emits_completion_once() {
@@ -1503,7 +1502,7 @@ mod tests {
     #[test]
     fn a_round_of_results_is_made_to_fit_a_small_window() {
         let context_tokens = 32_768;
-        let window = window_chars(context_tokens, DEFAULT_CHARS_PER_TOKEN);
+        let window = window_chars(input_budget(context_tokens), DEFAULT_CHARS_PER_TOKEN);
         let already = 20_000;
 
         let mut spent = already;
@@ -1521,7 +1520,7 @@ mod tests {
     fn a_large_window_gives_each_result_the_configured_maximum() {
         assert_eq!(
             tool_result_allowance(
-                window_chars(131_072, DEFAULT_CHARS_PER_TOKEN),
+                window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN),
                 20_000,
                 4,
                 50_000
@@ -1535,18 +1534,18 @@ mod tests {
     fn a_full_window_gives_a_result_only_what_is_left() {
         assert_eq!(
             tool_result_allowance(
-                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN),
                 1_000_000,
                 3,
                 50_000
             ),
             0
         );
-        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
+        let window = window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN);
         let nearly_full = window - 900;
         assert_eq!(
             tool_result_allowance(
-                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN),
                 nearly_full,
                 1,
                 50_000
@@ -1558,10 +1557,10 @@ mod tests {
     /// With room, a result still gets enough to be worth the round.
     #[test]
     fn a_window_with_room_keeps_the_floor() {
-        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
+        let window = window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN);
         assert_eq!(
             tool_result_allowance(
-                window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+                window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN),
                 window - 4_000,
                 3,
                 50_000
@@ -1586,14 +1585,14 @@ mod tests {
             "parameters must be counted: {schema_chars}"
         );
 
-        let window = window_chars(4_096, DEFAULT_CHARS_PER_TOKEN);
+        let window = window_chars(input_budget(4_096), DEFAULT_CHARS_PER_TOKEN);
         let prompt = vec![CompletionInput::Message {
             role: "user".into(),
             content: "p".repeat(window - schema_chars - 500),
         }];
         let in_flight = chars_in_flight(&prompt) + schema_chars;
         let allowance = tool_result_allowance(
-            window_chars(4_096, DEFAULT_CHARS_PER_TOKEN),
+            window_chars(input_budget(4_096), DEFAULT_CHARS_PER_TOKEN),
             in_flight,
             1,
             50_000,
@@ -1704,9 +1703,9 @@ mod tests {
 
     #[test]
     fn a_full_window_has_no_room_for_another_result() {
-        let window = window_chars(8_192, DEFAULT_CHARS_PER_TOKEN);
+        let window = window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN);
         assert!(window_has_room_for_a_result(
-            window_chars(8_192, DEFAULT_CHARS_PER_TOKEN),
+            window_chars(input_budget(8_192), DEFAULT_CHARS_PER_TOKEN),
             0
         ));
         assert!(!window_has_room_for_a_result(
@@ -1773,7 +1772,12 @@ mod tests {
     #[test]
     fn a_configured_maximum_below_the_floor_is_respected() {
         assert_eq!(
-            tool_result_allowance(window_chars(131_072, DEFAULT_CHARS_PER_TOKEN), 0, 1, 800),
+            tool_result_allowance(
+                window_chars(input_budget(131_072), DEFAULT_CHARS_PER_TOKEN),
+                0,
+                1,
+                800
+            ),
             800
         );
     }

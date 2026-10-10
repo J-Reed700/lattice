@@ -6,6 +6,7 @@ pub mod conversation_context;
 pub mod conversation_memory;
 pub(crate) mod evidence_retrieval;
 pub mod file_type_detector;
+pub(crate) mod grounded_generation;
 pub mod model_selection;
 
 pub use context_window_builder::ContextWindowBuilder;

@@ -1,6 +1,7 @@
 use super::retrieval::WEB_SOURCE_PREFIX;
 use super::{RetrievalSubTimingMetrics, ToolLoopTimingMetrics, TurnStepDto, VerificationReadyDto};
-use crate::features::qa::dto::SourceDto;
+pub(crate) use crate::features::explorer::dto::ExplorerFocusDto;
+pub(super) use crate::features::qa::dto::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -208,7 +209,7 @@ pub struct ToolPreferences {
     /// of an Explorer conversation. Resolved against the conversation's stored
     /// folder; ignored when it has none, and dropped when it does not resolve.
     #[serde(default)]
-    pub explorer_focus: Option<crate::features::explorer::dto::ExplorerFocusDto>,
+    pub explorer_focus: Option<ExplorerFocusDto>,
     /// The message already carries everything the turn may use: no retrieval of
     /// any kind runs, no tools are offered, and nothing is verified against
     /// sources. Backend callers only — it is never deserialized, so the

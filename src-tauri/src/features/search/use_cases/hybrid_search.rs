@@ -207,6 +207,11 @@ impl HybridSearchUseCase {
         self
     }
 
+    /// The embedding model the vector branch queries with.
+    pub fn model_identity(&self) -> String {
+        self.embedding_service.model_identity()
+    }
+
     /// The sparse branch to run for this query, or `None` to keep two-way fusion.
     fn active_sparse_branch(&self) -> Option<&Arc<dyn SparseSearchTrait>> {
         self.sparse_search

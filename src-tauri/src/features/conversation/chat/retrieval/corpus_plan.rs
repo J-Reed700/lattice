@@ -11,9 +11,12 @@ use tokio_util::sync::CancellationToken;
 use crate::application::contracts::search::CorpusDocument;
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use crate::application::ports::LLMPort;
-use crate::features::conversation::repository::ConversationRepository;
+use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
-use crate::features::search::use_cases::{BranchKind, HybridSearchUseCase, RankedBranch};
+use crate::features::search::{
+    trait_def::LibrarySearchTrait,
+    use_cases::{BranchKind, RankedBranch},
+};
 use crate::shared::error::{AppError, Result};
 
 use super::{select_informative_terms, tokenize_keyword_terms};
@@ -684,7 +687,7 @@ async fn plan_with(
 /// differently from the search that opened the turn, and could miss passages
 /// the first pass would have found.
 pub(in crate::features::conversation::chat) async fn fused_search(
-    hybrid: &HybridSearchUseCase,
+    hybrid: &dyn LibrarySearchTrait,
     query: &str,
     document_ids: &HashSet<String>,
     limit: usize,
@@ -703,8 +706,8 @@ pub(in crate::features::conversation::chat) async fn fused_search(
 }
 
 pub(super) async fn retrieve(
-    repository: &ConversationRepository,
-    hybrid: &HybridSearchUseCase,
+    repository: &dyn ChatRecords,
+    hybrid: &dyn LibrarySearchTrait,
     question: &str,
     plan: &CorpusSearchPlan,
     scope: &super::SpaceDocumentScope,
@@ -869,7 +872,7 @@ fn section_identifiers(question: &str) -> Vec<String> {
 }
 
 pub(super) async fn expand_evidence(
-    repository: &ConversationRepository,
+    repository: &dyn ChatRecords,
     results: &mut Vec<SearchResultDto>,
     allowed: &HashSet<String>,
     limit: usize,
@@ -897,7 +900,7 @@ pub(super) async fn expand_evidence(
 /// passes found rises above one that only the retry did, which is the whole
 /// point of correcting rather than replacing.
 pub(super) fn fuse_passes(
-    hybrid: &HybridSearchUseCase,
+    hybrid: &dyn LibrarySearchTrait,
     first: Vec<SearchResultDto>,
     second: Vec<SearchResultDto>,
     limit: usize,

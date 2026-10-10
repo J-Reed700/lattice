@@ -14,9 +14,7 @@ pub(super) async fn load_space_document_scope(
     container: &dyn ChatRuntime,
     conversation_id: &str,
 ) -> Option<super::SpaceDocumentScope> {
-    let repository = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
-    );
+    let repository = container.chat_records();
     let (space_id, document_ids) = match repository.retrieval_document_scope(conversation_id).await
     {
         Ok(Some(scope)) => scope,

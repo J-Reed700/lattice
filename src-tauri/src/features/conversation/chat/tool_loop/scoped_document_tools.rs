@@ -1,8 +1,6 @@
 //! Follow-up document tools obey the same scope as initial chat retrieval.
 use crate::features::conversation::chat::focus::FocusScope;
-use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::repository::ConversationRepository;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use crate::features::conversation::chat::ports::{ChatRuntime, FunctionCall, FunctionResult};
 use crate::features::function_calling::dto::{
     AttachmentItem, DocumentResult, ListAttachmentsOutput, SearchMode, SemanticSearchInput,
     SemanticSearchOutput,
@@ -31,9 +29,9 @@ pub(super) async fn execute(
     call: FunctionCall,
 ) -> Result<FunctionResult> {
     if !reads_the_vault(&call.name) {
-        return container.function_executor().execute(call).await;
+        return container.tools().execute(call).await;
     }
-    let repository = ConversationRepository::new(container.db_pool().clone());
+    let repository = container.chat_records();
     let (_, mut allowed) = repository
         .retrieval_document_scope(conversation_id)
         .await?
@@ -62,7 +60,7 @@ pub(super) async fn execute(
         // handed the model every filename, path and tag in the library, so a
         // chat in one space could enumerate another space's documents even
         // though `get_document` would then refuse to open them.
-        let listing = container.function_executor().execute(call).await?;
+        let listing = container.tools().execute(call).await?;
         return Ok(confine_listing(listing, &allowed));
     }
     if call.name == "get_document" {
@@ -72,7 +70,7 @@ pub(super) async fn execute(
             .and_then(|id| id.as_str())
             .unwrap_or("");
         ensure_allowed_document(id, &allowed)?;
-        return container.function_executor().execute(call).await;
+        return container.tools().execute(call).await;
     }
     let input: SemanticSearchInput = serde_json::from_value(call.arguments.clone())?;
     let limit = input.limit.clamp(1, 50);
@@ -83,7 +81,7 @@ pub(super) async fn execute(
         SearchMode::Hybrid => {
             let start = std::time::Instant::now();
             let hits = crate::features::conversation::chat::retrieval::fused_search(
-                container.hybrid_search_use_case().as_ref(),
+                container.library_search().as_ref(),
                 &input.query,
                 &allowed,
                 limit,
@@ -104,7 +102,7 @@ pub(super) async fn execute(
                 },
             };
             let response = container
-                .hybrid_search_use_case()
+                .library_search()
                 // `allowed` is the space plus the chat's attachments; a membership
                 // filter as well would hide the attachments from keyword search.
                 .execute_scoped(request, None, Some(&allowed))

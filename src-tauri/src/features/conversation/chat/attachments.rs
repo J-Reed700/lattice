@@ -36,14 +36,6 @@ use crate::shared::text::{build_excerpt, safe_truncate};
 use super::document_text::{assemble_document_text, truncate_to_token_budget};
 use super::retrieval::infer_category;
 
-/// The share of a turn's retrieval budget attachments may claim.
-///
-/// They are the reader's own material and outrank anything a search turns up,
-/// but a turn that attaches a book must still have room to search, cite and
-/// answer. What is left over goes back to retrieval, so a small attachment
-/// costs a small amount.
-const ATTACHMENT_BUDGET_SHARE: f64 = 0.6;
-
 /// Appended to an attachment the window could not hold, so the model reports a
 /// partial read as partial instead of answering as though it saw the end.
 const TRUNCATION_NOTE: &str = "\n\n[Attachment truncated here: the rest did not fit the context window. Say so if the answer depends on the part that is missing.]";
@@ -323,11 +315,6 @@ pub(super) async fn build_turn_attachments(
     attachments
 }
 
-/// The share of the turn's retrieval budget attachments may take.
-pub(super) fn attachment_token_budget(available_for_rag: usize) -> usize {
-    (available_for_rag as f64 * ATTACHMENT_BUDGET_SHARE) as usize
-}
-
 /// The ids a request named, blanks dropped and duplicates collapsed, in the
 /// order they were attached.
 fn distinct_ids(document_ids: &[String]) -> Vec<String> {
@@ -557,11 +544,5 @@ mod tests {
 
         assert!(carried.contains("doc-notes.txt"));
         assert_eq!(carried.len(), 1);
-    }
-
-    #[test]
-    fn the_budget_leaves_room_for_the_rest_of_the_turn() {
-        assert_eq!(attachment_token_budget(1000), 600);
-        assert_eq!(attachment_token_budget(0), 0);
     }
 }

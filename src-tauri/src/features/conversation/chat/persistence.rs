@@ -1,4 +1,4 @@
-use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::ports::{ChatRuntime, MemoryVector};
 use crate::features::qa::dto::SourceDto;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
@@ -280,16 +280,14 @@ async fn record_cited_web_sources(
     conversation_id: &str,
     sources: &[SourceDto],
 ) {
-    let repository = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
-    );
+    let repository = container.chat_records();
 
     let keepable = cited_web_sources(sources);
     let recorded = keepable.len();
     for source in keepable {
         if let Err(error) = repository
-            .add_conversation_web_source(
-                conversation_id.to_string(),
+            .add_cited_web_source(
+                conversation_id,
                 source.url,
                 source.title,
                 source.excerpt,
@@ -428,21 +426,19 @@ fn spawn_memory_indexing(
             let memory_id = uuid::Uuid::new_v4().to_string();
             let created_at = chrono::Utc::now().to_rfc3339();
 
-            let insert_result =
-                crate::features::conversation::repository::ConversationRepository::new(
-                    container.db_pool().clone(),
-                )
-                .persist_memory_vector(
-                    &conversation_id,
-                    &memory_id,
-                    &memory.message_id,
-                    &memory.role,
-                    &memory.content,
-                    embedding_blob,
+            let insert_result = container
+                .chat_records()
+                .persist_memory_vector(MemoryVector {
+                    conversation_id: &conversation_id,
+                    vector_id: &memory_id,
+                    message_id: &memory.message_id,
+                    role: &memory.role,
+                    content: &memory.content,
+                    embedding: embedding_blob,
                     dimension,
-                    &embedding_model,
-                    &created_at,
-                )
+                    embedding_model: &embedding_model,
+                    created_at: &created_at,
+                })
                 .await;
 
             if let Err(e) = insert_result {

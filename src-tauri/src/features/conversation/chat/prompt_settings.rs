@@ -1,5 +1,5 @@
 use super::prompting::enforce_numeric_citation_format;
-use crate::features::settings::dto::LLMPromptSettingsDto;
+pub(super) use crate::features::settings::dto::LLMPromptSettingsDto;
 
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
@@ -54,8 +54,6 @@ pub(super) fn normalize_prompt_settings(
     );
     prompt_settings.rag_prompt_template =
         enforce_numeric_citation_format(&prompt_settings.rag_prompt_template);
-    prompt_settings.tool_followup_prompt_template =
-        enforce_numeric_citation_format(&prompt_settings.tool_followup_prompt_template);
     prompt_settings
 }
 

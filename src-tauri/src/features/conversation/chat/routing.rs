@@ -75,7 +75,7 @@ pub(super) async fn infer_turn_intent_flags(
     // Resolved the way the grounding judge below resolves its model: the
     // utility LLM when one is configured, the chat LLM otherwise, and no
     // classification at all when loading one fails.
-    let classifier_llm = match container.get_or_load_utility_llm().await {
+    let classifier_llm = match (container.utility_llm_loader())().await {
         Ok(Some(utility)) => utility,
         Ok(None) => Arc::clone(chat_llm),
         Err(e) => {

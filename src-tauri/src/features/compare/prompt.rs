@@ -1,24 +1,18 @@
-//! The single per-document prompt. One call fills every column.
+//! The single per-document task. One call fills every column; the passages
+//! follow it under `Passages:`, as many as the model's window holds.
 //!
-//! Structured output is prompt-enforced (there is no schema parameter on
-//! `LLMPort`), so the shape is stated exactly, an example is shown, and the
-//! parser is tolerant.
+//! Structured output is prompt-enforced, so the shape is stated exactly, an
+//! example is shown, and the parser is tolerant.
 
-use super::retrieval::RetrievedChunk;
+/// Heading the passages are written under, after the task.
+pub const PASSAGES_HEADING: &str = "Passages:";
 
-pub fn build_compare_prompt(title: &str, columns: &[String], chunks: &[RetrievedChunk]) -> String {
+pub fn build_compare_task(title: &str, columns: &[String]) -> String {
     let field_list = columns
         .iter()
         .map(|column| format!("- {column}"))
         .collect::<Vec<_>>()
         .join("\n");
-
-    let passages = chunks
-        .iter()
-        .enumerate()
-        .map(|(index, chunk)| format!("[{}] {}", index + 1, chunk.content))
-        .collect::<Vec<_>>()
-        .join("\n\n");
 
     [
         "You are filling one row of a comparison table about a single document.".to_string(),
@@ -48,9 +42,6 @@ pub fn build_compare_prompt(title: &str, columns: &[String], chunks: &[Retrieved
         "Example of the required shape:".to_string(),
         r#"{"method": {"value": "randomised controlled trial", "quote": "We conducted a randomised controlled trial across four sites."}, "sample size": {"value": null, "quote": null}}"#
             .to_string(),
-        String::new(),
-        "Passages:".to_string(),
-        passages,
     ]
     .join("\n")
 }

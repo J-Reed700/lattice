@@ -190,6 +190,13 @@ impl SummarySearchPort for StubSummarySearch {
             .cloned()
             .collect())
     }
+
+    async fn document_summaries(
+        &self,
+        _scope: &HashSet<String>,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        Ok(std::collections::HashMap::new())
+    }
 }
 
 fn source_with_sections(sections: usize) -> SummarySource {
@@ -439,6 +446,37 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
     assert!(stored[0]
         .summary_text
         .contains("Key topics: preflight, engines"));
+}
+
+/// The source text is the call's evidence: the model reads its opening, as
+/// much as the window and the ceiling allow, ending on a whole passage, and
+/// the response contract still comes last.
+#[tokio::test]
+async fn a_long_document_is_summarized_from_its_opening_with_the_contract_last() {
+    let pool = pool_with_document().await;
+    let mut source = source_with_sections(0);
+    source.body = (0..5_000)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (use_case, prompts) = use_case(
+        true,
+        Some(source),
+        &[r#"{"summary":"Three sentences.","topics":["a"]}"#],
+        &pool,
+        memory_index(),
+    );
+
+    assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
+
+    let prompt = prompts.lock()[0].clone();
+    assert!(
+        prompt.contains("Beginning of the document:\nw0 w1 w2"),
+        "{prompt:.200}"
+    );
+    assert!(!prompt.contains("w4999"));
+    assert!(prompt.split_whitespace().count() < 3_200);
+    assert!(prompt.ends_with("No prose before or after it."));
 }
 
 #[tokio::test]

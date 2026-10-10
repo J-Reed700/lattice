@@ -412,10 +412,6 @@ pub struct LLMPromptSettingsDto {
     /// Prompt template when no relevant context is found.
     /// Supports placeholders: {question}
     pub no_context_prompt_template: String,
-
-    /// Prompt template used after tool results are appended to context.
-    /// Supports placeholders: {question}, {previous_response}
-    pub tool_followup_prompt_template: String,
 }
 
 /// Verification settings for response grounding checks.
@@ -1121,7 +1117,6 @@ impl Default for LLMPromptSettingsDto {
             greeting_prompt_template: default_greeting_prompt_template(),
             rag_prompt_template: "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:".to_string(),
             no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
-            tool_followup_prompt_template: "Tool results have been added to the context. Use them to answer the user's question. If excerpts are provided, quote them briefly and avoid repetition.\n\nQuestion: {question}\n{previous_response}\nAnswer:".to_string(),
         }
     }
 }

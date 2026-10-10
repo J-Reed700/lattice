@@ -1,20 +1,22 @@
 //! Chunk retrieval for one document across every requested column.
 //!
-//! Repository Barrier: the only state sources are the semantic search use case
+//! Each column is searched the way chat searches the library: the hybrid
+//! search's vector, BM25 and sparse branches, fused. How much of what comes
+//! back reaches the model is decided by grounded generation against the
+//! model's window, not here.
+//!
+//! Repository Barrier: the only state sources are the library search use case
 //! and the chunk repository. No filesystem, no raw SQL.
 
 use std::collections::HashSet;
 
 use tracing::{debug, warn};
 
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
+use crate::features::search::dto::SearchRequestDto;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 
-use super::use_case::{
-    CHUNKS_PER_COLUMN, MAX_CHUNKS_PER_DOCUMENT, MAX_CHUNK_CHARS, MAX_CONTEXT_CHARS,
-    SEMANTIC_THRESHOLD,
-};
+use super::use_case::{CHUNKS_PER_COLUMN, MAX_CHUNKS_PER_DOCUMENT};
 
 #[derive(Debug, Clone)]
 pub struct RetrievedChunk {
@@ -51,8 +53,8 @@ pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
     output
 }
 
-/// Chunks worth showing the model for one document across all columns.
-/// Ordered by first appearance, deduped by chunk id, capped.
+/// Chunks worth showing the model for one document across all columns,
+/// best first: ordered by first appearance, deduped by chunk id, capped.
 pub async fn retrieve_for_document(
     container: &Container,
     document_id: &str,
@@ -65,15 +67,10 @@ pub async fn retrieve_for_document(
     let mut chunks: Vec<RetrievedChunk> = Vec::new();
 
     let mut search_failed = false;
-    let search = container.semantic_search_use_case();
+    let search = container.hybrid_search_use_case();
     for column in columns {
-        let request = SearchRequestDto {
-            query: column.clone(),
-            limit: Some(CHUNKS_PER_COLUMN),
-            threshold: Some(SEMANTIC_THRESHOLD),
-            mode: SearchModeDto::Vector,
-        };
-        match search.execute_scoped(request, Some(&scope)).await {
+        let request = SearchRequestDto::hybrid(column, CHUNKS_PER_COLUMN);
+        match search.execute_scoped(request, None, Some(&scope)).await {
             Ok(response) => {
                 for result in response.results {
                     if !seen.insert(result.id.clone()) {
@@ -93,14 +90,14 @@ pub async fn retrieve_for_document(
                     document_id,
                     column = column.as_str(),
                     %error,
-                    "compare: scoped semantic search failed; will consider the chunk fallback"
+                    "compare: scoped library search failed; will consider the chunk fallback"
                 );
             }
         }
     }
 
-    // Fallback: no embeddings, or nothing cleared the threshold. A document's
-    // opening chunks are the best no-embedding guess, and this keeps compare
+    // Fallback: the search failed, or found nothing in this document. A
+    // document's opening chunks are the best guess left, and this keeps compare
     // usable on a fresh install.
     let mut degraded = None;
     if chunks.is_empty() {
@@ -113,7 +110,7 @@ pub async fn retrieve_for_document(
         } else {
             debug!(
                 document_id,
-                "compare: nothing cleared the threshold; using the opening chunks"
+                "compare: the search found nothing; using the opening chunks"
             );
         }
         let stored = container
@@ -130,18 +127,7 @@ pub async fn retrieve_for_document(
         }
     }
 
-    for chunk in &mut chunks {
-        chunk.content = truncate_chars(&chunk.content, MAX_CHUNK_CHARS);
-    }
     chunks.truncate(MAX_CHUNKS_PER_DOCUMENT);
-
-    while chunks.len() > 1 {
-        let total: usize = chunks.iter().map(|c| c.content.chars().count()).sum();
-        if total <= MAX_CONTEXT_CHARS {
-            break;
-        }
-        chunks.pop();
-    }
 
     Ok(DocumentChunks { chunks, degraded })
 }
