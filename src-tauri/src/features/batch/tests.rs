@@ -7,6 +7,7 @@ use super::imports::{BatchImports, FileImport, FILE_IMPORT};
 use super::items::{BatchItems, ItemState};
 use super::url_job::UrlImporter;
 use crate::application::ports::EmbeddingPort;
+use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
@@ -17,9 +18,7 @@ use crate::infrastructure::{
     file_system::SecureFileStorage,
     persistence::{
         database::{initialize_database, DatabaseConnection},
-        repositories::{
-            unit_of_work::SqliteUnitOfWorkFactory, DocumentRepositoryImpl, EmbeddingRepository,
-        },
+        repositories::{unit_of_work::SqliteUnitOfWorkFactory, DocumentRepositoryImpl},
     },
     storage::ContentAddressedStorage,
 };

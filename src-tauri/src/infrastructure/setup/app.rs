@@ -573,7 +573,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 /// when settings cannot be read so startup never depends on it.
 async fn read_summary_tier_flag(data_dir: &std::path::Path) -> bool {
     use crate::application::ports::SettingsRepositoryPort;
-    use crate::infrastructure::persistence::repositories::SettingsRepository;
+    use crate::features::settings::repository::SettingsRepository;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {

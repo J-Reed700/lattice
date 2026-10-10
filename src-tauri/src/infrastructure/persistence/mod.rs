@@ -24,7 +24,4 @@ pub mod helpers;
 pub mod mappers;
 pub mod repositories;
 
-pub use crate::features::download::download_repository::{
-    DownloadRepository, SqliteDownloadRepository,
-};
 pub use helpers::query_indexed_directories;

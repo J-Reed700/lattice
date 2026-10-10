@@ -20,13 +20,15 @@ use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
 use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::executor::FunctionExecutor;
+use crate::features::function_calling::registry::{
+    init_function_registry, register_custom_query_tools,
+};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::settings::di::ContainerSettingsSideEffects;
+use crate::features::web::services::web::WebService;
 use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
-use crate::infrastructure::services::{
-    init_function_registry, register_custom_query_tools, FunctionExecutor, WebService,
-};
 use crate::infrastructure::storage::ContentAddressedStorage;
 use crate::shared::error::Result;
 use sqlx::SqlitePool;

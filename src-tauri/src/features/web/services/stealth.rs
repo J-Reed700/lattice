@@ -18,7 +18,6 @@ use reqwest::header::{
     REFERER, USER_AGENT,
 };
 use serde::Deserialize;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -122,49 +121,15 @@ const BROWSER_PROFILES: &[BrowserProfile] = &[
     },
 ];
 
-// ─── Profile Rotation ───────────────────────────────────────────────────────
+// ─── Profile Selection ──────────────────────────────────────────────────────
 
-pub struct ProfileRotator {
-    counter: AtomicUsize,
-}
-
-impl Default for ProfileRotator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ProfileRotator {
-    pub const fn new() -> Self {
-        Self {
-            counter: AtomicUsize::new(0),
-        }
-    }
-
-    #[allow(clippy::indexing_slicing)]
-    pub fn next_profile(&self) -> &'static BrowserProfile {
-        let idx = self.counter.fetch_add(1, Ordering::Relaxed) % BROWSER_PROFILES.len();
-        &BROWSER_PROFILES[idx]
-    }
-
-    #[allow(clippy::indexing_slicing)]
-    pub fn random_profile(&self) -> &'static BrowserProfile {
-        let mut rng = rand::thread_rng();
-        let idx = rng.gen_range(0..BROWSER_PROFILES.len());
-        &BROWSER_PROFILES[idx]
-    }
-}
-
-static PROFILE_ROTATOR: Lazy<ProfileRotator> = Lazy::new(ProfileRotator::new);
 static PROXY_POOL: Lazy<Option<Vec<String>>> = Lazy::new(load_proxy_pool);
 static FLARESOLVERR: Lazy<Option<FlareSolverrClient>> = Lazy::new(FlareSolverrClient::from_env);
 
-pub fn next_profile() -> &'static BrowserProfile {
-    PROFILE_ROTATOR.next_profile()
-}
-
+#[allow(clippy::indexing_slicing)] // gen_range stays below BROWSER_PROFILES.len()
 pub fn random_profile() -> &'static BrowserProfile {
-    PROFILE_ROTATOR.random_profile()
+    let idx = rand::thread_rng().gen_range(0..BROWSER_PROFILES.len());
+    &BROWSER_PROFILES[idx]
 }
 
 // ─── Header Builders ────────────────────────────────────────────────────────
@@ -440,7 +405,7 @@ impl FlareSolverrClient {
 ///
 /// Does **not** set `User-Agent` — use [`browser_headers`] per-request for rotation.
 pub fn stealth_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = super::client::reqwest_client_builder().cookie_store(false);
+    let mut builder = crate::shared::http::reqwest_client_builder().cookie_store(false);
 
     if let Some(proxy_url) = random_proxy_url() {
         let shown = redact_url_credentials(proxy_url);
@@ -505,17 +470,6 @@ mod tests {
             "socks5://proxy.example:1080"
         );
         assert!(!redact_url_credentials("not a url with secret").contains("secret"));
-    }
-
-    #[test]
-    fn test_profile_rotation_wraps_around() {
-        let rotator = ProfileRotator::new();
-        let first = rotator.next_profile().user_agent;
-        for _ in 1..BROWSER_PROFILES.len() {
-            let _ = rotator.next_profile();
-        }
-        let wrapped = rotator.next_profile().user_agent;
-        assert_eq!(first, wrapped);
     }
 
     #[test]

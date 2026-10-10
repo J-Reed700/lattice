@@ -744,3 +744,6 @@ impl ModelManagerTrait for ModelManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

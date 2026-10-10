@@ -14,9 +14,10 @@ use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
     DocumentMetadata, TagGenerator, TAG_GENERATION_SYSTEM_PROMPT,
 };
+use crate::features::tags::repository::TagRepository;
 use crate::features::tags::service::{DocumentLockGuard, DocumentLockTable};
 use crate::features::tags::TagServiceTrait;
-use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, TagRepository};
+use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::SqlitePool;

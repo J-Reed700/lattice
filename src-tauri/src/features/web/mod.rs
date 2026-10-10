@@ -35,7 +35,7 @@ pub mod use_cases;
 pub mod mocks;
 
 pub use traits::{
-    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionResult, WebIngestionServiceTrait,
-    WebServiceTrait,
+    ArticleExtractorServiceTrait, WebArchiveServiceTrait, WebCaptureServiceTrait,
+    WebIngestionResult, WebIngestionServiceTrait, WebServiceTrait,
 };
 pub mod article_detector;

@@ -7,8 +7,8 @@ use crate::features::indexing::use_cases::index_file::{
     publish_chunks_to_live_index, PublishedChunk,
 };
 use crate::features::indexing::IndexStorageTrait;
+use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait};
-use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -33,8 +33,8 @@ use tokenizers::Tokenizer;
 /// # Example
 ///
 /// ```rust,no_run
-/// use lattice::infrastructure::services::{
-///     WebIngestionService, ArticleExtractorService, embedding::OnnxEmbeddingService
+/// use lattice::features::web::services::{
+///     article_extractor::ArticleExtractorService, ingestion::WebIngestionService,
 /// };
 /// use lattice::features::indexing::engine::storage::IndexStorage;
 /// use std::sync::Arc;

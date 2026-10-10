@@ -10,6 +10,7 @@ use crate::application::ports::{
     DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
     FileSystemPort, TranscriptionPort, VectorSearchPort,
 };
+use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
@@ -21,7 +22,7 @@ use crate::infrastructure::adapters::content_extraction_adapter::ContentExtracti
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::infrastructure::persistence::repositories::{
-    ChunkRepositoryImpl, DocumentRepositoryImpl, EmbeddingRepository,
+    ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
 use crate::interfaces::di::Container;

@@ -96,7 +96,7 @@ fn resolve_out_of_range_values(settings: &mut SettingsDto) {
 /// # Example
 ///
 /// ```rust,ignore
-/// use crate::infrastructure::persistence::repositories::SettingsRepository;
+/// use crate::features::settings::repository::SettingsRepository;
 /// use tauri::api::path::app_data_dir;
 ///
 /// let app_data_dir = app_data_dir(&config).expect("Failed to get app data dir");

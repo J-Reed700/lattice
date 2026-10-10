@@ -18,6 +18,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let indexing_state = container.indexing.indexing_state().clone();
             let app_handle = app.clone();
 
+            // raw-spawn: plugin setup has no tokio context; ends when the indexing state drops
             tauri::async_runtime::spawn(async move {
                 let mut rx = indexing_state.subscribe();
                 while let Ok(progress) = rx.recv().await {

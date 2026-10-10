@@ -13,6 +13,7 @@ use crate::application::ports::{
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use crate::features::download::download_repository::SqliteDownloadRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::engine::HttpDownloadEngine;
 use crate::features::download::manager::{DownloadManager, DownloadManagerService};
 use crate::features::llm::use_cases::{
@@ -28,7 +29,6 @@ use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;

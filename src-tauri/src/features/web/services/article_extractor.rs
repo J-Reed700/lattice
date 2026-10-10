@@ -21,7 +21,7 @@
 //! # Example
 //! ```rust,no_run
 //! use lattice::infrastructure::services::article_extractor::ArticleExtractorService;
-//! use lattice::infrastructure::services::traits::ArticleExtractorServiceTrait;
+//! use lattice::features::web::traits::ArticleExtractorServiceTrait;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let service = ArticleExtractorService::new()?;
@@ -44,9 +44,9 @@
 //! ```
 
 use crate::features::function_calling::dto::CleanArticle;
-use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
+use crate::features::web::services::stealth;
+use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
-use crate::shared::http::stealth;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lazy_regex::regex;

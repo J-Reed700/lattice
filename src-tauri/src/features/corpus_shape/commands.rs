@@ -120,7 +120,7 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
     // Container doesn't expose a port-shaped accessor for it today and the
     // underlying SQLite impl is stateless.
     let embedding_repo: Arc<dyn crate::application::ports::EmbeddingRepositoryPort> = Arc::new(
-        crate::infrastructure::persistence::repositories::EmbeddingRepository::new(
+        crate::features::embedding::repository::EmbeddingRepository::new(
             container.db_pool().clone(),
         ),
     );

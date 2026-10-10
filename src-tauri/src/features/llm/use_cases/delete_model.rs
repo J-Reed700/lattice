@@ -267,7 +267,7 @@ mod tests {
         DownloadedModel as StoredModel, MockModelStoragePort,
     };
     use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-    use crate::infrastructure::persistence::repositories::DownloadedModelRepository as ConcreteRepo;
+    use crate::features::download::downloaded_model_repository::DownloadedModelRepository as ConcreteRepo;
     use chrono::Utc;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;

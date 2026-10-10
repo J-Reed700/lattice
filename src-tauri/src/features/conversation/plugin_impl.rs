@@ -728,7 +728,7 @@ pub async fn get_conversation_memory_impl(
 /// summarization, and the length cap alone would reject every conversation long
 /// enough to be worth compacting.
 ///
-/// [`CompactionJob`]: crate::application::services::conversation_memory::CompactionJob
+/// [`CompactionJob`]: crate::features::conversation::memory::CompactionJob
 pub async fn compact_conversation_impl(
     request: CompactConversationRequestDto,
     container: &Container,
@@ -760,9 +760,8 @@ pub async fn compact_conversation_impl(
     let outcome = job
         .run(
             conversation_id,
-            crate::application::services::conversation_memory::CompactionRequest {
-                trigger:
-                    crate::application::services::conversation_memory::CompactionTrigger::Manual,
+            crate::features::conversation::memory::CompactionRequest {
+                trigger: crate::features::conversation::memory::CompactionTrigger::Manual,
                 keep_recent_messages: request.keep_recent_messages.map(|value| value as usize),
                 ..Default::default()
             },
@@ -776,9 +775,9 @@ pub async fn compact_conversation_impl(
 /// Map a run onto the compaction DTO.
 fn compaction_response(
     conversation_id: &str,
-    outcome: &crate::application::services::conversation_memory::CompactionOutcome,
+    outcome: &crate::features::conversation::memory::CompactionOutcome,
 ) -> Result<CompactConversationResponseDto, ApiError> {
-    use crate::application::services::conversation_memory::CompactionStatus;
+    use crate::features::conversation::memory::CompactionStatus;
     use crate::features::conversation::memory_dto::CompactionMemoryDto;
 
     if outcome.status == CompactionStatus::NothingToCompact {

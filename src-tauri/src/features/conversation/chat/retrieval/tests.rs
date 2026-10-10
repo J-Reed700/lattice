@@ -599,7 +599,7 @@ fn web_query_strips_tracking_even_for_a_short_product_link() {
 /// side so both sets of sources reach the answer.
 #[test]
 fn an_intent_that_needs_the_web_still_searches_the_vault() {
-    let intent = crate::infrastructure::services::intent::TurnIntent {
+    let intent = crate::features::conversation::chat::intent::TurnIntent {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,

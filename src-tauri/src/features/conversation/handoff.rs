@@ -20,6 +20,7 @@ use crate::features::conversation::repository::ConversationRepository;
 use crate::interfaces::di::Container;
 use crate::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 const TITLE_CHAR_LIMIT: usize = 200;
@@ -211,28 +212,38 @@ async fn ask_model(llm: &dyn LLMPort, request: GroundedRequest) -> Result<String
     Ok(text.to_string())
 }
 
-/// The conversations being summarized right now. The guard releases its id on
-/// drop, so an error or a panic cannot leave a conversation locked.
-struct InFlight(String);
+/// The conversations being summarized right now. Owned by the conversation
+/// DI, so every handoff in the process claims from one set.
+#[derive(Default)]
+pub struct HandoffsInFlight(std::sync::Mutex<HashSet<String>>);
 
-static IN_FLIGHT: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> =
-    std::sync::LazyLock::new(Default::default);
+/// A claimed conversation. The guard releases its id on drop, so an error or
+/// a panic cannot leave a conversation locked.
+struct InFlight {
+    set: Arc<HandoffsInFlight>,
+    id: String,
+}
 
 impl InFlight {
-    fn claim(id: &str) -> Option<Self> {
-        let mut running = IN_FLIGHT
+    fn claim(set: &Arc<HandoffsInFlight>, id: &str) -> Option<Self> {
+        let mut running = set
+            .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        running.insert(id.to_string()).then(|| Self(id.to_string()))
+        running.insert(id.to_string()).then(|| Self {
+            set: Arc::clone(set),
+            id: id.to_string(),
+        })
     }
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        IN_FLIGHT
+        self.set
+            .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.0);
+            .remove(&self.id);
     }
 }
 
@@ -263,7 +274,7 @@ pub async fn continue_in_new_conversation_impl(
     // One summary per conversation at a time. A second click, or a click after
     // a page reload lost the first one's spinner, would otherwise start a
     // parallel run and open a second copy.
-    let _running = match InFlight::claim(&source_id) {
+    let _running = match InFlight::claim(&container.handoffs_in_flight(), &source_id) {
         Some(guard) => guard,
         None => {
             return Err(ApiError::from(AppError::InvalidState(
@@ -488,11 +499,15 @@ mod tests {
 
     #[test]
     fn a_conversation_cannot_be_summarized_twice_at_once() {
-        let first = InFlight::claim("conv-a").unwrap();
-        assert!(InFlight::claim("conv-a").is_none());
-        assert!(InFlight::claim("conv-b").is_some());
+        let set = Arc::new(HandoffsInFlight::default());
+        let first = InFlight::claim(&set, "conv-a").unwrap();
+        assert!(InFlight::claim(&set, "conv-a").is_none());
+        assert!(InFlight::claim(&set, "conv-b").is_some());
         drop(first);
-        assert!(InFlight::claim("conv-a").is_some(), "released on drop");
+        assert!(
+            InFlight::claim(&set, "conv-a").is_some(),
+            "released on drop"
+        );
     }
 
     #[test]

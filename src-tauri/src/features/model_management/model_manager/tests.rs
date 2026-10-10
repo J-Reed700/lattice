@@ -14,7 +14,7 @@
 
 #![allow(unused_imports)]
 
-use crate::infrastructure::services::model_manager::{DownloadProgress, ModelManager};
+use super::{DownloadProgress, ModelManager};
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use crate::shared::error::AppError;
 use mockito;

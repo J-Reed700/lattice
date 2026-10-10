@@ -30,8 +30,8 @@
 use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

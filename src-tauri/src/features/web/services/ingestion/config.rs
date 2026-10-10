@@ -6,8 +6,8 @@
 use super::WebIngestionService;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
+use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::WebArchiveServiceTrait;
-use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;

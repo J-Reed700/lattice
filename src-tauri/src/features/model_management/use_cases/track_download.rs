@@ -3,7 +3,7 @@
 //! Records a model download completion in the models table.
 
 use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::shared::error::Result;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;

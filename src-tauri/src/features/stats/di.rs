@@ -13,8 +13,9 @@ use crate::features::stats::database_stats::DatabaseStatsAdapter;
 use crate::features::stats::use_cases::get_corpus_shape::GetCorpusShapeUseCase;
 use crate::features::stats::use_cases::get_system_stats::GetSystemStatsUseCase;
 use crate::features::tags::entity::Tag as TagEntity;
+use crate::features::tags::repository::TagRepository;
 use crate::infrastructure::persistence::repositories::{
-    ChunkRepositoryImpl, DocumentRepositoryImpl, TagRepositoryImpl,
+    ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::interfaces::di::Container;
 
@@ -30,7 +31,7 @@ pub fn build(db_pool: SqlitePool) -> StatsDi {
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<Chunk>>;
     let tag_repo =
-        Arc::new(TagRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<TagEntity>>;
+        Arc::new(TagRepository::new(db_pool.clone())) as Arc<dyn RepositoryPort<TagEntity>>;
     let corpus_shape_repo = Arc::new(SqliteCorpusShapeRepository::new(db_pool.clone()))
         as Arc<dyn CorpusShapeRepositoryPort>;
     let database_stats = Arc::new(DatabaseStatsAdapter::new(db_pool)) as Arc<dyn DatabaseStatsPort>;

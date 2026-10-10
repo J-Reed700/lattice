@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::application::contracts::settings::LLMSettingsDto;
 use crate::application::ports::LLMPort;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::types::LLMError;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 
 /// A bundled llama-server that cannot execute is an install problem, not a

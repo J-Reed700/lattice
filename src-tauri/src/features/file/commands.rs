@@ -491,7 +491,7 @@ pub async fn read_file_content_impl(
             .with_metadata("content_length", dto.content.len().to_string().as_str());
 
             let logger = Arc::clone(&audit_logger);
-            tokio::spawn(async move {
+            crate::shared::runtime::background::spawn(async move {
                 if let Err(e) = logger.log(event).await {
                     tracing::warn!("Failed to write audit log: {}", e);
                 }
@@ -506,7 +506,7 @@ pub async fn read_file_content_impl(
             .with_metadata("operation", "read_file_content");
 
             let logger = Arc::clone(&audit_logger);
-            tokio::spawn(async move {
+            crate::shared::runtime::background::spawn(async move {
                 if let Err(e) = logger.log(event).await {
                     tracing::warn!("Failed to write audit log: {}", e);
                 }
@@ -558,7 +558,7 @@ pub async fn read_file_bytes_impl(
             .with_metadata("file_size", bytes.len().to_string().as_str());
 
             let logger = Arc::clone(&audit_logger);
-            tokio::spawn(async move {
+            crate::shared::runtime::background::spawn(async move {
                 if let Err(e) = logger.log(event).await {
                     tracing::warn!("Failed to write audit log: {}", e);
                 }
@@ -573,7 +573,7 @@ pub async fn read_file_bytes_impl(
             .with_metadata("operation", "read_file_bytes");
 
             let logger = Arc::clone(&audit_logger);
-            tokio::spawn(async move {
+            crate::shared::runtime::background::spawn(async move {
                 if let Err(e) = logger.log(event).await {
                     tracing::warn!("Failed to write audit log: {}", e);
                 }

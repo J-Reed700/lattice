@@ -118,10 +118,6 @@ use lattice::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
 };
 use lattice::application::ports::LLMPort;
-use lattice::application::services::conversation_memory::{
-    prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
-    COMPACTION_DEADLINE,
-};
 use lattice::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
     SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
@@ -129,6 +125,10 @@ use lattice::domain::conversation::memory::{
 };
 use lattice::domain::conversation::MessageRole;
 use lattice::features::conversation::chat::memory_context::build_memory_plan;
+use lattice::features::conversation::memory::{
+    prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
+    COMPACTION_DEADLINE,
+};
 use lattice::features::conversation::repository::ConversationRepository;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
@@ -2963,7 +2963,7 @@ async fn targeted_bounded_memory_cells_from_env() {
     let _ = {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(
-                "lattice::application::services::conversation_memory=info",
+                "lattice::features::conversation::memory=info",
             ))
             .with_test_writer()
             .try_init()

@@ -14,7 +14,7 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::application::ports::LLMPort;
-use crate::application::services::conversation_memory::{
+use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
 };

@@ -39,10 +39,10 @@
 
 use crate::features::function_calling::dto::*;
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage, PageCache};
+use crate::features::web::services::stealth;
 use crate::features::web::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::http::stealth;
 use async_trait::async_trait;
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};

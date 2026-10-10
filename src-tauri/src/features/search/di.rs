@@ -100,7 +100,7 @@ pub async fn build_with_compression(
     strategy: EmbeddingStrategy,
 ) -> Result<SearchDi> {
     let repository =
-        crate::infrastructure::persistence::repositories::DownloadedModelRepository::new(
+        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
             db_pool.clone(),
         );
     let active = repository.get_active_embedding_model().await?;

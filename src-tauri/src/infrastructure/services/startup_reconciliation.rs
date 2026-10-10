@@ -1,6 +1,6 @@
 use crate::domain::download::{DownloadError, DownloadState};
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
-use crate::infrastructure::persistence::DownloadRepository;
+use crate::features::download::download_repository::DownloadRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::sync::Arc;

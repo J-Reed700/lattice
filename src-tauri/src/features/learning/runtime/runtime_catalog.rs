@@ -200,8 +200,11 @@ async fn run_engine_command(
     let stderr = child.stderr.take().ok_or_else(|| {
         AppError::InternalError("Container setup process did not provide stderr.".into())
     })?;
-    let stdout_task = tokio::spawn(bounded_read(stdout, MAX_COMMAND_OUTPUT));
-    let stderr_task = tokio::spawn(bounded_read(stderr, MAX_COMMAND_OUTPUT));
+    // raw-spawn: both pipe readers end with the child, which is waited or killed below
+    let (stdout_task, stderr_task) = (
+        tokio::spawn(bounded_read(stdout, MAX_COMMAND_OUTPUT)),
+        tokio::spawn(bounded_read(stderr, MAX_COMMAND_OUTPUT)),
+    );
     let status = match tokio::time::timeout(timeout, child.wait()).await {
         Ok(Ok(status)) => status,
         Ok(Err(error)) => return Err(error.into()),

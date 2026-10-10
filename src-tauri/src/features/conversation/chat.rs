@@ -30,13 +30,13 @@
 //! });
 //! ```
 
+use self::intent::{IntentClassifier, IntentInput, TurnIntent};
+use self::router::{RouterAction, RouterInput, RouterService};
 use crate::application::services::conversation_context::build_conversation_context;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::settings::dto::{CustomToolSettingsDto, RouterSettingsDto};
-use crate::infrastructure::services::intent::{IntentClassifier, IntentInput, TurnIntent};
-use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::extract_highlight_terms;
 use std::collections::HashSet;
@@ -60,6 +60,7 @@ mod prior_evidence;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
+pub mod intent;
 pub mod memory_context;
 mod persistence;
 pub(crate) use persistence::index_memory_note;
@@ -69,6 +70,7 @@ pub(crate) mod source_snapshots;
 // sufficiency judgement instead of reimplementing it.
 mod research_job;
 pub mod retrieval;
+pub mod router;
 pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
 mod tool_loop;
 pub mod turn_record;

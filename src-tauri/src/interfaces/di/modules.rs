@@ -127,14 +127,13 @@ use crate::features::conversation::ConversationServiceTrait;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::{
-    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
+    ArticleExtractorServiceTrait, WebArchiveServiceTrait, WebCaptureServiceTrait,
+    WebIngestionServiceTrait,
 };
-use crate::infrastructure::services::traits::{
-    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
-};
+use crate::infrastructure::services::traits::{ModelManagerTrait, SearchEnrichmentServiceTrait};
 
 use crate::application::ports::LoadedChatModelPort;
-use crate::infrastructure::services::model_manager::ModelManager;
+use crate::features::model_management::model_manager::ModelManager;
 
 /// Core shared infrastructure used by all modules
 ///
@@ -355,7 +354,7 @@ async fn read_search_settings(
     data_dir: &std::path::Path,
 ) -> crate::features::settings::dto::SearchSettingsDto {
     use crate::application::ports::SettingsRepositoryPort;
-    use crate::infrastructure::persistence::repositories::SettingsRepository;
+    use crate::features::settings::repository::SettingsRepository;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {
@@ -446,7 +445,7 @@ async fn resolve_vector_compression(
 
 /// The catalog id of the active embedding model, when there is one.
 async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
-    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
@@ -466,7 +465,7 @@ async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
 /// wipe the user's index back to 384, then the container would fail to
 /// load the model at the wrong dim, cycle forever.
 async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usize> {
-    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
@@ -721,10 +720,14 @@ impl AIModule {
         &self.conversation.conversation_context
     }
 
-    pub fn compaction_slots(
-        &self,
-    ) -> &Arc<crate::application::services::conversation_memory::CompactionSlots> {
+    pub fn compaction_slots(&self) -> &Arc<crate::features::conversation::memory::CompactionSlots> {
         &self.conversation.compaction_slots
+    }
+
+    pub(crate) fn handoffs_in_flight(
+        &self,
+    ) -> &Arc<crate::features::conversation::handoff::HandoffsInFlight> {
+        &self.conversation.handoffs_in_flight
     }
 
     pub fn conversation_memory(
@@ -735,7 +738,8 @@ impl AIModule {
 
     pub fn downloaded_model_repo(
         &self,
-    ) -> &Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository> {
+    ) -> &Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
+    {
         &self.llm.downloaded_model_repo
     }
 

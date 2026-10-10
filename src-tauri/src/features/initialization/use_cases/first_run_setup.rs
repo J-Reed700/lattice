@@ -1,8 +1,8 @@
 use crate::application::ports::system_info::SystemInfoPort;
 use crate::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
 use crate::domain::models::embedding_defaults::default_embedding_model;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::infrastructure::ml::compute_device::gpu_acceleration_available;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
