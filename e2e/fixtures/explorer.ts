@@ -38,6 +38,7 @@ export async function installExplorerFixture(page: Page) {
     list_downloads: () => [],
     get_batch_history: () => ({ jobs: [] }),
     list_jobs: () => [],
+    list_journal_syntheses: () => [],
     list_all_documents: () => [],
     get_indexed_folders: () => [],
     list_downloaded_models: () => [],
