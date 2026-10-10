@@ -186,7 +186,14 @@ export async function installTauriMock(page: Page) {
         const key = plugin === 'dialog' || plugin === 'app' ? `${plugin}|${name}` : name;
         ipc.calls.push({ command: key, args });
         const handler = (ipc.handlers as Record<string, ((args: MockArgs, ipc: MockIpc) => unknown) | undefined>)[key];
-        if (handler) return handler(args, ipc);
+        if (handler) {
+          // Tauri rejects with the serialized error, never an Error object.
+          try {
+            return await handler(args, ipc);
+          } catch (error) {
+            throw error instanceof Error ? error.message : error;
+          }
+        }
         if (ipc.served.includes(key) && window.__latticeServeCommand) return window.__latticeServeCommand(key, args);
         ipc.unsupported.push(key);
         void window.__latticeReportUnsupported?.(key);
