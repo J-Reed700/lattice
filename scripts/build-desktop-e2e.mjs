@@ -122,7 +122,7 @@ const runtimeProbe = spawnSync(binary, ['--learning-runtime-self-test', pythonRu
   cwd: installed, env, encoding: 'utf8', timeout: 180_000,
 });
 if (runtimeProbe.error) throw runtimeProbe.error;
-if (runtimeProbe.status !== 0) throw new Error(`Installed runtime probe failed: ${runtimeProbe.stderr || runtimeProbe.stdout}`);
+if (runtimeProbe.status !== 0) throw new Error(`Installed runtime probe failed (status ${runtimeProbe.status}, signal ${runtimeProbe.signal}): ${runtimeProbe.stderr || runtimeProbe.stdout}`);
 const runtimeProof = JSON.parse(runtimeProbe.stdout.trim());
 if (runtimeProof.status !== 'passed') throw new Error('Installed runtime probe did not pass');
 await mkdir(path.join(output, 'reports'), { recursive: true });
