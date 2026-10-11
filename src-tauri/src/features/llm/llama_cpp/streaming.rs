@@ -13,6 +13,9 @@ pub(crate) struct Decoder {
     allow_tool_calls: bool,
     content: String,
     reasoning: BTreeMap<String, String>,
+    /// Reasoning received since the caller last drained it. The aggregate
+    /// above is retained for native replay; this buffer is only UI progress.
+    reasoning_delta: String,
     tool_calls: BTreeMap<u64, Value>,
     usage: Value,
     /// Probabilities for the first public answer token. Hidden reasoning
@@ -73,6 +76,9 @@ impl Decoder {
     }
     pub fn retryable_error(&self) -> bool {
         self.retryable_error
+    }
+    pub fn take_reasoning_delta(&mut self) -> String {
+        std::mem::take(&mut self.reasoning_delta)
     }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         self.received_bytes = self.received_bytes.saturating_add(bytes.len());
@@ -166,6 +172,7 @@ impl Decoder {
                         .and_then(|d| d.get(key))
                         .and_then(Value::as_str)
                     {
+                        self.reasoning_delta.push_str(value);
                         self.reasoning
                             .entry(key.into())
                             .or_default()

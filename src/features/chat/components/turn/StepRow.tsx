@@ -33,7 +33,19 @@ export function StepRow({ step }: { step: TurnStep }) {
             ? formatDuration(step.durationMs)
             : ''}
       </span>
+      <ReasoningDisclosure reasoning={step.reasoning} />
     </li>
+  );
+}
+
+export function ReasoningDisclosure({ reasoning }: { reasoning?: string | null }) {
+  const text = reasoning?.trim();
+  if (!text) return null;
+  return (
+    <details className="turn-record-reasoning">
+      <summary>Reasoning</summary>
+      <div className="turn-record-reasoning-text">{text}</div>
+    </details>
   );
 }
 

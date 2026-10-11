@@ -1,4 +1,5 @@
 import { fireEvent, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Editor } from '@tiptap/core';
 import { MemoryRouter } from 'react-router';
 import { Markdown } from 'tiptap-markdown';
@@ -9,6 +10,7 @@ import { sentencesByOccurrence } from '@/features/chat/components/reader/answerS
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
 import { TiptapEditor } from '../TiptapEditor';
+import { TiptapViewer } from '../TiptapViewer';
 
 import type { DecorationSet } from '@tiptap/pm/view';
 
@@ -62,6 +64,90 @@ const ANSWER = [
 ].join('\n');
 
 describe('CitationMarks', () => {
+  it('tabs through read-only markers and delegates Enter/Space to the same occurrence as a click', async () => {
+    const user = userEvent.setup();
+    const activate = vi.fn();
+    const view = render(<div onClick={(event) => {
+      const chip = (event.target as Element).closest<HTMLElement>('[data-cite]');
+      if (chip) activate(Number(chip.dataset.cite), Number(chip.dataset.citeAt));
+    }}>
+      <button type="button">Before citations</button>
+      <TiptapViewer content="First claim [4]. Second claim [4]." citationNumbers={[4]} />
+    </div>);
+    const chips = await waitFor(() => {
+      const found = view.container.querySelectorAll<HTMLElement>('[data-cite="4"]');
+      expect(found).toHaveLength(2);
+      return found;
+    });
+    await user.click(view.getByRole('button', { name: 'Before citations' }));
+    await user.tab();
+    expect(chips[0]).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(activate).toHaveBeenLastCalledWith(4, 0);
+    await user.tab();
+    expect(chips[1]).toHaveFocus();
+    await user.keyboard(' ');
+    expect(activate).toHaveBeenLastCalledWith(4, 1);
+    expect(activate).toHaveBeenCalledTimes(2);
+    expect(view.container).toHaveTextContent('First claim [4]. Second claim [4].');
+  });
+
+  it('removes hidden citations from keyboard navigation', async () => {
+    const user = userEvent.setup();
+    const view = render(<>
+      <button type="button">Before citations</button>
+      <TiptapViewer content="A claim [4]." citationNumbers={[4]} showEvidence={false} />
+      <button type="button">After citations</button>
+    </>);
+    await waitFor(() => expect(view.container.querySelector('.citation-hidden')).not.toBeNull());
+    expect(view.container.querySelector('[data-cite]')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Citation 4' })).toBeNull();
+    await user.click(view.getByRole('button', { name: 'Before citations' }));
+    await user.tab();
+    expect(view.getByRole('button', { name: 'After citations' })).toHaveFocus();
+  });
+  it('toggles real viewer citations and highlights without changing prose, code or unknown markers', async () => {
+    const content = 'A careful comparison records the measure [4]. Leave [99] and `grid[4]` alone.';
+    const props = { content, citationNumbers: [4], claims: [{ sentence: 'A careful comparison records the measure [4].', verdict: 'supported' as const }] };
+    const view = render(<TiptapViewer {...props} />);
+    await waitFor(() => expect(view.container.querySelector('[data-cite="4"]')).not.toBeNull());
+    expect(view.container.querySelector('.claim-supported')).not.toBeNull();
+
+    view.rerender(<TiptapViewer {...props} showEvidence={false} />);
+    await waitFor(() => expect(view.container.querySelector('[data-cite]')).toBeNull());
+    expect(view.container.querySelector('.claim')).toBeNull();
+    expect(view.container.querySelectorAll('.citation-hidden')).toHaveLength(1);
+    expect(view.container.querySelector('.citation-hidden')).toHaveTextContent('[4]');
+    expect(view.container).toHaveTextContent('Leave [99]');
+    expect(view.container.querySelector('code')).toHaveTextContent('grid[4]');
+
+    view.rerender(<TiptapViewer {...props} />);
+    await waitFor(() => expect(view.container.querySelector('[data-cite="4"]')).not.toBeNull());
+    expect(view.container.querySelector('.claim-supported')).not.toBeNull();
+    expect(view.container.querySelector('.citation-hidden')).toBeNull();
+    expect(view.container).toHaveTextContent('A careful comparison records the measure [4].');
+  });
+
+  it('can hide a valid marker without removing it from the document', () => {
+    const editor = new Editor({
+      extensions: [
+        ...createExtensions(),
+        CitationMarks.configure({ isCitation: () => true, isVisible: () => false }),
+        Markdown.configure({ html: false }),
+      ],
+      content: 'A sourced sentence [3].',
+      editable: false,
+    });
+    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === citationMarksKey);
+    const set = plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
+    const attrs = (set.find()[0] as unknown as { type: { attrs: Record<string, string> } }).type.attrs;
+
+    expect(attrs.class).toBe('citation-hidden');
+    expect(attrs['data-cite']).toBeUndefined();
+    expect(editor.state.doc.textContent).toContain('[3]');
+    editor.destroy();
+  });
+
   it('numbers the marks of one source in reading order, leaving code alone', () => {
     const sixes = drawnChips(ANSWER).filter((chip) => chip.number === 6);
 
@@ -111,5 +197,13 @@ describe('CitationMarks', () => {
 
     fireEvent.click(chips[1]!);
     expect(onCitationClick).toHaveBeenCalledWith(4, 1);
+    fireEvent.keyDown(chips[0]!, { key: 'Enter' });
+    expect(onCitationClick).toHaveBeenLastCalledWith(4, 0);
+    fireEvent.keyDown(chips[1]!, { key: ' ' });
+    expect(onCitationClick).toHaveBeenLastCalledWith(4, 1);
+    fireEvent.keyDown(chips[1]!, { key: ' ', repeat: true });
+    fireEvent.keyDown(chips[1]!, { key: 'Enter', ctrlKey: true });
+    expect(onCitationClick).toHaveBeenCalledTimes(3);
+    expect(container).toHaveTextContent('First claim [4]. Second claim [4].');
   });
 });

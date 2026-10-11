@@ -334,6 +334,7 @@
     "learning:allow-list-learning-programs",
     "learning:allow-get-learning-program",
     "learning:allow-get-learning-lesson-evidence",
+    "learning:allow-get-learning-outline-evidence",
     "learning:allow-generate-learning-program",
     "learning:allow-cancel-learning-outline",
     "learning:allow-repair-learning-outline",

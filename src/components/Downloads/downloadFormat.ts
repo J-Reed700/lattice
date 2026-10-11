@@ -52,7 +52,7 @@ export function normalizePercentage(
   if (percentage !== null && Number.isFinite(percentage)) {
     return Math.min(100, Math.max(0, percentage));
   }
-  if (totalBytes !== null && totalBytes > 0) {
+  if (totalBytes !== null && Number.isFinite(totalBytes) && totalBytes > 0 && Number.isFinite(bytesDownloaded)) {
     return Math.min(100, Math.max(0, (bytesDownloaded / totalBytes) * 100));
   }
   return null;

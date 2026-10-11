@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
+import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
@@ -253,6 +254,7 @@ export function EntryFromConversation({
                 Replies ({insightCount})
               </button>
               <div className="flex items-center gap-1">
+                <CitationVisibilityToggle compact className="h-7 min-h-7 w-7 justify-center px-0" />
                 <button
                   type="button"
                   onClick={() =>

@@ -127,6 +127,9 @@ pub struct ArchiveWriter {
     /// instead of packing (and later restoring into) the developer's own
     /// library.
     files_root: Option<PathBuf>,
+    /// Saved web articles (`~/.lattice/web-archive`). Injected for the same
+    /// reason as `files_root`.
+    web_archive_root: Option<PathBuf>,
 }
 
 impl ArchiveWriter {
@@ -136,6 +139,7 @@ impl ArchiveWriter {
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         key_store: Arc<MasterKeyStore>,
         files_root: Option<PathBuf>,
+        web_archive_root: Option<PathBuf>,
     ) -> Self {
         Self {
             pool,
@@ -143,6 +147,7 @@ impl ArchiveWriter {
             settings_repo,
             key_store,
             files_root,
+            web_archive_root,
         }
     }
 
@@ -357,6 +362,11 @@ impl ArchiveWriter {
             None
         };
 
+        let web_archive_root = self
+            .web_archive_root
+            .clone()
+            .filter(|root| path_exists(root));
+
         let settings_file =
             Some(self.app_data_dir.join("settings.json")).filter(|p| path_exists(p));
 
@@ -366,6 +376,7 @@ impl ArchiveWriter {
             files_root,
             referenced_blob_hashes,
             vault_root,
+            web_archive_root,
             settings_file,
             // If the user pointed the backup destination at a folder inside
             // their vault, packing the vault would pack the growing archive

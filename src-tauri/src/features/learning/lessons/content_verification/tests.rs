@@ -429,6 +429,7 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
     let pending = PendingRepair {
         fingerprint: repair_fingerprint(&model, "instructions", &schema, &original, &references),
         defects: 1,
+        issue_fingerprint: Some(repair_issue_fingerprint(&[BAD.into()])),
         context: json!({"candidate":original,"failedClaims":[{"statement":BAD}]}),
     };
     let restored: PendingRepair = serde_json::from_str(&serde_json::to_string(&pending)?)?;
@@ -476,6 +477,25 @@ fn pending_repairs_require_identical_content_sources_and_instructions() -> Resul
     approved.defects = 0;
     assert!(!approved.matches(&model, "instructions", &schema, &original, &references));
     Ok(())
+}
+
+#[test]
+fn repair_progress_tracks_defect_identity_instead_of_only_the_count() {
+    let first = repair_issue_fingerprint(&[
+        "Section 1: unsupported toolchain claim".into(),
+        "Section 2: contradicted profile claim".into(),
+    ]);
+    let reordered = repair_issue_fingerprint(&[
+        " Section 2: contradicted   profile claim ".into(),
+        "Section 1: unsupported toolchain claim".into(),
+    ]);
+    let changed = repair_issue_fingerprint(&[
+        "Section 1: unsupported toolchain claim".into(),
+        "Section 3: a different unsupported claim".into(),
+    ]);
+
+    assert_eq!(first, reordered);
+    assert_ne!(first, changed);
 }
 
 #[tokio::test]
@@ -643,12 +663,13 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
 }
 
 #[tokio::test]
-async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Result<()> {
+async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> Result<()> {
     const SECOND: &str = "DictReader removes all whitespace from CSV values by default.";
     struct GradualRepair {
         inner: Model,
         repairs: std::sync::atomic::AtomicUsize,
-        stall: bool,
+        repeats_once: bool,
+        repeated_escalations: std::sync::atomic::AtomicUsize,
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
@@ -679,11 +700,16 @@ async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Resul
                 .to_string());
             }
             if prompt.starts_with("Repair verified lesson defects.") {
+                let data = self::context(prompt);
+                if data["repeatedDefects"].as_bool() == Some(true) {
+                    self.repeated_escalations
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 let repair = self
                     .repairs
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(repair < 2, "No progress must stop automatic repair");
-                let mut body = candidate(if repair == 0 || self.stall {
+                assert!(repair < 3, "The repeated defect should converge on removal");
+                let mut body = candidate(if repair == 0 || (self.repeats_once && repair == 1) {
                     SECOND
                 } else {
                     GOOD
@@ -691,7 +717,7 @@ async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Resul
                     .as_str()
                     .unwrap()
                     .to_owned();
-                if self.stall && repair > 0 {
+                if self.repeats_once && repair == 1 {
                     body.push(' ');
                 }
                 return Ok(repair_body(prompt, json!(body)));
@@ -728,13 +754,14 @@ async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Resul
             Ok(true)
         }
     }
-    for stall in [false, true] {
+    for repeats_once in [false, true] {
         let model = GradualRepair {
             inner: Model::new(),
             repairs: Default::default(),
-            stall,
+            repeats_once,
+            repeated_escalations: Default::default(),
         };
-        let result = verify_and_repair(
+        let (_, report) = verify_and_repair(
             &model,
             "{}",
             &json!({}),
@@ -742,21 +769,22 @@ async fn repairs_continue_with_fewer_defects_and_stop_when_they_stall() -> Resul
             &[source()],
             3000,
         )
-        .await;
-        assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 2);
-        if stall {
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("stopped making progress"));
-        } else {
-            let (_, report) = result?;
-            assert!(report.issues.is_empty());
-            assert!(report
-                .findings
-                .iter()
-                .all(|finding| finding.verdict == ClaimVerdict::Supported));
-        }
+        .await?;
+        assert_eq!(
+            model.repairs.load(std::sync::atomic::Ordering::Relaxed),
+            if repeats_once { 3 } else { 2 }
+        );
+        assert_eq!(
+            model
+                .repeated_escalations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            usize::from(repeats_once)
+        );
+        assert!(report.issues.is_empty());
+        assert!(report
+            .findings
+            .iter()
+            .all(|finding| finding.verdict == ClaimVerdict::Supported));
     }
     Ok(())
 }
@@ -805,7 +833,7 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
             copy
         })
         .collect();
-    let payload = repair_context("{}", &candidate, &report)?;
+    let payload = repair_context("{}", &candidate, &report, &[], false)?;
     assert_eq!(payload["failedClaims"].as_array().unwrap().len(), 107);
     assert_eq!(payload["evidence"].as_array().unwrap().len(), 2);
     assert_eq!(payload["evidence"][0]["text"], original.text);
@@ -1907,7 +1935,9 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     // public projection must omit it even when there are zero teaching blocks.
     let source = &program.sources[0];
     let saved = repo.verification_sources(&program.summary.id).await?;
-    let report = json!({"policy":POLICY,"checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":digest(&saved[0].excerpt)}],"findings":[{"unit":0,"statement":"PRIVATE ANSWER KEY","reason":"PRIVATE RATIONALE","evidence":[]}],"executions":[],"retrieval_mode":"hybrid"});
+    sqlx::query("INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(?,?,?,'quiz','Question','[]','[]',0)")
+        .bind(uuid::Uuid::new_v4().to_string()).bind(&lesson.id).bind(&program.modules[0].id).execute(&pool).await?;
+    let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":digest(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
     let view =
         crate::features::learning::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
@@ -1926,5 +1956,39 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
             .await?
             .unwrap();
     assert!(!view.sources_current);
+
+    // Missing unit identity must not silently become teaching section zero.
+    let mut malformed = report.clone();
+    malformed["findings"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("unit");
+    sqlx::query("UPDATE learning_lesson_verifications SET report_json=? WHERE lesson_id=?")
+        .bind(malformed.to_string())
+        .bind(&lesson.id)
+        .execute(&pool)
+        .await?;
+    let error =
+        crate::features::learning::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
+            .await
+            .unwrap_err()
+            .to_string();
+    assert!(error.contains("unavailable"));
+    assert!(!error.contains("PRIVATE"));
+
+    let mut foreign = report;
+    foreign["lesson_id"] = json!("another-lesson");
+    sqlx::query("UPDATE learning_lesson_verifications SET report_json=? WHERE lesson_id=?")
+        .bind(foreign.to_string())
+        .bind(&lesson.id)
+        .execute(&pool)
+        .await?;
+    assert!(crate::features::learning::lesson_evidence::get(
+        &pool,
+        &program.summary.id,
+        &lesson.id
+    )
+    .await
+    .is_err());
     Ok(())
 }

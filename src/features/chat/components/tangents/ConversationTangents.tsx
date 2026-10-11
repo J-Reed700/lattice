@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, GitBranch, Loader2, X } from 'lucide-react';
 
+import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { IconButton } from '@/components/ui/IconButton';
 import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { unwrap } from '@/hooks/queries/conversationQueryData';
@@ -72,7 +73,8 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
     <TangentSelectionContext.Provider value={context}>
       <div className="conversation-with-tangents">
         <div className="tangent-main">
-          <div className="flex h-9 shrink-0 items-center justify-end border-b border-border-subtle px-3">
+          <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-subtle px-3">
+            <CitationVisibilityToggle />
             <button ref={toggleRef} type="button" aria-expanded={open} aria-controls={`tangents-${conversationId}`}
               title="Explore an idea alongside this conversation"
               onClick={() => { if (open) close(); else setOpen(true); }}
@@ -90,6 +92,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
             {selected && <IconButton label="All tangents" onClick={() => setSelectedId(null)}><ArrowLeft /></IconButton>}
             <GitBranch className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
             <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{selected ? 'Tangent' : 'Tangents'}</h2>
+            <CitationVisibilityToggle compact className="h-8 min-h-8 w-8 justify-center px-0" />
             <IconButton label="Close tangents" onClick={close}><X /></IconButton>
           </header>
           {selected ? <TangentPanel key={selected.conversationId} tangent={selected} toolPreferences={toolPreferences}

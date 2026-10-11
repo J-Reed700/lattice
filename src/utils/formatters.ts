@@ -10,6 +10,7 @@ export function formatRelativeTime(timestamp?: string, fallback = 'Recently'): s
 
   try {
     const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) return fallback;
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -36,9 +37,9 @@ export function formatRelativeTime(timestamp?: string, fallback = 'Recently'): s
  * @returns Formatted string with appropriate unit
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100  } ${  sizes[i]}`;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))));
+  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
 }

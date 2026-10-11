@@ -7,9 +7,10 @@
 //!
 //! Merging rules are conservative on purpose. The files library is
 //! content-addressed, so an existing blob is by definition the same blob and
-//! is left alone. A vault that already has content is never written into;
-//! the restored copy lands beside it. `settings.json` is only restored when
-//! the machine has none.
+//! is left alone. Saved web articles live in uniquely named folders, so only
+//! the files missing from the web archive are copied back. A vault that
+//! already has content is never written into; the restored copy lands beside
+//! it. `settings.json` is only restored when the machine has none.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,6 +69,8 @@ pub struct ArchiveRestorer {
     /// Where restored blobs land. Injected for the same reason the writer
     /// injects it: a test must never write into `~/.lattice/files`.
     files_root: Option<PathBuf>,
+    /// Where restored web articles land (`~/.lattice/web-archive`).
+    web_archive_root: Option<PathBuf>,
 }
 
 impl ArchiveRestorer {
@@ -78,6 +81,7 @@ impl ArchiveRestorer {
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         key_store: Arc<MasterKeyStore>,
         files_root: Option<PathBuf>,
+        web_archive_root: Option<PathBuf>,
     ) -> Self {
         Self {
             pool,
@@ -86,6 +90,7 @@ impl ArchiveRestorer {
             settings_repo,
             key_store,
             files_root,
+            web_archive_root,
         }
     }
 
@@ -213,6 +218,8 @@ impl ArchiveRestorer {
 
         let files_restored = self
             .merge_files_library(extracted.files_dir.as_deref())
+            .await;
+        self.merge_web_archive(extracted.web_archive_dir.as_deref())
             .await;
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
@@ -358,6 +365,32 @@ impl ArchiveRestorer {
             }
             Err(e) => {
                 warn!(error = %e, "file library restore task failed");
+                0
+            }
+        }
+    }
+
+    /// Copy saved web articles back into the web archive, skipping any file
+    /// already there. Each article has its own uniquely named folder, so a
+    /// file that exists is the same article and is left as it is.
+    async fn merge_web_archive(&self, web_archive_dir: Option<&Path>) -> u64 {
+        let Some(web_archive_dir) = web_archive_dir else {
+            return 0;
+        };
+        let Some(root) = self.web_archive_root.clone() else {
+            warn!("no web archive root; skipping web article restore");
+            return 0;
+        };
+
+        let source = web_archive_dir.to_path_buf();
+        let restored = tokio::task::spawn_blocking(move || copy_missing_tree(&source, &root)).await;
+        match restored {
+            Ok(count) => {
+                info!(count, "restored saved web articles");
+                count
+            }
+            Err(e) => {
+                warn!(error = %e, "web archive restore task failed");
                 0
             }
         }
@@ -542,6 +575,43 @@ fn copy_new_files(files_dir: &Path, root: &Path) -> u64 {
     restored
 }
 
+/// `<extracted>/<rel>` -> `<root>/<rel>` for every regular file, skipping
+/// any that already exist.
+fn copy_missing_tree(source: &Path, root: &Path) -> u64 {
+    let mut restored = 0u64;
+    for entry in walkdir::WalkDir::new(source)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(rel) = entry.path().strip_prefix(source) else {
+            continue;
+        };
+        let target = root.join(rel);
+        // repository-barrier-allow: never overwrite an article already on disk.
+        if target.exists() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!(error = %e, path = %parent.display(), "could not create web archive folder");
+                continue;
+            }
+        }
+        match std::fs::copy(entry.path(), &target) {
+            Ok(_) => restored += 1,
+            Err(e) => {
+                warn!(error = %e, path = %target.display(), "could not restore web article file")
+            }
+        }
+    }
+    restored
+}
+
 /// Move the extracted vault to `target`, or beside it when `target` already
 /// holds something. Returns where it actually landed.
 fn place_vault(source: &Path, target: &Path) -> Result<PathBuf, ArchiveError> {
@@ -634,6 +704,46 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("bbb").join("two.md")).unwrap(),
             "also new"
+        );
+    }
+
+    #[test]
+    fn web_archive_merge_restores_articles_without_overwriting_existing_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let extracted = dir.path().join("web-archive");
+        let root = dir.path().join("home-web-archive");
+
+        write(
+            &extracted
+                .join("example.com")
+                .join("lost-abc")
+                .join("page.html"),
+            "restored snapshot",
+        );
+        write(
+            &extracted
+                .join("example.com")
+                .join("kept-def")
+                .join("page.html"),
+            "older copy",
+        );
+        write(
+            &root.join("example.com").join("kept-def").join("page.html"),
+            "current copy",
+        );
+
+        let restored = copy_missing_tree(&extracted, &root);
+
+        assert_eq!(restored, 1);
+        assert_eq!(
+            std::fs::read_to_string(root.join("example.com").join("lost-abc").join("page.html"))
+                .unwrap(),
+            "restored snapshot"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("example.com").join("kept-def").join("page.html"))
+                .unwrap(),
+            "current copy"
         );
     }
 

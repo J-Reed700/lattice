@@ -44,14 +44,15 @@ pub fn build(
     let key_store = Arc::new(MasterKeyStore::new(app_data_dir.clone()));
     // Resolved once at wiring time. `Err` only means "no home directory",
     // in which case there is no files library to archive either.
-    let files_root =
-        crate::infrastructure::storage::ContentAddressedStorage::default_library_root().ok();
+    let files_root = crate::shared::fs::roots::library_root().ok();
+    let web_archive_root = crate::shared::fs::roots::web_archive_root().ok();
     let archive_writer = Arc::new(ArchiveWriter::new(
         db_pool.clone(),
         app_data_dir.clone(),
         settings_repo.clone(),
         key_store.clone(),
         files_root.clone(),
+        web_archive_root.clone(),
     ));
     let db_dir = db_path
         .parent()
@@ -64,6 +65,7 @@ pub fn build(
         settings_repo.clone(),
         key_store.clone(),
         files_root,
+        web_archive_root,
     ));
     let archive_service = Arc::new(ArchiveService::new(
         archive_writer,
@@ -115,8 +117,7 @@ impl Container {
         Arc::clone(self.system.restore_backup_use_case())
     }
 
-    /// The backup port. `plugin_list_backups` reads through this rather than
-    /// the free `list_backups_impl`, which scans the wrong directory.
+    /// The backup port. `plugin_list_backups` reads through this.
     pub fn backup_port(&self) -> Arc<dyn BackupPort> {
         Arc::clone(self.system.backup_port())
     }

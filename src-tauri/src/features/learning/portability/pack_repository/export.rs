@@ -1,9 +1,9 @@
 //! Read all portable program data from one SQLite snapshot. No file I/O or runtime services.
 use super::{
-    db, invalid, json, now, snapshot_evidence_tables, source_body_path, CanvasPackSnapshot,
-    PracticalPackSnapshot, PrivateAnswerKey, SourceHistorySnapshot, CANVAS_ENTRY, EVIDENCE_ENTRY,
-    FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY, OUTCOMES_ENTRY, PRACTICAL_ENTRY,
-    PROGRAM_ENTRY,
+    db, invalid, json, now, provenance, snapshot_evidence_tables, source_body_path,
+    CanvasPackSnapshot, PracticalPackSnapshot, PrivateAnswerKey, SourceHistorySnapshot,
+    CANVAS_ENTRY, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY, OUTCOMES_ENTRY,
+    PRACTICAL_ENTRY, PROGRAM_ENTRY,
 };
 use crate::features::learning::{
     pack::{
@@ -24,7 +24,18 @@ pub(in crate::features::learning) async fn snapshot(
     req: &ExportLearningPackRequestDto,
 ) -> Result<LearningPackInput> {
     let mut tx = pool.begin().await.map_err(db)?;
-    let program = LearningRepository::get_on(&mut tx, &req.program_id).await?;
+    let input = snapshot_on(&mut tx, req).await?;
+    tx.commit().await.map_err(db)?;
+    Ok(input)
+}
+
+/// The caller owns the transaction, including any write lock needed to keep a
+/// replacement backup and its subsequent deletion on the same database state.
+pub(super) async fn snapshot_on(
+    tx: &mut sqlx::SqliteConnection,
+    req: &ExportLearningPackRequestDto,
+) -> Result<LearningPackInput> {
+    let program = LearningRepository::get_on(tx, &req.program_id).await?;
     let mut export_program = program.clone();
     let exported_attempts = std::mem::take(&mut export_program.attempts);
     let mut entries = vec![LearningPackEntry {
@@ -32,6 +43,11 @@ pub(in crate::features::learning) async fn snapshot(
         kind: LearningPackEntryKind::Program,
         bytes: json(&export_program)?,
     }];
+    entries.push(LearningPackEntry {
+        path: provenance::ENTRY.into(),
+        kind: LearningPackEntryKind::Curriculum,
+        bytes: json(&provenance::snapshot(tx, &program).await?)?,
+    });
     let state_rows=sqlx::query("SELECT id,curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? ORDER BY id")
             .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
     let lesson_states:Vec<serde_json::Value>=state_rows.into_iter().map(|r|serde_json::json!({"lessonId":r.get::<String,_>("id"),"state":r.get::<String,_>("curriculum_state"),"replacementLessonId":r.get::<Option<String>,_>("replacement_lesson_id")})).collect();
@@ -73,7 +89,7 @@ pub(in crate::features::learning) async fn snapshot(
         entries.push(LearningPackEntry {
             path: "evidence/learning-aggregate.json".into(),
             kind: LearningPackEntryKind::Evidence,
-            bytes: json(&snapshot_evidence_tables(&mut tx, &req.program_id).await?)?,
+            bytes: json(&snapshot_evidence_tables(tx, &req.program_id).await?)?,
         });
         let evidence=sqlx::query("SELECT id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at,id").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let rows:Vec<serde_json::Value>=evidence.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"outcomeId":r.get::<Option<String>,_>("outcome_id"),"sourceKind":r.get::<String,_>("source_kind"),"sourceId":r.get::<String,_>("source_id"),"dimension":r.get::<String,_>("dimension"),"result":r.get::<String,_>("result"),"score":r.get::<Option<f64>,_>("score"),"observation":r.get::<String,_>("observation"),"evidenceQuote":r.get::<Option<String>,_>("evidence_quote"),"assistance":r.get::<String,_>("assistance_json"),"observedAt":r.get::<i64,_>("observed_at")})).collect();
@@ -91,7 +107,7 @@ pub(in crate::features::learning) async fn snapshot(
         });
     }
     if req.include_practical_artifacts {
-        let practical = LearningPracticalRepository::workspace_on(&mut tx, &req.program_id).await?;
+        let practical = LearningPracticalRepository::workspace_on(tx, &req.program_id).await?;
         let sessions=sqlx::query("SELECT id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at,submitted_at FROM learning_simulation_sessions WHERE program_id=? ORDER BY created_at,id")
                 .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let simulations:Vec<serde_json::Value>=sessions.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"activityId":r.get::<String,_>("activity_id"),"activityRevision":r.get::<i64,_>("activity_revision"),"activitySnapshot":r.get::<String,_>("activity_snapshot_json"),"practiceSessionId":r.get::<Option<String>,_>("practice_session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"learnerRole":r.get::<String,_>("learner_role"),"counterpartRole":r.get::<String,_>("counterpart_role"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision"),"createdAt":r.get::<i64,_>("created_at"),"updatedAt":r.get::<i64,_>("updated_at"),"submittedAt":r.get::<Option<i64>,_>("submitted_at")})).collect();
@@ -125,7 +141,7 @@ pub(in crate::features::learning) async fn snapshot(
         });
     }
     let mut source_workspace =
-        LearningSourceLibraryRepository::workspace_on(&mut tx, &req.program_id, true).await?;
+        LearningSourceLibraryRepository::workspace_on(tx, &req.program_id, true).await?;
     let source_rows =
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(&req.program_id)
@@ -199,7 +215,6 @@ pub(in crate::features::learning) async fn snapshot(
         kind: LearningPackEntryKind::SourceMetadata,
         bytes: json(&selectors)?,
     });
-    tx.commit().await.map_err(db)?;
     let privacy = LearningPackPrivacyManifest {
             includes_private_chat: false,
             includes_credentials: false,
@@ -211,6 +226,7 @@ pub(in crate::features::learning) async fn snapshot(
             includes_practical_artifacts: req.include_practical_artifacts,
             omitted_items: vec![
                 "Lattice chat outside this program and credentials are never exported.".into(),
+                "Saved outline citations and lesson verification reports are included as historical course provenance, independently of learner activity. Import does not reverify them.".into(),
                 if !req.include_evidence {
                     "Submitted assessments, learner evidence, recall/review history, workbench history, memory, and canvas data were omitted by request.".into()
                 } else {

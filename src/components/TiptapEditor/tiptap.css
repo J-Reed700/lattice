@@ -25,6 +25,29 @@
   font-family: inherit;
 }
 
+/* Saved references use the same renderer as chat, with a quieter editorial
+   measure and denser metadata surrounding it. Keep these rules scoped so the
+   source reader can be tuned without changing assistant messages. */
+.source-reader-prose .tiptap-viewer p,
+.source-reader-prose .tiptap-viewer li {
+  color: hsl(var(--text-secondary));
+  line-height: 1.85;
+}
+
+.source-reader-prose .tiptap-viewer h1 {
+  font-size: 1.75rem;
+  letter-spacing: -0.025em;
+}
+
+.source-reader-prose .tiptap-viewer h2 {
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid hsl(var(--border-subtle));
+}
+
+.source-reader-prose .tiptap-viewer table {
+  min-width: min(100%, 34rem);
+}
+
 /* Inherit font on every element so the outer wrapper (font-serif / font-sans)
    is authoritative. Required for the assistant/user prose split in Message.tsx. */
 .tiptap-editor *,

@@ -30,7 +30,7 @@ fn correction_schema(unit: &UnitClaims, input: &Value) -> Value {
     let mut replacements = vec![Value::Null];
     replacements.extend((0..unit.claims.len()).map(|ordinal| json!(claim_id(unit, ordinal))));
     json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{
-        "claims":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,
+        "claims":{"type":"array","items":{"type":"object","additionalProperties":false,
             "required":["replaceClaimId","passageId","statement"],"properties":{
                 "replaceClaimId":{"enum":replacements},"passageId":{"type":"string","enum":passages},
                 "statement":{"type":"string","minLength":1,"maxLength":2000}}}},
@@ -39,8 +39,7 @@ fn correction_schema(unit: &UnitClaims, input: &Value) -> Value {
 
 fn apply(raw: &str, previous: &UnitClaims, input: &[Value]) -> Result<UnitClaims> {
     let patch: Corrections = crate::features::learning::generation::parse_json(raw)?;
-    if patch.claims.len() > 24
-        || patch.non_factual_reason.chars().count() > 500
+    if patch.non_factual_reason.chars().count() > 500
         || (patch.claims.is_empty() && patch.non_factual_reason.trim().is_empty())
     {
         return Err(invalid("Coverage correction needs missing assertions or an explanation of the mistaken finding."));
@@ -86,9 +85,7 @@ fn apply(raw: &str, previous: &UnitClaims, input: &[Value]) -> Result<UnitClaims
             corrected.claims.push(claim);
         }
     }
-    if corrected.claims.len() > 24 {
-        return Err(invalid("The corrected section exceeds the claim inventory capacity. Consolidate related additions or replace distorted claims without dropping assertions."));
-    }
+
     if !patch.non_factual_reason.trim().is_empty() {
         corrected.non_factual_reason = patch.non_factual_reason;
     }
@@ -161,7 +158,7 @@ pub(super) async fn correct(
                     break;
                 }
                 Err(error) if attempt == 0 => errors.push(error.to_string()),
-                Err(error) => return Err(error),
+                Err(error) => return Err(AppError::ServiceNotAvailable(format!("The model response still needs correction. Saved work will be retried: {error}"))),
             }
         }
     }
@@ -187,6 +184,31 @@ mod tests {
             input,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn missing_claims_can_expand_an_inventory_without_replacing_saved_assertions() {
+        let input = inputs(&[
+            json!({"body":"The original section contains many independent measurements."}),
+        ]);
+        let before = previous(&input);
+        let patch = json!({"claims":(0..40).map(|i| json!({"replaceClaimId":null,"passageId":"unit-0-passage-0","statement":format!("Sample {i} has value {i}.")})).collect::<Vec<_>>(),"nonFactualReason":""});
+        assert!(
+            jsonschema::JSONSchema::compile(&correction_schema(&before, &input[0]))
+                .unwrap()
+                .is_valid(&patch)
+        );
+        let after = apply(&patch.to_string(), &before, &input).unwrap();
+        assert_eq!(after.claims.len(), 41);
+        assert_eq!(after.claims[0].statement, before.claims[0].statement);
+        assert_eq!(
+            apply(&patch.to_string(), &after, &input)
+                .unwrap()
+                .claims
+                .len(),
+            41,
+            "Replaying additions must not duplicate claims"
+        );
     }
 
     #[test]

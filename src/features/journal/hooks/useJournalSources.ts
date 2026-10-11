@@ -8,6 +8,8 @@ import { getSourceExternalUrl } from '@/utils/sourcePreview';
 const JOURNAL_SOURCE_SCAN_LIMIT = 24;
 
 export interface JournalMessageSource {
+  /** Stable inline marker from the original message; legacy snapshots omit it. */
+  citationId?: number;
   documentId: string | null;
   fileName: string;
   filePath: string;
@@ -53,7 +55,7 @@ export function parseMessageSources(metadata: string | null | undefined): Journa
     if (!Array.isArray(rawSources)) return [];
 
     return rawSources
-      .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object')
+      .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
       .map((source) => {
         const filePath = asString(
           source.filePath ?? source.file_path ?? source.path ?? source.url ?? source.uri,
@@ -63,7 +65,9 @@ export function parseMessageSources(metadata: string | null | undefined): Journa
         const documentId = asString(source.documentId ?? source.document_id).trim();
         const score = asNumber(source.score, 0);
         const excerpt = asString(source.excerpt ?? source.content).trim();
+        const citationId = asNumber(source.citationId ?? source.citation_id, 0);
         return {
+          ...(Number.isInteger(citationId) && citationId > 0 ? { citationId } : {}),
           documentId: documentId || null,
           fileName: fileName || 'Untitled source',
           filePath: filePath || 'unknown://source',

@@ -4,4 +4,5 @@ pub mod capture;
 pub mod ingestion;
 pub(crate) mod page_cache;
 mod reference_text;
+pub(crate) use reference_text::EXTRACTION_VERSION as REFERENCE_TEXT_EXTRACTION_VERSION;
 pub mod web;

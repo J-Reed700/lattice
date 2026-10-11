@@ -235,21 +235,99 @@ test("Learning Studio saved draft findings can be repaired at desktop and narrow
   await expectNoUnsupportedIpc(page);
 });
 
-test("Learning Studio reference MVP exposes saved lesson evidence at desktop and narrow widths", async ({ page, browserName }) => {
+test("Learning Studio citations trace saved evidence and support clean reading at desktop and narrow widths", async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await openProgram(page);
   await page.getByRole("button", { name: "View lesson evidence" }).first().click();
   const evidence = page.getByRole("region", { name: "Lesson evidence" }).first();
   await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
-  await evidence.locator("summary").filter({ hasText: "A careful comparison records the chosen measure and observation period." }).click();
+  await expect(evidence.getByText("A careful comparison records the chosen measure and observation period.")).toBeVisible();
   await expect(evidence.getByText("The saved reference supports this teaching claim.")).toBeVisible();
-  await evidence.locator("details details summary").click();
+  await evidence.locator("summary").filter({ hasText: "Public field notes" }).click();
   await expect(evidence.getByText(/Saved version/)).toBeVisible();
   await expect(evidence.getByRole("link", { name: "Open original page" })).toHaveAttribute("href", /^https:/);
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(evidence.getByText(/14 claims checked against saved evidence/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  const section = page.locator('#lesson-lesson-observation-section-0');
+  await section.locator('summary').filter({ hasText: 'Evidence · 1 checked claim' }).click();
+  await expect(section.getByText('A careful comparison records the chosen measure and observation period.')).toBeVisible();
+  await section.locator('summary').filter({ hasText: 'Public field notes' }).click();
+  await expect(section.getByText(excerptSentinel, { exact: true })).toBeVisible();
+  expect(await section.getByText(excerptSentinel, { exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: `e2e-results/learning-citations-narrow-${browserName}.png`, fullPage: true });
+
+  await page.getByRole('button', { name: 'Hide citations', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Lesson evidence' })).toHaveCount(0);
+  await expect(section.locator('summary')).toHaveCount(0);
+  await expect(section.getByText('A comparison begins by naming the measure and the period under observation.')).toBeVisible();
+  await expect(page.getByText('View citation', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: `e2e-results/learning-clean-reading-narrow-${browserName}.png`, fullPage: true });
+
+  await page.reload();
+  await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
+  await expect(page.getByRole('button', { name: 'Show citations', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Lesson evidence' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show citations', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'View lesson evidence' }).first()).toBeVisible();
+  const citationSummary = page.locator('summary:visible').filter({ hasText: 'View citation' }).first();
+  const outlineCitation = citationSummary.locator('..');
+  await citationSummary.click();
+  await expect(outlineCitation.getByText(excerptSentinel, { exact: true })).toBeVisible();
+  await expectNoUnsupportedIpc(page);
+});
+
+test('Studio makes an outline citation failure visible and retryable', async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/studio');
+  const program = page.getByRole('button', { name: /Reasoning from field observations/ });
+  await expect(program).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { __LATTICE_LEARNING_STATE__: { outlineEvidenceFailuresRemaining: number } }).__LATTICE_LEARNING_STATE__.outlineEvidenceFailuresRemaining = 1;
+  });
+  await program.click();
+  await expect(page.getByRole('alert')).toContainText('Outline citations could not be loaded');
+  await expect(page.getByText('View citation', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry outline citations' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('summary:visible').filter({ hasText: 'View citation' }).first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expectNoUnsupportedIpc(page);
+});
+
+test("Studio text viewers survive repeated lesson and quiz navigation", async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await installLearningStudioBackend(page);
+  await page.goto('/studio');
+  const program = page.getByRole('button', { name: /Reasoning from field observations/ });
+  await expect(program).toBeVisible();
+  await page.evaluate(() => {
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: {
+      program: { modules: Array<{ lessons: Array<{ questions: unknown[] }> }> };
+    } }).__LATTICE_LEARNING_STATE__;
+    state.program.modules[0].lessons[0].questions = ['practice', 'quiz'].map((kind) => ({
+      id: `navigation-${kind}`, kind, prompt: `Which detail belongs in the ${kind} record?`,
+      options: ['The observation period', 'An unrelated guess'], sourceIds: [],
+    }));
+  });
+  await program.click();
+  const tabs = page.getByRole('tablist', { name: 'Program workspace', exact: true });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await tabs.getByRole('tab', { name: 'Practice', exact: true }).click();
+    await page.getByRole('tab', { name: 'Quick checks', exact: true }).click();
+    await page.getByRole('button', { name: 'quiz', exact: true }).click();
+    await expect(page.getByText('Which detail belongs in the quiz record?', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'practice', exact: true }).click();
+    await expect(page.getByText('Which detail belongs in the practice record?', { exact: true })).toBeVisible();
+    await tabs.getByRole('tab', { name: 'Lessons', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'View lesson evidence' }).first()).toBeVisible();
+  }
+  expect(errors).toEqual([]);
   await expectNoUnsupportedIpc(page);
 });
 
@@ -581,10 +659,12 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
     const primary = page.getByRole("tablist", { name: "Program workspace" });
     expect(await primary.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
     if (viewport.width >= 800) {
-      const lessonCard = page.locator("main article").first();
-      const bounds = await lessonCard.boundingBox();
+      // The lesson to resume is on the first screen: its title shows without
+      // scrolling, below the module's evidence when citations are shown.
+      const lessonTitle = page.locator("main article").first().getByText("Compare observations", { exact: true });
+      const bounds = await lessonTitle.boundingBox();
       expect(bounds).not.toBeNull();
-      expect(bounds!.y).toBeLessThan(viewport.height - 140);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     }
     await page.screenshot({ path: test.info().outputPath(`studio-active-workspace-${viewport.width}px.png`), fullPage: true });
     const lessonsTab = workspace.getByRole("tab", { name: "Lessons", exact: true });

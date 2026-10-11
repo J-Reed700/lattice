@@ -48,6 +48,9 @@ pub const DB_ENTRY: &str = "db/lattice.db";
 pub const FILES_ENTRY_PREFIX: &str = "files/";
 /// Tar directory prefix of the vault markdown folder.
 pub const VAULT_ENTRY_PREFIX: &str = "vault/";
+/// Tar directory prefix of the saved web articles (`~/.lattice/web-archive`),
+/// which web documents' `file_path` points into.
+pub const WEB_ARCHIVE_ENTRY_PREFIX: &str = "web-archive/";
 /// Tar entry path of `settings.json`.
 pub const SETTINGS_ENTRY: &str = "settings.json";
 

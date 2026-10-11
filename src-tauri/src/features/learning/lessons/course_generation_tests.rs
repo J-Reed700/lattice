@@ -1832,3 +1832,27 @@ async fn live_outline_generation_and_save() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn program_request_accepts_large_source_lists_but_still_validates_each_entry() -> Result<()> {
+    let mut input = request(LearningCourseDepth::Focused);
+    input.document_ids = (0..105).map(|_| uuid::Uuid::new_v4().to_string()).collect();
+    input.source_urls = (0..105)
+        .map(|i| format!("https://example.org/source/{i}"))
+        .collect();
+    service::validate_request(&input)?;
+    input.source_urls.push("file:///private/invalid".into());
+    assert!(service::validate_request(&input).is_err());
+    input.source_urls.pop();
+    input.document_ids.push(input.document_ids[0].clone());
+    assert!(service::validate_request(&input).is_err());
+    Ok(())
+}
+
+#[test]
+fn program_request_goal_and_prior_knowledge_have_no_character_limit() -> Result<()> {
+    let mut input = request(LearningCourseDepth::Focused);
+    input.goal = "Detailed learning goal. ".repeat(1_000);
+    input.prior_knowledge = "Relevant experience and context. ".repeat(1_000);
+    service::validate_request(&input)
+}

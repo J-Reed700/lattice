@@ -1,7 +1,9 @@
 import { useState } from 'react';
 
-import { Check, ChevronDown, MessageSquarePlus } from 'lucide-react';
+import { Check, ChevronDown, Loader2, MessageSquarePlus, MoreHorizontal, Trash2 } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
@@ -19,7 +21,23 @@ function relativeDay(iso: string): string {
 /** The right column: this folder's threads and the ordinary chat. */
 export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
   const [open, setOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const active = threads.threads.find((thread) => thread.id === threads.activeId);
+
+  const deleteConversation = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      if (await threads.remove(deleteTarget.id)) setDeleteTarget(null);
+      else setDeleteError('The conversation could not be deleted. Try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -61,6 +79,27 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
         <IconButton label="New thread" onClick={() => void threads.create()} disabled={threads.preparing}>
           <MessageSquarePlus />
         </IconButton>
+        <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
+          <PopoverTrigger asChild>
+            <IconButton label="Conversation actions" disabled={!active || deleting}>
+              <MoreHorizontal />
+            </IconButton>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-56 p-1.5">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger-muted focus-visible:bg-danger-muted focus-visible:outline-hidden"
+              onClick={() => {
+                setActionsOpen(false);
+                setDeleteError(null);
+                if (active) setDeleteTarget({ id: active.id, title: active.title });
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete conversation…
+            </button>
+          </PopoverContent>
+        </Popover>
       </div>
       {threads.activeId ? (
         <ChatPanel />
@@ -75,6 +114,25 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
             <p className="text-sm text-text-muted">Opening this folder’s thread…</p>
           )}
         </div>
+      )}
+      {deleteTarget && (
+        <Dialog open onOpenChange={(next) => !next && !deleting && setDeleteTarget(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete this conversation?</DialogTitle>
+              <DialogDescription>
+                &ldquo;{deleteTarget.title}&rdquo; and all of its messages will be permanently deleted. This can&apos;t be undone.
+              </DialogDescription>
+            </DialogHeader>
+            {deleteError && <p role="alert" className="text-sm text-danger-fg">{deleteError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button>
+              <Button type="button" variant="destructive" disabled={deleting} onClick={() => void deleteConversation()}>
+                {deleting ? <><Loader2 className="h-4 w-4 animate-spin" />Deleting…</> : 'Delete conversation'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

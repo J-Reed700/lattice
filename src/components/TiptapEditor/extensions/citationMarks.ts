@@ -9,6 +9,8 @@ export const citationMarksKey = new PluginKey('citationMarks');
 export interface CitationMarksOptions {
   /** Decides, at draw time, whether `[n]` refers to a real source. */
   isCitation: (number: number) => boolean;
+  /** Hides valid markers without changing the document or copied markdown. */
+  isVisible: () => boolean;
   /** Called when an editable or read-only citation chip is activated. */
   onCitationClick?: (number: number, occurrence: number) => void;
 }
@@ -27,18 +29,29 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
 
   addOptions() {
-    return { isCitation: () => false, onCitationClick: undefined };
+    return { isCitation: () => false, isVisible: () => true, onCitationClick: undefined };
   },
 
   addProseMirrorPlugins() {
-    const { isCitation, onCitationClick } = this.options;
+    const { isCitation, isVisible, onCitationClick } = this.options;
     return [
       new Plugin({
         key: citationMarksKey,
         props: {
           handleDOMEvents: {
+            keydown(_view, event) {
+              if (!isVisible() || event.isComposing || event.altKey || event.ctrlKey || event.metaKey
+                || (event.key !== 'Enter' && event.key !== ' ')) return false;
+              const chip = (event.target as Element | null)?.closest?.<HTMLElement>('[data-cite][data-cite-at]');
+              if (!chip) return false;
+              // Reuse the click path, including hosts which delegate clicks
+              // from a read-only viewer. Don't insert text or scroll on Space.
+              event.preventDefault();
+              if (!event.repeat) chip.click();
+              return true;
+            },
             click(_view, event) {
-              if (!onCitationClick) return false;
+              if (!isVisible() || !onCitationClick) return false;
               const target = event.target as Element | null;
               const chip = target?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
                 ?? target?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
@@ -46,6 +59,7 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               const number = Number(chip.dataset.cite);
               const occurrence = Number(chip.dataset.citeAt);
               if (!Number.isInteger(number) || !Number.isInteger(occurrence)) return false;
+              event.preventDefault();
               onCitationClick(number, occurrence);
               return true;
             },
@@ -53,6 +67,7 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
           decorations(state) {
             const decorations: Decoration[] = [];
             const seen = new Map<number, number>();
+            const visible = isVisible();
             state.doc.descendants((node, pos, parent) => {
               if (!node.isText || !node.text) return;
               if (parent?.type.spec.code) return;
@@ -64,13 +79,23 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
                 const at = seen.get(number) ?? 0;
                 seen.set(number, at + 1);
                 decorations.push(
-                  Decoration.inline(from, from + match[0].length, {
-                    class: 'cite-chip',
-                    'data-cite': String(number),
-                    'data-cite-at': String(at),
-                    role: 'button',
-                    'aria-label': `Citation ${number}`,
-                  }),
+                  Decoration.inline(
+                    from,
+                    from + match[0].length,
+                    visible
+                      ? {
+                          class: 'cite-chip',
+                          'data-cite': String(number),
+                          'data-cite-at': String(at),
+                          role: 'button',
+                          tabindex: '0',
+                          'aria-label': `Citation ${number}`,
+                        }
+                      : {
+                          class: 'citation-hidden',
+                          'aria-hidden': 'true',
+                        },
+                  ),
                 );
               }
             });

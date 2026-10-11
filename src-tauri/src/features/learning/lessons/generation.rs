@@ -210,10 +210,8 @@ fn validate_text(value: &str, max: usize) -> bool {
 }
 
 fn validate_outline_request(request: &GenerateLearningProgramRequestDto) -> Result<()> {
-    if !validate_text(&request.goal, 2000) || request.prior_knowledge.chars().count() > 3000 {
-        return Err(invalid(
-            "Add a learning goal and keep prior knowledge under 3000 characters.",
-        ));
+    if request.goal.trim().chars().count() < MIN_TEXT {
+        return Err(invalid("Add a learning goal of at least 3 characters."));
     }
     if !(5..=360).contains(&request.minutes_per_session) {
         return Err(invalid("Session length must be between 5 and 360 minutes."));
@@ -522,7 +520,7 @@ pub(in crate::features::learning) async fn draft_outline(
         "task":"Propose an editable, subject-neutral learning program outline",
         "goal":request.goal,"priorKnowledge":request.prior_knowledge,
         "minutesPerSession":request.minutes_per_session,"sources":supplied,
-        "sourceCatalog":references.catalog(),
+        "sourceCatalog":references.catalog(llm),
         "requirements":[
             format!("Create {min_modules} to {max_modules} modules and {min_lessons} to {max_lessons} lessons in each module."),
             "Design backward: first decide the final real-world performance and capstone deliverables, then identify the evidence needed to assess each deliverable, then sequence lessons and prerequisites to build those abilities.",
@@ -747,7 +745,7 @@ pub async fn prepare_lesson_with_references(
         "currentModule":program.modules.iter().find(|module| module.lessons.iter().any(|item| item.id == lesson.id)).map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| item.title.as_str()).collect::<Vec<_>>()})),
         "lesson":{"title":lesson.title,"objective":lesson.objective,"estimatedMinutes":lesson.estimated_minutes},
         "sources":source_data,
-        "referenceCatalog":references.catalog(),
+        "referenceCatalog":references.catalog(llm),
         "requirements":[
             "Create 8 to 12 teaching blocks: at least two explanations and two worked_example blocks, plus exactly one guided_practice, one independent_practice, one reflection, and one recap. Order them as a coherent lesson, not disconnected snippets.",
             "Explain the why and prerequisites, teach concepts in depth with concrete details, and walk through two different examples step by step including mistakes and tradeoffs.",
@@ -1289,8 +1287,8 @@ mod tests {
     }
 
     #[test]
-    fn blank_prior_knowledge_is_allowed_but_oversized_input_is_not() {
-        let request = GenerateLearningProgramRequestDto {
+    fn goal_and_prior_knowledge_have_no_character_limit() {
+        let mut request = GenerateLearningProgramRequestDto {
             goal: "Understand the material".into(),
             prior_knowledge: "".into(),
             minutes_per_session: 30,
@@ -1299,11 +1297,9 @@ mod tests {
             course_depth: None,
         };
         assert!(validate_outline_request(&request).is_ok());
-        let oversized = GenerateLearningProgramRequestDto {
-            prior_knowledge: "x".repeat(3001),
-            ..request
-        };
-        assert!(validate_outline_request(&oversized).is_err());
+        request.goal = "goal ".repeat(1_000);
+        request.prior_knowledge = "prior knowledge ".repeat(1_000);
+        assert!(validate_outline_request(&request).is_ok());
     }
 
     #[test]

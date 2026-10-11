@@ -407,6 +407,29 @@ impl LLMPort for SidecarPortAdapter {
             })?
     }
 
+    async fn complete_with_reasoning_progress(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        let (messages, tools) = self.typed_parts(request)?;
+        request
+            .within_time_budget(self.client.complete_typed_streaming_with_reasoning(
+                messages,
+                sidecar_tuning(request, tools.as_ref()),
+                on_text,
+                on_reasoning,
+            ))
+            .await
+            .map_err(|_| {
+                AppError::ServiceNotAvailable(
+                    "Local model generation exceeded its time budget".into(),
+                )
+            })?
+    }
+
     async fn generate(
         &self,
         prompt: &str,

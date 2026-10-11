@@ -52,6 +52,10 @@ with another dedicated test build directory.
 7. Custom collections survive a native restart and support rename and delete
    through the real SQLite repository and IPC handlers.
 8. Runtime catalog registration and the installed Python resource directory.
+9. Explorer listing and reads of actual Unicode, empty and binary files, with
+   parent traversal and absolute paths outside the chosen folder rejected by
+   the real Rust boundary. A missing-file rejection must leave subsequent
+   valid reads working.
 
 Before the UI suite, the build helper runs fixed Python and JavaScript exercises
 through the installed executable. It verifies correct and incorrect results,

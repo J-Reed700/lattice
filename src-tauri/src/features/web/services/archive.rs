@@ -222,12 +222,18 @@ impl WebArchiveService {
     /// - `AppError::ConfigError` if home directory cannot be determined
     /// - `AppError::Io` if directory creation fails
     pub fn new() -> Result<Self> {
-        let base_dir = dirs::home_dir()
-            .ok_or_else(|| AppError::InvalidConfig("No home directory found".to_string()))?
-            .join(".lattice")
-            .join("web-archive");
+        Ok(Self {
+            base_dir: Self::default_root()?,
+        })
+    }
 
-        Ok(Self { base_dir })
+    /// `~/.lattice/web-archive`, where saved articles live. Backups pack and
+    /// restore this folder; both resolve it through `shared::fs::roots`.
+    ///
+    /// # Errors
+    /// - `AppError::InvalidState` if home directory cannot be determined
+    pub fn default_root() -> Result<PathBuf> {
+        crate::shared::fs::roots::web_archive_root()
     }
 
     /// Create a service rooted at an explicit directory.

@@ -88,7 +88,10 @@ const MAX_TRACKED_SITES: usize = 64;
 /// Most of an article's text sits well inside this; past it a page is a
 /// dump, and the prompt has better uses for the room.
 const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
-const MAX_REFERENCE_PAGE_CHARS: usize = 2_000_000;
+// Reference snapshots retain all extracted text. The shared decoded HTTP-body
+// limit already bounds acquisition; a second text cap would discard a book's
+// tail after a successful, bounded download.
+const MAX_REFERENCE_PAGE_CHARS: usize = usize::MAX;
 /// Maximum decoded bytes accepted from a page before HTML parsing.
 const MAX_PAGE_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// Maximum decoded bytes accepted from a search provider response.
@@ -615,8 +618,9 @@ impl WebService {
         let (title, content) = if max_chars == MAX_FETCHED_PAGE_CHARS {
             self.parse_page(html).await?
         } else {
+            let extraction_url = final_url.clone();
             run_html_parser(self.html_parsers.clone(), move || {
-                super::reference_text::extract(&html)
+                super::reference_text::extract_with_url(&html, Some(&extraction_url))
             })
             .await??
         };
@@ -2439,6 +2443,35 @@ mod tests {
         let (capped, truncated) = cap_page_text("short page".to_string(), 50);
         assert_eq!(capped, "short page");
         assert!(!truncated);
+    }
+
+    #[tokio::test]
+    async fn reference_capture_retains_large_page_tail_without_using_chat_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = WebService::new(directory.path()).unwrap();
+        let text = format!(
+            "{}FINAL_REFERENCE_PASSAGE",
+            "Document paragraph. ".repeat(110_000)
+        );
+        let html = format!("<html><head><title>Full reference</title></head><body><article><p>{text}</p></article></body></html>");
+        assert!(text.len() > 2_000_000);
+        assert!(html.len() < MAX_PAGE_BODY_BYTES);
+        let (title, extracted) = super::super::reference_text::extract(&html).unwrap();
+        let url = "https://example.org/complete-reference";
+        let page = service
+            .keep_page(
+                url,
+                url.into(),
+                title,
+                extracted,
+                Some("text/html".into()),
+                (Instant::now(), MAX_REFERENCE_PAGE_CHARS),
+            )
+            .await;
+        assert!(!page.output.content_truncated);
+        assert!(page.output.content.len() > 2_000_000);
+        assert!(page.output.content.ends_with("FINAL_REFERENCE_PASSAGE"));
+        assert!(service.page_cache.get(url).await.is_none());
     }
 
     /// A page fetch used to sleep 0.5–2s before every request. Two different

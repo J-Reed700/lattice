@@ -104,7 +104,7 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
+          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -127,13 +127,9 @@ jobs:
             Write-Host "OK $exe"
           }
 
-      - name: Desktop Rust unit and repository tests
+      - name: All desktop Rust unit, command and integration tests
         working-directory: src-tauri
-        run: cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test
-
-      - name: Desktop lifecycle and repository integration tests
-        working-directory: src-tauri
-        run: cargo test --locked --test background_lifecycle_test --test tag_repository_test --test plugins_tests
+        run: cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast
 
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-latest'
@@ -151,10 +147,6 @@ jobs:
           LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
             LATTICE_LAB_SMOKE_ENGINE=docker \
             cargo test --features bindings-export --lib features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
-
-      - name: Audit and credential backend integration tests
-        working-directory: src-tauri
-        run: cargo test --test security_audit_logging_test --test native_keyring_backend_test
 
       # The crate defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.

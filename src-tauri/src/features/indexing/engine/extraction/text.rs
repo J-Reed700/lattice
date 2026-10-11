@@ -37,7 +37,11 @@ pub async fn extract_text_file(path: &Path, max_file_size: u64) -> Result<Extrac
         language: None,
     };
 
-    let mime_type = if path.extension().and_then(|s| s.to_str()) == Some("md") {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase);
+    let mime_type = if matches!(extension.as_deref(), Some("md" | "markdown")) {
         "text/markdown".to_string()
     } else {
         "text/plain".to_string()

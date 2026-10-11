@@ -8,7 +8,9 @@ LOCK="$SCRIPT_DIR/llama-server.lock"
 DEST="${1:-$SCRIPT_DIR/../binaries}"
 mkdir -p "$DEST"
 DEST="$(cd "$DEST" && pwd)"
-BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lattice-intel.XXXXXX")"
+# Resolve /var -> /private/var: llama.cpp's UI asset step relativises paths
+# and cannot cross that symlink.
+BUILD_DIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/lattice-intel.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 TAG="$(awk '$1 == "llama_cpp_tag" { print $2 }' "$LOCK")"
 MACOS_MIN="$(awk '$1 == "macos_min" { print $2 }' "$LOCK")"

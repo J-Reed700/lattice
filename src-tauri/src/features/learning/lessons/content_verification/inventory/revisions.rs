@@ -129,9 +129,7 @@ fn apply(
     let section = content
         .get(before.index)
         .ok_or_else(|| invalid("Missing revised section."))?;
-    if updated.claims.len() > 24 {
-        return Err(invalid("The revised section exceeds 24 claims. Replace changed assertions using their claimId instead of adding duplicates."));
-    }
+
     if updated.non_factual_reason.chars().count() > 500
         || updated.claims.is_empty() && updated.non_factual_reason.trim().is_empty()
     {
@@ -208,7 +206,11 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
                 return Ok(Some(updated));
             }
             Err(error) if attempt == 0 => errors.push(error.to_string()),
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Err(AppError::ServiceNotAvailable(format!(
+                "The model response still needs correction. Saved work will be retried: {error}"
+            )))
+            }
         }
     }
     Err(invalid(
@@ -240,4 +242,36 @@ pub(in crate::features::learning) async fn live_revision_fixture(
         if result["inventory"] != serde_json::to_value(resumed)? {return Err(invalid("Revision changed on resume"));}
         Ok(result)
     }).await
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    #[test]
+    fn one_revised_fact_does_not_drop_a_dense_sections_unchanged_claims() {
+        let content =
+            vec![json!({"body":"The section contains measurements for many separate samples."})];
+        let input = inputs(&content);
+        let before = UnitClaims {
+            index: 0,
+            non_factual_reason: String::new(),
+            claims: (0..64)
+                .map(|i| Claim {
+                    quote: content[0]["body"].as_str().unwrap().into(),
+                    statement: format!("Sample {i} has value {i}."),
+                })
+                .collect(),
+        };
+        let patch = json!({"changes":[{"claimId":63,"passageId":"unit-0-passage-0","statement":"Sample 63 has corrected value 64."}],"nonFactualReason":""});
+        let after = apply(&patch.to_string(), &before, &input, &content).unwrap();
+        assert_eq!(after.claims.len(), 64);
+        for i in 0..63 {
+            assert_eq!(after.claims[i].statement, before.claims[i].statement);
+        }
+        assert_eq!(
+            after.claims[63].statement,
+            "Sample 63 has corrected value 64."
+        );
+    }
 }

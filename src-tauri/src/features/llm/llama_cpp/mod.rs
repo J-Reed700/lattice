@@ -359,7 +359,7 @@ impl LLMPort for LlamaCppLlm {
             }))
     }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.complete_reliably(request, &|_| Ok(()), Some(&|_| Ok(())))
+        self.complete_reliably(request, &|_| Ok(()), None, Some(&|_| Ok(())))
             .await
     }
     async fn complete_with_progress(
@@ -368,7 +368,7 @@ impl LLMPort for LlamaCppLlm {
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
         // Text-only consumers cannot retract an already delivered draft.
-        self.complete_reliably(request, on_text, None).await
+        self.complete_reliably(request, on_text, None, None).await
     }
 
     async fn complete_with_retry_progress(
@@ -377,7 +377,18 @@ impl LLMPort for LlamaCppLlm {
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
-        self.complete_reliably(request, on_text, Some(on_retry))
+        self.complete_reliably(request, on_text, None, Some(on_retry))
+            .await
+    }
+
+    async fn complete_with_reasoning_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        self.complete_reliably(request, on_text, Some(on_reasoning), Some(on_retry))
             .await
     }
 
@@ -673,12 +684,19 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             );
         }
     }
+    let reasoning = ["reasoning_content", "reasoning"]
+        .iter()
+        .find_map(|key| message.get(key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned);
     Ok(CompletionResponse {
         text: message
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .into(),
+        reasoning,
         tool_calls: calls,
         finish_reason: finish_reason.into(),
         input_tokens: value

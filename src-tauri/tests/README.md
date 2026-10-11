@@ -49,8 +49,14 @@ The eval targets need a model endpoint; their module docs list the
 `LATTICE_EVAL_*` and `LATTICE_LEARNING_EVAL_*` variables.
 
 CI (`.github/workflows/ci.yml`) compiles every target (`cargo check
---all-targets`, `cargo clippy --all-targets`) but only runs
-`cargo test --features bindings-export --lib --bin export_bindings --test sidecar_guard_test`,
-`cargo test --test security_audit_logging_test --test native_keyring_backend_test`,
-and `cargo test --test background_lifecycle_test --test tag_repository_test --test plugins_tests`,
-plus two opt-in learning-runtime container tests.
+--all-targets`, `cargo clippy --all-targets`) and runs
+`cargo test --locked --features bindings-export --lib --bins --tests --no-fail-fast`
+on every platform in the Rust matrix, plus two opt-in learning-runtime container
+tests on Linux. A newly added integration target is automatically part of the
+gate. Explicitly ignored live-model and environment-dependent tests remain
+opt-in; an ignored test is not evidence that its scenario passed.
+
+`extractor_integration_test` exercises the actual public extractor and content
+adapter with temporary files: Unicode content and names, empty files, Markdown
+extension variants, exact byte-size limits, unsupported formats, missing files,
+directories, corrupt document archives and PDF, and text streaming boundaries.

@@ -43,7 +43,8 @@ impl LearningCurriculumRepository {
             AppError::RateLimitExceeded(_) => "The model service is rate limiting requests; preparation will retry automatically",
             _ => "The model service could not finish the request; preparation will retry automatically",
         };
-        let detail = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. Repeated service failures can prevent further progress until the service recovers. You can leave this screen or cancel.";
+        let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. Repeated service failures can prevent further progress until the service recovers. You can leave this screen or cancel.";
+        let detail = format!("{error} {recovery}");
         sqlx::query("UPDATE learning_generation_jobs SET status='pending',finished_at=NULL,error_code='temporarily_unavailable',error_message=?,progress_message=?,heartbeat_at=?,activity_json=?,retry_not_before=?,retry_count=? WHERE id=? AND status='running'")
             .bind(detail).bind(message).bind(stamp).bind(activity.as_ref().map(encode).transpose()?)
             .bind(stamp.saturating_add(delay_ms)).bind(retries.saturating_add(1)).bind(id)

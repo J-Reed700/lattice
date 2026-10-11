@@ -103,10 +103,7 @@ impl ContentAddressedStorage {
     ///
     /// - `AppError::InvalidState` if home directory cannot be determined
     pub(crate) fn default_library_root() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| AppError::InvalidState("Cannot determine home directory".to_string()))?;
-
-        Ok(home.join(".lattice").join("files"))
+        crate::shared::fs::roots::library_root()
     }
 
     /// The lock guarding mutations of one blob.
