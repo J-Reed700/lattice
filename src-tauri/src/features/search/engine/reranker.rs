@@ -32,10 +32,10 @@
 //! Sigmoided to `[0, 1]`. Higher = more relevant. The model's HF
 //! config technically says `sbert_ce_default_activation_function:
 //! Identity` — meaning the trained logit isn't a calibrated
-//! probability. But the existing downstream consumer
-//! (`apply_cross_encoder_rerank` in `chat/retrieval/rerank.rs`)
+//! probability. But the downstream consumer (the rerank stage of
+//! `HybridSearchUseCase`, through [`blend_rerank_scores`])
 //! `.clamp(0.0, 1.0)`s the score before blending it with normalized
-//! BM25/vector scores. Returning raw logits would make the clamp
+//! fused scores. Returning raw logits would make the clamp
 //! collapse all positive logits to 1.0 (destroying ranking), so we
 //! sigmoid here to give the consumer a smooth `[0, 1]` curve.
 //!

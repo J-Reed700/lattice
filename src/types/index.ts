@@ -32,17 +32,6 @@ export interface IndexingStats {
 
 export type { IndexedFolder, IndexingActivity, IndexFileResponse } from './api/files';
 
-export interface WebIngestResponse {
-  documentId: string;
-  url: string;
-  title: string;
-  wordCount: number;
-  chunks: number;
-  siteName: string | null;
-  author: string | null;
-  readingTimeMinutes: number | null;
-}
-
 export type {
   Conversation,
   ConversationMessage,

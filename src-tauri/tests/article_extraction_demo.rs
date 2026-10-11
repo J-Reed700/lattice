@@ -11,8 +11,8 @@
 ///
 /// This test verifies that the upgraded ArticleExtractorService can extract
 /// full article content instead of just snippets.
-use lattice::infrastructure::services::article_extractor::ArticleExtractorService;
-use lattice::infrastructure::services::traits::ArticleExtractorServiceTrait;
+use lattice::features::web::services::article_extractor::ArticleExtractorService;
+use lattice::features::web::traits::ArticleExtractorServiceTrait;
 
 #[tokio::test]
 async fn test_extract_full_article_content() {

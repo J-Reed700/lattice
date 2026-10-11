@@ -12,6 +12,7 @@
 //! plain inherent methods. If polymorphism is ever needed, extract
 //! the trait at that point.
 
+mod chat_port;
 mod conversations;
 mod document_references;
 mod fork;

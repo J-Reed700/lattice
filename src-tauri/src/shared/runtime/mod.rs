@@ -2,6 +2,7 @@
 
 pub mod autorelease;
 pub mod background;
+pub mod jobs;
 pub mod observer;
 pub mod supervised_task;
 pub mod user_activity;

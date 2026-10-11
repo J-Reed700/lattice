@@ -27,9 +27,10 @@ use crate::features::conversation::space_dto::{
     ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
     MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
     RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
-    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
-    UpsertConversationSpaceMemberRequestDto,
+    SetJournalEntryPinnedRequestDto, UpdateConversationJournalRequestDto,
+    UpdateConversationSpaceRequestDto, UpsertConversationSpaceMemberRequestDto,
 };
+use crate::features::conversation::starters_dto::ChatStartersDto;
 use crate::features::conversation::tangent_dto::{ConversationTangentDto, CreateTangentRequestDto};
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
@@ -38,10 +39,14 @@ use tauri::{
     State,
 };
 
+use crate::features::conversation::chat::ports::ChatRuntime;
 pub use crate::features::conversation::plugin_impl::{
     ConversationLinkedDocumentDto, ConversationWebSourceDto, DocumentSpaceMembershipDto,
-    SpaceDocumentDto, SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
+    JournalSynthesisDto, SpaceDocumentDto, StartJournalSynthesisRequestDto,
+    SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
 };
+use crate::features::conversation::{chat, synthesis};
+use std::sync::Arc;
 
 #[tauri::command]
 #[specta::specta]
@@ -95,33 +100,6 @@ pub async fn rename_conversation(
     container: State<'_, Container>,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     conversation_impl::rename_conversation_impl(request, container.inner()).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn chat_with_conversation_wrapper(
-    container: State<'_, Container>,
-    conversation_id: Option<String>,
-    message: String,
-    tool_preferences: Option<ToolPreferences>,
-    cancel_only: Option<bool>,
-    request_id: Option<String>,
-    attachment_names: Option<Vec<String>>,
-    attachment_document_ids: Option<Vec<String>>,
-    window: tauri::Window,
-) -> Result<ChatResponse, ApiError> {
-    conversation_impl::chat_with_conversation_wrapper_impl(
-        container.inner(),
-        conversation_id,
-        message,
-        tool_preferences,
-        cancel_only,
-        request_id,
-        attachment_names,
-        attachment_document_ids,
-        window,
-    )
-    .await
 }
 
 #[tauri::command]
@@ -512,6 +490,26 @@ pub async fn list_conversations_explorer(
     conversation_impl::list_conversations_explorer_impl(query, container.inner()).await
 }
 
+/// Pins or unpins an entry in one journal.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_journal_entry_pinned(
+    request: SetJournalEntryPinnedRequestDto,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    conversation_impl::set_journal_entry_pinned_impl(request, container.inner()).await
+}
+
+/// The conversations pinned in a journal, the most recently pinned first.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_entry_pins(
+    journal_space_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<String>, ApiError> {
+    conversation_impl::list_journal_entry_pins_impl(journal_space_id, container.inner()).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_journal_conversations(
@@ -521,21 +519,64 @@ pub async fn list_journal_conversations(
     conversation_impl::list_journal_conversations_impl(query, container.inner()).await
 }
 
+/// Starts a journal synthesis as a job. Its progress arrives on
+/// `jobs://status`; once it completes, its result is read with
+/// `get_journal_synthesis_result` and saved by the renderer.
 #[tauri::command]
 #[specta::specta]
 pub async fn synthesize_journal_entries(
-    request: SynthesizeJournalEntriesRequestDto,
-    on_progress: tauri::ipc::Channel<super::workspace_dto::SynthesisProgressDto>,
+    request: StartJournalSynthesisRequestDto,
     container: State<'_, Container>,
-    window: tauri::Window,
+) -> Result<JournalSynthesisDto, ApiError> {
+    Ok(conversation_impl::synthesize_journal_entries_impl(request, container.jobs()).await?)
+}
+
+/// Every synthesis not yet saved or dismissed: running, finished, or ended
+/// without a result.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_syntheses(
+    container: State<'_, Container>,
+) -> Result<Vec<JournalSynthesisDto>, ApiError> {
+    Ok(conversation_impl::list_journal_syntheses_impl(container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_journal_synthesis_result(
+    job_id: String,
+    container: State<'_, Container>,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    conversation_impl::synthesize_journal_entries_impl(
-        request,
-        container.inner(),
-        window,
-        on_progress,
-    )
-    .await
+    Ok(conversation_impl::get_journal_synthesis_result_impl(&job_id, container.jobs()).await?)
+}
+
+/// Records that a finished synthesis was saved to its destination. False when
+/// it already had been.
+#[tauri::command]
+#[specta::specta]
+pub async fn mark_journal_synthesis_applied(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<bool, ApiError> {
+    Ok(conversation_impl::mark_journal_synthesis_applied_impl(&job_id, container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dismiss_journal_synthesis(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    Ok(conversation_impl::dismiss_journal_synthesis_impl(&job_id, container.jobs()).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn retry_journal_synthesis(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<JournalSynthesisDto, ApiError> {
+    Ok(conversation_impl::retry_journal_synthesis_impl(&job_id, container.jobs()).await?)
 }
 
 /// Delete every message after `message_id` (and it too when `inclusive`),
@@ -657,16 +698,56 @@ pub async fn compact_conversation(
     conversation_impl::compact_conversation_impl(request, container.inner()).await
 }
 
+/// Corpus-derived opening questions for the Chat empty state, drawn from the
+/// documents one space can see. A blank `space_id` means General.
+#[tauri::command]
+#[specta::specta]
+pub async fn generate_chat_starters(
+    container: State<'_, Container>,
+    space_id: Option<String>,
+) -> Result<ChatStartersDto, ApiError> {
+    crate::features::conversation::starters::generate_chat_starters_impl(
+        container.inner(),
+        space_id,
+    )
+    .await
+}
+
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
+        .setup(|app, _api| {
+            use tauri::Manager;
+            let container = app.state::<Container>().inner().clone();
+            let jobs = Arc::clone(container.jobs());
+            // Registration settles research turns and syntheses the last
+            // process left running, then resumes them from their checkpoints.
+            tauri::async_runtime::block_on(async {
+                jobs.register(
+                    chat::DEEP_RESEARCH,
+                    Arc::new(chat::DeepResearchJob::new(
+                        container.share(),
+                        chat::app_event_sink(app.clone()),
+                    )),
+                    chat::research_job_config(),
+                )
+                .await?;
+                jobs.register(
+                    synthesis::JOURNAL_SYNTHESIS,
+                    Arc::new(synthesis::JournalSynthesisJob::new(container.clone())),
+                    synthesis::synthesis_job_config(),
+                )
+                .await
+            })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_conversation,
+            generate_chat_starters,
             get_conversation,
             list_conversations,
             delete_conversation,
             get_conversation_messages,
             rename_conversation,
-            chat_with_conversation_wrapper,
             chat_with_conversation,
             create_conversation_space,
             list_conversation_spaces,
@@ -703,7 +784,14 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             list_message_bookmarks,
             list_conversations_explorer,
             list_journal_conversations,
+            set_journal_entry_pinned,
+            list_journal_entry_pins,
             synthesize_journal_entries,
+            list_journal_syntheses,
+            get_journal_synthesis_result,
+            mark_journal_synthesis_applied,
+            dismiss_journal_synthesis,
+            retry_journal_synthesis,
             truncate_conversation_after,
             fork_conversation,
             create_conversation_tangent,

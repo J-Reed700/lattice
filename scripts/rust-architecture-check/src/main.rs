@@ -10,6 +10,8 @@ use syn::{
     Attribute, Item, UseTree,
 };
 
+mod ratchet;
+
 fn test_only(attrs: &[Attribute]) -> bool {
     fn excluded_from_production(meta: &syn::Meta) -> bool {
         match meta {
@@ -34,6 +36,28 @@ fn test_only(attrs: &[Attribute]) -> bool {
             && attr
                 .parse_args::<syn::Meta>()
                 .is_ok_and(|meta| excluded_from_production(&meta))
+    })
+}
+
+/// Attributes of an item that can carry `#[cfg(...)]`.
+fn item_attrs(item: &Item) -> Option<&[Attribute]> {
+    Some(match item {
+        Item::Const(i) => &i.attrs,
+        Item::Enum(i) => &i.attrs,
+        Item::ExternCrate(i) => &i.attrs,
+        Item::Fn(i) => &i.attrs,
+        Item::ForeignMod(i) => &i.attrs,
+        Item::Impl(i) => &i.attrs,
+        Item::Macro(i) => &i.attrs,
+        Item::Mod(i) => &i.attrs,
+        Item::Static(i) => &i.attrs,
+        Item::Struct(i) => &i.attrs,
+        Item::Trait(i) => &i.attrs,
+        Item::TraitAlias(i) => &i.attrs,
+        Item::Type(i) => &i.attrs,
+        Item::Union(i) => &i.attrs,
+        Item::Use(i) => &i.attrs,
+        _ => return None,
     })
 }
 
@@ -104,28 +128,7 @@ impl<'ast> Visit<'ast> for Dependencies<'_> {
         visit::visit_attribute(self, attr);
     }
     fn visit_item(&mut self, item: &'ast Item) {
-        let attrs = match item {
-            Item::Const(i) => &i.attrs,
-            Item::Enum(i) => &i.attrs,
-            Item::ExternCrate(i) => &i.attrs,
-            Item::Fn(i) => &i.attrs,
-            Item::ForeignMod(i) => &i.attrs,
-            Item::Impl(i) => &i.attrs,
-            Item::Macro(i) => &i.attrs,
-            Item::Mod(i) => &i.attrs,
-            Item::Static(i) => &i.attrs,
-            Item::Struct(i) => &i.attrs,
-            Item::Trait(i) => &i.attrs,
-            Item::TraitAlias(i) => &i.attrs,
-            Item::Type(i) => &i.attrs,
-            Item::Union(i) => &i.attrs,
-            Item::Use(i) => &i.attrs,
-            _ => {
-                visit::visit_item(self, item);
-                return;
-            }
-        };
-        if !test_only(attrs) {
+        if !item_attrs(item).is_some_and(test_only) {
             visit::visit_item(self, item);
         }
     }
@@ -180,61 +183,6 @@ fn inspect_with_drivers(
     };
     visitor.visit_file(&ast);
     Ok((visitor.violations, visitor.aliases))
-}
-
-#[derive(Default)]
-struct RawTokioSpawn {
-    found: bool,
-}
-
-impl<'ast> Visit<'ast> for RawTokioSpawn {
-    fn visit_item(&mut self, item: &'ast Item) {
-        let attrs = match item {
-            Item::Const(i) => &i.attrs,
-            Item::Enum(i) => &i.attrs,
-            Item::ExternCrate(i) => &i.attrs,
-            Item::Fn(i) => &i.attrs,
-            Item::ForeignMod(i) => &i.attrs,
-            Item::Impl(i) => &i.attrs,
-            Item::Macro(i) => &i.attrs,
-            Item::Mod(i) => &i.attrs,
-            Item::Static(i) => &i.attrs,
-            Item::Struct(i) => &i.attrs,
-            Item::Trait(i) => &i.attrs,
-            Item::TraitAlias(i) => &i.attrs,
-            Item::Type(i) => &i.attrs,
-            Item::Union(i) => &i.attrs,
-            Item::Use(i) => &i.attrs,
-            _ => {
-                visit::visit_item(self, item);
-                return;
-            }
-        };
-        if !test_only(attrs) {
-            visit::visit_item(self, item);
-        }
-    }
-
-    fn visit_path(&mut self, path: &'ast syn::Path) {
-        let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-        if segments == ["tokio", "spawn"]
-            || segments == ["tokio", "task", "spawn"]
-            || segments == ["tauri", "async_runtime", "spawn"]
-        {
-            self.found = true;
-        }
-        visit::visit_path(self, path);
-    }
-}
-
-fn has_production_raw_tokio_spawn(source: &str) -> Result<bool, syn::Error> {
-    let ast = syn::parse_file(source)?;
-    if test_only(&ast.attrs) {
-        return Ok(false);
-    }
-    let mut visitor = RawTokioSpawn::default();
-    visitor.visit_file(&ast);
-    Ok(visitor.found)
 }
 
 // Empty tests inflate the pass count without exercising a contract.
@@ -377,32 +325,6 @@ fn collect_test_modules(
     Ok(())
 }
 
-fn check_supervised_background_paths(
-    root: &Path,
-    failures: &mut usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for path in [
-        "features/batch/use_cases/start_url_import.rs",
-        "features/conversation/chat/verification/background.rs",
-        "features/conversation/chat/persistence.rs",
-        "features/conversation/compaction.rs",
-        "features/learning/plugin.rs",
-        "features/learning/lessons/generation_jobs.rs",
-        "features/learning/practice/practical_runs.rs",
-        "features/transcription/engine/whisper.rs",
-    ] {
-        let file = root.join(path);
-        if has_production_raw_tokio_spawn(&fs::read_to_string(&file)?)? {
-            eprintln!(
-                "VIOLATION: {} uses a detached spawn; use the shared background supervisor",
-                file.display()
-            );
-            *failures += 1;
-        }
-    }
-    Ok(())
-}
-
 fn scan(
     path: &Path,
     forbidden: &[&str],
@@ -511,40 +433,51 @@ fn check_feature_entrypoints(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = PathBuf::from(
-        std::env::args_os()
-            .nth(1)
-            .ok_or("expected Rust source root")?,
-    );
+    let mut write_baseline = false;
+    let mut roots = Vec::new();
+    for argument in std::env::args_os().skip(1) {
+        if argument == "--write-baseline" {
+            write_baseline = true;
+        } else if argument.to_string_lossy().starts_with("--") {
+            return Err(format!("unknown flag {}", argument.to_string_lossy()).into());
+        } else {
+            roots.push(PathBuf::from(argument));
+        }
+    }
+    let root = roots.first().ok_or("expected Rust source root")?.clone();
     let mut failures = 0;
-    check_supervised_background_paths(&root, &mut failures)?;
+    ratchet::check(
+        &root,
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline.txt"),
+        write_baseline,
+        &mut failures,
+    )?;
     check_integration_tests(&root, &mut failures)?;
     check_feature_entrypoints(&root.join("features"), &mut failures)?;
-    for workflow in [
+    let mut chat_workflows: Vec<PathBuf> = [
         "chat/turn_record.rs",
         "chat/tool_loop.rs",
-        "chat/turn.rs",
         "chat/routing.rs",
         "chat/tools.rs",
-    ] {
-        scan_with_drivers(
-            &root.join("features/conversation").join(workflow),
-            &[],
-            &["tauri"],
-            &mut HashSet::new(),
-            &mut failures,
-        )?;
+    ]
+    .iter()
+    .map(|workflow| root.join("features/conversation").join(workflow))
+    .collect();
+    // The turn is split into stage modules; every stage is a workflow file.
+    let mut turn_stages: Vec<PathBuf> = fs::read_dir(root.join("features/conversation/chat/turn"))
+        .map_err(|error| format!("chat/turn stages: {error}"))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .filter(|path| path.file_name().is_some_and(|name| name != "tests.rs"))
+        .collect();
+    turn_stages.sort();
+    chat_workflows.extend(turn_stages);
+    for workflow in &chat_workflows {
+        scan_with_drivers(workflow, &[], &["tauri"], &mut HashSet::new(), &mut failures)?;
     }
     scan_with_drivers(
         &root.join("features/learning/lessons/generation_jobs.rs"),
-        &["interfaces"],
-        &["tauri"],
-        &mut HashSet::new(),
-        &mut failures,
-    )?;
-    scan_with_drivers(
-        &root.join("features/conversation/chat/turn.rs"),
-        &["interfaces"],
+        &[],
         &["tauri"],
         &mut HashSet::new(),
         &mut failures,
@@ -602,8 +535,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut failures,
         )?;
     }
-    if let Some(api) = std::env::args_os().nth(2) {
-        let api = PathBuf::from(api);
+    if let Some(api) = roots.get(1) {
         for part in ["sync", "error.rs"] {
             scan(
                 &api.join(part),
@@ -680,18 +612,6 @@ mod tests {
     }
 
     #[test]
-    fn documentation_examples_are_excluded_from_production_dependencies() {
-        assert!(!has_production_raw_tokio_spawn(
-            "#[cfg(any(test, doc))] mod examples { fn run() { tokio::spawn(async {}); } }"
-        )
-        .unwrap());
-        assert!(has_production_raw_tokio_spawn(
-            "#[cfg(any(test, unix))] mod platform { fn run() { tokio::spawn(async {}); } }"
-        )
-        .unwrap());
-    }
-
-    #[test]
     fn resumes_after_test_items_and_ignores_comments_and_strings() {
         let (bad, _) = inspect(
             r#"
@@ -721,19 +641,6 @@ mod tests {
     #[test]
     fn invalid_rust_fails_closed() {
         assert!(inspect("fn broken(", &[]).is_err());
-    }
-
-    #[test]
-    fn supervised_workflows_reject_production_tokio_spawn_but_allow_tests() {
-        assert!(has_production_raw_tokio_spawn("fn run() { tokio::spawn(async {}); }").unwrap());
-        assert!(has_production_raw_tokio_spawn(
-            "fn run() { tauri::async_runtime::spawn(async {}); }"
-        )
-        .unwrap());
-        assert!(!has_production_raw_tokio_spawn(
-            "#[cfg(test)] mod tests { fn run() { tokio::spawn(async {}); } }"
-        )
-        .unwrap());
     }
 
     #[test]

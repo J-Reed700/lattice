@@ -387,7 +387,7 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
     assert_eq!(canvas.revision, 1);
     assert_eq!(canvas.element_count, 2);
     let receipts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM learning_canvas_operations WHERE operation_id=? AND kind='save'",
+        "SELECT count(*) FROM learning_operations WHERE operation_id=? AND scope='canvas' AND kind='save'",
     )
     .bind(&save.operation_id)
     .fetch_one(&pool)

@@ -61,32 +61,13 @@ export type ToolOutputSettings = import('../../lib/bindings').ToolOutputSettings
 
 export type ToolOutputTemplates = import('../../lib/bindings').ToolOutputTemplatesDto;
 
-export interface TestOllamaConnectionRequest {
-  ollamaUrl: string;
-  authHeaderName?: string;
-  authHeaderValue?: string;
-}
+export type TestOllamaConnectionRequest = import('../../lib/bindings').TestOllamaConnectionRequest;
 
-export interface TestOllamaConnectionResponse {
-  endpoint: string;
-  models: string[];
-}
+export type TestOllamaConnectionResponse = import('../../lib/bindings').TestOllamaConnectionResponse;
 
-export interface TestCustomToolRequest {
-  endpoint: string;
-  queryParam: string;
-  maxResultsParam?: string | null;
-  defaultMaxResults: number;
-  query: string;
-  maxResults?: number;
-}
+export type TestCustomToolRequest = import('../../lib/bindings').TestCustomToolRequest;
 
-export interface TestCustomToolResponse {
-  finalUrl: string;
-  status: number;
-  contentType?: string | null;
-  bodyPreview: string;
-}
+export type TestCustomToolResponse = import('../../lib/bindings').TestCustomToolResponse;
 
 export type UISettings = import('../../lib/bindings').UISettingsDto;
 

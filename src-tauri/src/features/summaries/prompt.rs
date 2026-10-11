@@ -1,4 +1,6 @@
-//! Prompt rendering and response parsing for generated summaries.
+//! Task rendering and response parsing for generated summaries. The document
+//! or section text itself is the call's evidence, fitted to the model's window
+//! by grounded generation.
 //!
 //! Pure string work on purpose: rendering and parsing are the two places a
 //! summary can go wrong in a way no integration test would catch, and neither
@@ -12,11 +14,24 @@
 
 use serde::Deserialize;
 
-/// Beginning-of-document budget handed to the document-level prompt.
+/// Ceiling on the opening a document summary reads, even when the window holds
+/// more: summaries are upkeep, and three sentences do not need a whole book.
 pub const DOCUMENT_BODY_TOKENS: usize = 3000;
 
-/// Per-section budget. Sections are numerous; the prompt pays for all of them.
+/// The same ceiling per section. Sections are numerous; the upkeep pays for
+/// all of them.
 pub const SECTION_BODY_TOKENS: usize = 1500;
+
+/// Largest piece the source text is cut into. The model reads whole pieces
+/// from the start until its window or the ceiling is reached, so this is also
+/// how far short of either the opening may stop.
+pub const BODY_PASSAGE_CHARS: usize = 800;
+
+/// Heading the document's opening is written under.
+pub const DOCUMENT_BODY_HEADING: &str = "Beginning of the document:";
+
+/// Heading a section's text is written under.
+pub const SECTION_BODY_HEADING: &str = "Section text:";
 
 /// A document with fewer top-level sections than this gets no section
 /// summaries — its document summary already covers the same ground.
@@ -70,7 +85,7 @@ pub fn section_system_prompt() -> String {
     .join(" ")
 }
 
-/// Everything the document-level prompt says about one document.
+/// Everything the document-level task says about one document.
 #[derive(Debug, Clone, Default)]
 pub struct DocumentPromptInput<'a> {
     pub title: &'a str,
@@ -78,21 +93,22 @@ pub struct DocumentPromptInput<'a> {
     /// It is the only corpus-wide context the summarizer gets.
     pub cluster_label: Option<&'a str>,
     pub section_headings: &'a [String],
-    /// Beginning of the document, already truncated to a token budget.
-    pub body: &'a str,
 }
 
-/// Everything the section-level prompt says about one section.
+/// Everything the section-level task says about one section.
 #[derive(Debug, Clone, Default)]
 pub struct SectionPromptInput<'a> {
     pub title: &'a str,
     pub section: &'a str,
     pub cluster_label: Option<&'a str>,
-    /// Section text, already truncated to a token budget.
-    pub body: &'a str,
 }
 
-pub fn render_document_prompt(input: &DocumentPromptInput<'_>) -> String {
+/// Written after the source text, so the contract is the last thing read.
+pub fn response_contract() -> &'static str {
+    JSON_CONTRACT
+}
+
+pub fn render_document_task(input: &DocumentPromptInput<'_>) -> String {
     let mut out = String::new();
     out.push_str(&format!("Title: {}\n", input.title.trim()));
     if let Some(label) = input.cluster_label.map(str::trim).filter(|l| !l.is_empty()) {
@@ -108,25 +124,17 @@ pub fn render_document_prompt(input: &DocumentPromptInput<'_>) -> String {
     if !headings.is_empty() {
         out.push_str(&format!("Section headings: {}\n", headings.join(" | ")));
     }
-    out.push_str("Beginning of the document:\n");
-    out.push_str(input.body.trim());
-    out.push_str("\n\n");
-    out.push_str(JSON_CONTRACT);
-    out
+    out.trim_end().to_string()
 }
 
-pub fn render_section_prompt(input: &SectionPromptInput<'_>) -> String {
+pub fn render_section_task(input: &SectionPromptInput<'_>) -> String {
     let mut out = String::new();
     out.push_str(&format!("Document: {}\n", input.title.trim()));
     out.push_str(&format!("Section: {}\n", input.section.trim()));
     if let Some(label) = input.cluster_label.map(str::trim).filter(|l| !l.is_empty()) {
         out.push_str(&format!("Collection theme: {label}\n"));
     }
-    out.push_str("Section text:\n");
-    out.push_str(input.body.trim());
-    out.push_str("\n\n");
-    out.push_str(JSON_CONTRACT);
-    out
+    out.trim_end().to_string()
 }
 
 /// A parsed, sanitized model response.
@@ -211,34 +219,6 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     out
 }
 
-/// Cut `text` down to `budget` tokens as measured by `count`.
-///
-/// Halving-then-probing rather than tokenizing incrementally: the tokenizer is
-/// behind the LLM port and every probe is a real call, so the loop is written
-/// to converge in a handful of them regardless of document size.
-pub fn truncate_to_tokens(text: &str, budget: usize, count: impl Fn(&str) -> usize) -> String {
-    if budget == 0 {
-        return String::new();
-    }
-    if count(text) <= budget {
-        return text.to_string();
-    }
-    // ~4 chars per token is the usual ballpark; start there and shrink by a
-    // quarter each probe, so even a pathological tokenizer converges quickly.
-    let total = text.chars().count();
-    let mut chars: usize = budget.saturating_mul(4).max(1).min(total);
-    loop {
-        let candidate: String = text.chars().take(chars).collect();
-        if count(&candidate) <= budget {
-            return candidate.trim_end().to_string();
-        }
-        if chars <= 1 {
-            return String::new();
-        }
-        chars = (chars * 3 / 4).max(1);
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
@@ -249,28 +229,25 @@ mod tests {
     }
 
     #[test]
-    fn document_prompt_carries_title_label_headings_and_body() {
+    fn document_task_carries_title_label_and_headings() {
         let headings = headings();
-        let prompt = render_document_prompt(&DocumentPromptInput {
+        let prompt = render_document_task(&DocumentPromptInput {
             title: "Flight Manual",
             cluster_label: Some("Aviation Procedures"),
             section_headings: &headings,
-            body: "  Chapter 1 covers preflight.  ",
         });
         assert!(prompt.contains("Title: Flight Manual"));
         assert!(prompt.contains("Collection theme: Aviation Procedures"));
-        assert!(prompt.contains("Section headings: Introduction | Safety"));
-        assert!(prompt.contains("Chapter 1 covers preflight."));
-        assert!(prompt.trim_end().ends_with("No prose before or after it."));
+        assert!(prompt.ends_with("Section headings: Introduction | Safety"));
+        assert!(response_contract().ends_with("No prose before or after it."));
     }
 
     #[test]
     fn document_prompt_omits_absent_label_and_headings() {
-        let prompt = render_document_prompt(&DocumentPromptInput {
+        let prompt = render_document_task(&DocumentPromptInput {
             title: "Notes",
             cluster_label: Some("   "),
             section_headings: &[],
-            body: "body",
         });
         assert!(!prompt.contains("Collection theme"));
         assert!(!prompt.contains("Section headings"));
@@ -279,11 +256,10 @@ mod tests {
     #[test]
     fn document_prompt_caps_the_heading_list() {
         let many: Vec<String> = (0..80).map(|i| format!("Heading {i}")).collect();
-        let prompt = render_document_prompt(&DocumentPromptInput {
+        let prompt = render_document_task(&DocumentPromptInput {
             title: "Manual",
             cluster_label: None,
             section_headings: &many,
-            body: "body",
         });
         assert!(prompt.contains("Heading 23"));
         assert!(!prompt.contains("Heading 24"));
@@ -291,15 +267,13 @@ mod tests {
 
     #[test]
     fn section_prompt_names_document_and_section() {
-        let prompt = render_section_prompt(&SectionPromptInput {
+        let prompt = render_section_task(&SectionPromptInput {
             title: "Flight Manual",
             section: "Emergency Procedures",
             cluster_label: None,
-            body: "Pull the handle.",
         });
         assert!(prompt.contains("Document: Flight Manual"));
-        assert!(prompt.contains("Section: Emergency Procedures"));
-        assert!(prompt.contains("Pull the handle."));
+        assert!(prompt.ends_with("Section: Emergency Procedures"));
     }
 
     #[test]
@@ -370,27 +344,5 @@ mod tests {
         }
         .into_summary_text();
         assert_eq!(text, "S.\n\nKey topics: a, b");
-    }
-
-    #[test]
-    fn truncation_respects_a_word_based_token_count() {
-        let words = |text: &str| text.split_whitespace().count();
-        let text = (0..500)
-            .map(|i| format!("word{i}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cut = truncate_to_tokens(&text, 10, words);
-        assert!(words(&cut) <= 10);
-        assert!(cut.starts_with("word0"));
-        assert_eq!(truncate_to_tokens(&text, 0, words), "");
-        assert_eq!(truncate_to_tokens("short", 100, words), "short");
-    }
-
-    #[test]
-    fn truncation_never_splits_a_multibyte_character() {
-        let text = "é".repeat(4000);
-        let cut = truncate_to_tokens(&text, 8, |t| t.chars().count());
-        assert!(cut.chars().count() <= 8);
-        assert!(cut.chars().all(|c| c == 'é'));
     }
 }

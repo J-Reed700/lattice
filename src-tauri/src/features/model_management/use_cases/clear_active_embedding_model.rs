@@ -2,7 +2,7 @@
 //!
 //! Deactivates the currently active embedding model.
 
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::shared::error::Result;
 use tracing::info;
 

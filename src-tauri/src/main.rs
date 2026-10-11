@@ -118,6 +118,11 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
+    // A learner's lab code runs in a child copy of this executable. It serves
+    // that one run and exits before any app state, window or plugin exists.
+    if lattice::features::learning::lab_runner::is_runner_invocation() {
+        std::process::exit(lattice::features::learning::lab_runner::run_child());
+    }
     lattice::infrastructure::crash::install_panic_hook();
     // This entrypoint exists only in an instrumented, isolated test package.
     // Exercise the installed executable's signing policy and bundled assets

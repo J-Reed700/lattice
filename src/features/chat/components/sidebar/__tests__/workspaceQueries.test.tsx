@@ -5,13 +5,11 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useCreateJournalMutation, useJournalsQuery, useSidebarBookmarksQuery } from '@/features/chat/components/sidebar/workspaceQueries';
-import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
-import { useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
 import { VaultAPI } from '@/lib/api';
 import { queryClient } from '@/lib/queryClient';
 
 
-vi.mock('@/lib/api', () => ({ VaultAPI: { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn(), synthesizeJournalEntries: vi.fn(), quickCapture: vi.fn() } }));
+vi.mock('@/lib/api', () => ({ VaultAPI: { listJournals: vi.fn(), createJournal: vi.fn(), listMessageBookmarks: vi.fn() } }));
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -23,44 +21,9 @@ const request = { name: 'New journal', description: null, icon: null, accentColo
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useSynthesisStore.setState({ job: null, minimized: false });
 });
 
 describe('sidebar repository queries', () => {
-  it('saves every synthesis source and conversation link with the generated text', async () => {
-    const sources = Array.from({ length: 25 }, (_, index) => ({
-      documentId: `document-${index}`, chunkId: `chunk-${index}`, content: `Evidence ${index}`,
-      score: 1, path: null, position: null, fileName: `Source ${index}`, filePath: `/sources/${index}.pdf`,
-      mimeType: 'application/pdf', category: 'Document', fileSizeBytes: 100, modifiedAt: '',
-      citationId: index + 1, pageNumber: index + 1,
-    }));
-    vi.mocked(VaultAPI.synthesizeJournalEntries).mockResolvedValue({ ok: true, data: {
-      synthesis: 'First claim [1]. Last claim [25].', scope: 'conversation', entryCount: 1,
-      chunkCount: 1, conversationIds: ['conversation-1'], citations: [], sources,
-    } });
-    vi.mocked(VaultAPI.quickCapture).mockResolvedValue({ ok: true, data: {
-      noteId: 'note-1', noteTitle: 'Today', created: false,
-    } });
-    const { client } = setup();
-    await runSynthesis({ title: 'Research', heading: 'Research', request: { conversationIds: ['conversation-1'], scope: 'conversation', maxEntries: 1 }, destination: { kind: 'capture' } }, client);
-    expect(VaultAPI.quickCapture).toHaveBeenCalledWith(
-      expect.stringContaining('First claim [1]. Last claim [25].'), sources, ['conversation-1'],
-    );
-    expect(useSynthesisStore.getState().job).toMatchObject({ status: 'completed', noteId: 'note-1' });
-  });
-
-  it('reports a source capture failure instead of announcing a saved synthesis', async () => {
-    vi.mocked(VaultAPI.synthesizeJournalEntries).mockResolvedValue({ ok: true, data: {
-      synthesis: 'Summary', scope: 'conversation', entryCount: 1, chunkCount: 1,
-      conversationIds: ['conversation-1'],
-    } });
-    vi.mocked(VaultAPI.quickCapture).mockResolvedValue({ ok: false, error: 'Disk full' });
-    const { client } = setup();
-    expect(await runSynthesis({ title: 'Research', heading: 'Research', request: { conversationIds: ['conversation-1'], scope: 'conversation', maxEntries: 1 }, destination: { kind: 'capture' } }, client)).toBe(false);
-    expect(useSynthesisStore.getState().job).toMatchObject({ status: 'failed', stage: 'saving', error: 'Disk full' });
-    expect(useSynthesisStore.getState().job?.noteId).toBeUndefined();
-  });
-
   it('refreshes all journal readers from the repository after creation', async () => {
     let persisted = [journal('one', 'First')];
     vi.spyOn(VaultAPI, 'listJournals').mockImplementation(async () => ({ ok: true, data: persisted }));

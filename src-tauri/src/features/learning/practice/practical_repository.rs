@@ -8,23 +8,18 @@ use crate::features::learning::{
         self, LearningContainerEngine, LearningLabExecutionResult, LearningLabExecutionSpec,
         LearningLabFile, LearningLabLimits, LearningLabRunStatus,
     },
+    operations::Operation,
+    persistence::{db, hash, hash_text, now},
     practical_dto::*,
     practical_generation::{GeneratedPracticalActivity, PracticalFileRole},
 };
 use crate::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
 }
 fn uuid(value: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
@@ -36,11 +31,6 @@ fn json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
 }
 fn decode<T: DeserializeOwned>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|error| AppError::Serialization(error.to_string()))
-}
-fn digest<T: Serialize + ?Sized>(value: &T) -> Result<String> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|error| AppError::Serialization(error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 fn engine_name(value: LearningContainerEngine) -> &'static str {
@@ -354,26 +344,29 @@ impl LearningPracticalRepository {
 
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,activity_id,activity_revision,payload_hash,result_revision,created_at FROM learning_practical_draft_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
+        let operation = practical_operation(
+            "practical_draft",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.activity_id,
+            "save",
+            payload_hash,
+            "Operation ID was reused with different practical draft data.",
+        );
+        if let Some(result) = operation
+            .replay::<PracticalDraftOperationResult, _>(&mut *tx)
+            .await?
         {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("activity_id") == request.activity_id
-                && row.get::<i64, _>("activity_revision") == request.activity_revision
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                let replay = LearningPracticalDraftDto {
-                    program_id: request.program_id.clone(),
-                    activity_id: request.activity_id.clone(),
-                    activity_revision: request.activity_revision,
-                    draft_revision: row.get("result_revision"),
-                    files: request.files.clone(),
-                    updated_at: Some(row.get("created_at")),
-                };
-                tx.commit().await.map_err(db)?;
-                return Ok(replay);
-            }
-            return Err(invalid("Operation ID was reused with different practical draft data."));
+            let replay = LearningPracticalDraftDto {
+                program_id: request.program_id.clone(),
+                activity_id: request.activity_id.clone(),
+                activity_revision: request.activity_revision,
+                draft_revision: result.draft_revision,
+                files: request.files.clone(),
+                updated_at: Some(result.updated_at),
+            };
+            tx.commit().await.map_err(db)?;
+            return Ok(replay);
         }
         Self::active_program(&mut tx, &request.program_id).await?;
         let activity = sqlx::query(
@@ -418,9 +411,15 @@ impl LearningPracticalRepository {
         sqlx::query("INSERT INTO learning_practical_drafts(program_id,activity_id,activity_revision,draft_revision,files_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(program_id,activity_id,activity_revision) DO UPDATE SET draft_revision=excluded.draft_revision,files_json=excluded.files_json,updated_at=excluded.updated_at")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
             .bind(result_revision).bind(json(&request.files)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practical_draft_operations(operation_id,program_id,activity_id,activity_revision,payload_hash,result_revision,created_at) VALUES(?,?,?,?,?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .bind(payload_hash).bind(result_revision).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation
+            .record(
+                &mut *tx,
+                &PracticalDraftOperationResult {
+                    draft_revision: result_revision,
+                    updated_at: timestamp,
+                },
+            )
+            .await?;
         tx.commit().await.map_err(db)?;
         Ok(LearningPracticalDraftDto {
             program_id: request.program_id.clone(),
@@ -801,17 +800,18 @@ impl LearningPracticalRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,run_id,payload_hash FROM learning_practical_run_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("run_id") == request.run_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return Ok(None);
-            }
-            return Err(invalid("Operation ID was reused with different run data."));
+        let operation = practical_operation(
+            "practical_run",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.run_id,
+            "start",
+            payload_hash,
+            "Operation ID was reused with different run data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return Ok(None);
         }
         Self::active_program(&mut tx, &request.program_id).await?;
         let activity =
@@ -930,9 +930,7 @@ impl LearningPracticalRepository {
             .bind(json(&request.learner_files)?).bind(timestamp).bind(activity.builtin_runtime.map(LearningBuiltinRuntime::as_str))
             .bind(&activity.builtin_runtime_version)
             .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practical_run_operations(operation_id,program_id,run_id,kind,payload_hash,created_at) VALUES(?,?,?,'start',?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.run_id)
-            .bind(payload_hash).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &()).await?;
         tx.commit().await.map_err(db)?;
         let dto = self.run(&request.run_id).await?;
         Ok(Some(PreparedRun {
@@ -1032,17 +1030,18 @@ impl LearningPracticalRepository {
         uuid(&request.run_id, "run")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,run_id,payload_hash FROM learning_practical_run_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("run_id") == request.run_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.run(&request.run_id).await;
-            }
-            return Err(invalid("Operation ID was reused with different cancellation data."));
+        let operation = practical_operation(
+            "practical_run",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.run_id,
+            "cancel",
+            payload_hash,
+            "Operation ID was reused with different cancellation data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.run(&request.run_id).await;
         }
         let timestamp = now();
         let changed = sqlx::query("UPDATE learning_practical_runs SET status='cancelled',stderr='Run cancelled by the learner.',completed_at=? WHERE id=? AND program_id=? AND status IN ('pending','running')")
@@ -1058,9 +1057,7 @@ impl LearningPracticalRepository {
         if exists.is_none() {
             return Err(AppError::NotFound("Practical run not found".into()));
         }
-        sqlx::query("INSERT INTO learning_practical_run_operations(operation_id,program_id,run_id,kind,payload_hash,created_at) VALUES(?,?,?,'cancel',?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.run_id)
-            .bind(payload_hash).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &()).await?;
         let changed = changed.rows_affected() == 1;
         if changed {
             sqlx::query("INSERT OR IGNORE INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,0,'Contained evaluator','not_run','The run was cancelled; its contained evaluator was told to stop.',NULL)")
@@ -1098,47 +1095,46 @@ impl LearningPracticalRepository {
     pub async fn replay_activity_operation(
         &self,
         program_id: &str,
+        activity_id: &str,
         operation_id: &str,
         payload_hash: &str,
     ) -> Result<Option<PracticalWorkspaceSnapshot>> {
-        let row = sqlx::query("SELECT program_id,payload_hash FROM learning_practical_activity_operations WHERE operation_id=?")
-            .bind(operation_id).fetch_optional(&self.pool).await.map_err(db)?;
-        match row {
-            Some(row)
-                if row.get::<String, _>("program_id") == program_id
-                    && row.get::<String, _>("payload_hash") == payload_hash =>
-            {
-                Ok(Some(self.workspace(program_id).await?))
-            }
-            Some(_) => Err(invalid(
-                "Operation ID was reused with different practical activity data.",
-            )),
-            None => Ok(None),
+        let operation = practical_operation(
+            "practical_activity",
+            operation_id,
+            Some(program_id),
+            activity_id,
+            "generate",
+            payload_hash,
+            "Operation ID was reused with different practical activity data.",
+        );
+        if operation.seen(&self.pool).await? {
+            return Ok(Some(self.workspace(program_id).await?));
         }
+        Ok(None)
     }
 
     pub async fn replay_simulation_operation(
         &self,
         program_id: &str,
         session_id: &str,
+        kind: &'static str,
         operation_id: &str,
         payload_hash: &str,
     ) -> Result<Option<LearningSimulationSessionDto>> {
-        let row = sqlx::query("SELECT program_id,session_id,payload_hash FROM learning_simulation_operations WHERE operation_id=?")
-            .bind(operation_id).fetch_optional(&self.pool).await.map_err(db)?;
-        match row {
-            Some(row)
-                if row.get::<String, _>("program_id") == program_id
-                    && row.get::<String, _>("session_id") == session_id
-                    && row.get::<String, _>("payload_hash") == payload_hash =>
-            {
-                Ok(Some(self.simulation(session_id).await?))
-            }
-            Some(_) => Err(invalid(
-                "Operation ID was reused with different simulation data.",
-            )),
-            None => Ok(None),
+        let operation = practical_operation(
+            "simulation",
+            operation_id,
+            Some(program_id),
+            session_id,
+            kind,
+            payload_hash,
+            "Operation ID was reused with different simulation data.",
+        );
+        if operation.seen(&self.pool).await? {
+            return Ok(Some(self.simulation(session_id).await?));
         }
+        Ok(None)
     }
 
     pub async fn simulation_generation_context(
@@ -1190,19 +1186,18 @@ impl LearningPracticalRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,session_id,payload_hash FROM learning_simulation_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("session_id") == request.session_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.simulation(&request.session_id).await;
-            }
-            return Err(invalid(
-                "Operation ID was reused with different simulation data.",
-            ));
+        let operation = practical_operation(
+            "simulation",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.session_id,
+            "start",
+            payload_hash,
+            "Operation ID was reused with different simulation data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.simulation(&request.session_id).await;
         }
         Self::active_program(&mut tx, &request.program_id).await?;
         let activity =
@@ -1230,10 +1225,7 @@ impl LearningPracticalRepository {
             .bind(&request.operation_id).bind(payload_hash).bind(request.learner_role.trim())
             .bind(request.counterpart_role.trim()).bind(timestamp).bind(timestamp)
             .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_simulation_operations(operation_id,program_id,session_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,'start',?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.session_id)
-            .bind(payload_hash).bind(&request.session_id).bind(timestamp)
-            .execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &request.session_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -1255,17 +1247,18 @@ impl LearningPracticalRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,session_id,payload_hash FROM learning_simulation_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("session_id") == request.session_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.simulation(&request.session_id).await;
-            }
-            return Err(invalid("Operation ID was reused with different turn data."));
+        let operation = practical_operation(
+            "simulation",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.session_id,
+            "turn",
+            payload_hash,
+            "Operation ID was reused with different turn data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.simulation(&request.session_id).await;
         }
         let session = sqlx::query(
             "SELECT status,revision FROM learning_simulation_sessions WHERE id=? AND program_id=?",
@@ -1301,7 +1294,7 @@ impl LearningPracticalRepository {
         let reply_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,'counterpart',?,?,?,?)")
             .bind(&reply_id).bind(&request.program_id).bind(&request.session_id)
-            .bind(uuid::Uuid::new_v4().to_string()).bind(digest(reply)?).bind(ordinal+1)
+            .bind(uuid::Uuid::new_v4().to_string()).bind(hash(reply)?).bind(ordinal+1)
             .bind(reply.content.trim()).bind(json(&reply.citations)?).bind(&reply.model_name)
             .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_simulation_sessions SET revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'")
@@ -1310,9 +1303,7 @@ impl LearningPracticalRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Simulation changed; reload and retry."));
         }
-        sqlx::query("INSERT INTO learning_simulation_operations(operation_id,program_id,session_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,'turn',?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.session_id)
-            .bind(payload_hash).bind(&reply_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &reply_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -1328,17 +1319,18 @@ impl LearningPracticalRepository {
         uuid(&request.session_id, "simulation")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,session_id,payload_hash FROM learning_simulation_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("session_id") == request.session_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.simulation(&request.session_id).await;
-            }
-            return Err(invalid("Operation ID was reused with different finish data."));
+        let operation = practical_operation(
+            "simulation",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.session_id,
+            "finish",
+            payload_hash,
+            "Operation ID was reused with different finish data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.simulation(&request.session_id).await;
         }
         let session =
             sqlx::query("SELECT * FROM learning_simulation_sessions WHERE id=? AND program_id=?")
@@ -1373,7 +1365,7 @@ impl LearningPracticalRepository {
         let feedback_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,'coach',?,?,?,?)")
             .bind(&feedback_id).bind(&request.program_id).bind(&request.session_id)
-            .bind(uuid::Uuid::new_v4().to_string()).bind(digest(feedback)?).bind(ordinal)
+            .bind(uuid::Uuid::new_v4().to_string()).bind(hash(feedback)?).bind(ordinal)
             .bind(feedback.content.trim()).bind(json(&feedback.citations)?).bind(&feedback.model_name)
             .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_simulation_sessions SET status='submitted',revision=revision+1,updated_at=?,submitted_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'")
@@ -1395,9 +1387,7 @@ impl LearningPracticalRepository {
                 .bind(json(&serde_json::json!({"mode":activity.practice_mode,"allowedAids":activity.allowed_aids}))?)
                 .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("INSERT INTO learning_simulation_operations(operation_id,program_id,session_id,kind,payload_hash,result_id,created_at) VALUES(?,?,?,'finish',?,?,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.session_id)
-            .bind(payload_hash).bind(&feedback_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &feedback_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -1417,14 +1407,16 @@ impl LearningPracticalRepository {
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         Self::active_program(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT profile_id,payload_hash FROM learning_runtime_profile_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("profile_id") != request.profile_id
-                || row.get::<String, _>("payload_hash") != payload_hash
-            {
-                return Err(invalid("Operation ID was reused with different runtime setup data."));
-            }
+        let operation = practical_operation(
+            "runtime_profile",
+            &request.operation_id,
+            None,
+            &request.profile_id,
+            "save",
+            payload_hash,
+            "Operation ID was reused with different runtime setup data.",
+        );
+        if operation.seen(&mut *tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await.map(Some);
         }
@@ -1473,18 +1465,18 @@ impl LearningPracticalRepository {
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         Self::active_program(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT profile_id,payload_hash FROM learning_runtime_profile_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("profile_id") == request.profile_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.workspace(&request.program_id).await;
-            }
-            return Err(invalid(
-                "Operation ID was reused with different runtime profile data.",
-            ));
+        let operation = practical_operation(
+            "runtime_profile",
+            &request.operation_id,
+            None,
+            &request.profile_id,
+            "save",
+            payload_hash,
+            "Operation ID was reused with different runtime profile data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&request.program_id).await;
         }
         let timestamp = now();
         let result_revision = if let Some(expected) = request.expected_revision {
@@ -1503,9 +1495,7 @@ impl LearningPracticalRepository {
                 .bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
             0
         };
-        sqlx::query("INSERT INTO learning_runtime_profile_operations(operation_id,profile_id,payload_hash,result_revision,created_at) VALUES(?,?,?,?,?)")
-            .bind(&request.operation_id).bind(&request.profile_id).bind(payload_hash)
-            .bind(result_revision).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &result_revision).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }
@@ -1573,19 +1563,18 @@ impl LearningPracticalRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
-        if let Some(row) = sqlx::query("SELECT program_id,activity_id,payload_hash FROM learning_practical_activity_operations WHERE operation_id=?")
-            .bind(&request.operation_id).fetch_optional(&mut *tx).await.map_err(db)?
-        {
-            if row.get::<String, _>("program_id") == request.program_id
-                && row.get::<String, _>("activity_id") == request.activity_id
-                && row.get::<String, _>("payload_hash") == payload_hash
-            {
-                tx.commit().await.map_err(db)?;
-                return self.workspace(&request.program_id).await;
-            }
-            return Err(invalid(
-                "Operation ID was reused with different practical activity data.",
-            ));
+        let operation = practical_operation(
+            "practical_activity",
+            &request.operation_id,
+            Some(&request.program_id),
+            &request.activity_id,
+            "generate",
+            payload_hash,
+            "Operation ID was reused with different practical activity data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&request.program_id).await;
         }
         let revision = Self::active_program(&mut tx, &request.program_id).await?;
         if revision != request.expected_program_revision {
@@ -1677,12 +1666,10 @@ impl LearningPracticalRepository {
             };
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)")
                 .bind(&request.activity_id).bind(ordinal as i64).bind(&file.path).bind(role)
-                .bind(&file.content).bind(format!("{:x}",Sha256::digest(file.content.as_bytes())))
+                .bind(&file.content).bind(hash_text(&file.content))
                 .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("INSERT INTO learning_practical_activity_operations(operation_id,program_id,activity_id,kind,payload_hash,result_revision,created_at) VALUES(?,?,?,'generate',?,0,?)")
-            .bind(&request.operation_id).bind(&request.program_id).bind(&request.activity_id)
-            .bind(payload_hash).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &0_i64).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }
@@ -1783,4 +1770,33 @@ fn workspace_owner_token_from_snapshot(snapshot: &str) -> Option<String> {
         .get("workspaceOwnerToken")?
         .as_str()
         .map(str::to_owned)
+}
+
+fn practical_operation<'a>(
+    scope: &'static str,
+    operation_id: &'a str,
+    program_id: Option<&'a str>,
+    subject_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+    conflict: &'static str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope,
+        kind,
+        program_id,
+        subject_id: Some(subject_id),
+        payload_hash,
+        conflict,
+    }
+}
+
+/// What a saved practical draft produced, so a replay answers with the same
+/// draft revision and timestamp.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PracticalDraftOperationResult {
+    draft_revision: i64,
+    updated_at: i64,
 }

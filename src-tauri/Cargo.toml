@@ -106,11 +106,12 @@ async-stream = "0.3"
 # back over HTTP/1.1, unlike any browser. Native roots keep user-installed CAs.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "charset", "macos-system-configuration", "stream", "json", "cookies", "gzip", "deflate", "brotli"] }
 hex = "0.4"
-# Learner execution: restricted JavaScript and CPython/WASI guests. Native
-# compiler projects use the optional container provider.
-rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"] }
-wasmtime = { version = "=48.0.4", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "=48.0.4", default-features = false, features = ["p1"] }
+# Learner execution: restricted JavaScript and CPython/WASI guests, behind the
+# `learning-labs` feature. Native compiler projects use the optional container
+# provider.
+rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"], optional = true }
+wasmtime = { version = "=48.0.4", default-features = false, features = ["cranelift", "runtime", "std"], optional = true }
+wasmtime-wasi = { version = "=48.0.4", default-features = false, features = ["p1"], optional = true }
 lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 encoding_rs = "0.8"
@@ -245,23 +246,16 @@ tokio = { version = "1.35", features = ["full", "test-util"] }   # paused clocks
 
 
 [features]
-default = ["custom-protocol", "search", "indexing", "qa", "extraction"]
+default = ["custom-protocol", "learning-labs"]
 custom-protocol = ["tauri/custom-protocol"]
+# Built-in JavaScript and Python labs. The engines run only in the lab runner,
+# a child process of the app; without them practical runs report the runtimes
+# unavailable.
+learning-labs = ["dep:rquickjs", "dep:wasmtime", "dep:wasmtime-wasi"]
 
-# Feature flags for optional functionality
-search = []       # Semantic search and embedding generation
-indexing = []     # Document processing and chunking
-qa = []           # Question-answering and LLM integration
-extraction = []   # Content extraction from documents
 test-utils = []   # Testing utilities and mocks
 desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only
 bindings-export = [] # Developer-only TypeScript binding generator; never ship it in app bundles
-
-
-# Quarantine features for temporarily disabled tests
-quarantine_download_tests = []  # Download command tests requiring refactoring
-quarantine_function_tests = []  # Function calling integration tests requiring refactoring
-
 
 # Profile configurations for stack size optimization
 # Increases stack size to prevent overflow with heavy ML dependencies (ONNX, candle)

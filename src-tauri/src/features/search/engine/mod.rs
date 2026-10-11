@@ -69,40 +69,11 @@
 //!
 //! ### Hybrid Search (Recommended)
 //!
-//! ```rust,no_run
-//! use lattice::features::search::engine::{
-//!     HybridSearchService, SearchMode, SearchConfig
-//! };
-//!
-//! let config = SearchConfig {
-//!     mode: SearchMode::Hybrid,
-//!     vector_weight: 0.7,
-//!     keyword_weight: 0.3,
-//!     min_score: 0.5,
-//!     ..Default::default()
-//! };
-//!
-//! let service = HybridSearchService::new(pool, embedder, config);
-//! let results = service.search("machine learning", 20).await?;
-//! ```
-//!
-//! ## Configuration
-//!
-//! Search behavior can be tuned via `SearchConfig`:
-//!
-//! ```rust
-//! use lattice::features::search::engine::{SearchConfig, SearchMode};
-//!
-//! let config = SearchConfig {
-//!     mode: SearchMode::Hybrid,
-//!     vector_weight: 0.7,        // 70% semantic relevance
-//!     keyword_weight: 0.3,       // 30% keyword relevance
-//!     min_score: 0.5,            // Minimum similarity threshold
-//!     enable_reranking: true,    // Post-process results
-//!     max_results: 100,          // Fetch top 100 before filtering
-//!     ..Default::default()
-//! };
-//! ```
+//! The engine supplies the branches and the fusion arithmetic; the
+//! orchestrator that runs them is
+//! [`HybridSearchUseCase`](crate::features::search::use_cases::HybridSearchUseCase),
+//! which chat, the tool executor, the search page and the retrieval
+//! evaluation all share.
 //!
 //! ## Performance Tips
 //!
@@ -134,7 +105,6 @@
 
 // Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod bm25;
-pub mod builder;
 pub mod fts_query;
 pub mod fusion;
 pub mod profiler;
@@ -146,18 +116,13 @@ pub mod snippet;
 pub mod vector_ops;
 
 // Directory-backed sub-modules.
-pub mod hybrid;
 pub mod query_expansion;
 pub mod sparse_search;
 pub mod text_search;
 pub mod vector_search;
 
 pub use bm25::{BM25Result, BM25Search};
-pub use builder::{
-    HybridSearchBuilder, Ready as SearchReady, Uninitialized as SearchUninitialized,
-};
-pub use fusion::{FusionResult, ReciprocalRankFusion, ThreeBranchWeights, WeightedRanking};
-pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMode};
+pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedRanking};
 pub use profiler::{PerformanceMetrics, Profiler};
 pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};

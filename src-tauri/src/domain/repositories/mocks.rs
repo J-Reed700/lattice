@@ -37,7 +37,7 @@ use crate::shared::error::Result;
 #[cfg(test)]
 use crate::application::ports::{
     unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
-    BatchJobRepositoryPort, ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
+    ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
 #[cfg(test)]
@@ -302,101 +302,6 @@ mock! {
 }
 
 #[cfg(test)]
-pub struct MockBatchJobRepository;
-
-#[cfg(test)]
-impl Default for MockBatchJobRepository {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockBatchJobRepository {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[cfg(test)]
-#[async_trait]
-impl BatchJobRepositoryPort for MockBatchJobRepository {
-    async fn create_batch_job(
-        &self,
-        _job_id: &str,
-        _job_type: &str,
-        _total_items: i64,
-        _options: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn create_batch_items(&self, _job_id: &str, _urls: Vec<String>) -> Result<()> {
-        Ok(())
-    }
-
-    async fn update_job_status(
-        &self,
-        _job_id: &str,
-        _status: &str,
-        _started_at: Option<String>,
-        _completed_at: Option<String>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn update_progress(
-        &self,
-        _job_id: &str,
-        _completed: i64,
-        _failed: i64,
-        _progress: f64,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn update_item_status(
-        &self,
-        _item_id: &str,
-        _status: crate::application::ports::BatchItemState,
-        _document_id: Option<&str>,
-        _error_message: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn get_batch_job(
-        &self,
-        _job_id: &str,
-    ) -> Result<crate::application::ports::batch_job_repository_port::BatchJobStatus> {
-        use crate::shared::error::AppError;
-        Err(AppError::NotFound("Job not found".to_string()))
-    }
-
-    async fn get_pending_items(
-        &self,
-        _job_id: &str,
-    ) -> Result<Vec<crate::application::ports::batch_job_repository_port::BatchJobItem>> {
-        Ok(vec![])
-    }
-
-    async fn cancel_pending_items(&self, _job_id: &str) -> Result<usize> {
-        Ok(0)
-    }
-
-    async fn list_batch_jobs(
-        &self,
-        _limit: Option<i64>,
-        _offset: Option<i64>,
-    ) -> Result<Vec<crate::application::ports::batch_job_repository_port::BatchJobSummary>> {
-        Ok(vec![])
-    }
-
-    async fn delete_batch_job(&self, _job_id: &str) -> Result<()> {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
 mock! {
     /// Mock implementation of SystemRepository
     pub SystemRepo {}
@@ -530,7 +435,6 @@ mock! {
         fn document_repository<'a>(&'a self) -> Result<Box<dyn DocumentRepositoryPort + Send + 'a>>;
         fn embedding_repository<'a>(&'a self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + 'a>>;
         fn search_repository<'a>(&'a self) -> Result<Box<dyn SearchRepository + Send + 'a>>;
-        fn batch_job_repository<'a>(&'a self) -> Result<Box<dyn BatchJobRepositoryPort + Send + 'a>>;
         fn system_repository<'a>(&'a self) -> Result<Box<dyn SystemRepository + Send + 'a>>;
         fn model_repository<'a>(&'a self) -> Result<Box<dyn ModelRepositoryPort + 'a>>;
         fn model_file_repository<'a>(&'a self) -> Result<Box<dyn ModelFileRepositoryPort + 'a>>;

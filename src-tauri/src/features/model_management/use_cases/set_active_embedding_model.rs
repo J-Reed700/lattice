@@ -5,8 +5,8 @@
 //! activation, so launch never hashes model files.
 
 use crate::domain::value_objects::ArtifactIdentity;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::embedding::artifact_identity;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
 

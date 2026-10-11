@@ -1,8 +1,11 @@
 //! Durable versioned assessment blueprints, immutable forms, submissions, and evidence.
 use crate::features::learning::{assessment_engine as engine, dto::*};
+use crate::features::learning::{
+    operations::Operation,
+    persistence::{self, db, now},
+};
 use crate::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
@@ -10,14 +13,8 @@ const MAX_FORM_ITEMS: usize = 64;
 const MAX_RESPONSE_CHARS: usize = 24_000;
 const STALE_EVIDENCE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
-fn db(e: sqlx::Error) -> AppError {
-    AppError::Database(e.to_string())
-}
 fn invalid(s: impl Into<String>) -> AppError {
     AppError::InvalidInput(s.into())
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
 }
 fn uuid(s: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(s)
@@ -29,10 +26,6 @@ fn json<T: Serialize + ?Sized>(v: &T) -> Result<String> {
 }
 fn decode<T: DeserializeOwned>(v: &str) -> Result<T> {
     serde_json::from_str(v).map_err(|e| AppError::Serialization(e.to_string()))
-}
-fn payload_hash<T: Serialize>(v: &T) -> Result<String> {
-    let b = serde_json::to_vec(v).map_err(|e| AppError::Serialization(e.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(b)))
 }
 fn format_name(v: engine::LearningItemFormat) -> &'static str {
     match v {
@@ -401,9 +394,18 @@ impl LearningAssessmentRepository {
         uuid(&req.program_id, "program")?;
         uuid(&req.operation_id, "operation")?;
         uuid(&req.blueprint_id, "blueprint")?;
-        if let Some(row)=sqlx::query("SELECT program_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&self.pool).await.map_err(db)? {
-            if row.get::<String,_>("program_id")==req.program_id && row.get::<String,_>("kind")=="create_blueprint" && row.get::<String,_>("payload_hash")==hash { return Ok(Some(self.workspace(&req.program_id).await?)); }
-            return Err(invalid("Operation ID was already used for different assessment data."));
+        if assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            None,
+            "create_blueprint",
+            hash,
+            "Operation ID was already used for different assessment data.",
+        )
+        .seen(&self.pool)
+        .await?
+        {
+            return Ok(Some(self.workspace(&req.program_id).await?));
         }
         if req.revision < 1 || req.revision > 10_000 {
             return Err(invalid("Invalid blueprint revision."));
@@ -575,7 +577,18 @@ impl LearningAssessmentRepository {
         engine::validate_blueprint(&engine_blueprint)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(row)=sqlx::query("SELECT program_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if row.get::<String,_>("program_id")==req.program_id&&row.get::<String,_>("kind")=="create_blueprint"&&row.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used for different assessment data."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            None,
+            "create_blueprint",
+            hash,
+            "Operation ID was already used for different assessment data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         Self::ensure_outcomes(&mut tx, &req.program_id).await?;
         if req.source_version_ids.is_empty() {
@@ -687,7 +700,7 @@ impl LearningAssessmentRepository {
                     "Assessment rationale must contain 8–1200 characters.",
                 ));
             }
-            let content_hash = payload_hash(&(&candidate, input.artifact_kind.as_deref()))?;
+            let content_hash = persistence::hash(&(&candidate, input.artifact_kind.as_deref()))?;
             let primary = input
                 .outcome_ids
                 .first()
@@ -709,7 +722,7 @@ impl LearningAssessmentRepository {
         if req.revision > 1 {
             sqlx::query("UPDATE learning_assessment_blueprints SET status='retired' WHERE program_id=? AND id=? AND revision=? AND status='accepted'").bind(&req.program_id).bind(&req.blueprint_id).bind(req.revision-1).execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("INSERT INTO learning_assessment_operations(operation_id,program_id,form_id,kind,payload_hash,response_id,created_at) VALUES(?,?,NULL,'create_blueprint',?,?,?)").bind(&req.operation_id).bind(&req.program_id).bind(hash).bind(&req.blueprint_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &req.blueprint_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -725,7 +738,18 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,form_id,kind,payload_hash,response_id FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("kind")=="create_form"&&r.get::<String,_>("payload_hash")==hash{let form_id:String=r.get("response_id");tx.commit().await.map_err(db)?;return self.get_form(&form_id).await;}return Err(invalid("Operation ID was already used for a different assessment form."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            Some(&req.form_id),
+            "create_form",
+            hash,
+            "Operation ID was already used for a different assessment form.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.get_form(&req.form_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         if let Some(parent) = req.retake_of_form_id.as_deref() {
             uuid(parent, "retake form")?;
@@ -843,7 +867,7 @@ impl LearningAssessmentRepository {
                 sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,?,?)").bind(&req.form_id).bind(ordinal as i64).bind(outcome).execute(&mut *tx).await.map_err(db)?;
             }
         }
-        sqlx::query("INSERT INTO learning_assessment_operations(operation_id,program_id,form_id,kind,payload_hash,response_id,created_at) VALUES(?,?,?,'create_form',?,?,?)").bind(&req.operation_id).bind(&req.program_id).bind(&req.form_id).bind(hash).bind(&req.form_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        operation.record(&mut *tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }
@@ -1096,7 +1120,18 @@ impl LearningAssessmentRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,form_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("form_id")==req.form_id&&r.get::<String,_>("kind")=="save_response"&&r.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.get_form(&req.form_id).await;}return Err(invalid("Operation ID was reused with different assessment data."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            Some(&req.form_id),
+            "save_response",
+            hash,
+            "Operation ID was reused with different assessment data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.get_form(&req.form_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         let h = sqlx::query(
             "SELECT revision,status FROM learning_assessment_forms WHERE id=? AND program_id=?",
@@ -1138,16 +1173,7 @@ impl LearningAssessmentRepository {
             return Err(invalid("Assessment form changed; reload and retry."));
         }
         sqlx::query("INSERT INTO learning_assessment_response_revisions(form_id,item_ordinal,revision,operation_id,payload_hash,selected_index,text_response,ordered_values_json,artifact_json,assistance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(&req.form_id).bind(ordinal).bind(next).bind(&req.operation_id).bind(hash).bind(req.response.selected_index.map(|i|i as i64)).bind(&req.response.text).bind(json(&req.response.ordered_values)?).bind(req.response.artifact_json.as_ref().map(serde_json::to_string).transpose().map_err(|e|AppError::Serialization(e.to_string()))?).bind(json(&req.assistance)?).bind(t).execute(&mut *tx).await.map_err(db)?;
-        operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.form_id),
-            "save_response",
-            hash,
-            Some(&req.response.item_id),
-        )
-        .await?;
+        operation.record(&mut *tx, &req.response.item_id).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }
@@ -1175,7 +1201,18 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,form_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("form_id")==req.form_id&&r.get::<String,_>("kind")==kind&&r.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.get_form(&req.form_id).await;}return Err(invalid("Operation ID was reused with different assessment data."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            Some(&req.form_id),
+            kind,
+            hash,
+            "Operation ID was reused with different assessment data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.get_form(&req.form_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         let row = sqlx::query(
             "SELECT revision,status FROM learning_assessment_forms WHERE program_id=? AND id=?",
@@ -1197,16 +1234,7 @@ impl LearningAssessmentRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Assessment form changed; reload and retry."));
         }
-        operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.form_id),
-            kind,
-            hash,
-            None,
-        )
-        .await?;
+        operation.record(&mut *tx, &()).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }
@@ -1229,7 +1257,18 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,form_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("form_id")==req.form_id&&r.get::<String,_>("kind")=="submit"&&r.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.get_form(&req.form_id).await;}return Err(invalid("Operation ID was reused with different assessment data."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            Some(&req.form_id),
+            "submit",
+            hash,
+            "Operation ID was reused with different assessment data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.get_form(&req.form_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         let h = sqlx::query("SELECT * FROM learning_assessment_forms WHERE id=? AND program_id=?")
             .bind(&req.form_id)
@@ -1518,16 +1557,7 @@ impl LearningAssessmentRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Assessment form changed; reload and retry."));
         }
-        operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            Some(&req.form_id),
-            "submit",
-            hash,
-            None,
-        )
-        .await?;
+        operation.record(&mut *tx, &()).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }
@@ -1540,26 +1570,20 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let row = sqlx::query(
-            "SELECT program_id,form_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?",
+        if assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            Some(&req.form_id),
+            "submit",
+            hash,
+            "Operation ID was already used for different assessment data.",
         )
-        .bind(&req.operation_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        if row.get::<String, _>("program_id") == req.program_id
-            && row.get::<Option<String>, _>("form_id").as_deref() == Some(req.form_id.as_str())
-            && row.get::<String, _>("kind") == "submit"
-            && row.get::<String, _>("payload_hash") == hash
+        .seen(&self.pool)
+        .await?
         {
             return self.get_form(&req.form_id).await.map(Some);
         }
-        Err(invalid(
-            "Operation ID was already used for different assessment data.",
-        ))
+        Ok(None)
     }
 
     pub async fn decide_follow_up(
@@ -1573,23 +1597,25 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,kind,payload_hash FROM learning_assessment_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("kind")=="decide_follow_up"&&r.get::<String,_>("payload_hash")==hash{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was reused with different follow-up data."));}
+        let operation = assessment_operation(
+            &req.operation_id,
+            &req.program_id,
+            None,
+            "decide_follow_up",
+            hash,
+            "Operation ID was reused with different follow-up data.",
+        );
+        if operation.seen(&mut *tx).await? {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         Self::active_program(&mut tx, &req.program_id).await?;
         let status = if accept { "accepted" } else { "dismissed" };
         let result=sqlx::query("UPDATE learning_follow_up_recommendations SET status=?,decided_at=? WHERE id=? AND program_id=? AND status='pending'").bind(status).bind(now()).bind(&req.follow_up_id).bind(&req.program_id).execute(&mut *tx).await.map_err(db)?;
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound("Pending follow-up not found".into()));
         }
-        operation(
-            &mut tx,
-            &req.operation_id,
-            &req.program_id,
-            None,
-            "decide_follow_up",
-            hash,
-            Some(&req.follow_up_id),
-        )
-        .await?;
+        operation.record(&mut *tx, &req.follow_up_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -1695,17 +1721,23 @@ fn parse_follow_status(s: &str) -> Result<LearningFollowUpStatus> {
         _ => Err(AppError::Database("Invalid follow-up status".into())),
     }
 }
-async fn operation(
-    tx: &mut Transaction<'_, Sqlite>,
-    id: &str,
-    program_id: &str,
-    form_id: Option<&str>,
-    kind: &str,
-    hash: &str,
-    response_id: Option<&str>,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_assessment_operations(operation_id,program_id,form_id,kind,payload_hash,response_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(form_id).bind(kind).bind(hash).bind(response_id).bind(now()).execute(&mut **tx).await.map_err(db)?;
-    Ok(())
+fn assessment_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    form_id: Option<&'a str>,
+    kind: &'a str,
+    payload_hash: &'a str,
+    conflict: &'static str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "assessment",
+        kind,
+        program_id: Some(program_id),
+        subject_id: form_id,
+        payload_hash,
+        conflict,
+    }
 }
 async fn item_ordinal(
     tx: &mut Transaction<'_, Sqlite>,

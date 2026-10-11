@@ -120,20 +120,14 @@ mod tests {
     use super::*;
     use crate::features::learning::dto::LearningSourceDto;
     use async_trait::async_trait;
-    use futures::Stream;
 
     struct TokenCounter(usize);
     #[async_trait]
     impl LLMPort for TokenCounter {
-        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-            unreachable!()
-        }
-        async fn generate_streaming(
+        async fn complete(
             &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
+            _: &crate::application::ports::llm_port::CompletionRequest,
+        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
             unreachable!()
         }
         fn model_name(&self) -> &str {

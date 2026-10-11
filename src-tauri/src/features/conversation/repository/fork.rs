@@ -152,7 +152,7 @@ impl ConversationRepository {
                 .join("\n");
             let focus =
                 format!("\n\nThe user selected this passage for a separate follow-up:\n\n{quote}");
-            selected.tokens += (focus.chars().count() as i64 + 3) / 4;
+            selected.tokens += token_estimate(&focus);
             selected.content.push_str(&focus);
         }
 
@@ -301,8 +301,8 @@ impl ConversationRepository {
         }
 
         // No model produced this turn in this thread, so there is no tokenizer
-        // count to record; four characters a token is close enough for totals.
-        let tokens = (summary.chars().count() / 4) as i64;
+        // count to record; the shared estimate is close enough for totals.
+        let tokens = token_estimate(summary);
         let sequence = Self::allocate_sequence(&mut tx, new_id).await?;
         sqlx::query(
             r#"
@@ -415,4 +415,9 @@ impl ConversationRepository {
 
         Ok(())
     }
+}
+
+/// A stored message's token count where no model counted it.
+fn token_estimate(text: &str) -> i64 {
+    i64::try_from(crate::application::ports::llm_port::estimate_tokens(text)).unwrap_or(i64::MAX)
 }

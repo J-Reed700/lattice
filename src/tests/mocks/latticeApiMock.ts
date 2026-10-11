@@ -77,8 +77,6 @@ export function createVaultAPIMock() {
           "Answer the user's question using only the provided context. Cite sources using [#]. If you need to call get_document, use the exact Document ID shown in the context.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
         noContextPromptTemplate:
           'The user asked: "{question}"\n\nNo relevant documents were found in their knowledge base. Respond politely and ask if they\'d like to upload or specify a document.',
-        toolFollowupPromptTemplate:
-          'Tool results have been added to the context. Use them to answer the user\'s question. If excerpts are provided, quote them briefly and avoid repetition.\n\nQuestion: {question}\n{previous_response}\nAnswer:',
       },
       verification: {
         enabled: true,
@@ -142,7 +140,6 @@ export function createVaultAPIMock() {
     clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     indexDirectory: vi.fn().mockResolvedValue({ success: true }),
     deleteDocument: vi.fn().mockResolvedValue({ success: true }),
-    getFileContent: vi.fn().mockResolvedValue({ content: 'mock content' }),
 
     // Search operations
     search: vi.fn().mockResolvedValue({
@@ -160,11 +157,12 @@ export function createVaultAPIMock() {
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
     warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    getModelInfo: vi.fn().mockResolvedValue({
-      name: 'test-model',
-      size: 1000000,
-      status: 'ready'
-    }),
+    clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    checkFirstRunStatus: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
+    downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
     listModels: vi.fn().mockResolvedValue([]),
     getModelDownloadPath: vi
       .fn()
@@ -173,6 +171,7 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
+    setCloudApiKey: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     // Default to the state a fresh install is really in: the reranker model is
     // downloaded on demand and is not there yet.
     getRerankerStatus: vi.fn().mockResolvedValue({

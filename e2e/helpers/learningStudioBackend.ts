@@ -1,7 +1,19 @@
 import type { Page } from "@playwright/test";
 
 import type {
+  JsonValue,
+  LearningDiagnosticAttemptDto,
+  LearningAssessmentBlueprintDto,
+  LearningAssessmentFormDto,
+  LearningAssessmentFormItemDto,
+  LearningAssessmentFormStatus,
+  LearningAssessmentFormSummaryDto,
+  LearningRuntimePresetDto,
   LearningMemoryDto,
+  LearningPackChangeDto,
+  LearningPackExportDto,
+  LearningPackImportResultDto,
+  LearningPackPreviewStatus,
   LearningOutlineProgressDto,
   LearningGenerationJob,
   LearningGenerationJobActionRequestDto,
@@ -13,6 +25,7 @@ import type {
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
+import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
 
 /** Collect any HTTP(S) requests the renderer sends outside the local app. */
 export function watchExternalHttpRequests(page: Page, localOrigin: string) {
@@ -121,7 +134,7 @@ type PracticeAssistanceEvent = {
     | "mode_changed";
   mode: PracticeMode;
   artifactRevision: number;
-  details: Record<string, unknown>;
+  details: { [key: string]: JsonValue };
   createdAt: number;
 };
 type PracticeProposal = {
@@ -212,12 +225,8 @@ type LabDraft = {
 
 /** Install a stateful Tauri command fixture for Learning Studio route tests. */
 export async function installLearningStudioBackend(page: Page) {
-  await page.addInitScript((settings) => {
-    Object.defineProperty(window, "isTauri", {
-      configurable: true,
-      value: true,
-    });
-
+  await installTauriMock(page);
+  await mockCommands(page, (settings, ipc) => {
     const source = {
       id: "source-version-field-notes-1",
       title: "Public field notes",
@@ -303,7 +312,6 @@ export async function installLearningStudioBackend(page: Page) {
       drafts: [],
       acceptedCards: [],
       dueCount: 0,
-      schedulerVersion: "expanding_v1",
     };
     type CanvasSnapshot = {
       id: string;
@@ -426,8 +434,8 @@ export async function installLearningStudioBackend(page: Page) {
       program,
       memory,
       canvasWorkspace,
-      calls: [] as { command: string; args: unknown }[],
-      unsupportedCommands: [] as string[],
+      calls: ipc.calls,
+      unsupportedCommands: ipc.unsupported,
       // The app retries mutations once automatically before surfacing its
       // recoverable error, so two transport failures reach the explicit retry UI.
       generationFailuresRemaining: 1,
@@ -471,12 +479,12 @@ export async function installLearningStudioBackend(page: Page) {
       assessmentWorkspace: {
         programId: program.summary.id,
         outcomes: [],
-        blueprints: [],
-        forms: [],
+        blueprints: [] as Array<Fixture<LearningAssessmentBlueprintDto> & { id: string }>,
+        forms: [] as Array<Fixture<LearningAssessmentFormSummaryDto> & { id: string }>,
         evidence: [],
         followUps: [],
       },
-      assessmentForms: new Map<string, Record<string, unknown>>(),
+      assessmentForms: new Map<string, Fixture<LearningAssessmentFormDto> & { id: string; revision: number; status: LearningAssessmentFormStatus; submittedAt: number | null; items: Array<Fixture<LearningAssessmentFormItemDto> & { id: string }> }>(),
       planWorkspace: {
         programId: program.summary.id,
         programRevision: program.summary.revision,
@@ -487,7 +495,7 @@ export async function installLearningStudioBackend(page: Page) {
         requiredLessonCountAfter: lesson ? 1 : 0,
         resumeLessonId: lesson?.id ?? null,
         jobs: [] as LearningGenerationJob[],
-        latestDiagnostic: null as Record<string, unknown> | null,
+        latestDiagnostic: null as LearningDiagnosticAttemptDto | null,
       },
       practicalWorkspace: {
         programId: program.summary.id,
@@ -512,20 +520,18 @@ export async function installLearningStudioBackend(page: Page) {
         importPreviews: [],
         imports: [],
         sourceWorkspace,
-      } as { programId: string; exports: unknown[]; importPreviews: Array<{ id: string; status: string; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: unknown[] }>; imports: unknown[]; sourceWorkspace: SourceWorkspace },
+      } as { programId: string; exports: Fixture<LearningPackExportDto>[]; importPreviews: Array<{ id: string; status: LearningPackPreviewStatus; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: Fixture<LearningPackChangeDto>[] }>; imports: Fixture<LearningPackImportResultDto>[]; sourceWorkspace: SourceWorkspace },
       recallV2Workspace: {
         programId: program.summary.id,
         cards: [],
         duplicates: [],
         dueCount: 0,
-        fsrsAvailable: false,
         schedulerDisclosure: "The FSRS schedule is not available in this test runtime.",
       },
       packMutationCalls: [] as Array<{ command: string; request: Record<string, unknown> }>,
     };
     const assessmentBlueprint = {
       id: "assessment-blueprint-e2e",
-      programId: program.summary.id,
       purpose: "practice",
       revision: 1,
       title: "Compare observations",
@@ -533,8 +539,7 @@ export async function installLearningStudioBackend(page: Page) {
       requirements: [{ format: "short_answer", count: 1 }],
       status: "accepted",
       createdAt: 1_790_000_000_000,
-      acceptedAt: 1_790_000_000_001,
-    };
+    } satisfies Fixture<LearningAssessmentBlueprintDto>;
     Object.assign(state.assessmentWorkspace, { blueprints: [assessmentBlueprint] });
     const curriculumLesson = {
       id: lesson.id,
@@ -592,7 +597,7 @@ export async function installLearningStudioBackend(page: Page) {
       contentRevision: 1,
       versions: [{ revision: 1, format: "question_answer", content: { prompt: "Which details define a careful comparison?", answer: "The measure and observation period.", explanation: "Both make the comparison interpretable.", options: [], correctOptionIndex: null, language: null, clozeDeletions: [] }, sourceVersionIds: [sourceV1.id], changeReason: "Initial source-backed card", createdAt: 1_790_000_000_000 }],
       sourceVersionIds: [sourceV1.id],
-      scheduler: { schedulerVersion: "expanding_v1", stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 },
+      scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 },
       reviewHistory: [],
       createdAt: 1_790_000_000_000,
       updatedAt: 1_790_000_000_000,
@@ -601,7 +606,6 @@ export async function installLearningStudioBackend(page: Page) {
       cards: [recallCard, { ...JSON.parse(JSON.stringify(recallCard)), id: "recall-card-match-e2e", content: { ...recallCard.content, prompt: "What should a careful comparison record?" }, versions: [{ ...recallCard.versions[0], content: { ...recallCard.content, prompt: "What should a careful comparison record?" } }], sourceVersionIds: [sourceV1.id] }],
       duplicates: [{ id: "duplicate-e2e", cardId: recallCard.id, possibleDuplicateCardId: "recall-card-match-e2e", reason: "Saved prompts cover closely related comparison details.", similarity: 0.91, status: "pending", createdAt: 1_790_000_000_001, decidedAt: null }],
       dueCount: 1,
-      fsrsAvailable: true,
       schedulerDisclosure: "The scheduler choice is recorded per card in this deterministic fixture.",
     });
     const persistedPracticeStateKey = "__learning_studio_practice_backend__";
@@ -992,46 +996,111 @@ export async function installLearningStudioBackend(page: Page) {
       url: source.url,
     });
 
-    const invoke = async (
-      command: string,
-      args?: unknown,
-    ): Promise<unknown> => {
-      state.calls.push({ command, args });
-      if (command === "plugin:settings|get_settings") return settings;
-      if (command === "plugin:health|initialize_database") return undefined;
-      if (command === "plugin:model|list_downloaded_models") return [];
-      if (command === "plugin:model|detect_system_capabilities")
-        return { total_ram_gb: 8, cpu_cores: 8, cpu_architecture: "e2e", gpu_type: "none", gpu_acceleration: "none", vram_gb: null, available_disk_gb: 10 };
-      if (command === "plugin:conversation|list_conversations_explorer" || command === "plugin:conversation|list_conversations")
-        return { conversations: [], total: 0 };
-      if (command === "plugin:file|get_index_progress")
-        return { totalFiles: 0, processed: 0, failed: 0, status: "idle", percentage: 0, paused: false, failures: [] };
-      if (
-        [
-          "plugin:download|list_downloads",
-          "plugin:file|get_indexed_folders",
-          "plugin:file|list_custom_collections",
-          "plugin:corpus-shape|list_clusters",
-          "plugin:conversation|list_conversation_spaces",
-        ].includes(command)
-      )
-        return [];
-      if (command === "plugin:conversation|list_space_documents") return [];
-      if (command === "plugin:file|list_all_documents") return [];
-      if (command === "plugin:learning|cancel_learning_outline") {
+    const decidePracticeProposal = (command: string, args: MockArgs) => {
+        const request = getRequest<Record<string, unknown>>(args);
+        const operation = practiceOperation(command, request);
+        if (!operation.replayed) {
+          validatePracticeScope(request);
+          const session = getPracticeSession(String(request.sessionId));
+          validatePracticeRevision(session, request);
+          const proposal = session.proposals.find((item) => item.id === request.proposalId);
+          if (!proposal || proposal.status !== "pending")
+            throw new Error("Pending proposal not found.");
+          proposal.status = command.includes("accept_") ? "accepted" : "rejected";
+          proposal.decidedAt = Date.now();
+          bumpPracticeRevision(session);
+          recordPracticeEffect(command, operation);
+        }
+        return copyPracticeWorkspace();
+    };
+    const closeAssessmentForm = (command: string, args: MockArgs) => {
+        const request = getRequest<Record<string, unknown>>(args);
+        const form = state.assessmentForms.get(String(request.formId));
+        if (!form || form.revision !== request.expectedRevision) throw new Error("Assessment changed; reload and retry.");
+        const submitted = command.endsWith("submit_learning_assessment_form");
+        form.status = submitted ? "submitted" : "interrupted";
+        form.submittedAt = submitted ? Date.now() : null;
+        const summary = state.assessmentWorkspace.forms.find((entry) => entry.id === form.id);
+        if (summary) Object.assign(summary, { status: form.status, submittedAt: form.submittedAt, gradeStatus: null, score: null });
+        return form;
+    };
+    const changeGenerationJob = (command: string, args: MockArgs) => {
+        const request = getRequest<LearningGenerationJobActionRequestDto>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
+          throw new Error("Program changed; reload and retry.");
+        const job = state.planWorkspace.jobs.find((job) => job.id === request.jobId);
+        if (!job) throw new Error("Job not found");
+        if (command === "cancel_learning_generation_job") {
+          Object.assign(job, { status: "cancelled", finishedAt: Date.now(), progressMessage: "Cancelled", error: null });
+          return job;
+        }
+        const next: LearningGenerationJob = {
+          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
+          status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
+        };
+        state.planWorkspace.jobs.unshift(next);
+        return next;
+    };
+    const practicalDraft = async (command: string, args: MockArgs) => {
+        const request = getRequest<LabDraft & { operationId: string; expectedDraftRevision: number }>(args);
+        const activity = state.practicalWorkspace.activities.find((item) => item.id === request.activityId);
+        if (request.programId !== program.summary.id || !activity || activity.revision !== request.activityRevision)
+          throw new Error("The lab activity changed. Reopen it before editing.");
+        const key = `${request.programId}:${request.activityId}:${request.activityRevision}`;
+        const initial: LabDraft = { programId: request.programId, activityId: request.activityId, activityRevision: request.activityRevision, draftRevision: 0, files: activity.files.filter((file) => file.role === "starter" && file.editable).map(({ path, content }) => ({ path, content })), updatedAt: null };
+        const current = state.labDrafts.get(key) ?? initial;
+        if (command === "get_learning_practical_draft") return structuredClone(current);
+        state.labDraftSaveCalls.push(structuredClone(request));
+        const payload = JSON.stringify(request);
+        const previous = state.labDraftOperations.get(request.operationId);
+        if (previous) {
+          if (previous.payload !== payload) throw new Error("Operation ID was already used with different draft data.");
+          return structuredClone(previous.result);
+        }
+        if (state.labDraftFailuresBeforeSave > 0) {
+          state.labDraftFailuresBeforeSave -= 1;
+          throw new Error("The draft could not be saved to this device.");
+        }
+        if (request.expectedDraftRevision !== current.draftRevision) throw new Error("Draft changed; reload before saving.");
+        if (!Array.isArray(request.files) || request.files.some((file) => !initial.files.some((starter) => starter.path === file.path)))
+          throw new Error("Only editable starter files can be saved.");
+        const next = { ...current, draftRevision: current.draftRevision + 1, files: structuredClone(request.files), updatedAt: Date.now() };
+        state.labDrafts.set(key, next);
+        state.labDraftOperations.set(request.operationId, { payload, result: next });
+        persistLabDrafts();
+        if (state.labDraftLostResponses > 0) {
+          state.labDraftLostResponses -= 1;
+          await state.lostSaveResponseGate;
+          throw new Error("Draft save response was lost after persistence.");
+        }
+        return structuredClone(next);
+    };
+    return {
+      get_settings: () => settings,
+      initialize_database: () => "Database initialized",
+      list_downloaded_models: () => [],
+      list_journal_syntheses: () => [],
+      detect_system_capabilities: () => ({ total_ram_gb: 8, cpu_cores: 8, cpu_architecture: "e2e", gpu_type: "none", gpu_acceleration: "none", vram_gb: null, available_disk_gb: 10 }),
+      list_conversations_explorer: () => ({ conversations: [], total: 0 }),
+      list_conversations: () => ({ conversations: [], total: 0 }),
+      get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: "idle", paused: false, failures: [] }),
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_custom_collections: () => [],
+      list_clusters: () => [],
+      list_conversation_spaces: () => [],
+      list_space_documents: () => [],
+      list_all_documents: () => [],
+      cancel_learning_outline: (args) => {
         if (!pendingOutline || pendingOutline.id !== getArg<string>(args, "requestId")) return false;
         pendingOutline.reject({ code: "SERVICE_NOT_AVAILABLE", message: "Course generation cancelled. Your inputs are kept." });
         pendingOutline = null;
         return true;
-      }
-      if (command === "plugin:learning|generate_learning_program") {
+      },
+      generate_learning_program: (args) => {
         if (outlineControl.hold) {
-          const channel = getArg<{ id: number }>(args, "onProgress");
-          let index = 0;
           return new Promise((_resolve, reject) => {
-            pendingOutline = { id: getArg<string>(args, "requestId"), reject, send: (message) => {
-              callbacks.get(channel.id)?.({ index: index++, message });
-            } };
+            pendingOutline = { id: getArg<string>(args, "requestId"), reject, send: (message) => ipc.send(args.onProgress, message) };
             pendingOutline.send({ stage: "reading_sources", elapsedSeconds: 0, stageSeconds: 0, responseCharacters: 0, modelName: null });
           });
         }
@@ -1051,19 +1120,18 @@ export async function installLearningStudioBackend(page: Page) {
           lesson.questions = [];
         }));
         return program;
-      }
-      if (command === "plugin:learning|repair_learning_outline") {
+      },
+      repair_learning_outline: (args) => {
         const request = getArg<{ programId: string; expectedRevision: number }>(args, "request");
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Draft changed");
         program.summary.revision += 1;
         program.modules[0].lessons[0].objective = "Compare observations and explain why they alone do not establish causality.";
         program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately." };
         return program;
-      }
-      if (command === "plugin:learning|list_learning_programs")
-        return [program.summary];
-      if (command === "plugin:learning|get_learning_program") return program;
-      if (command === "plugin:learning|get_learning_outline_evidence") {
+      },
+      list_learning_programs: () => [program.summary],
+      get_learning_program: () => program,
+      get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
           state.outlineEvidenceFailuresRemaining -= 1;
           throw new Error("Saved outline evidence unavailable.");
@@ -1089,8 +1157,8 @@ export async function installLearningStudioBackend(page: Page) {
             },
           ],
         };
-      }
-      if (command === "plugin:learning|get_learning_lesson_evidence") return {
+      },
+      get_learning_lesson_evidence: () => ({
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
         claimCount: 14, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
@@ -1099,19 +1167,19 @@ export async function installLearningStudioBackend(page: Page) {
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
             startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }] }],
-      };
-      if (command === "plugin:learning|get_learning_memory")
-        return copyMemory();
-      if (command === "plugin:learning|get_learning_practice_workspace") {
+      }),
+      get_learning_memory: () => copyMemory(),
+      get_learning_practice_workspace: (args) => {
         const programId = String(getArg(args, "id"));
         if (programId !== program.summary.id)
           throw new Error("Learning program not found");
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|get_learning_practice_session") {
+      },
+      get_learning_practice_session: (args) => {
         return copyPracticeSession(String(getArg(args, "id")));
-      }
-      if (command === "plugin:learning|start_learning_practice_session") {
+      },
+      start_learning_practice_session: (args) => {
+        const command = 'start_learning_practice_session';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1170,8 +1238,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|save_learning_practice_artifact") {
+      },
+      save_learning_practice_artifact: (args) => {
+        const command = 'save_learning_practice_artifact';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1194,8 +1263,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|change_learning_practice_mode") {
+      },
+      change_learning_practice_mode: (args) => {
+        const command = 'change_learning_practice_mode';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1218,8 +1288,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|open_learning_practice_source") {
+      },
+      open_learning_practice_source: (args) => {
+        const command = 'open_learning_practice_source';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1247,8 +1318,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|request_learning_tutor_response") {
+      },
+      request_learning_tutor_response: (args) => {
+        const command = 'request_learning_tutor_response';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1323,8 +1395,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|reveal_learning_practice_solution") {
+      },
+      reveal_learning_practice_solution: (args) => {
+        const command = 'reveal_learning_practice_solution';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1356,8 +1429,9 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|submit_learning_practice_attempt") {
+      },
+      submit_learning_practice_attempt: (args) => {
+        const command = 'submit_learning_practice_attempt';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = practiceOperation(command, request);
         if (!operation.replayed) {
@@ -1401,30 +1475,12 @@ export async function installLearningStudioBackend(page: Page) {
           recordPracticeEffect(command, operation);
         }
         return copyPracticeWorkspace();
-      }
-      if (
-        command === "plugin:learning|accept_learning_practice_proposal" ||
-        command === "plugin:learning|reject_learning_practice_proposal"
-      ) {
-        const request = getRequest<Record<string, unknown>>(args);
-        const operation = practiceOperation(command, request);
-        if (!operation.replayed) {
-          validatePracticeScope(request);
-          const session = getPracticeSession(String(request.sessionId));
-          validatePracticeRevision(session, request);
-          const proposal = session.proposals.find((item) => item.id === request.proposalId);
-          if (!proposal || proposal.status !== "pending")
-            throw new Error("Pending proposal not found.");
-          proposal.status = command.includes("accept_") ? "accepted" : "rejected";
-          proposal.decidedAt = Date.now();
-          bumpPracticeRevision(session);
-          recordPracticeEffect(command, operation);
-        }
-        return copyPracticeWorkspace();
-      }
-      if (command === "plugin:learning|get_learning_canvas_workspace")
-        return copyCanvasWorkspace();
-      if (command === "plugin:learning|create_learning_canvas") {
+      },
+      accept_learning_practice_proposal: (args) => decidePracticeProposal('accept_learning_practice_proposal', args),
+      reject_learning_practice_proposal: (args) => decidePracticeProposal('reject_learning_practice_proposal', args),
+      get_learning_canvas_workspace: () => copyCanvasWorkspace(),
+      create_learning_canvas: (args) => {
+        const command = 'create_learning_canvas';
         const request = getRequest<Record<string, unknown>>(args);
         state.canvasMutationCalls.push({ command, request });
         const operation = lookupCanvasOperation(command, request);
@@ -1461,8 +1517,9 @@ export async function installLearningStudioBackend(page: Page) {
           persistCanvasState();
         }
         return copyCanvasWorkspace();
-      }
-      if (command === "plugin:learning|save_learning_canvas") {
+      },
+      save_learning_canvas: async (args) => {
+        const command = 'save_learning_canvas';
         const request = getRequest<Record<string, unknown>>(args);
         state.canvasMutationCalls.push({ command, request });
         const operation = lookupCanvasOperation(command, request);
@@ -1494,8 +1551,9 @@ export async function installLearningStudioBackend(page: Page) {
           }
         }
         return copyCanvasWorkspace();
-      }
-      if (command === "plugin:learning|create_learning_canvas_snapshot") {
+      },
+      create_learning_canvas_snapshot: (args) => {
+        const command = 'create_learning_canvas_snapshot';
         const request = getRequest<Record<string, unknown>>(args);
         state.canvasMutationCalls.push({ command, request });
         const operation = lookupCanvasOperation(command, request);
@@ -1520,8 +1578,9 @@ export async function installLearningStudioBackend(page: Page) {
           persistCanvasState();
         }
         return copyCanvasWorkspace();
-      }
-      if (command === "plugin:learning|restore_learning_canvas_snapshot") {
+      },
+      restore_learning_canvas_snapshot: (args) => {
+        const command = 'restore_learning_canvas_snapshot';
         const request = getRequest<Record<string, unknown>>(args);
         state.canvasMutationCalls.push({ command, request });
         const operation = lookupCanvasOperation(command, request);
@@ -1554,14 +1613,14 @@ export async function installLearningStudioBackend(page: Page) {
           persistCanvasState();
         }
         return copyCanvasWorkspace();
-      }
-      if (command === "plugin:learning|get_learning_source_workspace") {
+      },
+      get_learning_source_workspace: (args) => {
         const programId = getArg<string>(args, "id");
         return programId === sourceWorkspace.programId
           ? copySourceWorkspace()
           : { programId, sources: [] };
-      }
-      if (command === "plugin:learning|get_learning_source_version") {
+      },
+      get_learning_source_version: (args) => {
         const request = getRequest<{
           programId: string;
           sourceId: string;
@@ -1587,8 +1646,8 @@ export async function installLearningStudioBackend(page: Page) {
                 ]
               : [],
         } satisfies SourceVersionDetail;
-      }
-      if (command === "plugin:learning|search_learning_sources") {
+      },
+      search_learning_sources: (args) => {
         const request = getRequest<{
           programId: string;
           query: string;
@@ -1622,8 +1681,9 @@ export async function installLearningStudioBackend(page: Page) {
                 )
                 .slice(0, Math.max(0, Math.min(request.limit, 50)));
         return results;
-      }
-      if (command === "plugin:learning|add_learning_web_source") {
+      },
+      add_learning_web_source: (args) => {
+        const command = 'add_learning_web_source';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1672,8 +1732,9 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|add_learning_document_source") {
+      },
+      add_learning_document_source: (args) => {
+        const command = 'add_learning_document_source';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1715,8 +1776,9 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|add_learning_text_source") {
+      },
+      add_learning_text_source: (args) => {
+        const command = 'add_learning_text_source';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1757,8 +1819,9 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|refresh_learning_source") {
+      },
+      refresh_learning_source: (args) => {
+        const command = 'refresh_learning_source';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1847,8 +1910,9 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|adopt_learning_source_version") {
+      },
+      adopt_learning_source_version: (args) => {
+        const command = 'adopt_learning_source_version';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1872,8 +1936,9 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|update_learning_source_policy") {
+      },
+      update_learning_source_policy: (args) => {
+        const command = 'update_learning_source_policy';
         const request = getRequest<Record<string, unknown>>(args);
         const operation = pushSourceMutation(command, request);
         if (!operation.replayed) {
@@ -1894,8 +1959,8 @@ export async function installLearningStudioBackend(page: Page) {
           maybeLoseSourceResponse();
         }
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|ensure_learning_lesson_note") {
+      },
+      ensure_learning_lesson_note: () => {
         if (!memory.lessonNotes.length) {
           const timestamp = now();
           memory.lessonNotes.push({
@@ -1918,8 +1983,8 @@ export async function installLearningStudioBackend(page: Page) {
           });
         }
         return copyMemory();
-      }
-      if (command === "plugin:dailynotes|update_workspace_note") {
+      },
+      update_workspace_note: async (args) => {
         await new Promise((resolve) => window.setTimeout(resolve, 125));
         const note = getArg<WorkspaceNoteDto>(args, "note");
         const saved = { ...note, revision: note.revision + 1, updatedAt: now() };
@@ -1932,8 +1997,8 @@ export async function installLearningStudioBackend(page: Page) {
         linked.note = saved;
         state.noteWrites += 1;
         return saved;
-      }
-      if (command === "plugin:learning|generate_learning_card_drafts") {
+      },
+      generate_learning_card_drafts: (args) => {
         if (state.generationFailuresRemaining > 0) {
           state.generationFailuresRemaining -= 1;
           throw new Error("The draft service is temporarily unavailable.");
@@ -1956,8 +2021,8 @@ export async function installLearningStudioBackend(page: Page) {
           });
         }
         return copyMemory();
-      }
-      if (command === "plugin:learning|save_learning_card_draft") {
+      },
+      save_learning_card_draft: (args) => {
         const request = getRequest<{
           draftId: string;
           question: string;
@@ -1974,8 +2039,8 @@ export async function installLearningStudioBackend(page: Page) {
           sourceIds: request.sourceIds,
         });
         return copyMemory();
-      }
-      if (command === "plugin:learning|accept_learning_card_draft") {
+      },
+      accept_learning_card_draft: (args) => {
         const request = getRequest<{ draftId: string }>(args);
         const index = memory.drafts.findIndex(
           (item) => item.id === request.draftId,
@@ -1986,7 +2051,6 @@ export async function installLearningStudioBackend(page: Page) {
         const card: StudyCardDto = {
           id: cardId,
           format: "question_answer",
-          schedulerVersion: "expanding_v1",
           deckId: "deck-learning-1",
           question: draft.question,
           answer: draft.answer,
@@ -2022,17 +2086,17 @@ export async function installLearningStudioBackend(page: Page) {
           (item) => item.dueAt <= Date.now(),
         ).length;
         return copyMemory();
-      }
-      if (command === "plugin:learning|discard_learning_card_draft") {
+      },
+      discard_learning_card_draft: (args) => {
         const request = getRequest<{ draftId: string }>(args);
         memory.drafts = memory.drafts.filter(
           (item) => item.id !== request.draftId,
         );
         return copyMemory();
-      }
+      },
       // Studio's Flashcards section lists every deck; the backend includes
       // program decks, so the program's recall deck shows up here too.
-      if (command === "plugin:study|list_study_decks") {
+      list_study_decks: () => {
         const deck = memory.studyDeck;
         if (!deck) return [];
         const summary: StudyDeckSummaryDto = {
@@ -2046,8 +2110,8 @@ export async function installLearningStudioBackend(page: Page) {
           quizCorrect: 0,
         };
         return [summary];
-      }
-      if (command === "plugin:study|review_study_card") {
+      },
+      review_study_card: (args) => {
         const request = getRequest<{
           reviewId: string;
           cardId: string;
@@ -2078,12 +2142,11 @@ export async function installLearningStudioBackend(page: Page) {
         const response = JSON.parse(JSON.stringify(card));
         state.appliedReviewIds[request.reviewId] = response;
         return response;
-      }
-      if (command === "plugin:learning|get_learning_assessment_workspace")
-        return state.assessmentWorkspace;
-      if (command === "plugin:learning|start_learning_assessment_form") {
-        const request = getRequest<Record<string, unknown>>(args);
-        const blueprint = (state.assessmentWorkspace.blueprints as Array<Record<string, unknown>>).find((item) => item.id === request.blueprintId);
+      },
+      get_learning_assessment_workspace: () => state.assessmentWorkspace,
+      start_learning_assessment_form: (args) => {
+        const request = getRequest<{ blueprintId: string; formId: string; retakeOfFormId?: string | null }>(args);
+        const blueprint = state.assessmentWorkspace.blueprints.find((item) => item.id === request.blueprintId);
         if (!blueprint) throw new Error("Accepted assessment blueprint not found.");
         const id = String(request.formId);
         const form = {
@@ -2093,52 +2156,42 @@ export async function installLearningStudioBackend(page: Page) {
           status: "active", revision: 0, createdAt: Date.now(), submittedAt: null,
           retakeOfFormId: request.retakeOfFormId ?? null,
           items: [{ id: "assessment-item-e2e", format: "short_answer", prompt: "Which details make the comparison interpretable?", options: [], selectedIndex: null, textResponse: "", artifactJson: null, orderedValues: [], artifactKind: null, previouslyExposed: false, rubric: [] }],
-          result: null,
-        };
+        } satisfies Fixture<LearningAssessmentFormDto>;
         state.assessmentForms.set(id, form);
-        (state.assessmentWorkspace.forms as Array<Record<string, unknown>>).unshift({ id, blueprintId: blueprint.id, blueprintRevision: blueprint.revision, programId: program.summary.id, purpose: blueprint.purpose, title: blueprint.title, status: "active", revision: 0, gradeStatus: null, score: null, createdAt: form.createdAt, submittedAt: null, retakeOfFormId: form.retakeOfFormId });
+        state.assessmentWorkspace.forms.unshift({ id, blueprintId: blueprint.id, blueprintRevision: blueprint.revision, purpose: blueprint.purpose, title: blueprint.title, status: "active", revision: 0, gradeStatus: null, score: null, createdAt: form.createdAt, submittedAt: null, retakeOfFormId: form.retakeOfFormId });
         return form;
-      }
-      if (command === "plugin:learning|get_learning_assessment_form") {
+      },
+      get_learning_assessment_form: (args) => {
         const id = getArg<string>(args, "id");
         const form = state.assessmentForms.get(id);
         if (!form) throw new Error("Assessment form not found.");
         return form;
-      }
-      if (command === "plugin:learning|save_learning_assessment_response") {
+      },
+      save_learning_assessment_response: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const form = state.assessmentForms.get(String(request.formId));
         if (!form || form.status !== "active") throw new Error("Assessment form is no longer active.");
         const response = request.response as Record<string, unknown>;
-        const item = (form.items as Array<Record<string, unknown>>).find((entry) => entry.id === response.itemId);
+        const item = form.items.find((entry) => entry.id === response.itemId);
         if (!item) throw new Error("Assessment item not found.");
         Object.assign(item, { selectedIndex: response.selectedIndex, textResponse: response.text, orderedValues: response.orderedValues, artifactJson: response.artifactJson });
         form.revision = Number(form.revision) + 1;
-        const summary = (state.assessmentWorkspace.forms as Array<Record<string, unknown>>).find((entry) => entry.id === form.id);
+        const summary = state.assessmentWorkspace.forms.find((entry) => entry.id === form.id);
         if (summary) summary.revision = form.revision;
         return form;
-      }
-      if (command === "plugin:learning|interrupt_learning_assessment_form" || command === "plugin:learning|submit_learning_assessment_form") {
-        const request = getRequest<Record<string, unknown>>(args);
-        const form = state.assessmentForms.get(String(request.formId));
-        if (!form || form.revision !== request.expectedRevision) throw new Error("Assessment changed; reload and retry.");
-        const submitted = command.endsWith("submit_learning_assessment_form");
-        form.status = submitted ? "submitted" : "interrupted";
-        form.submittedAt = submitted ? Date.now() : null;
-        const summary = (state.assessmentWorkspace.forms as Array<Record<string, unknown>>).find((entry) => entry.id === form.id);
-        if (summary) Object.assign(summary, { status: form.status, submittedAt: form.submittedAt, gradeStatus: null, score: null });
-        return form;
-      }
-      if (command === "plugin:learning|start_learning_diagnostic") {
+      },
+      interrupt_learning_assessment_form: (args) => closeAssessmentForm('interrupt_learning_assessment_form', args),
+      submit_learning_assessment_form: (args) => closeAssessmentForm('submit_learning_assessment_form', args),
+      start_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = {
           id: "diagnostic-e2e", programId: program.summary.id, status: "active", revision: 0,
           prompts: [{ id: "placement-task", prompt: "Two samples were observed for different periods. Explain how you would make their comparison fair.", outcomeId: "outcome-1", outcomeTitle: "Compare observations", sourceVersionIds: [source.id] }],
           responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Provisional starting-point feedback.", createdAt: Date.now(), submittedAt: null,
         };
         return state.planWorkspace.latestDiagnostic;
-      }
-      if (command === "plugin:learning|submit_learning_diagnostic") {
-        const request = getRequest<Record<string, unknown>>(args);
+      },
+      submit_learning_diagnostic: (args) => {
+        const request = getRequest<{ diagnosticId: string; expectedDiagnosticRevision: number; responses: LearningDiagnosticAttemptDto["responses"]; saveOnly?: boolean }>(args);
         const diagnostic = state.planWorkspace.latestDiagnostic;
         if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw new Error("The starting-point answers changed elsewhere. Reload before saving.");
         diagnostic.responses = request.responses;
@@ -2148,34 +2201,19 @@ export async function installLearningStudioBackend(page: Page) {
           diagnostic.findings = [{ promptId: "placement-task", outcomeId: "outcome-1", signal: "needs_practice", feedback: "Name a consistent observation period before comparing the measurements.", evidenceQuote: null }];
         }
         return diagnostic;
-      }
-      if (command === "plugin:learning|skip_learning_diagnostic") {
+      },
+      skip_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
-      }
-      if (command === "plugin:learning|get_learning_plan") {
+      },
+      get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;
         // IPC returns a snapshot, not shared references into the backend's state.
         return structuredClone(state.planWorkspace);
-      }
-      if (command === "plugin:learning|cancel_learning_generation_job" || command === "plugin:learning|retry_learning_generation_job") {
-        const request = getRequest<LearningGenerationJobActionRequestDto>(args);
-        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
-        const job = state.planWorkspace.jobs.find((job) => job.id === request.jobId);
-        if (!job) throw new Error("Job not found");
-        if (command === "plugin:learning|cancel_learning_generation_job") {
-          Object.assign(job, { status: "cancelled", finishedAt: Date.now(), progressMessage: "Cancelled", error: null });
-          return job;
-        }
-        const next: LearningGenerationJob = {
-          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
-          status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
-        };
-        state.planWorkspace.jobs.unshift(next);
-        return next;
-      }
-      if (command === "plugin:learning|preview_learning_curriculum_revision") {
+      },
+      cancel_learning_generation_job: (args) => changeGenerationJob('cancel_learning_generation_job', args),
+      retry_learning_generation_job: (args) => changeGenerationJob('retry_learning_generation_job', args),
+      preview_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
           throw new Error("Program changed; reload and retry.");
@@ -2196,8 +2234,8 @@ export async function installLearningStudioBackend(page: Page) {
         planState.previewChanges = [{ lessonId, kind: "edit_lesson", description: `Update ${String(operation.title)}.` }];
         planState.requiredLessonCountAfter = planState.requiredLessonCountBefore;
         return state.planWorkspace;
-      }
-      if (command === "plugin:learning|accept_learning_curriculum_revision") {
+      },
+      accept_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
           throw new Error("Program changed; reload and retry.");
@@ -2218,52 +2256,19 @@ export async function installLearningStudioBackend(page: Page) {
         planState.draftRevision = null;
         planState.previewChanges = [];
         return state.planWorkspace;
-      }
-      if (command === "plugin:learning|get_learning_practical_draft" || command === "plugin:learning|save_learning_practical_draft") {
-        const request = getRequest<LabDraft & { operationId: string; expectedDraftRevision: number }>(args);
-        const activity = state.practicalWorkspace.activities.find((item) => item.id === request.activityId);
-        if (request.programId !== program.summary.id || !activity || activity.revision !== request.activityRevision)
-          throw new Error("The lab activity changed. Reopen it before editing.");
-        const key = `${request.programId}:${request.activityId}:${request.activityRevision}`;
-        const initial: LabDraft = { programId: request.programId, activityId: request.activityId, activityRevision: request.activityRevision, draftRevision: 0, files: activity.files.filter((file) => file.role === "starter" && file.editable).map(({ path, content }) => ({ path, content })), updatedAt: null };
-        const current = state.labDrafts.get(key) ?? initial;
-        if (command === "plugin:learning|get_learning_practical_draft") return structuredClone(current);
-        state.labDraftSaveCalls.push(structuredClone(request));
-        const payload = JSON.stringify(request);
-        const previous = state.labDraftOperations.get(request.operationId);
-        if (previous) {
-          if (previous.payload !== payload) throw new Error("Operation ID was already used with different draft data.");
-          return structuredClone(previous.result);
-        }
-        if (state.labDraftFailuresBeforeSave > 0) {
-          state.labDraftFailuresBeforeSave -= 1;
-          throw new Error("The draft could not be saved to this device.");
-        }
-        if (request.expectedDraftRevision !== current.draftRevision) throw new Error("Draft changed; reload before saving.");
-        if (!Array.isArray(request.files) || request.files.some((file) => !initial.files.some((starter) => starter.path === file.path)))
-          throw new Error("Only editable starter files can be saved.");
-        const next = { ...current, draftRevision: current.draftRevision + 1, files: structuredClone(request.files), updatedAt: Date.now() };
-        state.labDrafts.set(key, next);
-        state.labDraftOperations.set(request.operationId, { payload, result: next });
-        persistLabDrafts();
-        if (state.labDraftLostResponses > 0) {
-          state.labDraftLostResponses -= 1;
-          await state.lostSaveResponseGate;
-          throw new Error("Draft save response was lost after persistence.");
-        }
-        return structuredClone(next);
-      }
-      if (command === "plugin:learning|get_learning_practical_workspace")
-        return state.practicalWorkspace;
-      if (command === "plugin:learning|get_learning_runtime_catalog") {
-        return [
+      },
+      get_learning_practical_draft: (args) => practicalDraft('get_learning_practical_draft', args),
+      save_learning_practical_draft: (args) => practicalDraft('save_learning_practical_draft', args),
+      get_learning_practical_workspace: () => state.practicalWorkspace,
+      get_learning_runtime_catalog: () => {
+        return ([
           { id: "csharp", name: "C#", description: "Compile and test a C# project in the .NET SDK.", imageRef: "mcr.microsoft.com/dotnet/sdk:10.0", command: ["dotnet", "run"], entrypointContract: "C# checks project" },
           { id: "rust", name: "Rust", description: "Compile and test Rust exercises.", imageRef: "rust:fixture", command: ["rustc", "--test"], entrypointContract: "Rust checks.rs" },
           { id: "node", name: "React & TypeScript", description: "Type-check React components and run component tests.", imageRef: "lattice-learning/react-ts:fixture", command: ["node", "--test"], entrypointContract: "React checks" },
           { id: "python", name: "Python", description: "Python projects in a container.", imageRef: "python:fixture", command: ["python", "checks.py"], entrypointContract: "Python checks.py" },
-        ].map((preset) => ({ ...preset, limits: { timeoutSeconds: 120, memoryMegabytes: 1024, cpuMillis: 1000, processLimit: 64, outputBytes: 262144 } }));
-      }
-      if (command === "plugin:learning|prepare_learning_runtime_preset") {
+        ] satisfies Fixture<LearningRuntimePresetDto>[]).map((preset) => ({ ...preset, limits: { timeoutSeconds: 120, memoryMegabytes: 1024, cpuMillis: 1000, processLimit: 64, outputBytes: 262144 } }));
+      },
+      prepare_learning_runtime_preset: (args) => {
         const request = getRequest<{ operationId: string; programId: string; profileId: string; preset: string; engine: "docker" | "podman" }>(args);
         if (!state.practicalWorkspace.runtimeCapabilities.some((capability) => capability.engine === request.engine && capability.available)) {
           throw new Error("Start Docker or Podman before preparing a language environment.");
@@ -2278,12 +2283,10 @@ export async function installLearningStudioBackend(page: Page) {
           });
         }
         return state.practicalWorkspace;
-      }
-      if (command === "plugin:learning|get_learning_portability_workspace")
-        return state.portabilityWorkspace;
-      if (command === "plugin:learning|get_learning_recall_workspace")
-        return state.recallV2Workspace;
-      if (command === "plugin:learning|save_learning_recall_card") {
+      },
+      get_learning_portability_workspace: () => state.portabilityWorkspace,
+      get_learning_recall_workspace: () => state.recallV2Workspace,
+      save_learning_recall_card: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const cards = state.recallV2Workspace.cards as Array<Record<string, unknown>>;
         const existing = cards.find((item) => item.id === request.cardId);
@@ -2296,28 +2299,19 @@ export async function installLearningStudioBackend(page: Page) {
           Object.assign(existing, { format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: revision, sourceVersionIds: request.sourceVersionIds, updatedAt: Date.now() });
         } else {
           const timestamp = Date.now();
-          cards.push({ id: request.cardId, programId: program.summary.id, format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: 1, versions: [{ revision: 1, format: request.format, content: JSON.parse(JSON.stringify(content)), sourceVersionIds: request.sourceVersionIds, changeReason: request.changeReason, createdAt: timestamp }], sourceVersionIds: request.sourceVersionIds, scheduler: { schedulerVersion: "expanding_v1", stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 }, reviewHistory: [], createdAt: timestamp, updatedAt: timestamp });
+          cards.push({ id: request.cardId, programId: program.summary.id, format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: 1, versions: [{ revision: 1, format: request.format, content: JSON.parse(JSON.stringify(content)), sourceVersionIds: request.sourceVersionIds, changeReason: request.changeReason, createdAt: timestamp }], sourceVersionIds: request.sourceVersionIds, scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 }, reviewHistory: [], createdAt: timestamp, updatedAt: timestamp });
         }
         return state.recallV2Workspace;
-      }
-      if (command === "plugin:learning|decide_learning_recall_duplicate") {
+      },
+      decide_learning_recall_duplicate: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const suggestion = (state.recallV2Workspace.duplicates as Array<Record<string, unknown>>).find((item) => item.id === request.suggestionId);
         if (!suggestion || suggestion.status !== "pending") throw new Error("Pending duplicate suggestion not found.");
         suggestion.status = request.accept ? "confirmed" : "dismissed";
         suggestion.decidedAt = Date.now();
         return state.recallV2Workspace;
-      }
-      if (command === "plugin:learning|change_learning_recall_scheduler") {
-        const request = getRequest<Record<string, unknown>>(args);
-        const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
-        if (!card) throw new Error("Recall card not found.");
-        const scheduler = card.scheduler as Record<string, unknown>;
-        if (scheduler.reviewCount !== request.expectedReviewCount) throw new Error("Review state changed.");
-        scheduler.schedulerVersion = request.schedulerVersion;
-        return state.recallV2Workspace;
-      }
-      if (command === "plugin:learning|review_learning_recall_card") {
+      },
+      review_learning_recall_card: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
         if (!card) throw new Error("Recall card not found.");
@@ -2326,11 +2320,12 @@ export async function installLearningStudioBackend(page: Page) {
         const timestamp = Date.now();
         const intervalDays = request.rating === "good" ? 1 : request.rating === "easy" ? 2 : 0;
         Object.assign(scheduler, { reviewCount: Number(scheduler.reviewCount) + 1, intervalDays, dueAt: timestamp + intervalDays * 86_400_000, lastReviewedAt: timestamp });
-        (card.reviewHistory as Array<Record<string, unknown>>).push({ id: request.reviewId, rating: request.rating, schedulerVersion: scheduler.schedulerVersion, createdAt: timestamp });
+        (card.reviewHistory as Array<Record<string, unknown>>).push({ id: request.reviewId, rating: request.rating, createdAt: timestamp });
         state.recallV2Workspace.dueCount = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).filter((entry) => ((entry.scheduler as Record<string, unknown>).dueAt as number) <= Date.now()).length;
         return state.recallV2Workspace;
-      }
-      if (command === "plugin:learning|preview_learning_pack_import") {
+      },
+      preview_learning_pack_import: (args) => {
+        const command = 'preview_learning_pack_import';
         const request = getRequest<Record<string, unknown>>(args);
         state.packMutationCalls.push({ command, request });
         const preview = {
@@ -2363,22 +2358,24 @@ export async function installLearningStudioBackend(page: Page) {
           conflicts: [],
           changes: [{ entityKind: "program", entityId: "incoming-program-1", action: "create_copy", description: "Create an isolated local program copy." }],
           warnings: [],
-          status: "pending",
+          status: "pending" as const,
           canApply: true,
           createdAt: Date.now(),
           decidedAt: null,
         };
         state.portabilityWorkspace.importPreviews = [preview];
         return state.portabilityWorkspace;
-      }
-      if (command === "plugin:learning|cancel_learning_pack_import_preview") {
+      },
+      cancel_learning_pack_import_preview: (args) => {
+        const command = 'cancel_learning_pack_import_preview';
         const request = getRequest<Record<string, unknown>>(args);
         state.packMutationCalls.push({ command, request });
         const preview = state.portabilityWorkspace.importPreviews.find((item) => item.id === request.previewId);
         if (preview) { preview.status = "cancelled"; preview.decidedAt = Date.now(); }
         return state.portabilityWorkspace;
-      }
-      if (command === "plugin:learning|apply_learning_pack_import") {
+      },
+      apply_learning_pack_import: (args) => {
+        const command = 'apply_learning_pack_import';
         const request = getRequest<Record<string, unknown>>(args);
         state.packMutationCalls.push({ command, request });
         const preview = state.portabilityWorkspace.importPreviews.find((item) => item.id === request.previewId);
@@ -2388,8 +2385,8 @@ export async function installLearningStudioBackend(page: Page) {
         preview.decidedAt = Date.now();
         state.portabilityWorkspace.imports.push({ id: "import-e2e-1", previewId: preview.id, importedProgramId: "program-copy-e2e", backupId: null, appliedChanges: preview.changes, importedAt: Date.now() });
         return state.portabilityWorkspace;
-      }
-      if (command === "plugin:learning|delete_learning_source") {
+      },
+      delete_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
         if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
@@ -2401,8 +2398,8 @@ export async function installLearningStudioBackend(page: Page) {
         item.updatedAt = Date.now();
         state.portabilityWorkspace.sourceWorkspace = copySourceWorkspace();
         return copySourceWorkspace();
-      }
-      if (command === "plugin:learning|reimport_learning_source") {
+      },
+      reimport_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
         if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
@@ -2415,70 +2412,8 @@ export async function installLearningStudioBackend(page: Page) {
         item.updatedAt = Date.now();
         state.portabilityWorkspace.sourceWorkspace = copySourceWorkspace();
         return copySourceWorkspace();
-      }
-      state.unsupportedCommands.push(command);
-      throw new Error(
-        `Unsupported Learning Studio fixture command: ${command}`,
-      );
-    };
-
-    (
-      window as unknown as { __LATTICE_TEST_INVOKE__: typeof invoke }
-    ).__LATTICE_TEST_INVOKE__ = invoke;
-    let nextCallbackId = 1;
-    let nextListenerId = 1;
-    const callbacks = new Map<number, (...args: unknown[]) => unknown>();
-    Object.defineProperty(window, "__TAURI_INTERNALS__", {
-      configurable: true,
-      value: {
-        metadata: {
-          currentWindow: { label: "main" },
-          currentWebview: { label: "main" },
-        },
-        transformCallback(
-          callback: (...args: unknown[]) => unknown,
-          once = false,
-        ) {
-          const id = nextCallbackId++;
-          callbacks.set(
-            id,
-            once
-              ? (...args) => {
-                  callbacks.delete(id);
-                  return callback(...args);
-                }
-              : callback,
-          );
-          return id;
-        },
-        unregisterCallback(id: number) {
-          callbacks.delete(id);
-        },
-        async invoke(
-          command: string,
-          args?: { event?: string; handler?: number; payload?: unknown },
-        ) {
-          if (command === "plugin:event|listen") return nextListenerId++;
-          if (
-            command === "plugin:event|unlisten" ||
-            command === "plugin:event|emit"
-          )
-            return undefined;
-          if (command === "plugin:model|check_first_run_status")
-            return JSON.stringify({
-              needs_setup: false,
-              recommended_model_id: null,
-              recommended_model_name: null,
-              estimated_size_bytes: null,
-              });
-          if (command === "plugin:dialog|open") return "/Downloads/studio-e2e.lattice-learning";
-          return invoke(command, args);
-        },
       },
-    });
-    Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
-      configurable: true,
-      value: { unregisterListener: () => undefined },
-    });
+      'dialog|open': () => "/Downloads/studio-e2e.lattice-learning",
+    };
   }, makeAppSettings());
 }

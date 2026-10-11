@@ -44,9 +44,7 @@ fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
+use crate::features::learning::persistence::db;
 
 async fn fixture_on_pool(pool: SqlitePool) -> Result<(SqlitePool, String, String, String)> {
     let program = crate::features::learning::tests::fixture();

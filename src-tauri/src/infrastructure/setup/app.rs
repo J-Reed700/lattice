@@ -69,15 +69,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
     context
 }
 
-/// Creates the DDD Container (new architecture).
-///
-/// This is the NEW DDD-aligned container that will replace the legacy one.
-/// It follows proper layering: Domain → Application → Infrastructure → Interfaces.
-///
-/// During migration:
-///   - Legacy commands use legacy ServiceContainer
-///
-/// Creates the unified DI Container (pure DDD architecture).
+/// Creates the unified DI Container.
 ///
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
@@ -215,11 +207,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         .map_err(|error| format!("Failed to initialize local audit persistence: {error}"))?;
         let security_context = initialize_security_layer();
 
-        // During DDD migration, we run BOTH containers:
-        // 1. Legacy ServiceContainer - for existing commands
-        // 2. DDD Container - for new DDD-aligned commands
-        // This allows gradual migration without breaking existing functionality.
-
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
 
         // Read Ollama endpoint + model from the unified Settings store. This
@@ -259,47 +246,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         // Without this, indexed documents can't be opened at all.
         if let Err(e) = container.refresh_allowed_roots().await {
             tracing::warn!(error = %e, "failed to compute file-access allowed roots");
-        }
-
-        // Resume interrupted file imports from their durable item records. Load
-        // the selected embedding model before allowing the workers to continue.
-        let batch_repo = container.batch_job_repository();
-        match batch_repo.list_batch_jobs(Some(500), Some(0)).await {
-            Ok(jobs) => {
-                // A job cancelled while a file was in flight left that file at
-                // `processing`: settling it needs no embedding model and no
-                // worker, only the reconciliation pass.
-                let (cancelled, active): (Vec<_>, Vec<_>) = jobs.into_iter()
-                    .filter(|job| matches!(job.status.as_str(), "pending" | "running" | "cancelled"))
-                    .partition(|job| job.status == "cancelled");
-                for job in cancelled.iter().filter(|job| job.job_type == "file_import") {
-                    if let Err(error) = container.start_batch_file_import_use_case().resume_interrupted(job.id.clone()).await {
-                        tracing::warn!(job_id = %job.id, %error, "Failed to reconcile a cancelled file import");
-                    }
-                }
-                let needs_embedding = active.iter().any(|job| job.job_type == "file_import");
-                let embedding_ready = if needs_embedding {
-                    match container.get_or_load_embedding().await {
-                        Ok(_) => true,
-                        Err(error) => {
-                            tracing::warn!(%error, "Cannot resume file imports without embedding model");
-                            false
-                        }
-                    }
-                } else { false };
-                for job in active {
-                    if job.job_type == "file_import" && embedding_ready {
-                        if let Err(error) = container.start_batch_file_import_use_case().resume_interrupted(job.id.clone()).await {
-                            tracing::warn!(job_id = %job.id, %error, "Failed to resume file import");
-                        }
-                    } else if let Err(error) = batch_repo.update_job_status(
-                        &job.id, "failed", None, Some(Utc::now().to_rfc3339())
-                    ).await {
-                        tracing::warn!(job_id = %job.id, %error, "Failed to mark interrupted batch job failed");
-                    }
-                }
-            }
-            Err(error) => tracing::warn!(%error, "Failed to recover batch jobs"),
         }
 
         Ok::<crate::interfaces::di::Container, String>(container)
@@ -563,13 +509,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // steady-state operation are unlikely. Refactoring the bridge to
     // be restartable is a separate task.
     let bridge_cancel = shutdown_token.clone();
-    let bridge_handle = tokio::spawn(async move {
+    let bridge_handle = crate::shared::runtime::background::spawn(async move {
         event_bridge.start(bridge_cancel).await;
     });
-    app_handle.manage(super::background_workers::BackgroundWorkers::new(vec![
-        saga_handle,
-        bridge_handle,
-    ]));
+    app_handle.manage(super::background_workers::BackgroundWorkers::new(
+        std::iter::once(saga_handle).chain(bridge_handle).collect(),
+    ));
     tracing::info!("Download event bridge started with EventBus integration");
 
     // Queue promotion must not run inside the event consumer: a full bounded
@@ -627,7 +572,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 /// when settings cannot be read so startup never depends on it.
 async fn read_summary_tier_flag(data_dir: &std::path::Path) -> bool {
     use crate::application::ports::SettingsRepositoryPort;
-    use crate::infrastructure::persistence::repositories::SettingsRepository;
+    use crate::features::settings::repository::SettingsRepository;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {

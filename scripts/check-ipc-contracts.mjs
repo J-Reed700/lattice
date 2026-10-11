@@ -26,6 +26,10 @@ invoke<LearningProgramDto>('generate_learning_program', { request: outlineReques
 invoke<LearningProgramDto>('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: new Channel<string>() });
 declare function apiCall<T>(command: string, args?: unknown): Promise<T>;
 apiCall<null>('command_without_a_route');
+import type { CommandName } from './shared/ipc/transport';
+import type { ApiResult } from './types';
+declare function featureCall<T>(command: CommandName, args?: Record<string, unknown>): Promise<ApiResult<T>>;
+featureCall<{ madeUpField: string }[]>('list_study_decks');
 `;
 if (process.argv.includes('--self-test')) {
     host.getSourceFile = (file, ...args) => file === probePath
@@ -49,16 +53,24 @@ visit(bindings, node => {
         return;
     visit(node.body, call => {
         if (ts.isCallExpression(call) && call.expression.getText(bindings) === 'TAURI_INVOKE' && ts.isStringLiteral(call.arguments[0]))
-            contracts.set(call.arguments[0].text, { type: checker.getTypeFromTypeNode(response), text: response.getText(bindings), params: node.parameters.map(p => ({ name: p.name.getText(bindings), type: checker.getTypeAtLocation(p) })) });
+            contracts.set(call.arguments[0].text.replace(/^plugin:[^|]+\|/, ''), { type: checker.getTypeFromTypeNode(response), text: response.getText(bindings), params: node.parameters.map(p => ({ name: p.name.getText(bindings), type: checker.getTypeAtLocation(p) })) });
     });
 });
-const api = program.getSourceFile(path.join(root, 'src/shared/ipc/routes.ts')), routes = new Map();
-visit(api, node => {
-    if (!ts.isVariableDeclaration(node) || node.name.getText(api) !== 'COMMAND_DOMAIN_MAP')
-        return;
-    for (const p of node.initializer.properties)
-        routes.set(p.name.getText(api).replaceAll("'", ''), p.initializer.properties.find(q => q.name.getText(api) === 'command').initializer.text);
+// The generated route table: every command the transport can invoke.
+const routeTable = program.getSourceFile(path.join(root, 'src/shared/ipc/routes.generated.ts')), routes = new Set();
+visit(routeTable, node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(routeTable) === 'COMMAND_PLUGINS')
+        for (const p of node.initializer.expression.properties)
+            routes.add(p.name.getText(routeTable));
 });
+// apiCall and the feature wrappers around it take a generated CommandName.
+function routedCall(call) {
+    if (call.expression.getText(call.getSourceFile()) === 'apiCall')
+        return true;
+    const declaration = checker.getResolvedSignature(call)?.parameters[0]?.valueDeclaration;
+    return declaration !== undefined && ts.isParameter(declaration) && declaration.type !== undefined
+        && ts.isTypeReferenceNode(declaration.type) && declaration.type.typeName.getText() === 'CommandName';
+}
 const report = { generatedCommands: contracts.size, checked: 0, mismatches: [], uncovered: [], unrouted: [], argumentNames: [] };
 function nullable(type) { return Boolean(type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) || type.isUnion() && type.types.some(nullable); }
 function checkObject(expression, expected, context, prefix = '') {
@@ -106,19 +118,22 @@ for (const source of program.getSourceFiles()) {
     if (!source.fileName.startsWith(path.join(root, 'src')) || source === bindings || /(?:__tests__|__mocks__|\.test\.|\.spec\.)/.test(source.fileName))
         continue;
     visit(source, call => {
-        if (!ts.isCallExpression(call) || !['apiCall', 'invoke'].includes(call.expression.getText(source)) || !ts.isStringLiteral(call.arguments[0]))
+        if (!ts.isCallExpression(call) || !call.arguments.length || !ts.isStringLiteral(call.arguments[0]))
             return;
-        const inputName = call.arguments[0].text, command = (routes.get(inputName) ?? inputName).replace(/^plugin:[^|]+\|/, '');
+        const routed = routedCall(call);
+        if (!routed && call.expression.getText(source) !== 'invoke')
+            return;
+        const inputName = call.arguments[0].text, command = inputName.replace(/^plugin:[^|]+\|/, '');
         const location = `${path.relative(root, source.fileName)}:${source.getLineAndCharacterOfPosition(call.getStart(source)).line + 1}`;
-        // `apiCall` throws at runtime on a command COMMAND_DOMAIN_MAP does not
-        // name, so an unrouted call site is a dead feature, not a fallback.
-        if (call.expression.getText(source) === 'apiCall' && !routes.has(inputName)) {
+        // A routed call names a generated command; anything else cannot be
+        // invoked, so it is a dead feature rather than a fallback.
+        if (routed && !routes.has(inputName)) {
             report.unrouted.push({ command: inputName, location });
             return;
         }
         const contract = contracts.get(command);
         let declared = call.typeArguments?.[0] ? checker.getTypeFromTypeNode(call.typeArguments[0]) : checker.getAwaitedType(checker.getTypeAtLocation(call));
-        if (!call.typeArguments?.[0] && call.expression.getText(source) === 'apiCall') {
+        if (!call.typeArguments?.[0] && routed) {
             const data = (declared.isUnion() ? declared.types : [declared]).map(t => checker.getPropertyOfType(t, 'data')).find(Boolean);
             if (data)
                 declared = checker.getTypeOfSymbolAtLocation(data, call);
@@ -165,8 +180,9 @@ for (const source of program.getSourceFiles()) {
 if (process.argv.includes('--self-test')) {
     const isProbe = item => item.location.startsWith('src/__contract_probe__.ts:');
     const channelErrors = report.argumentNames.filter(item => isProbe(item) && item.command === 'generate_learning_program');
-    if (report.mismatches.filter(isProbe).length !== 2 || report.uncovered.filter(isProbe).length !== 1
+    if (report.mismatches.filter(isProbe).length !== 3 || report.uncovered.filter(isProbe).length !== 1
         || !report.mismatches.some(item => isProbe(item) && item.command === 'get_learning_runtime_catalog')
+        || !report.mismatches.some(item => isProbe(item) && item.command === 'list_study_decks')
         || report.unrouted.filter(isProbe).length !== 1
         || !report.argumentNames.some(item => isProbe(item) && item.unexpected === 'request.documentId')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'request.document_id')
@@ -174,8 +190,39 @@ if (process.argv.includes('--self-test')) {
         || channelErrors.length !== 3 || channelErrors.some(item => item.field !== 'onProgress'))
         throw new Error('IPC guard failed to detect intentionally broken contracts');
     for (const key of ['mismatches', 'uncovered', 'unrouted', 'argumentNames']) report[key] = report[key].filter(item => !isProbe(item));
-    report.checked -= 9;
-    console.log('IPC guard rejects stale wrapped and direct responses, missing contracts, unrouted commands, incorrect nested request fields, and invalid transport channels.');
+    report.checked -= 10;
+    console.log('IPC guard rejects stale wrapped and direct responses, stale feature-wrapper responses, missing contracts, unrouted commands, incorrect nested request fields, and invalid transport channels.');
+}
+// Browser e2e fixtures answer IPC through e2e/fixtures/tauri.ts, typed by the
+// same generated contracts; `tsc -p tsconfig.e2e.json` is what rejects a stale
+// fixture. Prove the harness still makes it reject one.
+if (process.argv.includes('--self-test')) {
+    const e2eConfig = ts.readConfigFile(path.join(root, 'tsconfig.e2e.json'), ts.sys.readFile);
+    const e2eParsed = ts.parseJsonConfigFileContent(e2eConfig.config, ts.sys, root);
+    const e2eProbePath = path.join(root, 'e2e', '__contract_probe__.ts');
+    const e2eProbe = `
+import type { Page } from '@playwright/test';
+import { mockCommands, serveCommands } from './fixtures/tauri';
+declare const page: Page;
+export async function probe() {
+    await mockCommands(page, () => ({ list_conversation_spaces: () => [{ id: 'space', name: 'General', isArchivedd: false }] }), undefined);
+    await mockCommands(page, () => ({ list_journals: () => [], command_without_a_generated_contract: () => null }), undefined);
+    await mockCommands(page, () => ({ get_learning_program: () => ({ modules: [{ lessons: [{ blocks: [{ kind: 'explanation' as const, titl: 'x' }] }] }] }) }), undefined);
+    await serveCommands(page, () => ({ get_indexing_activities: () => [{ id: 'activity', madeUpField: 1 }] }));
+}
+`;
+    const e2eHost = ts.createCompilerHost(e2eParsed.options);
+    const getE2eSourceFile = e2eHost.getSourceFile.bind(e2eHost);
+    e2eHost.getSourceFile = (file, ...args) => file === e2eProbePath
+        ? ts.createSourceFile(file, e2eProbe, ts.ScriptTarget.Latest, true)
+        : getE2eSourceFile(file, ...args);
+    const e2eProgram = ts.createProgram([...e2eParsed.fileNames, e2eProbePath], e2eParsed.options, e2eHost);
+    const rejected = ts.getPreEmitDiagnostics(e2eProgram, e2eProgram.getSourceFile(e2eProbePath))
+        .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')).join('\n');
+    for (const expected of ['"isArchivedd"', '"command_without_a_generated_contract"', '"modules.lessons.blocks.titl"', '"madeUpField"'])
+        if (!rejected.includes(expected))
+            throw new Error(`e2e IPC fixtures no longer reject ${expected}`);
+    console.log('e2e IPC fixtures reject unknown commands and fields the generated DTOs lack.');
 }
 if (process.argv.includes('--json'))
     console.log(JSON.stringify(report, null, 2));

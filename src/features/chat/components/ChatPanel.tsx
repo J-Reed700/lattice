@@ -1,183 +1,42 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import * as Popover from '@radix-ui/react-popover';
-import { useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowUp, ChevronDown, Cpu, FileText, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, ScrollText, Settings2, Square } from 'lucide-react';
+import { Cpu, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, ScrollText } from 'lucide-react';
 
-import { ExplorerIndexNotice } from '@/components/Explorer/ExplorerIndexNotice';
-import { ExplorerSelectionChip } from '@/components/Explorer/ExplorerSelectionChip';
-import { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 import { ChatEmptyStateIngestDelta } from '@/features/chat/components/ChatEmptyStateIngestDelta';
-import { ChatModelNotice } from '@/features/chat/components/ChatModelNotice';
 import { ChatStarters } from '@/features/chat/components/ChatStarters';
 import { CompactionStatus } from '@/features/chat/components/CompactionStatus';
-import { ComposerSuggest } from '@/features/chat/components/composer/ComposerSuggest';
-import type { SuggestItem } from '@/features/chat/components/composer/ComposerSuggest';
-import { describeFocus, FocusChips } from '@/features/chat/components/composer/FocusChips';
-import { ModeChips } from '@/features/chat/components/composer/ModeChips';
-import type { ModeChipId } from '@/features/chat/components/composer/ModeChips';
-import { matchSlashCommands, parseSlashSubmission } from '@/features/chat/components/composer/slashCommands';
-import type { ComposerModeState, SlashCommandId } from '@/features/chat/components/composer/slashCommands';
-import { replaceTrigger } from '@/features/chat/components/composer/suggestTrigger';
-import type { SuggestTrigger } from '@/features/chat/components/composer/suggestTrigger';
-import { useComposerSuggest } from '@/features/chat/components/composer/useComposerSuggest';
-import { useRefocusAfterTurn } from '@/features/chat/components/composer/useRefocusAfterTurn';
-import { useSpaceDocuments } from '@/features/chat/components/composer/useSpaceDocuments';
-import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from '@/features/chat/components/ComposerControls';
+import { Composer } from '@/features/chat/components/composer/Composer';
 import { ConversationLinkedDocumentsPanel } from '@/features/chat/components/ConversationLinkedDocumentsPanel';
 import { ConversationMemoryPanel } from '@/features/chat/components/ConversationMemoryPanel';
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 import { Message } from '@/features/chat/components/Message';
-import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
-import { GENERAL_SPACE_ID, SpacePickerPopover, useOpenSpaces } from '@/features/chat/components/SpacePickerPopover';
 import { ConversationTangents } from '@/features/chat/components/tangents/ConversationTangents';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
 import { VirtualizedMessageList, type VirtualizedMessageListHandle } from '@/features/chat/components/VirtualizedMessageList';
-import { useChatFileDrop } from '@/features/chat/hooks/useChatFileDrop';
-import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
-import { useSettingsQuery } from '@/hooks/queries/useSettingsQuery';
-import { conversationKeys } from '@/hooks/useConversationsController';
-import { useDownloadedModels } from '@/hooks/useDownloadedModels';
-import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
-import { VaultAPI } from '@/lib/api';
-import { useCompactionStore } from '@/stores/compactionStore';
-import { useConversationsStore } from '@/stores/conversationsStore';
-import { selectIsChatWarming, useModelWarmupStore } from '@/stores/modelWarmupStore';
+import { useAttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
+import { useComposer } from '@/features/chat/hooks/useComposer';
+import { useCompactionStore } from '@/features/chat/stores/compactionStore';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
+import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
+import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
-import type { CustomToolSettings, SpaceDocument, ToolPreferences } from '@/types';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
+interface ChatPanelProps {
+  /** A line above the composer from the surface hosting this chat. */
+  composerNotice?: ReactNode;
+  /** Chips at the top of the composer for what the host sends with the next turn. */
+  composerChips?: ReactNode;
+}
 
-/** Poll a batch job until it stops moving, or five minutes elapse. */
-const BATCH_POLL_INTERVAL_MS = 1000;
-const BATCH_POLL_TIMEOUT_MS = 5 * 60 * 1000;
-
-/** The textarea points at the suggestion list through this, for screen readers. */
-const SUGGEST_LIST_ID = 'composer-suggest-list';
-
-type TurnMode = 'auto' | 'followup' | 'query';
-
-/**
- * What an import handed the send: names for the chips, ids for the turn.
- *
- * Both travel or the file is only half attached — visible in the thread and
- * invisible to the answer.
- */
-type ImportedAttachments = {
-  names: string[];
-  documentIds: string[];
-};
-
-const normalizeEnabledTools = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  return [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))];
-};
-
-const setToolNames = (
-  current: string[] | undefined,
-  names: readonly string[],
-  enabled: boolean
-): string[] => {
-  const set = new Set((current ?? []).map((name) => name.trim()).filter(Boolean));
-  for (const name of names) {
-    if (enabled) {
-      set.add(name);
-    } else {
-      set.delete(name);
-    }
-  }
-  return [...set];
-};
-
-const defaultToolPreferences = (): ToolPreferences => ({
-  knowledgeBase: false,
-  webSearch: false,
-  deepResearchMode: false,
-  followupMode: false,
-  turnMode: 'auto',
-  enabledTools: [],
-});
-
-const normalizeTurnMode = (value: unknown): TurnMode | null => {
-  if (value === 'auto' || value === 'followup' || value === 'query') {
-    return value;
-  }
-  return null;
-};
-
-const resolveTurnMode = (parsed: Record<string, unknown>): TurnMode => {
-  const explicitTurnMode =
-    normalizeTurnMode(parsed.turnMode) ?? normalizeTurnMode(parsed.turn_mode);
-  if (explicitTurnMode) {
-    return explicitTurnMode;
-  }
-
-  const followupMode =
-    typeof parsed.followupMode === 'boolean'
-      ? parsed.followupMode
-      : (typeof parsed.followup_mode === 'boolean' ? parsed.followup_mode : false);
-
-  return followupMode ? 'followup' : 'auto';
-};
-
-const parseToolPreferences = (serialized: string | null | undefined): ToolPreferences => {
-  const defaults = defaultToolPreferences();
-  if (!serialized) {
-    return defaults;
-  }
-
-  try {
-    const parsed = JSON.parse(serialized) as Record<string, unknown>;
-    const knowledgeBase =
-      typeof parsed.knowledgeBase === 'boolean'
-        ? parsed.knowledgeBase
-        : (typeof parsed.knowledge_base === 'boolean'
-          ? parsed.knowledge_base
-          : defaults.knowledgeBase);
-    const webSearch =
-      typeof parsed.webSearch === 'boolean'
-        ? parsed.webSearch
-        : (typeof parsed.web_search === 'boolean' ? parsed.web_search : defaults.webSearch);
-    const deepResearchMode =
-      typeof parsed.deepResearchMode === 'boolean'
-        ? parsed.deepResearchMode
-        : (typeof parsed.deep_research_mode === 'boolean' ? parsed.deep_research_mode : false);
-    const turnMode = resolveTurnMode(parsed);
-    const followupMode = turnMode === 'followup';
-
-    const enabledTools =
-      normalizeEnabledTools(parsed.enabledTools) ?? normalizeEnabledTools(parsed.enabled_tools);
-    if (enabledTools) {
-      return {
-        knowledgeBase,
-        webSearch,
-        deepResearchMode,
-        followupMode,
-        turnMode,
-        enabledTools,
-      };
-    }
-
-    return {
-      knowledgeBase,
-      webSearch,
-      deepResearchMode,
-      followupMode,
-      turnMode,
-      enabledTools: webSearch ? [...WEB_TOOL_NAMES] : [],
-    };
-  } catch {
-    return defaults;
-  }
-};
-
-export function ChatPanel() {
+export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}) {
   const { activeModel, downloadedModels, setActiveChatModel } = useDownloadedModels();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const conversations = useConversationsStore((state) => state.conversations);
@@ -186,35 +45,23 @@ export function ChatPanel() {
   const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
   const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
   const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
-  const composerDraft = useConversationsStore((state) => state.composerDraft);
-  const sendMessage = useConversationsStore((state) => state.sendMessage);
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
   const createConversation = useConversationsStore((state) => state.createConversation);
-  const setComposerDraft = useConversationsStore((state) => state.setComposerDraft);
   const regenerateResponse = useConversationsStore((state) => state.regenerateResponse);
   const forkConversation = useConversationsStore((state) => state.forkConversation);
   const compactConversation = useConversationsStore((state) => state.compactConversation);
   const moveConversationToSpace = useConversationsStore((state) => state.moveConversationToSpace);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
-  const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
-  const queryClient = useQueryClient();
   const settings = useSettingsQuery().data;
 
   const isSending = activeConversationId
     ? inFlightGenerations.has(activeConversationId)
     : false;
 
-  const [input, setInput] = useState('');
-  const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(defaultToolPreferences);
-  const [customTools, setCustomTools] = useState<CustomToolSettings[]>([]);
-  const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
-  const [isImportingFiles, setIsImportingFiles] = useState(false);
   // The memory reader is an overlay off the palette, like the source reader:
   // a read-only look at what was recorded, never a place to edit it.
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
-  const [focusDocuments, setFocusDocuments] = useState<SpaceDocument[]>([]);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   // A /compact outlives this panel (it carries on across a switch to
   // Explorer and back), so where it stands lives in a store.
   const compactionRun = useCompactionStore((state) =>
@@ -224,28 +71,17 @@ export function ChatPanel() {
   const isCompacting = compactionRun?.state === 'running';
   const panelRef = useRef<HTMLDivElement>(null);
   const modelLabelRef = useRef<HTMLButtonElement>(null);
-  const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
-  const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<VirtualizedMessageListHandle>(null);
   const previousConversationIdRef = useRef<string | null>(null);
   const previousMessageCountRef = useRef(0);
   const shouldAutoScrollRef = useRef(true);
   const [visibleMessage, setVisibleMessage] = useState<{ conversationId: string | null; index: number }>({ conversationId: null, index: 0 });
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Typing is never blocked during a turn (a turn can run for many minutes);
-  // only submitting is, in handleSubmit.
-  useRefocusAfterTurn(isSending, textareaRef);
   const knownMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
     conversationId: null,
     ids: new Set(),
   });
   const prefersReducedMotion = useReducedMotion();
-
-  const enabledToolSet = useMemo(
-    () => new Set(toolPreferences.enabledTools ?? []),
-    [toolPreferences.enabledTools]
-  );
 
   const messages = useMemo(() => {
     if (!activeConversationId) return [];
@@ -320,22 +156,6 @@ export function ChatPanel() {
   }, [activeConversationId, getMessageKey, messages]);
 
   useEffect(() => {
-    const loadCustomTools = async () => {
-      const result = await VaultAPI.getSettings();
-      if (!result.ok) {
-        return;
-      }
-
-      const configured = (result.data.llm.customTools ?? [])
-        .filter((tool) => tool.enabled && tool.name.trim().length > 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setCustomTools(configured);
-    };
-
-    void loadCustomTools();
-  }, []);
-
-  useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
@@ -362,147 +182,6 @@ export function ChatPanel() {
       behavior: isConversationChange || isInitialMessageLoad || prefersReducedMotion ? 'auto' : 'smooth',
     });
   }, [messages, activeConversationId, prefersReducedMotion]);
-
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-    }
-  }, [input]);
-
-  useEffect(() => {
-    if (!activeConversationId) {
-      lastAppliedToolPreferenceConversationRef.current = null;
-      const defaults = defaultToolPreferences();
-      setToolPreferences(defaults);
-      toolPreferencesRef.current = defaults;
-      return;
-    }
-    if (lastAppliedToolPreferenceConversationRef.current === activeConversationId) {
-      return;
-    }
-
-    const activeConversation = conversations.find(
-      (conversation) => conversation.id === activeConversationId
-    );
-    if (!activeConversation) {
-      return;
-    }
-
-    const spaceId = activeConversation?.spaceId;
-    if (!spaceId) {
-      const defaults = defaultToolPreferences();
-      setToolPreferences(defaults);
-      toolPreferencesRef.current = defaults;
-      lastAppliedToolPreferenceConversationRef.current = activeConversationId;
-      return;
-    }
-
-    const space = spaces.find((item) => item.id === spaceId);
-    if (!space) {
-      return;
-    }
-
-    const next = parseToolPreferences(space.toolPreferencesJson);
-    setToolPreferences(next);
-    toolPreferencesRef.current = next;
-
-    lastAppliedToolPreferenceConversationRef.current = activeConversationId;
-  }, [activeConversationId, conversations, spaces]);
-
-  const updateToolPreferences = useCallback(
-    (updater: (_prev: ToolPreferences) => ToolPreferences) => {
-      setToolPreferences((prev) => {
-        const next = updater(prev);
-        toolPreferencesRef.current = next;
-        return next;
-      });
-    },
-    []
-  );
-
-  /**
-   * The chips above the composer and the ids the turn goes out with, set
-   * together. The names are only here to draw the chips; the ids are what the
-   * backend intersects with this conversation's space.
-   */
-  const applyFocusDocuments = useCallback(
-    (next: SpaceDocument[]) => {
-      setFocusDocuments(next);
-      updateToolPreferences((prev) => ({
-        ...prev,
-        focusDocumentIds: next.map((document) => document.documentId),
-      }));
-    },
-    [updateToolPreferences]
-  );
-
-  // Focus belongs to the chat it was set in. Opening another one starts over.
-  useEffect(() => {
-    applyFocusDocuments([]);
-  }, [activeConversationId, applyFocusDocuments]);
-
-  const toggleKnowledgeBase = () => {
-    updateToolPreferences((prev) => ({
-      ...prev,
-      knowledgeBase: !prev.knowledgeBase,
-    }));
-  };
-
-  const toggleWebTools = () => {
-    updateToolPreferences((prev) => {
-      const enabled = !prev.webSearch;
-      return {
-        ...prev,
-        webSearch: enabled,
-        enabledTools: setToolNames(prev.enabledTools, WEB_TOOL_NAMES, enabled),
-      };
-    });
-  };
-
-  const toggleWikiTools = () => {
-    updateToolPreferences((prev) => {
-      const currentlyEnabled = WIKI_TOOL_NAMES.some((toolName) =>
-        (prev.enabledTools ?? []).includes(toolName)
-      );
-      return {
-        ...prev,
-        enabledTools: setToolNames(prev.enabledTools, WIKI_TOOL_NAMES, !currentlyEnabled),
-      };
-    });
-  };
-
-  const toggleDeepResearch = () => {
-    const enabling = !(toolPreferencesRef.current.deepResearchMode ?? false);
-    updateToolPreferences((prev) => ({
-      ...prev,
-      deepResearchMode: !(prev.deepResearchMode ?? false),
-    }));
-    if (enabling) {
-      toast.warning('Deep research enabled', {
-        message: DEEP_RESEARCH_WARNING_MESSAGE,
-        duration: 5000,
-      });
-    }
-  };
-
-  const toggleCustomTool = (toolName: string) => {
-    updateToolPreferences((prev) => {
-      const currentlyEnabled = (prev.enabledTools ?? []).includes(toolName);
-      return {
-        ...prev,
-        enabledTools: setToolNames(prev.enabledTools, [toolName], !currentlyEnabled),
-      };
-    });
-  };
-
-  const handleTurnModeChange = (nextMode: TurnMode) => {
-    updateToolPreferences((prev) => ({
-      ...prev,
-      turnMode: nextMode,
-      followupMode: nextMode === 'followup',
-    }));
-  };
 
   // The applied compaction for the active conversation, if any, drives the
   // "Context compacted" divider. A /compact from this session takes
@@ -549,92 +228,6 @@ export function ChatPanel() {
     [compactConversation]
   );
 
-  /**
-   * What a turn actually goes out with. Query mode turns every source on; the
-   * focus documents ride along with everything else the composer is showing,
-   * so a regenerated turn is the turn the chips describe.
-   */
-  const resolveEffectiveToolPreferences = useCallback((): ToolPreferences => {
-    const current = toolPreferencesRef.current;
-    const mode =
-      normalizeTurnMode(current.turnMode) ?? (current.followupMode ? 'followup' : 'auto');
-    const queryModeEnabledTools =
-      mode === 'query'
-        ? [
-            ...new Set([
-              ...(current.enabledTools ?? []),
-              ...WEB_TOOL_NAMES,
-              ...customTools.map((tool) => tool.name),
-            ]),
-          ]
-        : current.enabledTools;
-
-    return {
-      ...current,
-      turnMode: mode,
-      followupMode: mode === 'followup',
-      knowledgeBase: mode === 'query' ? true : current.knowledgeBase,
-      webSearch: mode === 'query' ? true : current.webSearch,
-      enabledTools: queryModeEnabledTools,
-    };
-  }, [customTools]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isSending || !activeConversationId) return;
-    // Block submit while warming up or before chat model downloads.
-    if (useModelWarmupStore.getState().chat.phase === 'started') return;
-    if (isChatUnavailable) return;
-
-    const message = input.trim();
-
-    // A message that is nothing but a command runs the command instead of being
-    // sent. /compact was the first of these — a bare regex here that nothing on
-    // screen mentioned — and every command in the menu now comes through the
-    // same door, typed or picked.
-    const typedCommand = parseSlashSubmission(message);
-    if (typedCommand) {
-      setInput('');
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
-      runSlashCommand(typedCommand);
-      return;
-    }
-    // Compacting rewrites the context the next turn reads; the draft keeps
-    // until it is done.
-    if (isCompacting) return;
-
-    // Staged files join the conversation *with* this message: import them
-    // first so the turn can already draw on them, and let the message carry
-    // their names and ids. The names draw the chips; the ids are what makes
-    // the turn actually read the files, so a send that has one without the
-    // other is a file the answer will not have seen. A total import failure
-    // aborts the send with the draft intact — sending without the files would
-    // answer the wrong question.
-    let attachmentNames: string[] | undefined;
-    let attachmentDocumentIds: string[] | undefined;
-    if (staged.length > 0) {
-      const imported = await handleImportStagedFiles();
-      if (imported === null) return;
-      if (imported.names.length > 0) attachmentNames = imported.names;
-      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
-    }
-
-    setInput('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    await sendMessage(
-      message,
-      activeConversationId,
-      resolveEffectiveToolPreferences(),
-      attachmentNames,
-      attachmentDocumentIds
-    );
-  };
-
   const handleCancel = async () => {
     if (!activeConversationId || !isSending) return;
     await cancelGeneration(activeConversationId);
@@ -655,27 +248,11 @@ export function ChatPanel() {
    */
   const startersSpaceId = conversationSpaceId ?? selectedSpaceId ?? null;
 
-  const {
-    isDragging,
-    staged,
-    add: addStagedPaths,
-    clear: clearStaged,
-    remove: removeStaged,
-  } = useChatFileDrop(panelRef, () => {
-    // Staging is the hook's own state; the panel only needs to re-render.
+  const attachments = useAttachmentImport({
+    dropTargetRef: panelRef,
+    conversationId: activeConversationId ?? null,
+    scopedSpaceId: isScopedToLinkedFiles ? conversationSpaceId : null,
   });
-
-  /** The palette's way in, for people who would rather not drag. */
-  const handleChooseFiles = useCallback(async () => {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const picked = await open({ multiple: true });
-      if (!picked) return;
-      addStagedPaths(Array.isArray(picked) ? picked : [picked]);
-    } catch {
-      // Not in a Tauri webview: the drop target is still there.
-    }
-  }, [addStagedPaths]);
 
   const openSpaces = useOpenSpaces();
   const conversationSpaceName =
@@ -684,6 +261,46 @@ export function ChatPanel() {
   const showSpacePicker = Boolean(
     activeConversationId && conversationSpaceName && (openSpaces.length > 1 || isScopedToLinkedFiles)
   );
+
+  // Mask the input during warmup, and while there is no model to answer with.
+  const isChatWarming = useModelWarmupStore(selectIsChatWarming);
+  const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
+
+  const llmSettings = settings?.llm;
+  const resolvedModel = resolveChatModel(llmSettings, activeModel?.model_id ?? null);
+  const activeModelLabel = resolvedModel && (downloadedModels.find(model => model.model_id === resolvedModel)?.model_name || resolvedModel);
+  const hasChatModel = activeModelLabel !== null;
+  const isChatUnavailable = isChatWarming || !hasChatModel;
+
+  // Report the completed turn. Initial retrieval can fail and a later tool
+  // search can recover while generation is still running.
+  const retrievalUnavailableReason = useMemo(() => {
+    if (!activeConversationId || isSending) return null;
+    const conversationMessages =
+      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
+    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = conversationMessages[index];
+      if (candidate.role !== 'assistant') continue;
+      const trace = messageRetrieval.get(candidate.id);
+      if (trace && (trace.files > 0 || trace.passages > 0)) return null;
+      return trace?.unavailableReason ?? null;
+    }
+    return null;
+  }, [activeConversationId, conversations, isSending, messageRetrieval]);
+
+  const composer = useComposer({
+    conversationId: activeConversationId ?? null,
+    conversationSpaceId,
+    conversationSpaceName,
+    isSending,
+    isCompacting,
+    isChatUnavailable,
+    canCompact: Boolean(activeConversationId) && !isCompacting && messages.length > 0,
+    onCompact: (conversationId) => void handleCompact(conversationId),
+    attachments,
+  });
+  const { applyFocusDocuments, resolveEffectiveToolPreferences } = composer;
+  const { chooseFiles } = attachments;
 
   /**
    * Move this chat to another space, which changes the documents every later
@@ -709,111 +326,6 @@ export function ChatPanel() {
     () => handleChangeSpace(GENERAL_SPACE_ID, 'General'),
     [handleChangeSpace]
   );
-
-  /**
-   * Import the staged files into the vault and link them to this conversation.
-   *
-   * Returns the names and the document ids when the send may proceed —
-   * including the still-indexing case, where the documents are linked and the
-   * next turn catches up — and `null` when nothing made it in, so the caller
-   * can abort with the composer's draft and the staged files both intact.
-   *
-   * The ids matter as much as the names: the names only draw the chips, while
-   * the ids are what the turn reads. A file whose id never reaches the send is
-   * a file the answer is written without, however plainly its chip says it was
-   * attached.
-   */
-  const handleImportStagedFiles = useCallback(async (): Promise<ImportedAttachments | null> => {
-    if (!activeConversationId || staged.length === 0 || isImportingFiles) return null;
-    const stagedNames = staged.map((file) => file.name);
-    setIsImportingFiles(true);
-    try {
-      // Attached, not filed. These documents belong to this conversation: the
-      // turn can read and cite them, but they stay out of the library and out
-      // of every other chat's searches, and they go when this chat goes. The
-      // "Add to library" action on the attachment is what files them for good.
-      const started = await VaultAPI.startBatchFileImport(
-        staged.map((file) => file.path),
-        activeConversationId
-      );
-      if (!started.ok) {
-        toast.error("Couldn't add these files", { message: started.error });
-        return null;
-      }
-
-      const outcome = await pollAttachmentImport(started.data, {
-        getStatus: VaultAPI.getBatchJobStatus,
-        intervalMs: BATCH_POLL_INTERVAL_MS,
-        timeoutMs: BATCH_POLL_TIMEOUT_MS,
-      });
-      if (outcome.kind === 'unreachable') {
-        toast.error("Couldn't confirm these files were attached", { message: outcome.error });
-        return null;
-      }
-      const { documentIds } = outcome;
-
-      // Scoping only applies to a conversation that already has its own space.
-      // Creating one behind the user's back would silently narrow every future
-      // answer in this thread.
-      if (documentIds.length > 0 && isScopedToLinkedFiles && conversationSpaceId) {
-        await VaultAPI.setDocumentsSpaceMembership(documentIds, conversationSpaceId, true);
-      }
-
-      await queryClient.invalidateQueries({
-        queryKey: conversationKeys.linkedDocuments(activeConversationId),
-      });
-      void loadConversationLinkedDocuments(activeConversationId);
-
-      const requested = staged.length;
-      // Report what the job actually did. Saying "Attached 4 files" after the
-      // batch failed, or after we stopped waiting, is a claim we cannot make.
-      // Files stay staged on a total failure so the send can be retried.
-      //
-      // "Attached", not "Added": these files belong to this conversation, not
-      // to the library, and the wording is the only place the user learns that
-      // before they go looking for them in the library.
-      if (outcome.kind === 'pending') {
-        // Still indexing at the deadline. Send only with ids to read: chips
-        // without ids would promise files the answer never sees.
-        if (documentIds.length === 0) {
-          toast.error('These files are taking too long to attach', {
-            message: 'They stay staged, and your message was not sent.',
-          });
-          return null;
-        }
-        clearStaged();
-        toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
-          message: "They'll appear in this conversation when indexing finishes.",
-        });
-        return { names: stagedNames, documentIds };
-      } else if (outcome.added === 0) {
-        toast.error("Couldn't attach these files", {
-          message: `${outcome.failed || requested} failed to import.`,
-        });
-        return null;
-      } else {
-        clearStaged();
-        toast.success(`Attached ${outcome.added} file${outcome.added !== 1 ? 's' : ''}`, {
-          message:
-            outcome.failed > 0
-              ? `${outcome.failed} couldn't be read. The rest are indexing now.`
-              : 'Only this conversation can see them. Add them to your library from Sources.',
-        });
-        return { names: stagedNames, documentIds };
-      }
-    } finally {
-      setIsImportingFiles(false);
-    }
-  }, [
-    activeConversationId,
-    staged,
-    isImportingFiles,
-    isScopedToLinkedFiles,
-    conversationSpaceId,
-    queryClient,
-    loadConversationLinkedDocuments,
-    clearStaged,
-  ]);
 
   const handleSwitchActiveModel = useCallback(
     async (modelId: string, modelLabel: string) => {
@@ -847,202 +359,6 @@ export function ChatPanel() {
     [activeModel, setActiveChatModel]
   );
 
-  const turnMode: TurnMode =
-    normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
-
-  const wikipediaEnabled = WIKI_TOOL_NAMES.some((toolName) => enabledToolSet.has(toolName));
-  const enabledCustomToolNames = customTools
-    .map((tool) => tool.name)
-    .filter((name) => enabledToolSet.has(name));
-
-  /** What the switches are set to now: the chips and the slash rows read this. */
-  const composerMode: ComposerModeState = {
-    turnMode,
-    knowledgeBase: Boolean(toolPreferences.knowledgeBase),
-    webSearch: Boolean(toolPreferences.webSearch),
-    wikipedia: wikipediaEnabled,
-    deepResearch: Boolean(toolPreferences.deepResearchMode),
-    canCompact: Boolean(activeConversationId) && !isCompacting && messages.length > 0,
-  };
-
-  /** A command flips exactly what its twin in the gear popover flips. */
-  const runSlashCommand = (id: SlashCommandId) => {
-    switch (id) {
-      case 'deep':
-        toggleDeepResearch();
-        break;
-      case 'docs':
-        toggleKnowledgeBase();
-        break;
-      case 'web':
-        toggleWebTools();
-        break;
-      case 'wiki':
-        toggleWikiTools();
-        break;
-      case 'auto':
-        handleTurnModeChange('auto');
-        break;
-      case 'followup':
-        handleTurnModeChange('followup');
-        break;
-      case 'query':
-        handleTurnModeChange('query');
-        break;
-      case 'compact':
-        if (activeConversationId) void handleCompact(activeConversationId);
-        break;
-    }
-  };
-
-  const removeMode = (id: ModeChipId) => {
-    switch (id) {
-      case 'turn':
-        handleTurnModeChange('auto');
-        break;
-      case 'docs':
-        toggleKnowledgeBase();
-        break;
-      case 'web':
-        toggleWebTools();
-        break;
-      case 'wiki':
-        toggleWikiTools();
-        break;
-      case 'deep':
-        toggleDeepResearch();
-        break;
-    }
-  };
-
-  // `@` may only ever offer documents this conversation can read — its own
-  // space and its own attachments, never the sidebar's selection, which is a
-  // different chat's business.
-  const { documents: mentionDocuments, isLoading: isLoadingMentions } = useSpaceDocuments(
-    conversationSpaceId,
-    activeConversationId,
-    mentionQuery
-  );
-
-  const focusedIds = new Set(focusDocuments.map((document) => document.documentId));
-
-  const resolveSuggestItems = (trigger: SuggestTrigger): SuggestItem[] => {
-    if (trigger.kind === 'slash') {
-      return matchSlashCommands(trigger.query, composerMode).map((command) => ({
-        id: command.id,
-        label: `/${command.token}`,
-        description: command.description,
-        state: command.state(composerMode),
-        icon: command.icon,
-      }));
-    }
-
-    if (trigger.query !== mentionQuery) return [];
-    return mentionDocuments
-      .filter((document) => !focusedIds.has(document.documentId))
-      .map((document) => ({
-        id: document.documentId,
-        label: document.fileName,
-        description: document.category ?? 'In this space',
-        state: null,
-        icon: FileText,
-      }));
-  };
-
-  const handleAcceptSuggestion = (item: SuggestItem, trigger: SuggestTrigger) => {
-    // The token was the way in, not part of the question.
-    const next = replaceTrigger(input, trigger, '');
-    setInput(next.value);
-    const textarea = textareaRef.current;
-    if (textarea) {
-      // The caret can only be placed once React has written the new value.
-      requestAnimationFrame(() => {
-        textarea.focus();
-        textarea.setSelectionRange(next.caret, next.caret);
-        suggest.syncCaret(textarea);
-      });
-    }
-
-    if (trigger.kind === 'slash') {
-      runSlashCommand(item.id as SlashCommandId);
-      return;
-    }
-
-    const picked = mentionDocuments.find((document) => document.documentId === item.id);
-    if (picked && !focusedIds.has(picked.documentId)) {
-      applyFocusDocuments([...focusDocuments, picked]);
-    }
-  };
-
-  const suggest = useComposerSuggest({
-    value: input,
-    textareaRef,
-    resolveItems: resolveSuggestItems,
-    // The list a keystroke behind is still the list: keep it open rather than
-    // blinking shut between the `@` and its answer.
-    isBusy: (trigger) =>
-      trigger.kind === 'mention' && (isLoadingMentions || trigger.query !== mentionQuery),
-    onAccept: handleAcceptSuggestion,
-  });
-
-  // The lookup follows the trigger the popup found, one render behind it.
-  const activeMention = suggest.trigger?.kind === 'mention' ? suggest.trigger.query : null;
-  useEffect(() => {
-    setMentionQuery(activeMention);
-  }, [activeMention]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // An IME sends Enter to commit a candidate. That Enter is not an accept and
-    // it is certainly not a send.
-    if (e.nativeEvent.isComposing) return;
-    if (suggest.handleKeyDown(e)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !(e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleSubmit(e);
-    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
-
-  // Mask the input during warmup, and while there is no model to answer with.
-  const isChatWarming = useModelWarmupStore(selectIsChatWarming);
-  const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
-
-  const llmSettings = settings?.llm;
-  const resolvedModel = resolveChatModel(llmSettings, activeModel?.model_id ?? null);
-  const activeModelLabel = resolvedModel && (downloadedModels.find(model => model.model_id === resolvedModel)?.model_name || resolvedModel);
-  const hasChatModel = activeModelLabel !== null;
-  const isChatUnavailable = isChatWarming || !hasChatModel;
-
-  // Report the completed turn. Initial retrieval can fail and a later tool
-  // search can recover while generation is still running.
-  const retrievalUnavailableReason = useMemo(() => {
-    if (!activeConversationId || isSending) return null;
-    const conversationMessages =
-      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
-    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
-      const candidate = conversationMessages[index];
-      if (candidate.role !== 'assistant') continue;
-      const trace = messageRetrieval.get(candidate.id);
-      if (trace && (trace.files > 0 || trace.passages > 0)) return null;
-      return trace?.unavailableReason ?? null;
-    }
-    return null;
-  }, [activeConversationId, conversations, isSending, messageRetrieval]);
-
-  // Model state lives in the notice below the composer, not in the placeholder.
-  // A chat pinned to two documents says so instead: that decides the answer.
-  const focusLabel =
-    focusDocuments.length > 0 ? describeFocus(focusDocuments.length, conversationSpaceName) : null;
-  const placeholder =
-    focusLabel ??
-    (turnMode === 'followup'
-      ? 'Follow up'
-      : turnMode === 'query'
-        ? 'Search sources and answer'
-        : 'Ask anything');
-
   const handleCreateEmptyStateConversation = async () => {
     if (isCreatingConversation) return;
     setIsCreatingConversation(true);
@@ -1058,14 +374,6 @@ export function ChatPanel() {
       setIsCreatingConversation(false);
     }
   };
-
-  // Deep links and failed regenerations hand the composer its text this way.
-  useEffect(() => {
-    if (!composerDraft) return;
-    setInput(composerDraft);
-    setComposerDraft(null);
-    textareaRef.current?.focus();
-  }, [composerDraft, setComposerDraft]);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const canRegenerate = Boolean(
@@ -1154,7 +462,7 @@ export function ChatPanel() {
         enabled: Boolean(activeConversationId),
         description: 'Or drop them onto the conversation.',
         run: () => {
-          void handleChooseFiles();
+          void chooseFiles();
         },
       },
       {
@@ -1177,7 +485,7 @@ export function ChatPanel() {
       canRegenerate,
       downloadedModels,
       forkConversation,
-      handleChooseFiles,
+      chooseFiles,
       handleCompact,
       handleSearchGeneral,
       conversationSpaceName,
@@ -1215,13 +523,13 @@ export function ChatPanel() {
   }
 
   return (
-    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={toolPreferences} unavailable={isChatUnavailable}>
+    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={composer.toolPreferences} unavailable={isChatUnavailable}>
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
       className="chat-panel relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg"
     >
-      {isDragging && (
+      {attachments.isDragging && (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-[hsl(var(--accent))] bg-bg/80 transition-opacity duration-fast">
           <p className="text-sm text-[hsl(var(--text-secondary))]">
             Drop files to add them to this conversation.
@@ -1255,10 +563,7 @@ export function ChatPanel() {
               <div className="w-full max-w-[520px]">
                 <ChatStarters
                   spaceId={startersSpaceId}
-                  onPick={(question) => {
-                    setInput(question);
-                    textareaRef.current?.focus();
-                  }}
+                  onPick={composer.fill}
                 />
                 <ChatEmptyStateIngestDelta />
               </div>
@@ -1344,226 +649,24 @@ export function ChatPanel() {
         />
       </div>
 
-      {/* Composer pinned to the bottom of the panel. */}
-      <div className="relative bg-bg before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-[hsl(var(--bg))] before:to-transparent">
-        <ChatDropStaging
-          staged={staged}
-          isImporting={isImportingFiles}
-          onRemove={removeStaged}
-          onClear={clearStaged}
-        />
-
-        <ChatModelNotice
-          hasChatModel={hasChatModel}
-          warmupPhase={chatWarmupPhase}
-          retrievalUnavailableReason={retrievalUnavailableReason}
-        />
-        <ExplorerIndexNotice />
-
-        <form onSubmit={handleSubmit} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
-          {/* One object: the page you write on, with its tools along the bottom edge. */}
-          <div className="rounded-2xl bg-surface shadow-sheet transition-shadow duration-base focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.16)]">
-            <ExplorerSelectionChip />
-            <FocusChips
-              documents={focusDocuments}
-              onRemove={(documentId) =>
-                applyFocusDocuments(
-                  focusDocuments.filter((document) => document.documentId !== documentId)
-                )
-              }
-              onClear={() => applyFocusDocuments([])}
-            />
-
-            <div className="composer-caret-field">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  suggest.syncCaret(e.target);
-                }}
-                onKeyDown={handleKeyDown}
-                onKeyUp={(e) => suggest.syncCaret(e.currentTarget)}
-                onClick={(e) => suggest.syncCaret(e.currentTarget)}
-                onFocus={() => suggest.setFocused(true)}
-                onBlur={() => suggest.setFocused(false)}
-                placeholder={placeholder}
-                rows={1}
-                aria-label="Message composer"
-                aria-autocomplete="list"
-                aria-expanded={suggest.isOpen}
-                aria-controls={suggest.isOpen ? SUGGEST_LIST_ID : undefined}
-                aria-activedescendant={
-                  suggest.isOpen ? `${SUGGEST_LIST_ID}-${suggest.activeIndex}` : undefined
-                }
-                className="block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 font-sans text-[15px] leading-[1.55] text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ minHeight: '44px', maxHeight: '240px' }}
-              />
-
-              {suggest.isOpen && suggest.point && (
-                <ComposerSuggest
-                  items={suggest.items}
-                  activeIndex={suggest.activeIndex}
-                  heading={
-                    suggest.trigger?.kind === 'mention'
-                      ? conversationSpaceName
-                        ? `Documents in ${conversationSpaceName}`
-                        : 'Documents this chat can read'
-                      : 'Commands'
-                  }
-                  emptyLabel={
-                    suggest.trigger?.kind === 'mention' ? 'Looking…' : 'No command matches.'
-                  }
-                  point={suggest.point}
-                  listId={SUGGEST_LIST_ID}
-                  onSelect={suggest.accept}
-                  onHover={suggest.setActiveIndex}
-                />
-              )}
-            </div>
-
-            {/* The tools along the bottom edge. The left group wraps when the
-                modes fill it; the send button stays on the right either way. */}
-            <div className="flex items-end gap-1 px-2.5 pb-2.5 pt-1">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                {/* Controls trigger (left) */}
-              <Popover.Root open={isControlsOpen} onOpenChange={setIsControlsOpen}>
-                <Popover.Trigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Composer controls"
-                    title="Turn mode and tools"
-                    className={`pressable inline-flex h-7 w-7 items-center justify-center rounded-md transition-[background-color,color,scale] duration-fast ${
-                      isControlsOpen
-                        ? 'bg-[hsl(var(--text-primary)/0.08)] text-[hsl(var(--text-primary))]'
-                        : 'text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]'
-                    }`}
-                  >
-                    <Settings2 className="h-[15px] w-[15px]" strokeWidth={1.6} />
-                  </button>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Content
-                    side="top"
-                    align="start"
-                    sideOffset={8}
-                    className="surface-pop z-50 w-[320px] max-h-[480px] overflow-y-auto rounded-xl bg-surface-overlay p-4 text-[hsl(var(--text-primary))] shadow-lg outline-hidden"
-                  >
-                    <ComposerControls
-                      turnMode={turnMode}
-                      onTurnModeChange={handleTurnModeChange}
-                      toolPreferences={toolPreferences}
-                      onToggleKnowledgeBase={toggleKnowledgeBase}
-                      onToggleWebTools={toggleWebTools}
-                      onToggleWikiTools={toggleWikiTools}
-                      onToggleDeepResearch={toggleDeepResearch}
-                      customTools={customTools}
-                      enabledToolSet={enabledToolSet}
-                      onToggleCustomTool={toggleCustomTool}
-                    />
-                  </Popover.Content>
-                </Popover.Portal>
-              </Popover.Root>
-
-              {/* Dropping files on the thread works, but only once you know it
-                  does. The same flow the palette runs, in reach of the caret. */}
-              <button
-                type="button"
-                onClick={() => void handleChooseFiles()}
-                aria-label="Add files to this conversation"
-                title="Add files to this conversation"
-                className="pressable inline-flex h-7 w-7 items-center justify-center rounded-md text-[hsl(var(--text-tertiary))] transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]"
-              >
-                <Paperclip className="h-[15px] w-[15px]" strokeWidth={1.6} />
-              </button>
-
-              {/* What a chat can search decides its answers more than the model
-                  does, so it sits beside the model, where the question is typed. */}
-              {showSpacePicker && (
-                <SpacePickerPopover
-                  activeSpaceId={conversationSpaceId}
-                  heading="This chat searches"
-                  onSelect={handleChangeSpace}
-                >
-                  <button
-                    type="button"
-                    title="The documents this chat searches"
-                    aria-label={`${focusLabel ?? `Searching ${conversationSpaceName}`}. Change space`}
-                    className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]"
-                  >
-                    <Library className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden="true" />
-                    <span className="truncate">{focusLabel ?? conversationSpaceName}</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} />
-                  </button>
-                </SpacePickerPopover>
-              )}
-
-              {activeModelLabel && (
-                <ModelPickerPopover
-                  activeModelId={activeModel?.model_id ?? null}
-                  onSelect={handleSwitchActiveModel}
-                  align="start"
-                >
-                  <button
-                    ref={modelLabelRef}
-                    type="button"
-                    title="Active chat model"
-                    className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))]"
-                  >
-                    <span className="truncate">{activeModelLabel}</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} />
-                  </button>
-                </ModelPickerPopover>
-              )}
-
-              <ModeChips
-                turnMode={turnMode}
-                knowledgeBase={composerMode.knowledgeBase}
-                webSearch={composerMode.webSearch}
-                wikipedia={composerMode.wikipedia}
-                deepResearch={composerMode.deepResearch}
-                customTools={enabledCustomToolNames}
-                onRemove={removeMode}
-                onRemoveTool={toggleCustomTool}
-              />
-              </div>
-
-              <span className="hidden shrink-0 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:block">
-                {isSending
-                  ? 'Generating…'
-                  : isCompacting
-                    ? 'Compacting context…'
-                    : input.trim()
-                      ? '↵ send · ⇧↵ new line'
-                      : ''}
-              </span>
-
-              {/* Send / Stop */}
-              {isSending ? (
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  aria-label="Stop generating response"
-                  title="Stop"
-                  className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
-                >
-                  <Square className="h-3 w-3 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isChatUnavailable || isCompacting}
-                  aria-label="Send message"
-                  title={isCompacting ? 'Waiting for the context to finish compacting' : 'Send · Enter'}
-                  className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-[hsl(var(--text-disabled))] disabled:shadow-none"
-                >
-                  <ArrowUp className="h-4 w-4" strokeWidth={2.2} />
-                </button>
-              )}
-            </div>
-          </div>
-        </form>
-      </div>
+      <Composer
+        composer={composer}
+        attachments={attachments}
+        modelNotice={{ hasChatModel, warmupPhase: chatWarmupPhase, retrievalUnavailableReason }}
+        notice={composerNotice}
+        chips={composerChips}
+        space={showSpacePicker ? { id: conversationSpaceId, name: conversationSpaceName, onChange: handleChangeSpace } : null}
+        model={{
+          id: activeModel?.model_id ?? null,
+          label: activeModelLabel,
+          onSelect: handleSwitchActiveModel,
+          triggerRef: modelLabelRef,
+        }}
+        isSending={isSending}
+        isCompacting={isCompacting}
+        isChatUnavailable={isChatUnavailable}
+        onCancel={() => void handleCancel()}
+      />
     </div>
     </ConversationTangents>
   );

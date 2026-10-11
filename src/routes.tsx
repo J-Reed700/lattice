@@ -15,17 +15,17 @@ import { Layout } from './components/Layout';
 import { RootLayout } from './components/RootLayout';
 
 // Lazy-load every surface so the boot bundle stays small.
-const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
-const SearchInterface = lazy(() => import('./components/SearchInterface').then((m) => ({ default: m.SearchInterface })));
-const FileTree = lazy(() => import('./components/FileTree').then((m) => ({ default: m.FileTree })));
+const Dashboard = lazy(() => import('./features/dashboard').then((m) => ({ default: m.Dashboard })));
+const SearchInterface = lazy(() => import('./features/search/components/SearchInterface').then((m) => ({ default: m.SearchInterface })));
+const FileTree = lazy(() => import('./features/files/components/FileTree').then((m) => ({ default: m.FileTree })));
 const ChatView = lazy(() => import('@/features/chat').then((m) => ({ default: m.ChatView })));
-const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ default: m.IngestHub })));
+const IngestHub = lazy(() => import('./features/files/components/IngestHub').then((m) => ({ default: m.IngestHub })));
 const JournalWorkspace = lazy(() => import('@/features/journal').then((m) => ({ default: m.JournalWorkspace })));
 const ReferenceInbox = lazy(() => import('@/features/references').then((m) => ({ default: m.ReferenceInbox })));
-const ExplorerPage = lazy(() => import('./components/Explorer').then((m) => ({ default: m.ExplorerPage })));
+const ExplorerPage = lazy(() => import('./features/explorer').then((m) => ({ default: m.ExplorerPage })));
 const LearningStudioPage = lazy(() => import('@/features/learning').then((m) => ({ default: m.LearningStudioPage })));
-const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
-const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
+const ComparePage = lazy(() => import('./features/compare').then((m) => ({ default: m.ComparePage })));
+const Settings = lazy(() => import('./features/settings').then((m) => ({ default: m.Settings })));
 
 /** Route transition: a short fade with a few pixels of travel. Nothing bounces. */
 const PAGE_VARIANTS = {

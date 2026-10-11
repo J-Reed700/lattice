@@ -367,7 +367,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await
         .expect("curriculum change");
     let curriculum_operation_id = id();
-    sqlx::query("INSERT INTO learning_curriculum_operations(operation_id,program_id,kind,payload_hash,result_id,created_at) VALUES(?,?,'accept_revision','curriculum-op-hash',?,20)")
+    sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,'curriculum','accept_revision',NULL,'curriculum-op-hash',json_quote(?),20)")
         .bind(&curriculum_operation_id)
         .bind(program_id)
         .bind(&accepted_revision_id)
@@ -384,13 +384,13 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .execute(&pool)
         .await
         .expect("study deck");
-    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,interval_days,review_count,lapses,format,scheduler_version) VALUES(?,?, 'What supports a claim?','Evidence','[]',0,'Use a source','{}','reasoning',100,4,2,1,'question_answer','fsrs_6_v1')")
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,interval_days,review_count,lapses,format,stability,difficulty,last_reviewed_at) VALUES(?,?, 'What supports a claim?','Evidence','[]',0,'Use a source','{}','reasoning',100,4,2,1,'question_answer',4.5,5.25,22)")
         .bind(&card_id)
         .bind(&deck_id)
         .execute(&pool)
         .await
         .expect("canonical recall card");
-    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option,scheduler_version) VALUES(?,?,22,'good','flashcard',1,NULL,'fsrs_6_v1')")
+    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,22,'good','flashcard',1,NULL)")
         .bind(&review_id)
         .bind(&card_id)
         .execute(&pool)
@@ -404,7 +404,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
     .execute(&pool)
     .await
     .expect("program memory link");
-    sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,scheduler_version,scheduler_state_json,content_revision,created_at,updated_at) VALUES(?,?,'question_answer','{\"prompt\":\"What supports a claim?\"}','{\"answer\":\"Evidence\"}','[]','fsrs_6_v1','{\"stability\":4.5}',2,21,23)")
+    sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,content_revision,created_at,updated_at) VALUES(?,?,'question_answer','{\"prompt\":\"What supports a claim?\"}','{\"answer\":\"Evidence\"}','[]',2,21,23)")
         .bind(&card_id)
         .bind(program_id)
         .execute(&pool)
@@ -416,14 +416,6 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .execute(&pool)
         .await
         .expect("recall content versions");
-    sqlx::query("INSERT INTO learning_recall_scheduler_transitions(id,card_id,review_id,scheduler_version,prior_state_json,rating,next_state_json,due_at,created_at) VALUES(?,?,?,'fsrs_6_v1','{\"stability\":2}','good','{\"stability\":4.5}',100,22)")
-        .bind(id())
-        .bind(&card_id)
-        .bind(&review_id)
-        .execute(&pool)
-        .await
-        .expect("scheduler transition");
-
     // A two-revision practical activity chain exercises historical ordering and
     // predecessor remapping through the dedicated practical snapshot.
     let older_activity_id = id();
@@ -445,7 +437,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .expect("current practical activity");
     let older_activity_op = id();
     let current_activity_op = id();
-    sqlx::query("INSERT INTO learning_practical_activity_operations(operation_id,program_id,activity_id,kind,payload_hash,result_revision,created_at) VALUES(?,?,?,'generate','activity-op-one',0,24),(?,?,?,'revise','activity-op-two',1,25)")
+    sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,'practical_activity','generate',?,'activity-op-one','0',24),(?,?,'practical_activity','revise',?,'activity-op-two','1',25)")
         .bind(&older_activity_op)
         .bind(program_id)
         .bind(&older_activity_id)
@@ -476,7 +468,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .execute(&pool)
         .await
         .expect("historical practical run");
-    sqlx::query("INSERT INTO learning_practical_run_operations(operation_id,program_id,run_id,kind,payload_hash,created_at) VALUES(?,?,?,'start','practical-run-payload',26)")
+    sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,'practical_run','start',?,'practical-run-payload','null',26)")
         .bind(&run_operation_id)
         .bind(program_id)
         .bind(&run_id)
@@ -532,7 +524,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
     assert_ne!(curriculum.2, prior_revision_id);
     assert_eq!(curriculum.2, curriculum.3);
     let copied_operation_id: String = sqlx::query_scalar(
-        "SELECT operation_id FROM learning_curriculum_operations WHERE program_id=?",
+        "SELECT operation_id FROM learning_operations WHERE program_id=? AND scope='curriculum'",
     )
     .bind(&copy_id)
     .fetch_one(&pool)
@@ -556,14 +548,13 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         1
     );
 
-    let recall: (String, String, String, i64, String, String) = sqlx::query_as("SELECT c.id,c.scheduler_version,r.scheduler_version,p.content_revision,v.change_reason,t.rating FROM learning_memory m JOIN study_cards c ON c.deck_id=m.deck_id JOIN study_reviews r ON r.card_id=c.id JOIN learning_recall_card_profiles p ON p.card_id=c.id JOIN learning_recall_card_versions v ON v.card_id=c.id AND v.revision=2 JOIN learning_recall_scheduler_transitions t ON t.card_id=c.id AND t.review_id=r.id WHERE m.program_id=?")
+    let recall: (String, f64, f64, i64, String, String) = sqlx::query_as("SELECT c.id,c.stability,c.difficulty,p.content_revision,v.change_reason,r.rating FROM learning_memory m JOIN study_cards c ON c.deck_id=m.deck_id JOIN study_reviews r ON r.card_id=c.id JOIN learning_recall_card_profiles p ON p.card_id=c.id JOIN learning_recall_card_versions v ON v.card_id=c.id AND v.revision=2 WHERE m.program_id=?")
         .bind(&copy_id)
         .fetch_one(&pool)
         .await
-        .expect("recall card, review, versions and scheduler transition restored");
+        .expect("recall card, review, versions and FSRS memory restored");
     assert_ne!(recall.0, card_id);
-    assert_eq!(recall.1, "fsrs_6_v1");
-    assert_eq!(recall.2, "fsrs_6_v1");
+    assert_eq!((recall.1, recall.2), (4.5, 5.25));
     assert_eq!(recall.3, 2);
     assert_eq!(recall.4, "Clarified");
     assert_eq!(recall.5, "good");
@@ -595,7 +586,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
     assert_ne!(current.id, current_activity_id);
     assert_eq!(current.predecessor_id.as_deref(), Some(earlier.id.as_str()));
     let copied_activity_operations: Vec<String> = sqlx::query_scalar(
-        "SELECT operation_id FROM learning_practical_activity_operations WHERE program_id=? ORDER BY created_at",
+        "SELECT operation_id FROM learning_operations WHERE program_id=? AND scope='practical_activity' ORDER BY created_at",
     )
     .bind(&copy_id)
     .fetch_all(&pool)

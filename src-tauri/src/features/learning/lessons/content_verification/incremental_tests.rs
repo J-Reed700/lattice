@@ -1,7 +1,9 @@
 use super::*;
+use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
     curriculum_repository::LearningCurriculumRepository, lesson_drafts,
 };
+use crate::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[derive(Default)]
 struct IncrementalModel {
@@ -11,7 +13,28 @@ struct IncrementalModel {
 
 #[async_trait::async_trait]
 impl LLMPort for IncrementalModel {
-    async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            replies.push(self.respond(&prompt).await?);
+        }
+        Ok(fixture_completion(request, replies))
+    }
+    fn model_name(&self) -> &str {
+        "incremental-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+impl IncrementalModel {
+    async fn respond(&self, prompt: &str) -> Result<String> {
         if let Some(response) = fixture_response(prompt) {
             return Ok(response);
         }
@@ -33,26 +56,6 @@ impl LLMPort for IncrementalModel {
             "supported"
         };
         Ok(format!("{verdict}\nReason: Scripted evidence comparison.\nSource quote: {claim}\nSource passage: passage-0"))
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        unreachable!()
-    }
-    fn model_name(&self) -> &str {
-        "incremental-fixture"
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4
-    }
-    fn max_context_tokens(&self) -> usize {
-        128000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
     }
 }
 
@@ -112,18 +115,27 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
         struct RevisionModel;
         #[async_trait::async_trait]
         impl LLMPort for RevisionModel {
-            async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-                assert!(prompt.starts_with("Update claims after a lesson edit."));
-                let data = context(prompt);
-                let passage = data["revisedSection"]["passages"].as_array().unwrap().iter().find(|p|p["field"]=="/body").unwrap();
-                Ok(json!({"changes":[json!({"claimId":0,"passageId":passage["id"],"statement":"mineral0"})],"nonFactualReason":""}).to_string())
+            async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+                let mut replies = Vec::new();
+                for prompt in fixture_prompts(request) {
+                    replies.push(self.respond(&prompt).await?);
+                }
+                Ok(fixture_completion(request, replies))
             }
-            async fn generate_streaming(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<Box<dyn futures::Stream<Item=Result<String>> + Send + Unpin + '_>> { unreachable!() }
             fn model_name(&self) -> &str { "incremental-fixture" }
             fn max_context_tokens(&self) -> usize { 128000 }
             fn count_tokens(&self, text: &str) -> usize { text.len()/4 }
             async fn is_ready(&self) -> Result<bool> { Ok(true) }
         }
+        impl RevisionModel {
+            async fn respond(&self, prompt: &str) -> Result<String> {
+                assert!(prompt.starts_with("Update claims after a lesson edit."));
+                let data = context(prompt);
+                let passage = data["revisedSection"]["passages"].as_array().unwrap().iter().find(|p|p["field"]=="/body").unwrap();
+                Ok(json!({"changes":[json!({"claimId":0,"passageId":passage["id"],"statement":"mineral0"})],"nonFactualReason":""}).to_string())
+            }
+        }
+
         let updated = inventory::revisions::update(&RevisionModel, &content, 0).await?.unwrap();
         assert_eq!(updated.claims.len(), 22);
         for (old, new) in inventory.units[0].claims.iter().zip(&updated.claims).skip(1) {
@@ -224,8 +236,10 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningCurriculumRepository::new(pool.clone());
-    repo.recover_running_jobs().await?;
-    assert!(repo.begin_job(&job).await?);
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let broad_counterevidence = format!(
         "{} COUNTEREVIDENCE",
         (0..170)
@@ -463,22 +477,12 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
         struct NoRequests;
         #[async_trait::async_trait]
         impl LLMPort for NoRequests {
-            async fn generate(
-                &self,
-                _: &str,
-                _: &[String],
-                _: Option<Vec<String>>,
-            ) -> Result<String> {
-                Err(invalid("Unexpected repeated teaching review"))
-            }
-            async fn generate_streaming(
-                &self,
-                _: &str,
-                _: &[String],
-                _: Option<Vec<String>>,
-            ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>>
-            {
-                unreachable!()
+            async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+                let mut replies = Vec::new();
+                for prompt in fixture_prompts(request) {
+                    replies.push(self.respond(&prompt).await?);
+                }
+                Ok(fixture_completion(request, replies))
             }
             fn model_name(&self) -> &str {
                 "scripted-evidence-checker"
@@ -493,6 +497,12 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
                 Ok(true)
             }
         }
+        impl NoRequests {
+            async fn respond(&self, _prompt: &str) -> Result<String> {
+                Err(invalid("Unexpected repeated teaching review"))
+            }
+        }
+
         sources.extend(references(1));
         let restored = crate::features::learning::teaching::review_lesson(
             &NoRequests,

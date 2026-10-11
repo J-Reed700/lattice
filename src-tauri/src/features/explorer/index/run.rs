@@ -30,8 +30,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-/// Status events go out at most this often while counts move; a change of
-/// state always goes out at once.
+/// A status goes to its sink at most this often while counts move; a change of
+/// state always goes at once.
 const STATUS_INTERVAL: Duration = Duration::from_millis(250);
 /// Files read and chunked per trip to the blocking pool.
 const PREPARE_GROUP: usize = 64;
@@ -41,30 +41,53 @@ const COUNT_CEILING_FACTOR: usize = 10;
 /// The walk reports how many files it has found once per this many.
 const SCAN_REPORT_EVERY: usize = 200;
 
-pub type StatusEmitter = Arc<dyn Fn(&FolderIndexStatusDto) + Send + Sync>;
+/// Where a status goes as it moves: a build job's progress while one runs,
+/// and the window while the watcher updates the open folder.
+pub type StatusSink = Arc<dyn Fn(&FolderIndexStatusDto) + Send + Sync>;
 
-/// The open folder's status, and the throttle on telling the UI about it.
+/// A folder index's status, and the throttle on reporting it to a sink.
 pub struct StatusCell {
     status: Mutex<FolderIndexStatusDto>,
     last_emit: Mutex<Option<Instant>>,
-    emit: StatusEmitter,
+    sink: Mutex<Option<StatusSink>>,
 }
 
 impl StatusCell {
-    pub fn new(initial: FolderIndexStatusDto, emit: StatusEmitter) -> Self {
+    pub fn new(initial: FolderIndexStatusDto) -> Self {
         Self {
             status: Mutex::new(initial),
             last_emit: Mutex::new(None),
-            emit,
+            sink: Mutex::new(None),
         }
+    }
+
+    /// Sends every later change to `sink`, starting with the current status.
+    pub fn attach(&self, sink: StatusSink) {
+        self.forward(sink);
+        self.announce();
+    }
+
+    /// Sends every later change to `sink`; the current status is already
+    /// known where it goes.
+    pub fn forward(&self, sink: StatusSink) {
+        *self.sink.lock() = Some(sink);
+    }
+
+    pub fn detach(&self) {
+        *self.sink.lock() = None;
     }
 
     pub fn get(&self) -> FolderIndexStatusDto {
         self.status.lock().clone()
     }
 
-    /// Applies `change` and tells the UI: at once when the state moved,
-    /// otherwise only if the last event is old enough.
+    /// Takes `status` as it is, without reporting it.
+    pub fn replace(&self, status: FolderIndexStatusDto) {
+        *self.status.lock() = status;
+    }
+
+    /// Applies `change` and reports it: at once when the state moved,
+    /// otherwise only if the last report is old enough.
     pub fn update(&self, change: impl FnOnce(&mut FolderIndexStatusDto)) {
         let (snapshot, state_moved) = {
             let mut status = self.status.lock();
@@ -77,14 +100,21 @@ impl StatusCell {
         if state_moved || due {
             *last = Some(Instant::now());
             drop(last);
-            (self.emit)(&snapshot);
+            self.emit(&snapshot);
         }
     }
 
-    /// Sends the current status regardless of the throttle.
+    /// Reports the current status regardless of the throttle.
     pub fn announce(&self) {
         *self.last_emit.lock() = Some(Instant::now());
-        (self.emit)(&self.get());
+        self.emit(&self.get());
+    }
+
+    fn emit(&self, status: &FolderIndexStatusDto) {
+        let sink = self.sink.lock().clone();
+        if let Some(sink) = sink {
+            sink(status);
+        }
     }
 }
 

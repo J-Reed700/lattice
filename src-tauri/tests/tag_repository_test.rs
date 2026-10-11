@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod tag_repository_tests {
-    use lattice::infrastructure::persistence::repositories::TagRepository;
+    use lattice::features::tags::repository::TagRepository;
     use sqlx::SqlitePool;
     async fn setup_test_db() -> SqlitePool {
         let pool = SqlitePool::connect(":memory:")

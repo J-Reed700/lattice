@@ -1,20 +1,5 @@
-//! LLM Factory for creating LLM clients with auto-detection and fallback.
-//!
-//! This factory implements the Factory Pattern to create LLM clients based on
-//! configuration, with graceful fallback when resources are unavailable.
-//!
-//! # Purpose
-//!
-//! - Abstract LLM client creation logic
-//! - Support multiple LLM backends (local, Ollama, mock)
-//! - Auto-detect available resources (local models, Ollama service)
-//! - Graceful degradation when resources unavailable
-//!
-//! # Design
-//!
-//! The factory tries to create the requested LLM client, falling back to a mock
-//! implementation if the requested backend is unavailable. This ensures the
-//! application can continue to function even when LLM services are not available.
+//! LLM factory: a local GGUF behind the bundled llama-server, or an Ollama
+//! endpoint, each behind its backend's scheduler.
 //!
 //! # Example
 //!
@@ -22,7 +7,6 @@
 //! use crate::features::llm::engine::factory::{LLMConfig, create_llm};
 //! use std::path::PathBuf;
 //!
-//! // Try to create local LLM, fallback to mock if unavailable
 //! let config = LLMConfig::Local {
 //!     model_path: PathBuf::from("models/mistral-7b.gguf"),
 //!     n_gpu_layers: 0,  // CPU only (safe default)
@@ -38,15 +22,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
 use crate::application::ports::LLMPort;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
-use crate::features::llm::engine::traits::LLMClient;
 use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
+use crate::features::llm::scheduler::{ollama_scheduler, ScheduledLlm};
 use crate::shared::error::AppError;
 use crate::shared::error::Result;
 
@@ -157,50 +142,11 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
     }
 }
 
-/// Create an LLM client with graceful fallback to mock.
-///
-/// This function wraps `create_llm` and provides automatic fallback to a
-/// mock LLM client if the requested backend is unavailable. This ensures
-/// the application can continue to function even when LLM services are down.
-///
-/// # Arguments
-///
-/// * `config` - LLM configuration specifying backend and parameters
-///
-/// # Returns
-///
-/// Always returns `Ok(Arc<dyn LLMPort>)`, falling back to mock if needed
-///
-/// # Example
-///
-/// ```rust
-/// let config = LLMConfig::Local {
-///     model_path: PathBuf::from("models/mistral-7b.gguf"),
-///     n_gpu_layers: 0,  // CPU only
-///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
-/// };
-///
-/// // Always succeeds, even if model doesn't exist
-/// let llm = create_llm_with_fallback(config).await;
-/// ```
-pub async fn create_llm_with_fallback(config: LLMConfig) -> Arc<dyn LLMPort> {
-    match create_llm(config).await {
-        Ok(llm) => {
-            info!("LLM client created successfully: {}", llm.model_name());
-            llm
-        }
-        Err(e) => {
-            warn!("Failed to create LLM client, using mock: {}", e);
-            Arc::new(MockLLMPort::new()) as Arc<dyn LLMPort>
-        }
-    }
-}
-
 /// Create a local-LLM client backed by the bundled `llama-server`
 /// sidecar. Starts the child process (Metal on macOS, Vulkan on
 /// Windows/Linux, CPU on hardware that can't accelerate), waits for
-/// HTTP readiness, wraps the resulting `SidecarHandle` in a
-/// `SidecarLLMClient` and a `SidecarPortAdapter`.
+/// HTTP readiness, and puts a `LlamaCppLlm` that owns the resulting
+/// `SidecarHandle` behind the server's scheduler.
 ///
 /// Every local role — chat, router, utility — arrives here, so a role whose
 /// model resolves to one already running gets a client over that server
@@ -215,7 +161,6 @@ async fn create_local_llm_sidecar(
     generation_config: GenerationConfig,
     context_window: Option<u32>,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
-    use crate::features::llm::engine::sidecar_client::SidecarLLMClient;
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
     use tauri::Manager;
@@ -293,233 +238,18 @@ async fn create_local_llm_sidecar(
         .and_then(|name| name.to_str())
         .is_some_and(crate::domain::models::curated::chat_model_file_supports_tool_calling);
 
-    let client = SidecarLLMClient::new(handle, model_name, generation_config)?;
+    let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
+        handle,
+        model_name,
+        generation_config,
+        supports_tools,
+    )
+    .map_err(|e| LLMError::Other(e.to_string()))?;
     info!(
         binary,
         n_gpu_layers, supports_tools, "Local LLM (sidecar) ready"
     );
-
-    Ok(Arc::new(SidecarPortAdapter {
-        client,
-        supports_tools,
-    }))
-}
-
-/// Adapts `SidecarLLMClient` (LLMClient trait) to `LLMPort`. The
-/// OpenAI-compat API takes typed messages directly, so this adapter
-/// is simple — context strings get formatted as a single system
-/// message rather than parsed into role-tagged history.
-struct SidecarPortAdapter {
-    client: crate::features::llm::engine::sidecar_client::SidecarLLMClient,
-    /// Whether the loaded GGUF is a catalog model whose chat template carries
-    /// a native tool-call format. Unknown files stay without tools: a template
-    /// that cannot render `tools` answers a tool request with a 500 or with
-    /// prose pretending to be a call.
-    supports_tools: bool,
-}
-
-impl SidecarPortAdapter {
-    /// Messages and tools for a typed request, refusing tool traffic when the
-    /// model cannot take it rather than letting it reach the template as text.
-    fn typed_parts(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>)> {
-        use crate::application::ports::llm_port::CompletionInput;
-
-        let carries_tools = !request.tools.is_empty()
-            || request.input.iter().any(|item| {
-                matches!(
-                    item,
-                    CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. }
-                )
-            });
-        if carries_tools && !self.supports_tools {
-            return Err(AppError::InvalidConfig(
-                "This local model does not support tool calling".into(),
-            ));
-        }
-        let messages = crate::features::llm::llama_cpp::chat_messages(&request.input)?;
-        let tools = (!request.tools.is_empty())
-            .then(|| crate::features::llm::llama_cpp::tool_specs(&request.tools));
-        Ok((messages, tools))
-    }
-}
-
-fn sidecar_tuning<'a>(
-    request: &'a crate::application::ports::llm_port::CompletionRequest,
-    tools: Option<&'a serde_json::Value>,
-) -> crate::features::llm::engine::sidecar_client::RequestTuning<'a> {
-    crate::features::llm::engine::sidecar_client::RequestTuning {
-        reasoning_effort: request.reasoning_effort.as_deref(),
-        json_schema: request.json_schema.as_ref(),
-        time_budget: request.wall_clock_budget(),
-        no_time_limit: request.no_time_limit,
-        sampling: request.sampling,
-        max_output_tokens: request.max_output_tokens,
-        tools,
-        want_logprobs: request.want_logprobs,
-    }
-}
-
-#[async_trait]
-impl LLMPort for SidecarPortAdapter {
-    /// Without this the utility paths fall back to `generate()`, which carries
-    /// neither a reasoning effort nor a response schema — so a reasoning GGUF
-    /// picked as the utility model thought its way through every query rewrite.
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
-
-    /// A crashed llama-server leaves this adapter cached with a dead port;
-    /// saying so lets the role cache drop it and start a fresh server.
-    fn is_alive(&self) -> bool {
-        self.client.is_alive()
-    }
-
-    async fn complete(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        let (messages, tools) = self.typed_parts(request)?;
-        self.client
-            .complete_typed(messages, sidecar_tuning(request, tools.as_ref()))
-            .await
-    }
-
-    async fn complete_with_progress(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        let (messages, tools) = self.typed_parts(request)?;
-        request
-            .within_time_budget(self.client.complete_typed_streaming(
-                messages,
-                sidecar_tuning(request, tools.as_ref()),
-                on_text,
-            ))
-            .await
-            .map_err(|_| {
-                AppError::ServiceNotAvailable(
-                    "Local model generation exceeded its time budget".into(),
-                )
-            })?
-    }
-
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        let (messages, tools) = self.typed_parts(request)?;
-        request
-            .within_time_budget(self.client.complete_typed_streaming_with_reasoning(
-                messages,
-                sidecar_tuning(request, tools.as_ref()),
-                on_text,
-                on_reasoning,
-            ))
-            .await
-            .map_err(|_| {
-                AppError::ServiceNotAvailable(
-                    "Local model generation exceeded its time budget".into(),
-                )
-            })?
-    }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        let system = if context.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "Use the following context to answer the question:\n\n{}",
-                context.join("\n\n")
-            ))
-        };
-
-        crate::features::llm::engine::traits::LLMClient::generate(
-            &self.client,
-            prompt,
-            system.as_deref(),
-            images,
-        )
-        .await
-        .map_err(|e| crate::shared::error::AppError::Other(format!("LLM generation failed: {e}")))
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::stream::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        let system = if context.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "Use the following context to answer the question:\n\n{}",
-                context.join("\n\n")
-            ))
-        };
-
-        let stream = crate::features::llm::engine::traits::LLMClient::generate_stream(
-            &self.client,
-            prompt,
-            system.as_deref(),
-            images,
-        )
-        .await
-        .map_err(|e| crate::shared::error::AppError::Other(format!("LLM streaming failed: {e}")))?;
-
-        // LLMClient yields Result<String, LLMError>; LLMPort wants
-        // Result<String, AppError>. Map the error type.
-        use futures::StreamExt;
-        let mapped = stream.map(|item| {
-            item.map_err(|e| crate::shared::error::AppError::Other(format!("Stream error: {e}")))
-        });
-
-        Ok(Box::new(Box::pin(mapped)))
-    }
-
-    fn model_name(&self) -> &str {
-        crate::features::llm::engine::traits::LLMClient::model_name(&self.client)
-    }
-
-    fn max_context_tokens(&self) -> usize {
-        // Report what the sidecar was actually launched with, not a constant.
-        // This is 8192 on GPU machines but 4096 CPU-only and 2048 under the
-        // low-RAM threshold; hard-coding 8192 made every downstream budget
-        // (the context-window builder's 75% slice, `available_for_rag`)
-        // overshoot the real window by 2-4x on smaller machines. The prompt
-        // then got truncated server-side, silently dropping the system prompt
-        // and the oldest history — so the model appeared to ignore its
-        // instructions, and only on lower-spec hardware.
-        self.client.context_size() as usize
-    }
-
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
-    }
-
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(crate::features::llm::engine::traits::LLMClient::health_check(&self.client).await)
-    }
-
-    fn supports_tool_calling(&self) -> bool {
-        self.supports_tools
-    }
-
-    fn provider_name(&self) -> &str {
-        "local-sidecar"
-    }
+    Ok(llm.schedule().await)
 }
 
 /// Create an Ollama LLM client.
@@ -531,7 +261,7 @@ pub async fn create_ollama_llm(
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
 
-    let mut client = OllamaClient::with_model_and_timeouts_and_header(
+    let client = OllamaClient::with_model_and_timeouts_and_header(
         endpoint,
         model,
         Duration::from_secs(120),
@@ -547,7 +277,8 @@ pub async fn create_ollama_llm(
         }
     })?;
 
-    *client.generation_config_mut() = generation_config;
+    let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
+    let client = client.with_generation_config(generation_config);
 
     if !client.health_check().await {
         error!("Ollama health check failed: {}", endpoint);
@@ -558,7 +289,15 @@ pub async fn create_ollama_llm(
     }
 
     info!("Ollama LLM client created successfully");
-    Ok(Arc::new(client) as Arc<dyn LLMPort>)
+    let scheduler = ollama_scheduler(
+        endpoint,
+        crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
+    );
+    Ok(Arc::new(ScheduledLlm::new(
+        Arc::new(client),
+        scheduler,
+        output_limit,
+    )))
 }
 
 /// Infer model information from file path.
@@ -752,15 +491,15 @@ impl MockLLMPort {
 
 #[async_trait]
 impl LLMPort for MockLLMPort {
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         warn!("Using mock LLM - returning intelligent response");
 
-        let response = if !context.is_empty() {
+        let prompt = match request.input.last() {
+            Some(CompletionInput::Message { content, .. }) => content.as_str(),
+            _ => "",
+        };
+        let context = request.input.len().saturating_sub(1);
+        let response = if context > 0 {
             // If context is provided, acknowledge it
             format!(
                 "Based on the provided context, I can help answer your question about: {}. \
@@ -769,9 +508,7 @@ impl LLMPort for MockLLMPort {
                 1. Start Ollama with a model (e.g., `ollama run llama3.1:8b`), or\n\
                 2. Download a local model from Settings → Models\n\n\
                 Your question: {}\n\nContext references: {} document(s) available",
-                prompt,
-                prompt,
-                context.len()
+                prompt, prompt, context
             )
         } else {
             // Provide contextual responses based on common queries
@@ -809,21 +546,7 @@ impl LLMPort for MockLLMPort {
             }
         };
 
-        Ok(response)
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::stream::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        warn!("Using mock LLM streaming - returning single chunk");
-
-        let response = self.generate(prompt, context, None).await?;
-        let stream = futures::stream::once(async move { Ok(response) });
-
-        Ok(Box::new(Box::pin(stream)))
+        Ok(CompletionResponse::from_text(response))
     }
 
     fn model_name(&self) -> &str {
@@ -832,11 +555,6 @@ impl LLMPort for MockLLMPort {
 
     fn max_context_tokens(&self) -> usize {
         4096
-    }
-
-    fn count_tokens(&self, text: &str) -> usize {
-        // Simple heuristic: 1 token ≈ 4 characters
-        text.len().div_ceil(4)
     }
 
     async fn is_ready(&self) -> Result<bool> {
@@ -878,20 +596,6 @@ pub fn find_local_model() -> Option<PathBuf> {
     }
 
     None
-}
-
-/// Check if Ollama is available at the default endpoint.
-///
-/// # Returns
-///
-/// `true` if Ollama is reachable, `false` otherwise
-pub async fn is_ollama_available() -> bool {
-    let endpoint = "http://localhost:11434";
-
-    match OllamaClient::new(endpoint) {
-        Ok(client) => client.health_check().await,
-        Err(_) => false,
-    }
 }
 
 #[cfg(test)]
@@ -1020,13 +724,16 @@ mod tests {
     async fn test_mock_llm_port() {
         let mock = MockLLMPort::new();
 
-        let response = mock.generate("test prompt", &[], None).await.unwrap();
-        assert!(response.contains("mock mode") || response.contains("asking about"));
-
-        let response_with_context = mock
-            .generate("test", &["doc1".to_string()], None)
+        use crate::application::services::completion_input::{complete_text, TextCall};
+        let response = complete_text(&mock, "test prompt", &[], TextCall::default())
             .await
             .unwrap();
+        assert!(response.contains("mock mode") || response.contains("asking about"));
+
+        let response_with_context =
+            complete_text(&mock, "test", &["doc1".to_string()], TextCall::default())
+                .await
+                .unwrap();
         assert!(response_with_context.contains("context"));
 
         let ready = mock.is_ready().await.unwrap();
@@ -1045,20 +752,5 @@ mod tests {
 
         let result = create_llm(config).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_create_llm_with_fallback() {
-        let config = LLMConfig::Local {
-            model_path: PathBuf::from("/nonexistent/model.gguf"),
-            n_gpu_layers: 0,
-            generation_config: GenerationConfig::default(),
-            app_handle: None,
-            context_window: None,
-        };
-
-        // Should always succeed with fallback
-        let llm = create_llm_with_fallback(config).await;
-        assert_eq!(llm.model_name(), "mock-llm");
     }
 }

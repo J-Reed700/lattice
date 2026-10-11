@@ -2,7 +2,7 @@ use crate::shared::error::Result;
 use async_trait::async_trait;
 
 use crate::application::ports::{
-    BatchJobRepositoryPort, ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
+    ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
 use crate::domain::repositories::{SearchRepository, SystemRepository};
@@ -52,8 +52,6 @@ pub trait UnitOfWork: Send + Sync {
     fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>>;
 
     fn search_repository(&self) -> Result<Box<dyn SearchRepository + Send + '_>>;
-
-    fn batch_job_repository(&self) -> Result<Box<dyn BatchJobRepositoryPort + Send + '_>>;
 
     fn system_repository(&self) -> Result<Box<dyn SystemRepository + Send + '_>>;
 

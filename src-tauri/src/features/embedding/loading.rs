@@ -1,9 +1,9 @@
 //! Loads embedding artifacts and validates compatibility before publication.
 
 use crate::application::ports::EmbeddingPort;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::infrastructure::security::SecurityContext;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;

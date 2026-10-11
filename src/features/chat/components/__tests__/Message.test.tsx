@@ -2,9 +2,9 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
-import { useChatReaderStore } from '@/stores/chatReaderStore';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
-import { useExplorerStore } from '@/stores/explorerStore';
+import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -23,7 +23,7 @@ const sendMessage = vi.fn().mockResolvedValue(undefined);
 const retryFailedMessage = vi.fn().mockResolvedValue(undefined);
 const dismissFailedMessage = vi.fn();
 
-vi.mock('@/stores/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_state: unknown) => unknown) => selector({
     messageVerification: new Map([['answer', verificationSummary]]),
     messageBookmarkMap: new Map(), lastMessageSources: new Map(), messageRetrieval: new Map(),
@@ -38,8 +38,9 @@ vi.mock('react-router', async () => {
   const actual = await vi.importActual<typeof import('react-router')>('react-router');
   return { ...actual, useNavigate: () => vi.fn() };
 });
-vi.mock('@/hooks/queries' , () => ({ useSettingsQuery: () => ({ data: undefined }), usePassageReferenceIds: () => [] }));
-vi.mock('@/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ activeModel: null }) }));
+vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: undefined }) }));
+vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ activeModel: null }) }));
 // The chips the answer body draws are what the reader is opened from, so the
 // viewer stands in for tiptap by drawing them.
 vi.mock('@/components/TiptapEditor', () => ({
@@ -70,7 +71,7 @@ vi.mock('@/features/chat/components/MessageActions', () => ({ MessageActions: ()
 vi.mock('@/features/chat/components/turn/TurnRecord', () => ({ TurnRecord: () => null }));
 // Owned by another track; this file is about what the answer itself does.
 vi.mock('@/features/chat/components/EvidenceMargin', () => ({ EvidenceMargin: () => null }));
-vi.mock('@/features/chat/components/SourceCitations', () => ({ SourceCitations: () => null }));
+vi.mock('@/features/reading/components/SourceCitations', () => ({ SourceCitations: () => null }));
 
 const source = (number: number): SourceWithMetadata => ({
   documentId: `document-${number}`,
@@ -101,15 +102,14 @@ describe('clean reading', () => {
   it('keeps Explorer file navigation working when citations are hidden', () => {
     explorerRoot = '/project';
     const reveal = vi.fn();
-    const originalReveal = useExplorerStore.getState().reveal;
-    useExplorerStore.setState({ reveal });
+    setFolderThreadHost({ focusFor: () => null, reveal, openFile: vi.fn() });
     try {
       useCitationDisplayStore.setState({ visible: false });
       renderAnswer();
       fireEvent.click(screen.getByText('src/example.ts:12-14'));
       expect(reveal).toHaveBeenCalledWith('src/example.ts', { startLine: 12, endLine: 14 });
     } finally {
-      useExplorerStore.setState({ reveal: originalReveal });
+      setFolderThreadHost(null);
     }
   });
 

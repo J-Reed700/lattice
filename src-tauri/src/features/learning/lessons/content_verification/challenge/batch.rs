@@ -34,28 +34,16 @@ pub(in crate::features::learning::lessons::content_verification) async fn guard_
         .collect::<Vec<_>>();
     let (prompt, _) = render_batch_evidence(&targets);
     let system = format!("{SYSTEM}\n\nThis request contains several independent claims and a bank of shared source passages. For EACH claim, use only the passages in that claim's evidenceIds. Other claims and evidence allocated only to them are not evidence for this claim. Review each claim separately; do not infer that approval or a concern applies to the whole batch. Return JSON with checks: exactly one object for every supplied claim ID, containing id and queries. Keep queries empty only when that claim has no concrete unresolved concern. Do not omit any claim or invent an ID.");
-    let remaining = llm
-        .max_context_tokens()
-        .saturating_sub(llm.count_tokens(&system) + llm.count_tokens(&prompt));
-    if remaining < 1200 * targets.len() {
-        return Err(invalid(
-            "The evidence challenge batch needs a smaller context.",
-        ));
-    }
     let ids: Vec<_> = (0..targets.len())
         .map(|index| format!("claim-{index}"))
         .collect();
-    let response = llm.complete_with_retry_progress(&CompletionRequest {
-        input:vec![CompletionInput::Message {role:"system".into(),content:system},CompletionInput::Message {role:"user".into(),content:prompt}],
-        json_schema:Some(json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}})),
-        sampling:Some(SamplingOverride::deterministic()),reasoning_effort:Some("low".into()),max_output_tokens:Some(remaining.min(u32::MAX as usize) as u32),no_time_limit:true,..Default::default()
-    }, &|text| {
-        crate::features::learning::lesson_progress::received(&text);
-        Ok(())
-    }, &|attempt| {
-        crate::features::learning::lesson_progress::model_retry(attempt);
-        Ok(())
-    }).await?;
+    let schema = json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":targets.len(),"maxItems":targets.len(),"items":{"type":"object","additionalProperties":false,"required":["id","queries"],"properties":{"id":{"type":"string","enum":ids},"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}}}}});
+    let response = send_challenge(
+        llm,
+        challenge_request(&system, prompt, schema, targets.len()),
+        "The evidence challenge batch needs a smaller context.",
+    )
+    .await?;
     let checks = if matches!(
         response.finish_reason.as_str(),
         "stop" | "end_turn" | "completed"

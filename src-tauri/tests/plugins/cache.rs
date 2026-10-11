@@ -1,8 +1,6 @@
 //! Smoke tests for Cache plugin DTOs
 
-use lattice::features::cache::commands::{
-    CacheMetrics, CacheOperation, CacheResponse, SearchCacheStats,
-};
+use lattice::features::cache::commands::{CacheMetrics, SearchCacheStats};
 
 #[test]
 fn test_cache_stats_creation() {
@@ -49,34 +47,6 @@ fn test_cache_metrics_creation() {
     assert_eq!(metrics.hits, 200);
     assert_eq!(metrics.misses, 100);
     assert_eq!(metrics.hit_rate, 0.667);
-}
-
-#[test]
-fn test_cache_operation_clear() {
-    let json = r#"{"action":"clear"}"#;
-    let op: CacheOperation = serde_json::from_str(json).expect("Failed to parse");
-    matches!(op, CacheOperation::Clear);
-}
-
-#[test]
-fn test_cache_operation_get_stats() {
-    let json = r#"{"action":"getStats"}"#;
-    let op: CacheOperation = serde_json::from_str(json).expect("Failed to parse");
-    matches!(op, CacheOperation::GetStats);
-}
-
-#[test]
-fn test_cache_operation_get_metrics() {
-    let json = r#"{"action":"getMetrics"}"#;
-    let op: CacheOperation = serde_json::from_str(json).expect("Failed to parse");
-    matches!(op, CacheOperation::GetMetrics);
-}
-
-#[test]
-fn test_cache_response_cleared() {
-    let response = CacheResponse::Cleared;
-    let json = serde_json::to_string(&response).expect("Failed to serialize");
-    assert!(json.contains("cleared"));
 }
 
 #[test]

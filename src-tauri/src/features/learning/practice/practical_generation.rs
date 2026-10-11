@@ -15,10 +15,7 @@ use crate::features::learning::{
     },
 };
 use crate::{
-    application::ports::{
-        llm_port::{CompletionInput, CompletionRequest},
-        LLMPort,
-    },
+    application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
@@ -123,54 +120,33 @@ async fn complete_json(
     schema: serde_json::Value,
     max_tokens: u32,
 ) -> Result<String> {
-    if llm.count_tokens(system) + llm.count_tokens(&prompt) + max_tokens as usize
-        > llm.max_context_tokens()
+    let response = crate::features::learning::model_call::send(
+        llm,
+        crate::features::learning::model_call::structured(
+            system,
+            prompt,
+            schema,
+            max_tokens as usize,
+            "medium",
+        ),
+        None,
+        Some(crate::features::learning::model_call::Deadline {
+            after: Duration::from_secs(120),
+            message: "Practical generation timed out.",
+        }),
+        "The practical activity exceeds this model's context window.",
+    )
+    .await?;
+    let finish = response.finish_reason.to_ascii_lowercase();
+    if ["length", "max_tokens", "max_output_tokens", "incomplete"]
+        .iter()
+        .any(|reason| finish.contains(reason))
     {
         return Err(invalid(
-            "The practical activity exceeds this model's context window.",
+            "The model returned an incomplete practical activity.",
         ));
     }
-    let output = tokio::time::timeout(Duration::from_secs(120), async {
-        if llm.supports_typed_completions() {
-            let response = llm
-                .complete(&CompletionRequest {
-                    input: vec![
-                        CompletionInput::Message {
-                            role: "system".into(),
-                            content: system.into(),
-                        },
-                        CompletionInput::Message {
-                            role: "user".into(),
-                            content: prompt,
-                        },
-                    ],
-                    json_schema: Some(schema),
-                    reasoning_effort: Some("medium".into()),
-                    max_output_tokens: Some(max_tokens),
-                    ..Default::default()
-                })
-                .await?;
-            let finish = response.finish_reason.to_ascii_lowercase();
-            if ["length", "max_tokens", "max_output_tokens", "incomplete"]
-                .iter()
-                .any(|reason| finish.contains(reason))
-            {
-                return Err(invalid(
-                    "The model returned an incomplete practical activity.",
-                ));
-            }
-            Ok(response.text)
-        } else {
-            llm.generate(
-                &format!("{system}\n\nReturn only JSON matching the supplied contract.\n{prompt}"),
-                &[],
-                None,
-            )
-            .await
-        }
-    })
-    .await
-    .map_err(|_| AppError::ServiceNotAvailable("Practical generation timed out.".into()))??;
+    let output = response.text;
     if output.chars().count() > MAX_RESPONSE_CHARS {
         return Err(invalid("The generated practical activity is too large."));
     }

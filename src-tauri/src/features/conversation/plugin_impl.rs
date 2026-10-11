@@ -25,8 +25,8 @@ use crate::features::conversation::space_dto::{
     ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
     MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
     RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
-    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
-    UpsertConversationSpaceMemberRequestDto,
+    SetJournalEntryPinnedRequestDto, UpdateConversationJournalRequestDto,
+    UpdateConversationSpaceRequestDto, UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::ipc::ApiError;
@@ -36,7 +36,11 @@ pub use super::branching::{
     promote_conversation_tangent_impl, regenerate_response_impl, truncate_conversation_after_impl,
 };
 pub use super::handoff::continue_in_new_conversation_impl;
-pub use super::synthesis::synthesize_journal_entries_impl;
+pub use super::synthesis::{
+    dismiss_journal_synthesis_impl, get_journal_synthesis_result_impl, list_journal_syntheses_impl,
+    mark_journal_synthesis_applied_impl, retry_journal_synthesis_impl,
+    synthesize_journal_entries_impl,
+};
 pub use super::workspace_dto::*;
 
 pub async fn create_conversation_impl(
@@ -346,6 +350,26 @@ pub async fn remove_conversation_from_journal_impl(
 ) -> Result<RenameConversationResponseDto, ApiError> {
     ConversationRepository::new(container.db_pool().clone())
         .remove_conversation_from_journal(request)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn set_journal_entry_pinned_impl(
+    request: SetJournalEntryPinnedRequestDto,
+    container: &Container,
+) -> Result<(), ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .set_journal_entry_pinned(request)
+        .await
+        .map_err(ApiError::from)
+}
+
+pub async fn list_journal_entry_pins_impl(
+    journal_space_id: String,
+    container: &Container,
+) -> Result<Vec<String>, ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .list_journal_entry_pins(&journal_space_id)
         .await
         .map_err(ApiError::from)
 }
@@ -704,7 +728,7 @@ pub async fn get_conversation_memory_impl(
 /// summarization, and the length cap alone would reject every conversation long
 /// enough to be worth compacting.
 ///
-/// [`CompactionJob`]: crate::application::services::conversation_memory::CompactionJob
+/// [`CompactionJob`]: crate::features::conversation::memory::CompactionJob
 pub async fn compact_conversation_impl(
     request: CompactConversationRequestDto,
     container: &Container,
@@ -736,9 +760,8 @@ pub async fn compact_conversation_impl(
     let outcome = job
         .run(
             conversation_id,
-            crate::application::services::conversation_memory::CompactionRequest {
-                trigger:
-                    crate::application::services::conversation_memory::CompactionTrigger::Manual,
+            crate::features::conversation::memory::CompactionRequest {
+                trigger: crate::features::conversation::memory::CompactionTrigger::Manual,
                 keep_recent_messages: request.keep_recent_messages.map(|value| value as usize),
                 ..Default::default()
             },
@@ -752,9 +775,9 @@ pub async fn compact_conversation_impl(
 /// Map a run onto the compaction DTO.
 fn compaction_response(
     conversation_id: &str,
-    outcome: &crate::application::services::conversation_memory::CompactionOutcome,
+    outcome: &crate::features::conversation::memory::CompactionOutcome,
 ) -> Result<CompactConversationResponseDto, ApiError> {
-    use crate::application::services::conversation_memory::CompactionStatus;
+    use crate::features::conversation::memory::CompactionStatus;
     use crate::features::conversation::memory_dto::CompactionMemoryDto;
 
     if outcome.status == CompactionStatus::NothingToCompact {

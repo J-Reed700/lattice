@@ -3,13 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, Bookmark, Copy, PanelLeft, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { FilePreviewModal } from '@/features/chat/components/FilePreviewModal';
+import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { PassageReader } from '@/features/references/components/PassageReader';
 import { ReferenceList } from '@/features/references/components/ReferenceList';
 import { ReferenceReader } from '@/features/references/components/ReferenceReader';
 import { useReferenceInbox } from '@/features/references/hooks/useReferenceInbox';
-import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
-import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { PassageReferenceDto } from '@/types/api/references';
@@ -68,7 +68,6 @@ export function ReferenceInbox() {
     isResolvingSelected,
     resolutionFailed,
     resolveCaptureDestination,
-    resolveJournalSpaceIdForNote,
     captureReference,
     removeReference,
     saveAnnotations,
@@ -135,13 +134,12 @@ export function ReferenceInbox() {
         noteId: reference.noteId,
         snapshotId: reference.snapshotId,
       });
-      const journalSpaceId = resolveJournalSpaceIdForNote(reference.noteId);
-      if (journalSpaceId) {
-        params.set('journalSpaceId', journalSpaceId);
+      if (reference.journalId) {
+        params.set('journalSpaceId', reference.journalId);
       }
       navigate(`/journals?${params.toString()}`);
     },
-    [navigate, resolveJournalSpaceIdForNote],
+    [navigate],
   );
 
   const handleCopy = useCallback(

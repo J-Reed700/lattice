@@ -7,10 +7,10 @@ import {
 } from 'lucide-react';
 
 import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
-import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
-import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
-import { useConversationsStore } from '@/stores/conversationsStore';
-import type { PaletteCommand } from '@/stores/paletteCommandsStore';
+import { useActiveSynthesis } from '@/features/journal/synthesis/synthesisPanel';
+import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
 
@@ -18,14 +18,19 @@ export function useConversationSynthesis() {
   const queryClient = useQueryClient();
   const { conversations, activeConversationId, continueInNewConversation } = useConversationsStore();
   const [continuingConversationId, setContinuingConversationId] = useState<string | null>(null);
-  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
-  const synthesizingConversationId = useSynthesisStore(state => state.job?.status === 'running' && state.job.conversationIds.length === 1 ? state.job.conversationIds[0] : null);
+  const activeSynthesis = useActiveSynthesis();
+  const isSynthesizing = activeSynthesis !== null;
+  const synthesizingConversationId = activeSynthesis?.conversationIds.length === 1 ? activeSynthesis.conversationIds[0] : null;
   const synthesizeConversationToJournal = useCallback(async (id: string, title: string) => {
-    await runSynthesis({
-      title, heading: title,
-      request: { conversationIds: [id], scope: 'conversation', maxEntries: 1 },
-      destination: { kind: 'capture' },
-    }, queryClient);
+    try {
+      await runSynthesis({
+        title, heading: title,
+        request: { conversationIds: [id], scope: 'conversation', maxEntries: 1 },
+        destination: { kind: 'capture' },
+      }, queryClient);
+    } catch (error) {
+      toast.error("Couldn't start the synthesis", { message: error instanceof Error ? error.message : String(error) });
+    }
   }, [queryClient]);
   // A long thread slows every turn and its opening falls out of the model's
   // window. This carries what it established into a fresh chat in the same

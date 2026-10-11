@@ -17,7 +17,7 @@ vi.mock('@/lib/api', () => ({
   VaultAPI: api,
 }));
 
-vi.mock('@/stores/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: () => storeState.current,
 }));
 

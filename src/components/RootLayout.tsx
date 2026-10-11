@@ -3,24 +3,21 @@ import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { PenLine } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 
-import { CommandPalette } from './CommandPalette';
-import { QuickCaptureDialog, readClipboardText } from './QuickCapture';
-import { useSynthesisStore } from '../features/journal/synthesis/synthesisStore';
+import { useDeepResearchJobs } from '../features/jobs/research';
+import { QuickCaptureDialog } from '../features/journal/components/QuickCaptureDialog';
+import { useJournalSyntheses } from '../features/journal/synthesis/api';
+import { useSynthesisPanel } from '../features/journal/synthesis/synthesisPanel';
+import { CommandPalette } from '../features/palette/components/CommandPalette';
+import { useRegisterPaletteCommands } from '../features/palette/hooks/useRegisterPaletteCommands';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { useRegisterPaletteCommands } from '../hooks/useRegisterPaletteCommands';
+import { NEW_ITEM_EVENT } from '../shared/newItemEvent';
+import { readClipboardText } from '../utils/clipboard';
 
-import type { PaletteCommand } from '../stores/paletteCommandsStore';
+import type { PaletteCommand } from '../features/palette/stores/paletteCommandsStore';
 
 const SynthesisProgress = lazy(async () => ({
   default: (await import('../features/journal/synthesis/SynthesisProgress')).SynthesisProgress,
 }));
-
-/**
- * Fired on ⌘N. Surfaces that can create something (Chat, Journal) listen for
- * it and create in place; everywhere else ⌘N opens Chat with `?new=1`, which
- * the Chat surface turns into a fresh conversation.
- */
-export const NEW_ITEM_EVENT = 'lattice:new';
 
 /**
  * RootLayout — wraps every route. Owns the command palette, the quick-capture
@@ -30,7 +27,11 @@ export const NEW_ITEM_EVENT = 'lattice:new';
 export function RootLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const hasSynthesis = useSynthesisStore(state => state.job !== null);
+  // Syntheses are jobs: one that finished while the app was closed shows too.
+  const syntheses = useJournalSyntheses();
+  const savedSynthesis = useSynthesisPanel(state => state.saved !== null);
+  const hasSynthesis = savedSynthesis || (syntheses.data?.length ?? 0) > 0;
+  useDeepResearchJobs();
   const [capture, setCapture] = useState<{ open: boolean; clipboard: string | null }>({
     open: false,
     clipboard: null,

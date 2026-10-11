@@ -1,35 +1,8 @@
 use super::*;
+use crate::application::ports::llm_port::CompletionResponse;
+use crate::features::conversation::repository::ConversationRepository;
+use crate::features::search::use_cases::HybridSearchUseCase;
 use std::sync::Arc;
-
-fn hit(id: &str, doc: &str, score: f32) -> SearchResultDto {
-    SearchResultDto {
-        id: id.into(),
-        document_id: Some(doc.into()),
-        score,
-        title: doc.into(),
-        content: id.into(),
-        path: None,
-        position: None,
-        vector_score: None,
-        bm25_score: None,
-        vector_rank: None,
-        bm25_rank: None,
-        metadata: HashMap::new(),
-    }
-}
-
-#[test]
-fn ranks_fuse_across_different_score_scales_and_keep_document_diversity() {
-    let vector = vec![hit("v", "a", 0.99), hit("shared", "b", 0.4)];
-    let lexical = vec![hit("shared", "b", 100.0), hit("k", "c", 90.0)];
-    let fused = fuse_branches(vec![(0.7, vector), (0.3, lexical)], 3);
-    assert_eq!(fused[0].id, "shared");
-    let mut crowded: Vec<_> = (0..12).map(|i| hit(&format!("a{i}"), "a", 1.0)).collect();
-    crowded.push(hit("b0", "b", 0.1));
-    let diverse = fuse_branches(vec![(1.0, crowded)], 8);
-    assert_eq!(diverse[4].id, "b0");
-    assert_eq!(diverse.len(), 8);
-}
 
 #[test]
 fn exact_references_keep_subsections_and_deduplicate_before_the_budget() {
@@ -108,7 +81,6 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let semantic = SemanticSearchUseCase::new(embedder.clone(), index.clone());
     // The fixture deliberately lacks an FTS index too; both search branches fail.
     let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
     let scope = super::super::SpaceDocumentScope {
@@ -120,17 +92,9 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
         opening_document_ids: vec![],
         start_at_beginning: false,
     };
-    let found = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "Explain 706.07(a)",
-        &plan,
-        &scope,
-        8,
-    )
-    .await
-    .unwrap();
+    let found = retrieve(&repository, &hybrid, "Explain 706.07(a)", &plan, &scope, 8)
+        .await
+        .unwrap();
     assert_eq!(
         found
             .results
@@ -139,17 +103,11 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
             .collect::<Vec<_>>(),
         ["a-sub", "a-nested"]
     );
-    assert!(retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "Explain 999.99",
-        &plan,
-        &scope,
-        8
-    )
-    .await
-    .is_err());
+    assert!(
+        retrieve(&repository, &hybrid, "Explain 999.99", &plan, &scope, 8)
+            .await
+            .is_err()
+    );
 }
 
 /// A chat's attachment belongs to no space, so it has no membership row. The
@@ -182,7 +140,6 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     // Degraded embedder: the vector branch fails, so only keyword can answer.
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let semantic = SemanticSearchUseCase::new(embedder.clone(), index.clone());
     let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
     let scope = super::super::SpaceDocumentScope {
         space_id: "space_movies".into(),
@@ -193,17 +150,9 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
         opening_document_ids: vec![],
         start_at_beginning: false,
     };
-    let found = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        "quarterly budget",
-        &plan,
-        &scope,
-        8,
-    )
-    .await
-    .unwrap();
+    let found = retrieve(&repository, &hybrid, "quarterly budget", &plan, &scope, 8)
+        .await
+        .unwrap();
     assert!(
         found.results.iter().any(|p| p.id == "a1"),
         "{:?}",
@@ -393,7 +342,6 @@ async fn live_corpus_retrieval_and_answer() {
         )
         .unwrap();
     assert!(count > 0);
-    let semantic = SemanticSearchUseCase::new(embedding.clone(), index.clone());
     let hybrid = HybridSearchUseCase::new(
         embedding.clone(),
         index.clone(),
@@ -435,26 +383,25 @@ async fn live_corpus_retrieval_and_answer() {
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
     let llm = LlamaCppLlm::new(&config).unwrap();
     let started = Instant::now();
-    let plan = plan(&llm, &question, None, &catalog, &HashMap::new())
-        .await
-        .unwrap();
+    let plan = plan(
+        &llm,
+        &question,
+        None,
+        &catalog,
+        &HashMap::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     println!(
         "Live plan ({:?}): {}",
         started.elapsed(),
         serde_json::to_string(&plan).unwrap()
     );
     let search_started = Instant::now();
-    let response = retrieve(
-        &repository,
-        &semantic,
-        &hybrid,
-        &question,
-        &plan,
-        &scope,
-        16,
-    )
-    .await
-    .unwrap();
+    let response = retrieve(&repository, &hybrid, &question, &plan, &scope, 16)
+        .await
+        .unwrap();
     let mut names: Vec<_> = response
         .results
         .iter()
@@ -497,17 +444,9 @@ async fn live_corpus_retrieval_and_answer() {
             start_at_beginning: false,
             opening_document_ids: vec![],
         };
-        let found = retrieve(
-            &repository,
-            &semantic,
-            &hybrid,
-            query,
-            &query_plan,
-            &scope,
-            16,
-        )
-        .await
-        .unwrap();
+        let found = retrieve(&repository, &hybrid, query, &query_plan, &scope, 16)
+            .await
+            .unwrap();
         let expected = if query.contains("706") {
             "mpep-0700.pdf"
         } else {
@@ -702,11 +641,24 @@ fn explicit_book_order_keeps_editions_separate_and_reaches_the_first_chapter() {
         .all(|ids| ids[0] < ids[1]));
 }
 
+/// The system instructions a request carries.
+fn system_messages(request: &CompletionRequest) -> Vec<String> {
+    request
+        .input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { role, content } if role == "system" => Some(content.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Records what the planner was asked and replays canned JSON plans.
 struct PlannerStub {
     responses: std::sync::Mutex<std::collections::VecDeque<String>>,
     prompts: std::sync::Mutex<Vec<String>>,
     systems: std::sync::Mutex<Vec<Vec<String>>>,
+    cancels: std::sync::Mutex<Vec<Option<CancellationToken>>>,
 }
 
 impl PlannerStub {
@@ -715,6 +667,7 @@ impl PlannerStub {
             responses: std::sync::Mutex::new(responses.iter().map(|r| (*r).to_string()).collect()),
             prompts: std::sync::Mutex::new(Vec::new()),
             systems: std::sync::Mutex::new(Vec::new()),
+            cancels: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -729,29 +682,20 @@ impl PlannerStub {
 
 #[async_trait::async_trait]
 impl LLMPort for PlannerStub {
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        self.prompts.lock().unwrap().push(prompt.to_string());
-        self.systems.lock().unwrap().push(context.to_vec());
-        Ok(self
-            .responses
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.prompts
             .lock()
             .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| "{}".to_string()))
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(Box::pin(futures::stream::empty())))
+            .push(request.user_text().to_string());
+        self.systems.lock().unwrap().push(system_messages(request));
+        self.cancels.lock().unwrap().push(request.cancel.clone());
+        Ok(CompletionResponse::from_text(
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| "{}".to_string()),
+        ))
     }
 
     fn model_name(&self) -> &str {
@@ -799,6 +743,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         None,
         &correction_catalog(),
         &correction,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -807,7 +752,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
     // One system prompt for both passes: a correction is evidence in the user
     // turn, not a second prompt to keep in sync.
     let systems = stub.systems.lock().unwrap();
-    assert_eq!(systems[0], [format!("System: {PLANNER_SYSTEM}")]);
+    assert_eq!(systems[0], [PLANNER_SYSTEM.to_string()]);
     let prompt = stub.last_prompt();
     assert!(prompt.contains("noncompete clauses"), "{prompt}");
     assert!(prompt.contains("Quarterly revenue"), "{prompt}");
@@ -816,6 +761,31 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
     // which is how one retry could otherwise cascade into a different pipeline.
     assert!(plan.opening_document_ids.is_empty());
     assert!(!plan.start_at_beginning);
+}
+
+/// A stop press must take the plan out of the backend's queue.
+#[tokio::test]
+async fn the_planner_request_carries_the_turns_cancellation() {
+    let stub = PlannerStub::new(&[
+        r#"{"queries":["garden leave notice period"],"opening_document_ids":[],"start_at_beginning":false}"#,
+    ]);
+    let turn = CancellationToken::new();
+    plan(
+        &stub,
+        "What about garden leave?",
+        None,
+        &correction_catalog(),
+        &HashMap::new(),
+        &turn,
+    )
+    .await
+    .unwrap();
+    let carried = stub.cancels.lock().unwrap()[0]
+        .clone()
+        .expect("the turn's token");
+    assert!(!carried.is_cancelled());
+    turn.cancel();
+    assert!(carried.is_cancelled());
 }
 
 #[tokio::test]
@@ -836,6 +806,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         None,
         &correction_catalog(),
         &correction,
+        &CancellationToken::new(),
     )
     .await;
 
@@ -887,27 +858,15 @@ impl NarrowWindowStub {
 
 #[async_trait::async_trait]
 impl LLMPort for NarrowWindowStub {
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        self.prompts.lock().unwrap().push(prompt.to_string());
-        self.systems.lock().unwrap().push(context.to_vec());
-        Ok(
-            r#"{"queries":["anything"],"opening_document_ids":[],"start_at_beginning":false}"#
-                .to_string(),
-        )
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(Box::pin(futures::stream::empty())))
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.prompts
+            .lock()
+            .unwrap()
+            .push(request.user_text().to_string());
+        self.systems.lock().unwrap().push(system_messages(request));
+        Ok(CompletionResponse::from_text(
+            r#"{"queries":["anything"],"opening_document_ids":[],"start_at_beginning":false}"#,
+        ))
     }
 
     fn model_name(&self) -> &str {
@@ -967,6 +926,7 @@ async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
         Some(&history),
         &wide_catalog(43),
         &Default::default(),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1000,6 +960,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         Some(&"user: earlier turn\n".repeat(200)),
         &wide_catalog(43),
         &correction,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

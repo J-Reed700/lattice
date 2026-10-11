@@ -2,6 +2,14 @@
 
 Date: 2026-09-24. Status: proposal, not built. Branch context: `conversation-memory-release-readiness`.
 
+> **Status (2026-10-10).** Partly built since: the judge reads up to three
+> windows per source (`WINDOWS_PER_SOURCE` in `chat/verification/judge.rs`), a
+> numeric, date or negated claim the judge never reached is `unverified`
+> rather than unsupported, the judge budget is 90 s, and `claim_verification`
+> calls run at verification priority on the backend's scheduler. Learning
+> reuses `claim_verification`. The table below predates these changes; the
+> remaining proposals have not been re-checked against the code.
+
 ## 1. What we have, and why it fails
 
 `src-tauri/src/features/conversation/chat/verification/` runs two passes after every answer:

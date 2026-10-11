@@ -1,7 +1,7 @@
 import { useMemo, type MouseEvent } from 'react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';

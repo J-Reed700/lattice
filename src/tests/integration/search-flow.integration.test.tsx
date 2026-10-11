@@ -2,9 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { SearchInterface } from '../../components/SearchInterface';
+import { SearchInterface } from '@/features/search/components/SearchInterface';
+import type { UseSearchQueryParams } from '@/features/search/hooks/useSearchQuery';
 
-import type { UseSearchQueryParams } from '../../hooks/queries/useSearchQuery';
 import type { SearchResult } from '../../types';
 
 const searchState: {
@@ -21,11 +21,11 @@ const searchState: {
 
 // react-pdf pulls in pdfjs, which needs a canvas DOM this environment lacks.
 // The viewer is not part of the search flow under test.
-vi.mock('../../components/ContentViewer', () => ({
+vi.mock('@/features/reading/components/ContentViewer', () => ({
   ContentViewer: () => null,
 }));
 
-vi.mock('@/hooks/queries', () => ({
+vi.mock('@/features/search/hooks/useSearchQuery', () => ({
   useSearchQuery: (params: UseSearchQueryParams) => {
     searchState.lastParams = params;
     return {

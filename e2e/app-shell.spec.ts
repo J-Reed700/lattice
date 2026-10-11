@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
+import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
+import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
@@ -9,7 +11,7 @@ test('inline citations support keyboard passage navigation and clean reading', a
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings) => {
     localStorage.setItem('chat.sidebar.collapsed', '1');
     const stamp = '2026-10-09T00:00:00Z';
     const conversation = { id: 'citations-chat', title: 'Citation keyboard check', modelName: 'test', createdAt: stamp, updatedAt: stamp, messageCount: 1, totalTokens: 20, spaceId: 'space_general', isArchived: false };
@@ -21,15 +23,22 @@ test('inline citations support keyboard passage navigation and clean reading', a
       webSnapshot: { url: 'https://example.org/field-guide', title: 'Field guide', text, fetchedAt: stamp, truncated: false },
     };
     const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [1]. Keep the observation period [1].', tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
-      if (command === 'plugin:conversation|get_conversation') return { conversation };
-      if (command === 'plugin:conversation|get_conversation_messages') return { messages: [message], total: 1 };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:references|list_passage_references', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-      throw new Error(`Unsupported citation fixture command: ${command}`);
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages: [message], total: 1 }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_journals: () => [],
+      list_conversation_tangents: () => [],
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_passage_references: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, makeAppSettings());
   await page.goto('/chat?conversationId=citations-chat');
@@ -64,7 +73,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     const settings = makeAppSettings();
     settings.llm.provider = 'llamacpp';
     settings.llm.llamaCpp.model = 'qwen-test.gguf';
-    await page.addInitScript(({ settings, entry }) => {
+    await mockCommands(page, ({ settings, entry }) => {
       localStorage.setItem('chat.sidebar.collapsed', '1');
       const stamp = '2026-10-06T00:00:00Z';
       const parent = { id: 'tangent-parent', title: 'Main discussion', modelName: '__llamacpp_server__', createdAt: stamp, updatedAt: stamp, messageCount: 2, totalTokens: 50, spaceId: 'space_general', isArchived: false };
@@ -81,24 +90,31 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
       const persist = () => localStorage.setItem('test:tangents', JSON.stringify(state));
       const expectedPassage = entry === 'reply' ? sourceMessages[1].content : 'explores one idea';
       const conversation = () => ({ ...parent, id: 'tangent-1', title: expectedPassage, messageCount: state.messages.length, tangentParentId: state.promoted ? null : parent.id });
-      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-        const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
-        if (command === 'plugin:settings|get_settings') return settings;
-        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 };
-        if (command === 'plugin:conversation|get_conversation') return { conversation: request?.conversationId === parent.id ? parent : conversation() };
-        if (command === 'plugin:conversation|get_conversation_messages') return { messages: request?.conversationId === parent.id ? sourceMessages : state.messages, total: request?.conversationId === parent.id ? 2 : state.messages.length };
-        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-        if (command === 'plugin:conversation|list_conversation_tangents') return state.tangents;
-        if (command === 'plugin:conversation|create_conversation_tangent') {
+      return {
+        get_settings: () => settings,
+        list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+        list_conversations_explorer: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 }),
+        list_conversations: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 }),
+        get_conversation: (args) => {
+          const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
+          return { conversation: request?.conversationId === parent.id ? parent : conversation() };
+        },
+        get_conversation_messages: (args) => {
+          const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
+          return { messages: request?.conversationId === parent.id ? sourceMessages : state.messages, total: request?.conversationId === parent.id ? 2 : state.messages.length };
+        },
+        list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+        list_conversation_tangents: () => state.tangents,
+        create_conversation_tangent: (args) => {
+          const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
           if (request?.conversationId !== parent.id || request.messageId !== 'source-answer' || request.selectedText !== expectedPassage) throw new Error('Tangent lost the exact source selection');
           const tangent: Tangent = { conversationId: 'tangent-1', parentConversationId: parent.id, sourceConversationId: parent.id, sourceMessageId: request.messageId, selectedText: request.selectedText, title: request.selectedText, createdAt: stamp, updatedAt: stamp, contextMessageCount: 2 };
           state.tangents.push(tangent);
           state.messages = sourceMessages.map(message => ({ ...message, id: `copy-${message.id}`, conversationId: tangent.conversationId }));
           persist();
           return tangent;
-        }
-        if (command === 'plugin:conversation|chat_with_conversation') {
+        },
+        chat_with_conversation: (args) => {
           const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
           if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
           if (turn.cancelOnly) {
@@ -111,13 +127,17 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
             { ...sourceMessages[1], id: 'tangent-answer', conversationId: turn.conversationId, content: 'You can explore that idea on its own.' });
           persist();
           return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 4 };
-        }
-        if (command === 'plugin:conversation|promote_conversation_tangent') {
+        },
+        promote_conversation_tangent: () => {
           if (state.failPromotion) { state.failPromotion = false; persist(); throw new Error('Promotion temporarily unavailable'); }
           state.promoted = true; state.tangents = []; persist(); return conversation();
-        }
-        if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-        throw new Error(`Unsupported tangent fixture command: ${command}`);
+        },
+        list_journals: () => [],
+        list_conversation_linked_documents: () => [],
+        list_conversation_web_sources: () => [],
+        list_downloaded_models: () => [],
+        list_downloads: () => [],
+        get_indexed_folders: () => [],
       };
     }, { settings, entry });
     const errors: Error[] = [];
@@ -192,78 +212,10 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
 }
 
 test.beforeEach(async ({ page }) => {
+  await installTauriMock(page);
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'isTauri', { configurable: true, value: true });
-    let shutdownHandler: number | undefined;
-    window.addEventListener('test:native-quit', (event) => {
-      if (shutdownHandler !== undefined) void callbacks.get(shutdownHandler)?.({ event: 'lattice:shutdown-requested', id: 1, payload: (event as CustomEvent<number>).detail });
-    });
-    let nextCallbackId = 1;
-    let nextListenerId = 1;
-    const callbacks = new Map<number, (...args: unknown[]) => unknown>();
-
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {
-        metadata: {
-          currentWindow: { label: 'main' },
-          currentWebview: { label: 'main' },
-        },
-        transformCallback(callback: (...args: unknown[]) => unknown, once = false) {
-          const id = nextCallbackId++;
-          callbacks.set(id, once ? (...args) => {
-            callbacks.delete(id);
-            return callback(...args);
-          } : callback);
-          return id;
-        },
-        unregisterCallback(id: number) {
-          callbacks.delete(id);
-        },
-        async invoke(command: string, args?: { event?: string; handler?: number; payload?: unknown }) {
-          if ([
-            'plugin:file|list_custom_collections', 'plugin:file|create_custom_collection',
-            'plugin:file|rename_custom_collection', 'plugin:file|delete_custom_collection',
-            'plugin:file|add_documents_to_custom_collection', 'plugin:file|remove_documents_from_custom_collection',
-          ].includes(command)) {
-            return (window as unknown as {
-              __LATTICE_TEST_COLLECTIONS__: (command: string, args?: unknown) => Promise<unknown>;
-            }).__LATTICE_TEST_COLLECTIONS__(command, args);
-          }
-          if (command === 'plugin:event|emit') {
-            if (args?.event === 'lattice:shutdown-response') document.documentElement.dataset.shutdownResponse = JSON.stringify(args.payload);
-            return undefined;
-          }
-          if (command === 'plugin:event|listen') {
-            if (args?.event === 'lattice:shutdown-requested') shutdownHandler = args.handler;
-            return nextListenerId++;
-          }
-          if (command === 'plugin:event|unlisten') {
-            return undefined;
-          }
-          if (command === 'plugin:model|check_first_run_status') {
-            return JSON.stringify({
-              needs_setup: false,
-              recommended_model_id: null,
-              recommended_model_name: null,
-              estimated_size_bytes: null,
-            });
-          }
-          const override = (window as unknown as { __LATTICE_TEST_INVOKE__?: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__;
-          if (override) return override(command, args);
-          throw new Error(`Tauri backend unavailable in renderer smoke test: ${command}`);
-        },
-      },
-    });
-
-    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
-      configurable: true,
-      value: { unregisterListener: () => undefined },
-    });
-  });
 });
 
 for (const width of [1440, 620]) {
@@ -272,11 +224,7 @@ for (const width of [1440, 620]) {
     const settings = makeAppSettings();
     settings.llm.provider = 'auto';
     settings.llm.llamaCpp.model = 'qwen-test.gguf';
-    await page.addInitScript(settings => {
-      const native = (window as unknown as { __TAURI_INTERNALS__: { transformCallback: (fn: (...args: unknown[]) => unknown) => number } }).__TAURI_INTERNALS__;
-      const callbacks = new Map<number, (...args: unknown[]) => unknown>();
-      const transform = native.transformCallback.bind(native);
-      native.transformCallback = fn => { const id = transform(fn); callbacks.set(id, fn); return id; };
+    await mockCommands(page, (settings, ipc) => {
       const stamp = new Date().toISOString();
       const conversation = { id: 'synthesis-chat', title: 'Forest research', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 2, totalTokens: 50 };
       const messages = [
@@ -286,45 +234,61 @@ for (const width of [1440, 620]) {
       let note = { id: 'synthesis-note', title: 'Forest notes', journalId: 'research-journal', content: '', revision: 0, linkedDocumentIds: [], linkedConversationIds: [] as string[], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: stamp, updatedAt: stamp };
       let captureAttempts = 0;
       let synthesisCalls = 0;
-      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-        if (command === 'plugin:settings|get_settings') return settings;
-        if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-        if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations' || command === 'plugin:conversation|list_journal_conversations') return { conversations: [conversation], total: 1 };
-        if (command === 'plugin:conversation|get_conversation') return { conversation };
-        if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: 2 };
-        if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-        if (command === 'plugin:conversation|list_journals') return [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }];
-        if (command === 'plugin:dailynotes|list_workspace_notes') return { notes: [note] };
-        if (command === 'plugin:dailynotes|update_workspace_note') {
+      const results = new Map<string, SynthesizeJournalEntriesResponseDto>();
+      return {
+        get_settings: () => settings,
+        list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+        list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+        list_conversations: () => ({ conversations: [conversation], total: 1 }),
+        list_journal_conversations: () => ({ conversations: [conversation], total: 1 }),
+        get_conversation: () => ({ conversation }),
+        get_conversation_messages: () => ({ messages, total: 2 }),
+        list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+        list_journals: () => [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }],
+        list_journal_entry_pins: () => [],
+        list_workspace_notes: () => ({ notes: [note] }),
+        update_workspace_note: (args) => {
           const next = (args as { note: typeof note }).note;
           if (!next || next.id !== note.id || next.revision !== note.revision) throw new Error('Conflicting page write');
           note = { ...next, revision: next.revision + 1 };
           document.documentElement.dataset.synthesisSavedPage = note.id;
           return note;
-        }
-        if (command === 'plugin:conversation|synthesize_journal_entries') {
+        },
+        // A synthesis is a job: it reports on jobs://status and stages its result.
+        synthesize_journal_entries: (args) => {
           synthesisCalls += 1;
           document.documentElement.dataset.synthesisCalls = String(synthesisCalls);
-          const { onProgress } = args as { onProgress: { id: number } };
-          let index = 0;
-          const report = (stage: string, chunkIndex: number | null) => callbacks.get(onProgress.id)?.({ index: index++, message: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
-          report('gathering', null);
+          const { request } = args as { request: StartJournalSynthesisRequestDto };
+          const id = `synthesis-${synthesisCalls}`;
+          results.set(id, { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] });
+          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null };
+          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch }; ipc.emit('jobs://status', job); };
+          const report = (stage: string, chunkIndex: number | null) => publish({ status: 'running', activity: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
+          setTimeout(() => report('gathering', null), 0);
           window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
           window.addEventListener('test:synthesis-second', () => report('reading', 2), { once: true });
           window.addEventListener('test:synthesis-writing', () => report('writing', null), { once: true });
-          await new Promise<void>(resolve => window.addEventListener('test:synthesis-finish', () => resolve(), { once: true }));
-          return { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] };
-        }
-        if (command === 'plugin:dailynotes|quick_capture') {
+          window.addEventListener('test:synthesis-finish', () => publish({ status: 'completed', resultRef: 'destination', finishedAt: Date.now() }), { once: true });
+          return { job, title: request.title, heading: request.heading, destination: request.destination, conversationIds: request.request.conversationIds, activity: null };
+        },
+        list_journal_syntheses: () => [],
+        get_journal_synthesis_result: (args) => results.get((args as { jobId: string }).jobId) ?? {},
+        mark_journal_synthesis_applied: (args) => results.delete((args as { jobId: string }).jobId),
+        quick_capture: async (args) => {
           captureAttempts += 1;
           if (captureAttempts === 1) throw new Error('The journal could not be saved.');
           await new Promise<void>(resolve => window.addEventListener('test:synthesis-save', () => resolve(), { once: true }));
           const capture = args as { content: string; conversationIds: string[] };
           note = { ...note, content: capture.content, linkedConversationIds: capture.conversationIds, revision: note.revision + 1 };
           return { noteId: note.id, noteTitle: note.title, created: false };
-        }
-        if (['plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:references|list_passage_references', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-        throw new Error(`Unsupported synthesis fixture command: ${command}`);
+        },
+        list_conversation_tangents: () => [],
+        list_conversation_linked_documents: () => [],
+        list_conversation_web_sources: () => [],
+        list_passage_references: () => [],
+        list_downloaded_models: () => [],
+        list_downloads: () => [],
+        get_indexed_folders: () => [],
       };
     }, settings);
     const errors: Error[] = [];
@@ -423,22 +387,22 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
     ? Array.from(await readFile(process.env.LATTICE_PREVIEW_PDF))
     : makePreviewPdf();
   const filePath = `/home/test/.lattice/files/${'a'.repeat(64)}/preview.pdf`;
-  await page.addInitScript(({ settings, bytes, filePath }) => {
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:file|list_all_documents') return [{
+  await mockCommands(page, ({ settings, bytes, filePath }) => {
+    return {
+      get_settings: () => settings,
+      list_all_documents: () => [{
         id: 'imported-pdf', fileName: 'preview.pdf', filePath, fileType: 'pdf',
         category: 'Document', language: 'en', wordCount: 100,
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
-      }];
-      if (command === 'plugin:file|read_file_bytes') {
+      }],
+      read_file_bytes: (args) => {
         if ((args as { path: string }).path !== filePath) throw new Error('Unexpected PDF path');
         return bytes;
-      }
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (command === 'plugin:download|list_downloads') return [];
-      if (command === 'plugin:file|get_indexed_folders' || command === 'plugin:conversation|list_conversation_spaces') return [];
-      throw new Error(`Unsupported PDF fixture command: ${command}`);
+      },
+      initialize_database: () => 'Database initialized',
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_conversation_spaces: () => [],
     };
   }, { settings: makeAppSettings(), bytes, filePath });
   const errors: Error[] = [];
@@ -477,19 +441,21 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
 
 test.describe('Library collections', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(settings => {
+    await mockCommands(page, settings => {
       const documents = ['Field guide.pdf', 'Interview notes.pdf', 'Planning.pdf'].map((fileName, index) => ({
         id: `collection-doc-${index}`, fileName,
         filePath: `/home/test/.lattice/files/${String(index).repeat(64)}/${fileName}`,
         fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200,
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }));
-      (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async command => {
-        if (command === 'plugin:settings|get_settings') return settings;
-        if (command === 'plugin:file|list_all_documents') return documents;
-        if (command === 'plugin:health|initialize_database') return undefined;
-        if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces', 'plugin:conversation|list_document_space_memberships'].includes(command)) return [];
-        throw new Error(`Unsupported collection fixture command: ${command}`);
+      return {
+        get_settings: () => settings,
+        list_all_documents: () => documents,
+        initialize_database: () => 'Database initialized',
+        list_downloads: () => [],
+        get_indexed_folders: () => [],
+        list_conversation_spaces: () => [],
+        list_document_space_memberships: () => [],
       };
     }, makeAppSettings());
     await page.goto('/files');
@@ -667,20 +633,21 @@ test('theme text and destructive actions keep readable contrast', async ({ page 
 
 test('HTML and code previews follow light and dark themes', async ({ page }, testInfo) => {
   const fileRoot = `/home/test/.lattice/files/${'b'.repeat(64)}`;
-  await page.addInitScript(({ settings, fileRoot }) => {
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:file|list_all_documents') return ['article.html', 'example.ts'].map((fileName, index) => ({
+  await mockCommands(page, ({ settings, fileRoot }) => {
+    return {
+      get_settings: () => settings,
+      list_all_documents: () => ['article.html', 'example.ts'].map((fileName, index) => ({
         id: `preview-${index}`, fileName, filePath: `${fileRoot}/${fileName}`, fileType: index ? 'ts' : 'html',
         category: 'Document', language: 'en', wordCount: 100,
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
-      }));
-      if (command === 'plugin:file|read_file_content') return (args as { path: string }).path.endsWith('.ts')
+      })),
+      read_file_content: (args) => (args as { path: string }).path.endsWith('.ts')
         ? 'const answer = 42;'
-        : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>';
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders' || command === 'plugin:conversation|list_conversation_spaces') return [];
-      throw new Error(`Unsupported theme preview fixture command: ${command}`);
+        : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>',
+      initialize_database: () => 'Database initialized',
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_conversation_spaces: () => [],
     };
   }, { settings: makeAppSettings(), fileRoot });
   await page.emulateMedia({ colorScheme: 'light' });
@@ -708,21 +675,21 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
 // These tests exercise the real renderer/settings controls against a simulated
 // persistent IPC repository. They do not claim native desktop persistence.
 test('switches themes, remembers the choice on reload, and follows system changes', async ({ page }) => {
-  await page.addInitScript((defaults) => {
-    // Init scripts have no guaranteed order, including after a reload. Install
-    // an independent handler that the common IPC fixture calls at invocation.
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      const saved = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
-      if (command === 'plugin:settings|get_settings') return saved;
-      if (command === 'plugin:settings|update_settings') {
+  await mockCommands(page, (defaults) => {
+    return {
+      get_settings: () => {
+        const saved = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+        return saved;
+      },
+      update_settings: (args) => {
+        const saved = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
         if (localStorage.getItem('test:fail-save')) throw new Error('Disk is full');
         const { category, updates } = (args as { settings: { category: string | null; updates: Record<string, unknown> } }).settings;
         if (category) Object.assign(saved[category], updates);
         else Object.assign(saved, updates);
         localStorage.setItem('test:settings', JSON.stringify(saved));
         return saved;
-      }
-      throw new Error(`Unsupported settings fixture command: ${command}`);
+      },
     };
   }, makeAppSettings());
   await page.emulateMedia({ colorScheme: 'light' });
@@ -763,9 +730,10 @@ test('switches themes, remembers the choice on reload, and follows system change
 test('acknowledges native quit and prevents further editing while closing', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('test:native-quit', { detail: 42 })));
+  await page.evaluate(() => window.__LATTICE_IPC__.emit('lattice:shutdown-requested', 42));
   await expect(page.getByRole('status')).toContainText('Saving your work before quitting…');
-  await expect(page.locator('html')).toHaveAttribute('data-shutdown-response', JSON.stringify({ requestId: 42, saved: true }));
+  await expect.poll(() => page.evaluate(() => window.__LATTICE_IPC__.emitted.filter(({ event }) => event === 'lattice:shutdown-response').map(({ payload }) => payload)))
+    .toEqual([{ requestId: 42, saved: true }]);
   await expect(page.locator('[inert]')).toHaveCount(1);
   await page.screenshot({ path: '/tmp/lattice-acceptance/shutdown.png' });
 });
@@ -773,7 +741,7 @@ test('acknowledges native quit and prevents further editing while closing', asyn
 // Exercise the decomposed sidebar as one renderer flow, backed by a simulated
 // repository. This catches broken prop/hook wiring that isolated hooks miss.
 test('conversation outline navigates long virtualized replies and tracks the reading position', async ({ page }) => {
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings) => {
     const stamp = '2026-10-03T10:00:00Z';
     const messages = Array.from({ length: 60 }, (_, index) => ({
       id: `outline-${index}`, conversationId: 'outline-chat', role: index % 2 === 0 ? 'user' : 'assistant',
@@ -782,15 +750,21 @@ test('conversation outline navigates long virtualized replies and tracks the rea
       tokens: 100, status: 'completed', createdAt: stamp,
     }));
     const conversation = { id: 'outline-chat', title: 'Long conversation', modelName: 'test-model', createdAt: stamp, updatedAt: stamp, messageCount: messages.length, totalTokens: 6000, spaceId: 'space_general', isArchived: false };
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
-      if (command === 'plugin:conversation|get_conversation') return { conversation };
-      if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: messages.length };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-      throw new Error(`Unsupported outline fixture command: ${command}`);
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages, total: messages.length }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_journals: () => [],
+      list_conversation_tangents: () => [],
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -865,25 +839,26 @@ test('conversation outline navigates long virtualized replies and tracks the rea
 });
 
 test('chat sidebar renames a conversation and opens the spaces editor', async ({ page }) => {
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings) => {
     const stamp = new Date().toISOString();
     const conversation = { id: 'conversation-1', title: 'Reading notes', modelName: 'test-model', systemPrompt: null, createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isSaved: false, isBookmarked: false, isPinned: false, isArchived: false };
     const space = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return [space];
-      if (command === 'plugin:conversation|list_journals') return [];
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
-      if (command === 'plugin:conversation|get_conversation') return { conversation };
-      if (command === 'plugin:conversation|get_conversation_messages') return { messages: [], total: 0 };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (command === 'plugin:conversation|rename_conversation') {
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => [space],
+      list_journals: () => [],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      rename_conversation: (args) => {
         conversation.title = (args as { request: { newTitle: string } }).request.newTitle;
         return { status: 'success' };
-      }
-      if (command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources') return [];
-      if (command === 'plugin:model|list_downloaded_models') return [];
-      throw new Error(`Unsupported chat fixture command: ${command}`);
+      },
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_downloaded_models: () => [],
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -912,14 +887,14 @@ test('chat sidebar renames a conversation and opens the spaces editor', async ({
 });
 
 test('creates a space in Settings and opens it in Chat', async ({ page }) => {
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings) => {
     const stamp = new Date().toISOString();
     const general = { id: 'space_general', name: 'General', description: null, icon: null, accentColor: null, spacePrompt: null, defaultModelName: null, toolPreferencesJson: null, isArchived: false, sortOrder: 0, createdAt: stamp, updatedAt: stamp };
     let spaces = [general];
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return spaces;
-      if (command === 'plugin:conversation|create_conversation_space') {
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => spaces,
+      create_conversation_space: (args) => {
         if (document.documentElement.dataset.spaceCreationAllowed !== 'true') {
           throw new Error('Disk full');
         }
@@ -927,11 +902,14 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
         const space = { ...general, ...request, id: 'space_research', sortOrder: 1 };
         spaces = [...spaces, space];
         return space;
-      }
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [], total: 0 };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (command === 'plugin:conversation|list_journals' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
-      throw new Error(`Unsupported spaces fixture command: ${command}`);
+      },
+      list_conversations_explorer: () => ({ conversations: [], total: 0 }),
+      list_conversations: () => ({ conversations: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_journals: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -971,7 +949,7 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
 });
 
 test('Downloaded switches chat between llama.cpp and local while keeping the utility assignment', async ({ page }, testInfo) => {
-  await page.addInitScript(defaults => {
+  await mockCommands(page, defaults => {
     let settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
     settings.llm.provider = 'llamacpp';
     settings.llm.llamaCpp = {
@@ -985,22 +963,25 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
       last_used_at: null, use_count: 0, is_active_for_chat: true,
       is_active_for_embedding: false, is_active_for_utility: true,
     };
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:settings|update_settings') {
+    return {
+      get_settings: () => settings,
+      update_settings: (args) => {
         const payload = args as { settings: { updates: Record<string, unknown> } };
         settings = { ...settings, llm: { ...settings.llm, ...payload.settings.updates } };
         localStorage.setItem('test:settings', JSON.stringify(settings));
         return settings;
-      }
-      if (command === 'plugin:model|list_downloaded_models') return [model];
-      if (command === 'plugin:model|set_active_chat_model') {
+      },
+      list_downloaded_models: () => [model],
+      set_active_chat_model: (args) => {
         if ((args as { modelId: string }).modelId !== model.model_id) throw new Error('Unexpected model selection');
         return null;
-      }
-      if (command.startsWith('plugin:model|get_active')) return null;
-      if (['plugin:conversation|list_journals', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-      throw new Error(`Unsupported model selection fixture command: ${command}`);
+      },
+      get_active_chat_model: () => null,
+      get_active_embedding_model: () => null,
+      get_active_models: () => ({ chat_model: null, embedding_model: null }),
+      list_journals: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -1035,27 +1016,33 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
 });
 
 test('Downloaded only lists configured connections and remembers a saved localhost server', async ({ page }, testInfo) => {
-  await page.addInitScript(defaults => {
+  await mockCommands(page, defaults => {
     defaults.llm.model = 'llama3.2:latest';
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:settings|update_settings') {
+    return {
+      get_settings: () => {
+        const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+        return settings;
+      },
+      update_settings: (args) => {
+        const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
         const payload = args as { settings: { updates: Record<string, unknown> } };
         Object.assign(settings.llm, payload.settings.updates);
         localStorage.setItem('test:settings', JSON.stringify(settings));
         return settings;
-      }
-      if (command === 'plugin:settings|test_ollama_connection') return { endpoint: '/api/tags', models: ['llama3.2:latest'] };
-      if (command === 'plugin:model|list_downloaded_models') return [{
+      },
+      test_ollama_connection: () => ({ endpoint: '/api/tags', models: ['llama3.2:latest'] }),
+      list_downloaded_models: () => [{
         id: 'ollama', model_id: '__ollama_server__', model_name: 'Ollama',
         file_path: '', file_size_bytes: 0, model_type: 'chat', backend: 'ollama',
         downloaded_at: '2026-10-01T00:00:00Z', last_used_at: null, use_count: 0,
         is_active_for_chat: true, is_active_for_embedding: false, is_active_for_utility: true,
-      }];
-      if (command.startsWith('plugin:model|get_active')) return null;
-      if (['plugin:conversation|list_journals', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-      throw new Error(`Unsupported configured connection fixture command: ${command}`);
+      }],
+      get_active_chat_model: () => null,
+      get_active_embedding_model: () => null,
+      get_active_models: () => ({ chat_model: null, embedding_model: null }),
+      list_journals: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -1089,20 +1076,24 @@ test('Downloaded only lists configured connections and remembers a saved localho
 });
 
 test('keeps Ollama and llama.cpp connections separate across provider changes', async ({ page }) => {
-  await page.addInitScript((defaults) => {
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:settings|update_settings') {
+  await mockCommands(page, (defaults) => {
+    return {
+      get_settings: () => {
+        const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
+        return settings;
+      },
+      update_settings: (args) => {
+        const settings = JSON.parse(localStorage.getItem('test:settings') ?? JSON.stringify(defaults));
         const payload = args as { settings: { updates: Record<string, unknown> } };
         Object.assign(settings.llm, payload.settings.updates);
         localStorage.setItem('test:settings', JSON.stringify(settings));
         return settings;
-      }
-      if (command === 'plugin:settings|test_llama_cpp_connection') return { endpoint: '/v1/chat/completions', models: ['test-model.gguf'] };
-      if (command === 'plugin:model|list_downloaded_models') return [];
-      if (command.startsWith('plugin:model|get_active')) return null;
-      throw new Error(`Unsupported connection fixture command: ${command}`);
+      },
+      test_llama_cpp_connection: () => ({ endpoint: '/v1/chat/completions', models: ['test-model.gguf'] }),
+      list_downloaded_models: () => [],
+      get_active_chat_model: () => null,
+      get_active_embedding_model: () => null,
+      get_active_models: () => ({ chat_model: null, embedding_model: null }),
     };
   }, makeAppSettings());
   await page.goto('/settings');
@@ -1124,9 +1115,9 @@ test('keeps Ollama and llama.cpp connections separate across provider changes', 
 
 // A large catalog must stay navigable without a token or a local chat provider.
 test('catalog offers category previews, bounded pages, and honest search results', async ({ page }) => {
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings) => {
     settings.llm.provider = 'llamacpp';
-    const groups = [
+    const groups: Array<{ category: ModelCategoryDto; names: string[]; variants: number }> = [
       { category: 'LLM', names: ['Qwen 3 8B', 'Gemma 3 4B', 'Phi 4 Mini', 'Mistral 7B', 'Llama 3.2 3B', 'Qwen 3 14B', 'DeepSeek R1 8B', 'SmolLM 3B'], variants: 3 },
       { category: 'Embedding', names: ['BGE Small English', 'Nomic Embed Text', 'All MiniLM L6', 'BGE Base English', 'E5 Small', 'GTE Base'], variants: 1 },
       { category: 'OCR', names: ['PaddleOCR', 'DeepSeek OCR', 'GOT OCR'], variants: 1 },
@@ -1149,36 +1140,36 @@ test('catalog offers category previews, bounded pages, and honest search results
           },
           compatibility: { compatibility_level: 'Good', overall_score: 80, ram_score: 90, gpu_score: 80, disk_score: 90, estimated_tokens_per_second: null, estimated_loading_time_seconds: 3, recommendations: [], blockers: [] },
           ranking_score: 80 - index, popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
-        };
+        } satisfies Fixture<CommandResult<'get_all_recommended_models'>[number]>;
       })
     ));
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:model|get_model_download_path') return '/Users/example/Models';
-      if (command === 'plugin:huggingface|get_huggingface_token_status') return { isSet: false };
-      if (command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads') return [];
-      if (command === 'plugin:model|is_model_already_downloaded') return false;
-      if (command === 'plugin:model|get_all_recommended_models') return models;
-      if (command === 'plugin:model|get_model_variants') {
+    return {
+      get_settings: () => settings,
+      get_model_download_path: () => '/Users/example/Models',
+      get_huggingface_token_status: () => ({ isSet: false }),
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      is_model_already_downloaded: () => false,
+      get_all_recommended_models: () => models,
+      get_model_variants: (args) => {
         if (localStorage.getItem('test:catalog-versions-error')) throw new Error('Repository temporarily unavailable');
         const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
         return ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'BF16'].map((quant, index) => ({
           ...base, id: `${base.id}-${quant}`, default_filename: `model-${quant}.gguf`,
           supported_quantizations: [quant], size_gb: 4 + index * 3, minimum_ram_gb: (4 + index * 3) * 1.5,
         }));
-      }
-      if (command === 'plugin:model|download_model') {
+      },
+      download_model: (args) => {
         localStorage.setItem('test:catalog-downloaded-id', (args as { modelId: string }).modelId);
         return { status: 'already_downloaded', download_id: '' };
-      }
-      if (command === 'plugin:model|detect_system_capabilities') return { total_ram_gb: 32, available_ram_gb: 24, cpu_cores: 10, cpu_architecture: 'ARM64', gpu_type: 'AppleSilicon', gpu_acceleration: 'Metal', vram_gb: null, available_disk_gb: 500, os_type: 'macOS' };
-      if (command === 'plugin:model|get_model_catalog_stats') return { total_entries: 36, expired_entries: 0, cache_size_bytes: 12000 };
-      if (command === 'plugin:model|search_model_catalog') {
+      },
+      detect_system_capabilities: () => ({ total_ram_gb: 32, cpu_cores: 10, cpu_architecture: 'ARM64', gpu_type: 'AppleSilicon', gpu_acceleration: 'Metal', vram_gb: null, available_disk_gb: 500 }),
+      get_model_catalog_stats: () => ({ total_entries: 36, valid_entries: 36, expired_entries: 0 }),
+      search_model_catalog: (args) => {
         if (localStorage.getItem('test:catalog-search-error')) throw new Error('Catalog search unavailable');
         const query = (args as { request: { query: string } }).request.query.toLowerCase();
-        return models.filter(({ model }) => model.name.toLowerCase().includes(query)).map((entry) => ({ ...entry, relevance_score: 80 }));
-      }
-      throw new Error(`Unsupported catalog fixture command: ${command}`);
+        return models.filter(({ model }) => model.name.toLowerCase().includes(query)).map(({ model, popularity_downloads, popularity_likes }) => ({ model, relevance_score: 80, source: 'Curated' as const, popularity_downloads, popularity_likes }));
+      },
     };
   }, makeAppSettings());
   await page.goto('/settings');
@@ -1265,24 +1256,25 @@ test('catalog offers category previews, bounded pages, and honest search results
 });
 
 test('restores a 45-PDF import and updates progress as files finish', async ({ page }) => {
-  await page.addInitScript(({ settings }) => {
+  await mockCommands(page, ({ settings }) => {
     localStorage.setItem('ingestHub.lastTab', 'files');
-    const state = window as unknown as { __IMPORT_FINISHED__: number; __LATTICE_TEST_INVOKE__: (command: string) => Promise<unknown> };
+    const state = window as unknown as { __IMPORT_FINISHED__: number };
     state.__IMPORT_FINISHED__ = 0;
-    state.__LATTICE_TEST_INVOKE__ = async (command) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:batch|get_batch_history') return { jobs: [{ jobId: 'job', jobType: 'file_import', status: 'running', totalItems: 45, completedItems: 0, failedItems: 0 }] };
-      if (command === 'plugin:batch|get_batch_status') return {
+    return {
+      get_settings: () => settings,
+      get_batch_history: () => ({ jobs: [{ jobId: 'job', jobType: 'file_import', status: 'running', totalItems: 45, completedItems: 0, failedItems: 0 }] }),
+      get_batch_status: () => ({
         jobId: 'job', jobType: 'file_import', status: 'running', totalItems: 45,
         completedItems: state.__IMPORT_FINISHED__, failedItems: 0,
         items: Array.from({ length: 45 }, (_, i) => ({
           itemId: `pdf-${i}`, target: `/Downloads/chapter-${i}.pdf`,
           status: i < state.__IMPORT_FINISHED__ ? 'completed' : i === state.__IMPORT_FINISHED__ ? 'processing' : 'pending',
         })),
-      };
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders' || command === 'plugin:conversation|list_conversation_spaces') return [];
-      throw new Error(`Unsupported import fixture command: ${command}`);
+      }),
+      initialize_database: () => 'Database initialized',
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_conversation_spaces: () => [],
     };
   }, { settings: makeAppSettings() });
   const errors: Error[] = [];
@@ -1290,7 +1282,15 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
   await page.goto('/ingest');
   await expect(page.getByText('0 of 45 files processed · 0%')).toBeVisible();
   await expect(page.getByText('Processing chapter-0.pdf — extracting text and building search index')).toBeVisible();
-  await page.evaluate(() => { (window as unknown as { __IMPORT_FINISHED__: number }).__IMPORT_FINISHED__ = 3; });
+  // Three files finish; the import's job reports it.
+  await page.evaluate(() => {
+    (window as unknown as { __IMPORT_FINISHED__: number }).__IMPORT_FINISHED__ = 3;
+    window.__LATTICE_IPC__.emit('jobs://status', {
+      id: 'job', kind: 'batch.file_import', subjectId: null, status: 'running', progressCurrent: 3, progressTotal: 45,
+      progressMessage: 'Imported 3 of 45 files', activity: { completed: 3, failed: 0 }, resultRef: null, errorCode: null,
+      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null,
+    });
+  });
   await expect(page.getByText('3 of 45 files processed · 7%')).toBeVisible();
   await expect(page.getByText('Processing chapter-3.pdf — extracting text and building search index')).toBeVisible();
   await expect(page.getByText('Imported', { exact: true })).toHaveCount(3);
@@ -1300,7 +1300,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
 });
 
 test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
-  await page.addInitScript(settings => {
+  await mockCommands(page, settings => {
     const source = { chunkId: 'biology-chunk', documentId: 'biology', fileName: 'biology.md', filePath: '/library/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' };
     const original = {
       id: 'biology-deck', title: 'Biology review', focus: 'photosynthesis', studyGoal: 'Biology exam', modelName: 'test-model', createdAt: Date.now(),
@@ -1312,30 +1312,42 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
     type Deck = typeof original;
     const load = (): Deck | null => JSON.parse(localStorage.getItem('test:study-deck') ?? 'null');
     const save = (deck: Deck) => localStorage.setItem('test:study-deck', JSON.stringify(deck));
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') {
+    return {
+      get_settings: () => {
         settings.ui.theme = localStorage.getItem('test:study-theme') === 'light' ? 'light' : 'dark';
         return settings;
-      }
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (command === 'plugin:learning|list_learning_programs') return [];
-      if (command === 'plugin:download|list_downloads' || command === 'plugin:batch|get_batch_history') return [];
-      if (command === 'plugin:file|list_all_documents') return [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }];
-      if (command === 'plugin:file|read_file_content') {
+      },
+      initialize_database: () => 'Database initialized',
+      list_learning_programs: () => [],
+      list_downloads: () => [],
+      get_batch_history: () => ({ jobs: [] }),
+      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
+      read_file_content: (args) => {
         if ((args as { path: string }).path !== source.filePath) throw new Error('Unexpected source');
         return '# Photosynthesis notes\n\nChlorophyll absorbs the light used in photosynthesis.\n\nPhotosynthesis converts light energy into chemical energy.';
-      }
-      const deck = load();
-      if (command === 'plugin:study|list_study_decks') return deck ? [{ ...deck, cardCount: deck.cards.length, dueCount: deck.cards.filter(c => c.dueAt <= Date.now()).length, quizAttempts: 0, quizCorrect: 0 }] : [];
-      if (command === 'plugin:study|get_study_deck') return deck;
-      if (command === 'plugin:study|generate_study_deck') {
+      },
+      list_study_decks: () => {
+        const deck = load();
+        if (!deck) return [];
+        const { id, title, focus, studyGoal, createdAt, cards } = deck;
+        return [{ id, title, focus, studyGoal, createdAt, cardCount: cards.length, dueCount: cards.filter(c => c.dueAt <= Date.now()).length, quizAttempts: 0, quizCorrect: 0 }];
+      },
+      get_study_deck: () => {
+        const deck = load();
+        if (!deck) throw new Error('Study deck not found');
+        return deck;
+      },
+      generate_study_deck: async (args) => {
         const request = (args as { request: { title: string; focus: string; studyGoal: string; documentIds: string[] } }).request;
         if (request.documentIds.join(',') !== 'biology') throw new Error('Incorrect source scope');
         Object.assign(original, { title: request.title, focus: request.focus, studyGoal: request.studyGoal });
         await new Promise<void>(resolve => window.addEventListener('test:finish-generation', () => resolve(), { once: true }));
         save(original); return original;
-      }
-      if (command === 'plugin:study|review_study_card' && deck) {
+      },
+      delete_study_deck: () => { localStorage.removeItem('test:study-deck'); return null; },
+      review_study_card: (args) => {
+        const deck = load();
+        if (!deck) throw new Error('No saved deck');
         if (localStorage.getItem('test:study-fail-review')) throw new Error('Disk full');
         const request = (args as { request: { cardId: string; expectedReviews: number; selectedOption: number | null; rating: string } }).request;
         const card = deck.cards.find(c => c.id === request.cardId)!;
@@ -1344,15 +1356,15 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
         const wrong = request.selectedOption !== null ? request.selectedOption !== card.correctIndex : request.rating === 'again';
         card.lapses += Number(wrong); card.dueAt = Date.now() + (wrong ? 600_000 : 86_400_000); card.intervalDays = wrong ? 0 : 1;
         save(deck); return card;
-      }
-      if (command === 'plugin:study|update_study_card' && deck) {
+      },
+      update_study_card: (args) => {
+        const deck = load();
+        if (!deck) throw new Error('No saved deck');
         const request = (args as { request: { cardId: string; question: string; answer: string; explanation: string } }).request;
         const card = deck.cards.find(c => c.id === request.cardId)!;
         Object.assign(card, { question: request.question, answer: request.answer, explanation: request.explanation });
-        card.options[card.correctIndex] = card.answer; save(deck); return undefined;
-      }
-      if (command === 'plugin:study|delete_study_deck') { localStorage.removeItem('test:study-deck'); return undefined; }
-      throw new Error(`Unsupported study fixture command: ${command}`);
+        card.options[card.correctIndex] = card.answer; save(deck); return null;
+      },
     };
   }, makeAppSettings());
   const errors: Error[] = [];
@@ -1421,16 +1433,20 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
 
 
 test('keeps both remote connections in Auto settings after saving and reloading', async ({ page }) => {
-  await page.addInitScript(defaults => {
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      const saved = JSON.parse(localStorage.getItem('test:auto-settings') ?? JSON.stringify(defaults));
-      if (command === 'plugin:settings|get_settings') return saved;
-      if (command === 'plugin:settings|update_settings') {
+  await mockCommands(page, defaults => {
+    return {
+      get_settings: () => {
+        const saved = JSON.parse(localStorage.getItem('test:auto-settings') ?? JSON.stringify(defaults));
+        return saved;
+      },
+      update_settings: (args) => {
+        const saved = JSON.parse(localStorage.getItem('test:auto-settings') ?? JSON.stringify(defaults));
         Object.assign(saved.llm, (args as { settings: { updates: object } }).settings.updates);
         localStorage.setItem('test:auto-settings', JSON.stringify(saved)); return saved;
-      }
-      if (command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:batch|get_batch_history') return [];
-      throw new Error(`Unsupported Auto fixture command: ${command}`);
+      },
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_batch_history: () => ({ jobs: [] }),
     };
   }, makeAppSettings());
   await page.goto('/settings');
@@ -1450,7 +1466,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
   const settings = makeAppSettings();
   settings.llm.provider = 'auto';
   settings.llm.llamaCpp.model = 'qwen-test.gguf';
-  await page.addInitScript((settings) => {
+  await mockCommands(page, (settings, ipc) => {
     const stamp = new Date().toISOString();
     const conversation = { id: 'patent-chat', title: 'Patent Training', modelName: '__ollama_server__', createdAt: stamp, updatedAt: stamp, messageCount: 0, totalTokens: 0, spaceId: 'space_general', isArchived: false };
     const job = { jobId: 'pdf-import', jobType: 'file_import', status: 'completed', totalItems: 45, completedItems: 44, failedItems: 1, createdAt: stamp };
@@ -1458,20 +1474,20 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
     let item = { itemId: 'failed-pdf', target: '/Downloads/mpep-2100.pdf', status: 'failed', errorMessage: 'PDF extraction timed out' as string | null };
     const saved = localStorage.getItem('test:pdf-recovery');
     if (saved) { const state = JSON.parse(saved); Object.assign(job, state.job); item = state.item; }
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
-      if (command === 'plugin:conversation|get_conversation') return { conversation };
-      if (command === 'plugin:conversation|get_conversation_messages') return { messages: [], total: 0 };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (command === 'plugin:conversation|chat_with_conversation') throw { code: 'NETWORK_ERROR', message: 'Network error', details: 'llama.cpp request timed out' };
-      if (command === 'plugin:batch|get_batch_history') return { jobs: [job, earlier] };
-      if (command === 'plugin:batch|get_batch_status') return (args as { request: { jobId: string } }).request.jobId === earlier.jobId
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      get_batch_history: () => ({ jobs: [job, earlier] }),
+      get_batch_status: (args) => (args as { request: { jobId: string } }).request.jobId === earlier.jobId
         ? { ...earlier, completedAt: stamp, items: [{ itemId: 'earlier-item', target: '/Downloads/mpep-9035-appx-p.pdf', status: 'completed' }] }
-        : { ...job, completedAt: job.status === 'completed' ? stamp : null, items: [item] };
-      if (command === 'plugin:dialog|open') return '/Downloads/mpep-2100-corrected.pdf';
-      if (command === 'plugin:batch|retry_failed_items') {
+        : { ...job, completedAt: job.status === 'completed' ? stamp : null, items: [item] },
+      'dialog|open': () => '/Downloads/mpep-2100-corrected.pdf',
+      retry_failed_items: (args) => {
         const request = args as { jobId: string; itemId: string; replacementPath?: string };
         if (request.jobId !== job.jobId || request.itemId !== item.itemId) throw new Error('Retry must target the exact failed PDF');
         job.status = 'running'; job.failedItems = 0; item.status = 'processing'; item.errorMessage = null;
@@ -1480,11 +1496,25 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
           if (request.replacementPath) { job.status = 'completed'; job.completedItems = 45; item.status = 'completed'; }
           else { job.status = 'failed'; job.failedItems = 1; item.status = 'failed'; item.errorMessage = 'PDF extraction timed out again'; }
           localStorage.setItem('test:pdf-recovery', JSON.stringify({ job, item }));
+          // The import's job reports how the retry ended.
+          ipc.emit('jobs://status', {
+            id: job.jobId, kind: 'batch.file_import', subjectId: null, status: job.status, progressCurrent: 1, progressTotal: 1,
+            progressMessage: job.status, activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null,
+            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+          });
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };
-      }
-      if (command === 'plugin:conversation|list_journals' || command === 'plugin:conversation|list_conversation_tangents' || command === 'plugin:conversation|list_conversation_linked_documents' || command === 'plugin:conversation|list_conversation_web_sources' || command === 'plugin:model|list_downloaded_models' || command === 'plugin:download|list_downloads' || command === 'plugin:file|get_indexed_folders') return [];
-      throw new Error(`Unsupported failure fixture command: ${command}`);
+      },
+      list_journals: () => [],
+      list_conversation_tangents: () => [],
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      chat_with_conversation: () => {
+        throw { code: 'NETWORK_ERROR', message: 'Network error', details: 'llama.cpp request timed out' };
+      },
     };
   }, settings);
   const errors: Error[] = [];
@@ -1532,39 +1562,28 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
   const settings = makeAppSettings();
   settings.llm.provider = 'auto';
   settings.llm.llamaCpp.model = 'qwen-test.gguf';
-  await page.addInitScript((settings) => {
-    const native = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown>; transformCallback: (fn: (...args: unknown[]) => unknown) => number } }).__TAURI_INTERNALS__;
-    // Capture the real controller listener while retaining the shell fixture.
-    const callbacks = new Map<number, (...args: unknown[]) => unknown>();
-    const transform = native.transformCallback.bind(native);
-    native.transformCallback = fn => { const id = transform(fn); callbacks.set(id, fn); return id; };
-    const invoke = native.invoke.bind(native);
-    let streamHandler: number | undefined;
-    native.invoke = async (command, args) => {
-      const input = args as { event?: string; handler?: number } | undefined;
-      if (command === 'plugin:event|listen' && input?.event === 'llm-stream') streamHandler = input.handler;
-      return invoke(command, args);
-    };
+  await mockCommands(page, (settings, ipc) => {
     const stamp = new Date().toISOString();
     const conversation = { id: 'retrieval-chat', title: 'Patent Training', modelName: 'qwen-test.gguf', createdAt: stamp, updatedAt: stamp, spaceId: 'space_general', messageCount: 0, totalTokens: 0 };
     const recovered = { searchedDocuments: 0, passages: 7, files: 7, scope: 'vault' };
     const oldFailure = { ...recovered, passages: 0, files: 0, unavailableReason: 'the active space has no indexed documents yet' };
-    let messages: unknown[] = JSON.parse(localStorage.getItem('test:retrieval-messages') ?? '[]');
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:conversation|list_conversation_spaces') return [{ id: 'space_general', name: 'General', isArchived: false }];
-      if (command === 'plugin:conversation|list_conversations_explorer' || command === 'plugin:conversation|list_conversations') return { conversations: [conversation], total: 1 };
-      if (command === 'plugin:conversation|get_conversation') return { conversation };
-      if (command === 'plugin:conversation|get_conversation_messages') return { messages, total: messages.length };
-      if (command === 'plugin:conversation|list_message_bookmarks') return { bookmarks: [], total: 0 };
-      if (command === 'plugin:batch|get_batch_history') return { jobs: [] };
-      if (command === 'plugin:conversation|chat_with_conversation') {
+    let messages: Fixture<MessageDto>[] = JSON.parse(localStorage.getItem('test:retrieval-messages') ?? '[]');
+    return {
+      get_settings: () => settings,
+      list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages, total: messages.length }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      get_batch_history: () => ({ jobs: [] }),
+      chat_with_conversation: async (args) => {
         const request = args as { requestId: string; message: string };
-        const emit = (retrieval: unknown) => callbacks.get(streamHandler!)?.({ payload: { conversationId: conversation.id, requestId: request.requestId, status: 'retrieval', retrieval, done: false } });
+        const emit = (retrieval: unknown) => ipc.emit('llm-stream', { conversationId: conversation.id, requestId: request.requestId, status: 'retrieval', retrieval, done: false });
         // QA also publishes on this channel. Its tokens and completion must
         // neither enter this conversation nor detach its stream listener.
-        callbacks.get(streamHandler!)?.({ payload: { type: 'token', content: 'Unrelated QA response', done: false } });
-        callbacks.get(streamHandler!)?.({ payload: { type: 'done', done: true } });
+        ipc.emit('llm-stream', { type: 'token', content: 'Unrelated QA response', done: false });
+        ipc.emit('llm-stream', { type: 'done', done: true });
         emit(oldFailure);
         document.documentElement.dataset.retrievalStage = 'initial';
         await new Promise<void>(resolve => window.addEventListener('test:recover-retrieval', () => resolve(), { once: true }));
@@ -1577,9 +1596,14 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
         ];
         localStorage.setItem('test:retrieval-messages', JSON.stringify(messages));
         return { conversationId: conversation.id, messages, contextUsed: 0, sources: [] };
-      }
-      if (['plugin:conversation|list_journals', 'plugin:conversation|list_conversation_tangents', 'plugin:conversation|list_conversation_linked_documents', 'plugin:conversation|list_conversation_web_sources', 'plugin:model|list_downloaded_models', 'plugin:download|list_downloads', 'plugin:file|get_indexed_folders'].includes(command)) return [];
-      throw new Error(`Unsupported retrieval fixture command: ${command}`);
+      },
+      list_journals: () => [],
+      list_conversation_tangents: () => [],
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
     };
   }, settings);
   await page.goto('/chat?conversationId=retrieval-chat');
@@ -1601,7 +1625,7 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
 });
 
 test('cancels a 43-document deletion after the pending document completes', async ({ page }) => {
-  await page.addInitScript(settings => {
+  await mockCommands(page, settings => {
     let documents = Array.from({ length: 43 }, (_, index) => ({
       id: `delete-${index}`, fileName: `Delete ${index}.pdf`,
       filePath: `/home/test/.lattice/files/${String(index).padStart(64, '0')}/Delete ${index}.pdf`,
@@ -1609,19 +1633,21 @@ test('cancels a 43-document deletion after the pending document completes', asyn
       modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
     }));
     let calls = 0;
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async (command, args) => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:file|list_all_documents') return documents;
-      if (command === 'plugin:file|delete_document') {
+    return {
+      get_settings: () => settings,
+      list_all_documents: () => documents,
+      delete_document: async (args) => {
         document.documentElement.dataset.deleteCalls = String(++calls);
         await new Promise<void>(resolve => window.addEventListener('test:finish-delete', () => resolve(), { once: true }));
         documents = documents.filter(doc => doc.id !== (args as { documentId: string }).documentId);
         document.documentElement.dataset.deleteFinished = 'true';
         return undefined;
-      }
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces', 'plugin:conversation|list_document_space_memberships'].includes(command)) return [];
-      throw new Error(`Unsupported deletion fixture command: ${command}`);
+      },
+      initialize_database: () => 'Database initialized',
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_conversation_spaces: () => [],
+      list_document_space_memberships: () => [],
     };
   }, makeAppSettings());
   await page.goto('/files');
@@ -1644,7 +1670,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
 
 test('Learning Studio integrates with the app shell and preserves quick-check work across tabs', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.addInitScript(settings => {
+  await mockCommands(page, settings => {
     const source = {
       id: 'studio-source',
       title: 'Distributed systems field guide',
@@ -1671,7 +1697,7 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
         question(`test-${suffix}-1`, 'test', 'Which production change prevents a duplicated charge?'),
         question(`test-${suffix}-2`, 'test', 'Which observation best demonstrates safe replay?'),
       ],
-    });
+    } satisfies Fixture<LearningLessonDto>);
     const first = lesson('lesson-1', 'Reason about retries', 'a');
     const second = lesson('lesson-2', 'Design an idempotent boundary', 'b');
     const program = {
@@ -1698,16 +1724,17 @@ test('Learning Studio integrates with the app shell and preserves quick-check wo
           { questionId: 'quiz-a-2', prompt: 'Which failure requires an idempotency record?', options: ['Use a stable operation identifier', 'Repeat the write without identity', 'Discard every retry', 'Trust the network to deliver once'], selectedIndex: 1, correctIndex: 0, explanation: 'A response can be lost after the effect commits, so the next delivery must find the earlier result.', sourceIds: [source.id] },
         ],
       }],
-    };
-    (window as unknown as { __LATTICE_TEST_INVOKE__: (command: string, args?: unknown) => Promise<unknown> }).__LATTICE_TEST_INVOKE__ = async command => {
-      if (command === 'plugin:settings|get_settings') return settings;
-      if (command === 'plugin:health|initialize_database') return undefined;
-      if (['plugin:download|list_downloads', 'plugin:file|get_indexed_folders', 'plugin:conversation|list_conversation_spaces'].includes(command)) return [];
-      if (command === 'plugin:learning|list_learning_programs') return [program.summary];
-      if (command === 'plugin:learning|get_learning_program') return program;
-      if (command === 'plugin:learning|get_learning_memory') return { programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0, schedulerVersion: 'fixture' };
-      if (command === 'plugin:learning|get_learning_practice_workspace') return { programId: program.summary.id, sessions: [] };
-      throw new Error(`Unsupported Learning Studio fixture command: ${command}`);
+    } satisfies Fixture<LearningProgramDto>;
+    return {
+      get_settings: () => settings,
+      initialize_database: () => 'Database initialized',
+      list_downloads: () => [],
+      get_indexed_folders: () => [],
+      list_conversation_spaces: () => [],
+      list_learning_programs: () => [program.summary],
+      get_learning_program: () => program,
+      get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
+      get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
     };
   }, makeAppSettings());
   const errors: Error[] = [];

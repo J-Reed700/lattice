@@ -14,12 +14,11 @@
 //! 1. **CoreModule** - Shared infrastructure (DB, security, runtime)
 //! 2. **SearchModule** - All search functionality
 //! 3. **IndexingModule** - Document ingestion and processing
-//! 4. **AIModule** - LLM, Q&A, conversations
+//! 4. **AIModule** - LLM, conversations
 //! 5. **LibraryModule** - Tags, favorites, mentions
 //! 6. **FileOpsModule** - File system operations
 //! 7. **SystemModule** - Settings, health, backup, cache
 
-use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::infrastructure::persistence::repositories::file_library::SqliteFileLibrary;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -38,12 +37,6 @@ use crate::features::indexing::use_cases::{
 
 // Application Use Cases - Web
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
-
-// Application Use Cases - Batch
-use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
-    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
-};
 
 // Application Use Cases - Conversation
 use crate::features::conversation::use_cases::CreateConversationUseCase;
@@ -123,27 +116,24 @@ use crate::features::credentials::use_cases::{
 
 // Application Ports
 use crate::application::ports::{
-    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository,
-    FavoritesRepositoryPort, FileStoragePort, FileSystemPort, MentionRepositoryPort,
-    ModelCatalogPort, RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort,
-    SystemInfoPort, VectorSearchPort,
+    BackupPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository, FavoritesRepositoryPort,
+    FileStoragePort, FileSystemPort, MentionRepositoryPort, ModelCatalogPort,
+    RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort, SystemInfoPort,
+    VectorSearchPort,
 };
 
 // Service Traits
-use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::qa::ConversationalQAServiceTrait;
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::{
-    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
+    ArticleExtractorServiceTrait, WebArchiveServiceTrait, WebCaptureServiceTrait,
+    WebIngestionServiceTrait,
 };
-use crate::infrastructure::services::traits::{
-    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
-};
+use crate::infrastructure::services::traits::{ModelManagerTrait, SearchEnrichmentServiceTrait};
 
 use crate::application::ports::LoadedChatModelPort;
-use crate::infrastructure::services::model_manager::ModelManager;
+use crate::features::model_management::model_manager::ModelManager;
 
 /// Core shared infrastructure used by all modules
 ///
@@ -334,14 +324,6 @@ impl SearchModule {
         &self.search.bm25_search
     }
 
-    pub fn hybrid_search_service(&self) -> &Arc<dyn HybridSearchTrait> {
-        &self.search.hybrid_search_service
-    }
-
-    pub fn reranker(&self) -> &Arc<dyn crate::features::search::engine::reranker::Reranker> {
-        &self.search.reranker
-    }
-
     pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {
         &self.search.search_enrichment_service
     }
@@ -372,7 +354,7 @@ async fn read_search_settings(
     data_dir: &std::path::Path,
 ) -> crate::features::settings::dto::SearchSettingsDto {
     use crate::application::ports::SettingsRepositoryPort;
-    use crate::infrastructure::persistence::repositories::SettingsRepository;
+    use crate::features::settings::repository::SettingsRepository;
 
     match SettingsRepository::new(data_dir.to_path_buf()).await {
         Ok(repository) => match repository.get_all().await {
@@ -463,7 +445,7 @@ async fn resolve_vector_compression(
 
 /// The catalog id of the active embedding model, when there is one.
 async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
-    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
@@ -483,7 +465,7 @@ async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
 /// wipe the user's index back to 384, then the container would fail to
 /// load the model at the wrong dim, cycle forever.
 async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usize> {
-    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+    use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
@@ -494,14 +476,13 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
     json.get("hidden_size")?.as_u64().map(|n| n as usize)
 }
 
-/// Indexing module — hollow composition root over the indexing, web, and
-/// batch feature slices. Shares `vector_search` with [`SearchModule`] so
+/// Indexing module — hollow composition root over the indexing and web
+/// feature slices. Shares `vector_search` with [`SearchModule`] so
 /// index-time writes reach the same USearch instance queried at search time.
 #[derive(Clone)]
 pub struct IndexingModule {
     indexing: crate::features::indexing::di::IndexingDi,
     web: crate::features::web::di::WebDi,
-    batch: crate::features::batch::di::BatchDi,
     /// Page OCR for scanned PDFs. `NoopOcr` until a vision adapter exists:
     /// scanned pages are reported in `ExtractedContent::needs_ocr` and the
     /// rest of every document is still indexed. Swap this one binding for a
@@ -510,7 +491,7 @@ pub struct IndexingModule {
 }
 
 impl IndexingModule {
-    /// Build IndexingModule by composing indexing + web + batch features.
+    /// Build IndexingModule by composing the indexing and web features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -532,19 +513,9 @@ impl IndexingModule {
             vector_search,
             web.web_archive.clone(),
         )?;
-        let batch = crate::features::batch::di::build(
-            indexing.batch_job_repo.clone(),
-            indexing.index_file_use_case.clone(),
-            web.ingest_web_url_use_case.clone(),
-            web.web_ingestion_service.clone(),
-            indexing.uow_factory.clone(),
-            Arc::new(SqliteDocumentScope::new(db_pool)),
-        );
-
         Ok(Self {
             indexing,
             web,
-            batch,
             ocr: Arc::new(crate::application::ports::NoopOcr),
         })
     }
@@ -590,35 +561,6 @@ impl IndexingModule {
         &self.web.get_url_preview_use_case
     }
 
-    // Batch use case getters
-    pub fn start_batch_file_import_use_case(&self) -> &Arc<StartBatchFileImportUseCase> {
-        &self.batch.start_batch_file_import_use_case
-    }
-
-    pub fn start_batch_url_import_use_case(&self) -> &Arc<StartBatchUrlImportUseCase> {
-        &self.batch.start_batch_url_import_use_case
-    }
-
-    pub fn get_batch_job_status_use_case(&self) -> &Arc<GetBatchJobStatusUseCase> {
-        &self.batch.get_batch_job_status_use_case
-    }
-
-    pub fn cancel_batch_job_use_case(&self) -> &Arc<CancelBatchJobUseCase> {
-        &self.batch.cancel_batch_job_use_case
-    }
-
-    pub fn list_batch_jobs_use_case(&self) -> &Arc<ListBatchJobsUseCase> {
-        &self.batch.list_batch_jobs_use_case
-    }
-
-    pub fn delete_batch_job_use_case(&self) -> &Arc<DeleteBatchJobUseCase> {
-        &self.batch.delete_batch_job_use_case
-    }
-
-    pub fn retry_failed_items_use_case(&self) -> &Arc<RetryFailedItemsUseCase> {
-        &self.batch.retry_failed_items_use_case
-    }
-
     // Service getters
     pub fn indexing_state(&self) -> &Arc<crate::features::indexing::engine::IndexingState> {
         &self.indexing.indexing_state
@@ -645,14 +587,6 @@ impl IndexingModule {
         &self.web.web_archive
     }
 
-    pub fn batch_file_import_service(&self) -> &Arc<dyn BatchFileImportServiceTrait> {
-        &self.batch.batch_file_import_service
-    }
-
-    pub fn batch_url_import_service(&self) -> &Arc<dyn BatchUrlImportServiceTrait> {
-        &self.batch.batch_url_import_service
-    }
-
     pub fn file_storage(&self) -> &Arc<dyn FileStoragePort> {
         &self.indexing.file_storage
     }
@@ -661,8 +595,9 @@ impl IndexingModule {
         &self.indexing.chunk_repo
     }
 
-    pub fn batch_job_repo(&self) -> &Arc<dyn BatchJobRepositoryPort> {
-        &self.indexing.batch_job_repo
+    /// Opens the transactions that commit an imported document whole.
+    pub fn uow_factory(&self) -> &Arc<dyn crate::application::ports::UnitOfWorkFactory> {
+        &self.indexing.uow_factory
     }
 }
 
@@ -677,7 +612,6 @@ impl IndexingModule {
 #[derive(Clone)]
 pub struct AIModule {
     conversation: crate::features::conversation::di::ConversationDi,
-    qa: crate::features::qa::di::QaDi,
     llm: crate::features::llm::di::LlmDi,
     ai_tags: crate::features::tags::di::AiTagsDi,
 
@@ -686,7 +620,7 @@ pub struct AIModule {
 }
 
 impl AIModule {
-    /// Build AIModule by composing conversation + qa + llm + ai-tags features.
+    /// Build AIModule by composing conversation + llm + ai-tags features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -695,7 +629,6 @@ impl AIModule {
         _llm_model: &str,
     ) -> crate::shared::error::Result<Self> {
         let conversation = crate::features::conversation::di::build(db_pool.clone());
-        let qa = crate::features::qa::di::build(conversation.conversation_service.clone());
         let llm = crate::features::llm::di::build(
             db_pool.clone(),
             core.db_conn().clone(),
@@ -707,7 +640,6 @@ impl AIModule {
 
         Ok(Self {
             conversation,
-            qa,
             llm,
             ai_tags,
             credentials: core.credentials().clone(),
@@ -788,10 +720,14 @@ impl AIModule {
         &self.conversation.conversation_context
     }
 
-    pub fn compaction_slots(
-        &self,
-    ) -> &Arc<crate::application::services::conversation_memory::CompactionSlots> {
+    pub fn compaction_slots(&self) -> &Arc<crate::features::conversation::memory::CompactionSlots> {
         &self.conversation.compaction_slots
+    }
+
+    pub(crate) fn handoffs_in_flight(
+        &self,
+    ) -> &Arc<crate::features::conversation::handoff::HandoffsInFlight> {
+        &self.conversation.handoffs_in_flight
     }
 
     pub fn conversation_memory(
@@ -800,13 +736,10 @@ impl AIModule {
         &self.conversation.conversation_memory
     }
 
-    pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
-        &self.qa.conversational_qa_service
-    }
-
     pub fn downloaded_model_repo(
         &self,
-    ) -> &Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository> {
+    ) -> &Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
+    {
         &self.llm.downloaded_model_repo
     }
 

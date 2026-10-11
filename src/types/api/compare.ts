@@ -1,37 +1,11 @@
 /** Comparison tables across documents. */
-export interface CompareCitationDto {
-  chunkId: string;
-  excerpt: string;
-}
+export type CompareCitationDto = import('../../lib/bindings').CompareCitationDto;
 
-export interface CompareCellDto {
-  /** null renders as "not stated" — never as a guess. */
-  value: string | null;
-  citation: CompareCitationDto | null;
-}
+export type CompareCellDto = import('../../lib/bindings').CompareCellDto;
 
-export interface CompareRowDto {
-  documentId: string;
-  title: string;
-  filePath: string;
-  /** Same length and order as CompareTableDto.columns. */
-  cells: CompareCellDto[];
-  /** Set when this document could not be processed. Cells are all null. */
-  error: string | null;
-  /**
-   * Set when the cells were filled from the document's opening passages
-   * because semantic search failed for it, so they may miss the parts the
-   * columns ask about.
-   */
-  degraded: string | null;
-}
+export type CompareRowDto = import('../../lib/bindings').CompareRowDto;
 
-export interface CompareTableDto {
-  columns: string[];
-  rows: CompareRowDto[];
-  modelName: string;
-  generatedAt: string;
-}
+export type CompareTableDto = import('../../lib/bindings').CompareTableDto;
 
 export interface CompareDocumentsRequest {
   documentIds: string[];

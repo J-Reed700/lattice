@@ -7,14 +7,14 @@ use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::engine::storage::IndexStorage;
 use crate::features::indexing::IndexStorageTrait;
+use crate::features::web::services::archive::WebArchiveService;
+use crate::features::web::services::article_extractor::ArticleExtractorService;
+use crate::features::web::services::capture::WebCaptureService;
 use crate::features::web::services::ingestion::WebIngestionService;
+use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 use crate::features::web::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
-};
-use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
-use crate::infrastructure::services::{
-    ArticleExtractorService, WebArchiveService, WebCaptureService,
 };
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};

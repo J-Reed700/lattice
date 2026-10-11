@@ -14,13 +14,11 @@ const { listJournals, createJournal, deleteJournal } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/api', () => ({ default: { listJournals, createJournal, deleteJournal }, VaultAPI: { listJournals, createJournal, deleteJournal } }));
-vi.mock('@/features/chat/components/SpacePickerPopover', () => ({ GENERAL_SPACE_ID: 'space_general' }));
-vi.mock('@/components/RootLayout', () => ({ NEW_ITEM_EVENT: 'new-item' }));
-vi.mock('@/hooks/queries/useWeeklySynthesisCandidatesQuery', () => ({
+vi.mock('@/features/journal/hooks/useWeeklySynthesisCandidatesQuery', () => ({
   useWeeklySynthesisCandidatesQuery: () => ({ data: { total: 0 }, refetch: vi.fn() }),
 }));
-vi.mock('@/hooks/useRegisterPaletteCommands', () => ({ useRegisterPaletteCommands: vi.fn() }));
-vi.mock('@/stores/conversationsStore', () => ({ useConversationsStore: () => vi.fn() }));
+vi.mock('@/features/palette/hooks/useRegisterPaletteCommands', () => ({ useRegisterPaletteCommands: vi.fn() }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => vi.fn() }));
 vi.mock('@/features/journal/hooks/useJournalEntries', () => ({
   useJournalEntries: () => ({
     entries: [], pinnedIds: new Set(), selectedId: null, setSelectedId: vi.fn(),

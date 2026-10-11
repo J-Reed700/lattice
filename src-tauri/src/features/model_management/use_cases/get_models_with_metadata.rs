@@ -3,7 +3,7 @@
 //! Returns all downloaded models with metadata.
 
 use crate::domain::models::downloaded::DownloadedModel;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::shared::error::Result;
 
 /// Use case for getting all downloaded models with metadata

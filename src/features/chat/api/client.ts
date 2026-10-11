@@ -1,4 +1,3 @@
-import { Channel } from '@tauri-apps/api/core';
 
 import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
@@ -30,8 +29,6 @@ import type {
   SetConversationStateRequest,
   ListConversationsExplorerQuery,
   ListJournalConversationsQuery,
-  SynthesizeJournalEntriesRequest,
-  SynthesizeJournalEntriesResponse,
   DeleteConversationMessageRequest,
   BookmarkConversationMessageRequest,
   UnbookmarkConversationMessageRequest,
@@ -462,6 +459,18 @@ export const chatApi = {
       query,
     }),
 
+  /** The conversations pinned in a journal, the most recently pinned first. */
+  listJournalEntryPins: (
+    journalSpaceId: string,
+  ): Promise<ApiResult<string[]>> =>
+    apiCall('list_journal_entry_pins', { journalSpaceId }),
+
+  /** Pins or unpins an entry in one journal; the Chat sidebar's pin is separate. */
+  setJournalEntryPinned: (
+    request: Wire.SetJournalEntryPinnedRequestDto,
+  ): Promise<ApiResult<void>> =>
+    apiCall('set_journal_entry_pinned', { request }),
+
   /**
    * The documents a chat in this space may read, newest first.
    *
@@ -586,21 +595,6 @@ export const chatApi = {
 
         spaceId,
         assigned,
-      },
-    ),
-
-  /**
-   * Synthesizes multiple conversations into a structured journal summary.
-   */
-  synthesizeJournalEntries: async (
-    request: SynthesizeJournalEntriesRequest,
-    onProgress?: (progress: Wire.SynthesisProgressDto) => void,
-  ): Promise<ApiResult<SynthesizeJournalEntriesResponse>> =>
-    apiCall<Wire.SynthesizeJournalEntriesResponseDto>(
-      'synthesize_journal_entries',
-      {
-        request,
-        onProgress: new Channel<Wire.SynthesisProgressDto>(onProgress),
       },
     ),
 

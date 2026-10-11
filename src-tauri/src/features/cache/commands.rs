@@ -4,9 +4,8 @@
 //! The cache stores recent search results to avoid redundant embedding generation and
 //! database queries, significantly improving search performance for repeated queries.
 //!
-//! # Commands (4 total)
+//! # Commands
 //!
-//! - `cache_operation` - Unified cache operation dispatcher (clear/stats/metrics)
 //! - `clear_search_cache` - Manually clear all cached search results
 //! - `get_cache_stats` - Get detailed cache statistics (size, capacity, hit rate)
 //! - `get_cache_metrics` - Get cache performance metrics (hits, misses, time saved)
@@ -56,103 +55,6 @@ pub struct CacheMetrics {
     pub misses: u64,
     pub total_time_saved_ms: u64,
     pub hit_rate: f64,
-}
-
-#[derive(Debug, Deserialize, specta::Type)]
-#[serde(tag = "action", rename_all = "camelCase")]
-pub enum CacheOperation {
-    Clear,
-    GetStats,
-    GetMetrics,
-}
-
-#[derive(Debug, Serialize, specta::Type)]
-#[serde(tag = "type", content = "data", rename_all = "camelCase")]
-pub enum CacheResponse {
-    Cleared,
-    Stats(SearchCacheStats),
-    Metrics(CacheMetrics),
-}
-
-/// Unified cache operation dispatcher using enum-based pattern
-///
-/// Single command handling multiple cache operations (clear, stats, metrics) via enum
-/// dispatch pattern. Simplifies frontend API by consolidating related operations.
-///
-/// # Arguments
-///
-/// * `operation` - Enum specifying the operation to perform
-///
-/// # Returns
-///
-/// * `Ok(CacheResponse)` - Operation-specific response (Cleared/Stats/Metrics)
-/// * `Err(AppError)` - Cache operation failed (rare)
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Clear cache
-/// const clearResult = await invoke('cache_operation', {
-///   operation: { action: 'clear' }
-/// });
-/// console.log('Cache cleared');
-///
-/// // Get stats
-/// const statsResult = await invoke<{ type: 'stats', data: CacheStats }>('cache_operation', {
-///   operation: { action: 'getStats' }
-/// });
-/// console.log('Cache size:', statsResult.data.size);
-/// console.log('Hit rate:', statsResult.data.hitRate);
-///
-/// // Get metrics
-/// const metricsResult = await invoke<{ type: 'metrics', data: CacheMetrics }>('cache_operation', {
-///   operation: { action: 'getMetrics' }
-/// });
-/// console.log('Hits:', metricsResult.data.hits);
-/// console.log('Time saved:', metricsResult.data.totalTimeSavedMs, 'ms');
-/// ```
-///
-/// # Performance
-///
-/// - **Clear**: ~1-10ms (depends on cache size)
-/// - **Stats/Metrics**: ~1μs (atomic reads)
-/// - **Synchronous**: Instant return
-///
-/// # Architecture
-///
-/// Enum dispatch pattern for unified API (alternative to separate commands)
-#[tauri::command]
-#[specta::specta]
-pub fn cache_operation(operation: CacheOperation) -> Result<CacheResponse, AppError> {
-    match operation {
-        CacheOperation::Clear => {
-            QUERY_CACHE.clear();
-            tracing::info!("Search cache manually cleared");
-            Ok(CacheResponse::Cleared)
-        }
-        CacheOperation::GetStats => {
-            let stats = QUERY_CACHE.stats();
-            Ok(CacheResponse::Stats(SearchCacheStats {
-                size: stats.size,
-                capacity: stats.capacity,
-                hits: stats.hits,
-                misses: stats.misses,
-                total_time_saved_ms: stats.total_time_saved_ms,
-                hit_rate: stats.hit_rate,
-            }))
-        }
-        CacheOperation::GetMetrics => {
-            let metrics = QUERY_CACHE.metrics();
-            Ok(CacheResponse::Metrics(CacheMetrics {
-                hits: metrics.hits,
-                misses: metrics.misses,
-                total_time_saved_ms: metrics.total_time_saved_ms,
-                hit_rate: metrics.hit_rate,
-            }))
-        }
-    }
 }
 
 /// Manually clears all cached search results

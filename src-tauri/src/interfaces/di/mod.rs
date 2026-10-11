@@ -1,20 +1,15 @@
 //! Dependency Injection Container
 //!
-//! This module provides dependency injection containers for the application.
+//! This module provides the dependency injection container for the application.
 //! It manages the lifecycle and wiring of all repositories and services.
 //!
 //! # Architecture
 //!
-//! Dependencies are exposed through small, composable interfaces:
-//! - **Container**: Pure DDD unified DI container (RECOMMENDED - use this!)
-//! - **ServiceContainer**: Legacy DI container (DEPRECATED - being removed)
-//! - **AppContainer**: Legacy repository-focused container (DEPRECATED)
-//! - **MockAppContainer**: Test container with in-memory mocks
+//! - **Container**: the unified DI container, composed from domain modules
+//! - **MockAppContainer**: test container with in-memory mocks
 //!
-//! # Pure DDD Container (Modern)
-//!
-//! **Container** is the pure DDD unified container following Domain-Driven Design.
-//! It supports optional AI models and uses degraded mocks when models aren't installed.
+//! **Container** supports optional AI models and uses degraded mocks when
+//! models aren't installed.
 //!
 //! ## Usage in Tauri Commands
 //! ```rust
@@ -40,25 +35,6 @@
 //! }
 //! ```
 //!
-//! ## Legacy AppContainer Usage
-//! ```rust
-//! use crate::di::AppContainer;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let container = AppContainer::new(pool).await?;
-//!
-//!     // Use repositories
-//!     let doc = container.documents().create(...).await?;
-//!
-//!     // Use services
-//!     let embedding = container.embedding_service().embed_single("text").await?;
-//!     let results = container.search_service().search(&embedding, 10);
-//!
-//!     Ok(())
-//! }
-//! ```
-//!
 //! ## Testing Usage
 //! ```rust
 //! use crate::di::MockAppContainer;
@@ -73,14 +49,13 @@
 //! }
 //! ```
 
-use sqlx::SqlitePool;
+#[cfg(test)]
 use std::sync::Arc;
 
 // DDD Container - Unified DI container for DDD architecture
 pub mod container;
 pub use container::Container;
 
-// Domain Modules - Modular replacement for ServiceContainer (2026-01-21)
 #[cfg(test)]
 mod file_preview_tests;
 pub mod modules;
@@ -88,7 +63,6 @@ pub use modules::{
     AIModule, CoreModule, FileOpsModule, IndexingModule, LibraryModule, SearchModule, SystemModule,
 };
 
-// Legacy exports (for backward compatibility)
 #[cfg(test)]
 use crate::application::ports::{
     ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
@@ -102,6 +76,8 @@ use crate::features::mentions::mocks::MockMentionRepository;
 #[cfg(test)]
 use crate::features::search::mocks::MockSearchService;
 #[cfg(test)]
+use crate::features::search::SearchServiceTrait;
+#[cfg(test)]
 use crate::features::tags::mocks::MockTagRepository;
 #[cfg(test)]
 use crate::features::tags::TagRepositoryTrait;
@@ -111,203 +87,6 @@ use crate::infrastructure::persistence::repositories::mocks::{
 };
 #[cfg(test)]
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
-use crate::shared::error::{AppError, Result};
-// Removed: use crate::shared::traits (god object eliminated - traits migrated to infrastructure/services/traits/)
-use crate::features::embedding::service::EmbeddingService;
-use crate::features::search::SearchServiceTrait;
-use crate::infrastructure::persistence::repositories::{
-    ChunkRepository, DocumentRepository, EmbeddingRepository, MentionRepository, TagRepository,
-};
-
-/// Production dependency injection container
-///
-/// Contains real implementations backed by SQLite database and ONNX models.
-/// Use this in production code and integration tests.
-///
-/// # Example
-/// ```rust
-/// let pool = get_database_pool().await?;
-/// let container = AppContainer::new(pool).await?;
-///
-/// // Access repositories
-/// let documents = container.documents();
-/// let chunks = container.chunks();
-///
-/// // Access services
-/// let embedder = container.embedding_service();
-/// let searcher = container.search_service();
-/// ```
-pub struct AppContainer {
-    // Repositories
-    document_repo: Arc<DocumentRepository>,
-    chunk_repo: Arc<ChunkRepository>,
-    embedding_repo: Arc<EmbeddingRepository>,
-    tag_repo: Arc<TagRepository>,
-    mention_repo: Arc<MentionRepository>,
-
-    // Services
-    embedding_service: Option<Arc<EmbeddingService>>,
-    search_service: Option<Arc<dyn SearchServiceTrait>>,
-}
-
-impl AppContainer {
-    /// Create a new production container
-    ///
-    /// # Arguments
-    /// * `pool` - SQLite connection pool
-    ///
-    /// # Returns
-    /// Container with production implementations
-    ///
-    /// # Example
-    /// ```rust
-    /// use sqlx::sqlite::SqlitePoolOptions;
-    ///
-    /// let pool = SqlitePoolOptions::new()
-    ///     .connect("sqlite:lattice.db")
-    ///     .await?;
-    ///
-    /// let container = AppContainer::new(pool).await?;
-    /// ```
-    pub async fn new(pool: SqlitePool) -> Result<Self> {
-        Ok(Self {
-            document_repo: Arc::new(DocumentRepository::new(pool.clone())),
-            chunk_repo: Arc::new(ChunkRepository::new(pool.clone())),
-            embedding_repo: Arc::new(EmbeddingRepository::new(pool.clone())),
-            tag_repo: Arc::new(TagRepository::new(pool.clone())),
-            mention_repo: Arc::new(MentionRepository::new(pool)),
-            embedding_service: None,
-            search_service: None,
-        })
-    }
-
-    /// Create container with embedding service
-    ///
-    /// # Arguments
-    /// * `pool` - SQLite connection pool
-    /// * `embedding_service` - Pre-initialized embedding service
-    ///
-    /// # Returns
-    /// Container with embedding service configured
-    ///
-    /// # Example
-    /// ```rust
-    /// use crate::features::embedding::service::EmbeddingService;
-    ///
-    /// let pool = get_pool().await?;
-    /// let embedder = EmbeddingService::new("models/model.onnx").await?;
-    ///
-    /// let container = AppContainer::with_embedding_service(pool, embedder).await?;
-    /// ```
-    pub async fn with_embedding_service(
-        pool: SqlitePool,
-        embedding_service: EmbeddingService,
-    ) -> Result<Self> {
-        Ok(Self {
-            document_repo: Arc::new(DocumentRepository::new(pool.clone())),
-            chunk_repo: Arc::new(ChunkRepository::new(pool.clone())),
-            embedding_repo: Arc::new(EmbeddingRepository::new(pool.clone())),
-            tag_repo: Arc::new(TagRepository::new(pool.clone())),
-            mention_repo: Arc::new(MentionRepository::new(pool)),
-            embedding_service: Some(Arc::new(embedding_service)),
-            search_service: None,
-        })
-    }
-
-    /// Create container with both embedding and search services
-    ///
-    /// # Arguments
-    /// * `pool` - SQLite connection pool
-    /// * `embedding_service` - Pre-initialized embedding service
-    /// * `search_service` - Pre-initialized search service
-    ///
-    /// # Example
-    /// ```rust
-    /// let embedder = EmbeddingService::new(model_path).await?;
-    /// let usearch_index = USearchVectorIndex::new(768, None)?;
-    /// let searcher = Arc::new(usearch_index) as Arc<dyn SearchServiceTrait>;
-    ///
-    /// let container = AppContainer::with_services(pool, embedder, searcher).await?;
-    /// ```
-    pub async fn with_services(
-        pool: SqlitePool,
-        embedding_service: EmbeddingService,
-        search_service: Arc<dyn SearchServiceTrait>,
-    ) -> Result<Self> {
-        Ok(Self {
-            document_repo: Arc::new(DocumentRepository::new(pool.clone())),
-            chunk_repo: Arc::new(ChunkRepository::new(pool.clone())),
-            embedding_repo: Arc::new(EmbeddingRepository::new(pool.clone())),
-            tag_repo: Arc::new(TagRepository::new(pool.clone())),
-            mention_repo: Arc::new(MentionRepository::new(pool)),
-            embedding_service: Some(Arc::new(embedding_service)),
-            search_service: Some(search_service),
-        })
-    }
-
-    // Repository accessors
-
-    /// Get document repository
-    pub fn documents(&self) -> Arc<DocumentRepository> {
-        Arc::clone(&self.document_repo)
-    }
-
-    /// Get chunk repository
-    pub fn chunks(&self) -> Arc<ChunkRepository> {
-        Arc::clone(&self.chunk_repo)
-    }
-
-    /// Get embedding repository
-    pub fn embeddings(&self) -> Arc<EmbeddingRepository> {
-        Arc::clone(&self.embedding_repo)
-    }
-
-    /// Get tag repository
-    pub fn tags(&self) -> Arc<TagRepository> {
-        Arc::clone(&self.tag_repo)
-    }
-
-    /// Get mention repository
-    pub fn mentions(&self) -> Arc<MentionRepository> {
-        Arc::clone(&self.mention_repo)
-    }
-
-    // Service accessors
-
-    /// Get embedding service
-    ///
-    /// # Returns
-    /// Result containing the embedding service, or error if not initialized
-    pub fn embedding_service(&self) -> Result<Arc<EmbeddingService>> {
-        self.try_embedding_service()
-            .ok_or_else(|| AppError::InternalError("EmbeddingService not initialized".to_string()))
-    }
-
-    /// Try to get embedding service
-    ///
-    /// # Returns
-    /// `Some` if service is configured, `None` otherwise
-    pub fn try_embedding_service(&self) -> Option<Arc<EmbeddingService>> {
-        self.embedding_service.as_ref().map(Arc::clone)
-    }
-
-    /// Get search service
-    ///
-    /// # Returns
-    /// Result containing the search service, or error if not initialized
-    pub fn search_service(&self) -> Result<Arc<dyn SearchServiceTrait>> {
-        self.try_search_service()
-            .ok_or_else(|| AppError::InternalError("SearchService not initialized".to_string()))
-    }
-
-    /// Try to get search service
-    ///
-    /// # Returns
-    /// `Some` if service is configured, `None` otherwise
-    pub fn try_search_service(&self) -> Option<Arc<dyn SearchServiceTrait>> {
-        self.search_service.as_ref().map(Arc::clone)
-    }
-}
 
 /// Mock dependency injection container for testing
 ///

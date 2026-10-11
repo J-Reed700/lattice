@@ -1,4 +1,4 @@
-import { useChatStartersQuery } from '@/hooks/queries/useChatStartersQuery';
+import { useChatStartersQuery } from '@/features/chat/hooks/useChatStartersQuery';
 
 /**
  * Suggested prompts for the empty chat state.

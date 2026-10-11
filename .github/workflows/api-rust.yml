@@ -1,0 +1,83 @@
+name: api-rust
+
+# api-rust has no caller in the desktop app, so its checks run only when it
+# (or this workflow) changes, or by hand.
+on:
+  pull_request:
+    paths:
+      - 'api-rust/**'
+      - '.github/workflows/api-rust.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'api-rust/**'
+      - '.github/workflows/api-rust.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: api-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  dependency-audit:
+    name: API advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: API advisories
+        working-directory: api-rust
+        run: cargo audit
+
+  sync-engine:
+    name: api-rust check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            api-rust/target/
+          key: cargo-api-rust-${{ hashFiles('api-rust/Cargo.lock') }}
+          restore-keys: cargo-api-rust-
+      - name: cargo check
+        working-directory: api-rust
+        run: cargo check --all-targets
+      - name: unit tests
+        working-directory: api-rust
+        run: cargo test --lib
+      - name: PostgreSQL contracts
+        working-directory: api-rust
+        env:
+          DATABASE_URL: postgres://postgres:test-only@localhost:5432/postgres
+        run: cargo test --test sync_persistence -- --ignored
+      - name: cargo clippy
+        working-directory: api-rust
+        run: cargo clippy --all-targets
+      - name: cargo fmt --check
+        working-directory: api-rust
+        run: cargo fmt --all -- --check

@@ -7,20 +7,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolutionPanel';
 
-const mocks = vi.hoisted(() => ({ recall: vi.fn(), sources: vi.fn(), save: vi.fn(), duplicate: vi.fn(), scheduler: vi.fn(), review: vi.fn() }));
+const mocks = vi.hoisted(() => ({ recall: vi.fn(), sources: vi.fn(), save: vi.fn(), duplicate: vi.fn(), review: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningRecallWorkspace: mocks.recall,
   getLearningSourceWorkspace: mocks.sources,
   saveLearningRecallCard: mocks.save,
   decideLearningRecallDuplicate: mocks.duplicate,
-  changeLearningRecallScheduler: mocks.scheduler,
   reviewLearningRecallCard: mocks.review,
 } }));
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 const content = { prompt: 'Which boundary makes retries safe?', answer: 'A stable operation identifier and a payload fingerprint.', explanation: 'The same operation can be replayed without creating a second write.', options: [], correctOptionIndex: null, language: null, clozeDeletions: [] };
-const card = (overrides: Record<string, unknown> = {}) => ({ id: 'card-1', format: 'question_answer', content, sourceVersionIds: ['version-1'], contentRevision: 2, scheduler: { schedulerVersion: 'expanding_v1', stability: null, difficulty: null, lastReviewedAt: null, dueAt: 1, intervalDays: 2, reviewCount: 1 }, versions: [{ revision: 1, format: 'question_answer', content, sourceVersionIds: ['version-1'], changeReason: 'Created', createdAt: 1_790_000_000_000 }, { revision: 2, format: 'question_answer', content: { ...content, prompt: 'Which boundary makes retries safe?' }, sourceVersionIds: ['version-1'], changeReason: 'Tightened prompt', createdAt: 1_790_100_000_000 }], createdAt: 1_790_000_000_000, updatedAt: 1_790_100_000_000, ...overrides });
-const workspace = (overrides: Record<string, unknown> = {}) => ({ programId: 'program-1', cards: [card()], duplicates: [], dueCount: 1, fsrsAvailable: true, schedulerDisclosure: 'Schedules are versioned and can be replayed.', ...overrides });
+const card = (overrides: Record<string, unknown> = {}) => ({ id: 'card-1', format: 'question_answer', content, sourceVersionIds: ['version-1'], contentRevision: 2, scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 1, intervalDays: 2, reviewCount: 1 }, versions: [{ revision: 1, format: 'question_answer', content, sourceVersionIds: ['version-1'], changeReason: 'Created', createdAt: 1_790_000_000_000 }, { revision: 2, format: 'question_answer', content: { ...content, prompt: 'Which boundary makes retries safe?' }, sourceVersionIds: ['version-1'], changeReason: 'Tightened prompt', createdAt: 1_790_100_000_000 }], createdAt: 1_790_000_000_000, updatedAt: 1_790_100_000_000, ...overrides });
+const workspace = (overrides: Record<string, unknown> = {}) => ({ programId: 'program-1', cards: [card()], duplicates: [], dueCount: 1, schedulerDisclosure: 'Cards are scheduled with FSRS 6.', ...overrides });
 const sourceWorkspace = () => ({ programId: 'program-1', sources: [{ id: 'source-1', deletedAt: null, versions: [{ id: 'version-1', versionNumber: 1, title: 'Operations guide' }] }] });
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
@@ -35,8 +34,7 @@ describe('Learning Studio versioned recall', () => {
     mocks.sources.mockResolvedValue(ok(sourceWorkspace()));
     mocks.save.mockResolvedValue(ok(workspace()));
     mocks.duplicate.mockResolvedValue(ok(workspace({ duplicates: [{ id: 'duplicate-1', cardId: 'card-1', possibleDuplicateCardId: 'card-2', reason: 'Prompts overlap.', similarity: 0.91, status: 'confirmed', createdAt: 1, decidedAt: 2 }] })));
-    mocks.scheduler.mockResolvedValue(ok(workspace({ cards: [card({ scheduler: { schedulerVersion: 'fsrs_6_v1', stability: 2.1, difficulty: 5, lastReviewedAt: 1, dueAt: 2, intervalDays: 2, reviewCount: 1 } })] })));
-    mocks.review.mockResolvedValue(ok(workspace({ cards: [card({ scheduler: { schedulerVersion: 'expanding_v1', stability: null, difficulty: null, lastReviewedAt: 1_790_100_000_000, dueAt: Date.now() + 86_400_000, intervalDays: 3, reviewCount: 2 } })], dueCount: 0 })));
+    mocks.review.mockResolvedValue(ok(workspace({ cards: [card({ scheduler: { stability: 3.2, difficulty: 5, lastReviewedAt: 1_790_100_000_000, dueAt: Date.now() + 86_400_000, intervalDays: 3, reviewCount: 2 } })], dueCount: 0 })));
   });
 
   it('creates a source-linked cloze card and retries the identical version operation', async () => {
@@ -97,35 +95,19 @@ describe('Learning Studio versioned recall', () => {
     expect(mocks.review.mock.calls[0][0]).toMatchObject({ cardId: 'card-1', selectedOption: 1, rating: 'good' });
   });
 
-  it('offers FSRS only when available and retries scheduler or duplicate decisions with their original requests', async () => {
+  it('shows each card on FSRS and retries a duplicate decision with its original request', async () => {
     const user = userEvent.setup();
-    mocks.scheduler.mockResolvedValueOnce(fail('Revision changed; reload and retry.'));
-    mocks.scheduler.mockResolvedValueOnce(ok(workspace({ cards: [card({ scheduler: { schedulerVersion: 'fsrs_6_v1', stability: 2.1, difficulty: 5, lastReviewedAt: 1, dueAt: 2, intervalDays: 2, reviewCount: 1 } })], duplicates: [{ id: 'duplicate-1', cardId: 'card-1', possibleDuplicateCardId: 'card-2', reason: 'Prompts overlap.', similarity: 0.91, status: 'pending', createdAt: 1, decidedAt: null }] })));
     mocks.duplicate.mockResolvedValueOnce(fail('Duplicate decision failed'));
-    mocks.recall.mockResolvedValue(ok(workspace({ duplicates: [{ id: 'duplicate-1', cardId: 'card-1', possibleDuplicateCardId: 'card-2', reason: 'Prompts overlap.', similarity: 0.91, status: 'pending', createdAt: 1, decidedAt: null }] })));
+    mocks.recall.mockResolvedValue(ok(workspace({ cards: [card({ scheduler: { stability: 2.1, difficulty: 5, lastReviewedAt: 1, dueAt: 2, intervalDays: 2, reviewCount: 1 } })], duplicates: [{ id: 'duplicate-1', cardId: 'card-1', possibleDuplicateCardId: 'card-2', reason: 'Prompts overlap.', similarity: 0.91, status: 'pending', createdAt: 1, decidedAt: null }] })));
     renderPanel();
-    await screen.findByText('A reversible scheduling choice');
-    const fsrs = screen.getAllByRole('button', { name: 'FSRS 6 v1' })[0];
-    expect(fsrs).toBeEnabled();
-    await user.click(fsrs);
-    expect(await screen.findByText(/Revision changed/)).toBeVisible();
-    const schedulerRequest = mocks.scheduler.mock.calls[0][0];
-    await user.click(screen.getByRole('button', { name: 'Retry scheduler change' }));
-    await waitFor(() => expect(mocks.scheduler).toHaveBeenCalledTimes(2));
-    expect(mocks.scheduler.mock.calls[1][0]).toEqual(schedulerRequest);
+    await screen.findByText('Where each card stands');
+    expect(screen.getByText(/FSRS 6 · stability 2.1 days/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'FSRS 6 v1' })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: 'Mark as duplicate' }));
     expect(await screen.findByText('Duplicate decision failed')).toBeVisible();
     const duplicateRequest = mocks.duplicate.mock.calls[0][0];
     await user.click(screen.getByRole('button', { name: 'Retry duplicate decision' }));
     await waitFor(() => expect(mocks.duplicate).toHaveBeenCalledTimes(2));
     expect(mocks.duplicate.mock.calls[1][0]).toEqual(duplicateRequest);
-  });
-
-  it('keeps FSRS unavailable visibly disabled', async () => {
-    mocks.recall.mockResolvedValue(ok(workspace({ fsrsAvailable: false })));
-    renderPanel();
-    await screen.findByText('A reversible scheduling choice');
-    expect(screen.getAllByRole('button', { name: 'FSRS 6 v1' })[0]).toBeDisabled();
-    expect(screen.getByText(/FSRS is currently unavailable/)).toBeVisible();
   });
 });

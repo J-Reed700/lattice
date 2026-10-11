@@ -1,7 +1,6 @@
 //! Backup feature — use cases.
 //!
-//! `list` was removed — `backup/commands.rs::list_backups_impl` calls
-//! `BackupAdapter::list_backups` directly.
+//! Listing has no use case: `plugin_list_backups` reads through the backup port.
 
 pub mod create;
 pub mod export_conversations;

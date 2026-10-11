@@ -4,6 +4,12 @@ Six read-only reviewers, one per area, each handed the 2026-09-19, 09-22 and 09-
 
 Branch: `conversation-memory-release-readiness`, tree as of the Track A (local tool calling) and Track B (verifier phases 2–3) edits.
 
+> **Status (2026-10-10).** Superseded as the current picture by
+> `2026-10-09-architecture-audit.md`. Since this was written, message
+> virtualisation is done (`VirtualizedMessageList.tsx`, memoised `Message`),
+> so that deferral below is stale. Item 16 is half done: the retrieval eval
+> now runs chat's orchestrator, but CI still only validates the datasets.
+
 ## 1. Verdict
 
 The skeleton is sound in every area: blob leases and GC, atomic turn commit, sidecar lifetime, event subscriptions, the CSP and IPC boundary, and space scoping on every retrieval path. The defects cluster at the edges: file-format extractors that lose content, error paths that leave a row `pending` or replace a real error with a fake one, timeouts that do not match the budgets above them, and three file-level database operations that ignore the write-ahead log. Two findings are security issues worth fixing before any external release: a web page can poison the page cache for another URL, and redirects reach private addresses before validation.

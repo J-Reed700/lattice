@@ -25,7 +25,8 @@ use crate::domain::conversation::memory::{MemoryItem, MemorySnapshot, SourceMess
 use crate::shared::error::{AppError, Result};
 
 pub use budget::{
-    ActiveMemoryBudgetExceeded, BudgetAllocation, ModelCapacity, TokenAccounting,
+    ActiveMemoryBudgetExceeded, BudgetAllocation, BudgetError, BudgetRequest, EvidenceBudget,
+    EvidenceShare, HistoryCharge, ModelCapacity, PromptBudgetExceeded, TokenAccounting,
     MIN_USABLE_CAPACITY,
 };
 pub use plan::{ContextAccounting, ContextPlan, RecallDiagnostics, SelectedPassage};
@@ -148,11 +149,11 @@ impl ContextAssembler {
 
         let policy_tokens = self.count_input(&policy_message);
         let current_tokens = self.count_input(&current_message);
-        let fixed = policy_tokens
-            .saturating_add(current_tokens)
-            .saturating_add(request.tool_schema_tokens);
 
-        let allocation = BudgetAllocation::plan(&request.capacity, fixed)?;
+        let allocation = BudgetAllocation::plan(
+            &request.capacity,
+            &BudgetRequest::new(policy_tokens, request.tool_schema_tokens, current_tokens),
+        )?;
         let mut accounting =
             ContextAccounting::from_allocation(&allocation, &request.capacity.model_identity);
         accounting.fixed_policy = policy_tokens;
@@ -343,7 +344,7 @@ impl ContextAssembler {
         });
         let mut evidence_blocks = Vec::new();
         let mut evidence_tokens = 0usize;
-        let evidence_pool = allocation.rag_and_tools.min(remaining);
+        let evidence_pool = allocation.evidence.min(remaining);
         for item in evidence {
             let block = format!("- {}\n{}", item.label, item.content);
             let cost = self.count(&block) + MESSAGE_FRAMING_TOKENS;

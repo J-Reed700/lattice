@@ -44,20 +44,6 @@ pub async fn decide_learning_recall_duplicate(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn change_learning_recall_scheduler(
-    request: ChangeLearningRecallSchedulerRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningRecallWorkspaceDto, ApiError> {
-    crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
-    )
-    .change_scheduler(&request)
-    .await
-    .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn review_learning_recall_card(
     request: ReviewLearningRecallCardRequestDto,
     container: State<'_, Container>,

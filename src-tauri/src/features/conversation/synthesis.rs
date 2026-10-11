@@ -1,13 +1,29 @@
-//! Journal synthesis selection and model orchestration.
-use super::chat::chat_with_conversation_impl as run_chat_with_conversation_impl;
-use super::chat::{ChatResponse, ToolPreferences};
+//! Journal synthesis: which entries it reads, and the job that writes it.
+//!
+//! A synthesis is a job (`journal.synthesis`) whose subject is its
+//! destination. It gathers its entries once and saves the plan, writes each
+//! part's notes in a scratch conversation and saves them as they come, then
+//! merges them into its staged result. A synthesis stopped by a restart
+//! resumes at the first part it had not saved; one that finished while the
+//! app was closed waits, staged, until the renderer saves it.
+use super::chat::ports::ChatPolicy;
+use super::chat::{run_unwatched_turn, ChatResponse, ToolPreferences};
 use super::commands as conversation;
+use super::dto::CreateConversationRequestDto;
 use super::workspace_dto::*;
 use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
-use crate::shared::{error::AppError, ipc::ApiError};
+use crate::shared::error::{AppError, Result};
+use crate::shared::runtime::jobs::{
+    JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,
+    NewJob, RecoveryPolicy,
+};
+use async_trait::async_trait;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tracing::warn;
 type SnapshotKey = (String, Option<String>, String, Option<String>, bool);
 type SourceKey = (String, String, String, Option<SnapshotKey>);
 
@@ -450,7 +466,7 @@ fn sort_entries_by_recency(entries: &mut [JournalSynthesisEntry]) {
 async fn select_week_entries(
     container: &Container,
     max_entries: usize,
-) -> Result<Vec<JournalSynthesisEntry>, ApiError> {
+) -> Result<Vec<JournalSynthesisEntry>> {
     let now = Utc::now();
     let mut entries: Vec<JournalSynthesisEntry> = Vec::new();
 
@@ -460,8 +476,7 @@ async fn select_week_entries(
         Some(WEEK_SYNTHESIS_CANDIDATE_SCAN),
         Some(0),
     )
-    .await
-    .map_err(ApiError::from)?;
+    .await?;
 
     let mut used_conversations = 0usize;
     for candidate in candidates {
@@ -474,8 +489,7 @@ async fn select_week_entries(
         let conversation_id = candidate.id.to_string();
         let messages =
             conversation::get_conversation_messages_impl(container, conversation_id.clone())
-                .await
-                .map_err(ApiError::from)?;
+                .await?;
         let transcript = build_synthesis_transcript(&messages);
         let (sources, prompt_messages) = source_keys_by_message(&messages);
         if transcript.is_empty() {
@@ -505,8 +519,7 @@ async fn select_week_entries(
         container.db_pool().clone(),
     )
     .list_created_since(&cutoff, WEEK_SYNTHESIS_MAX_REFERENCES as i64)
-    .await
-    .map_err(ApiError::from)?;
+    .await?;
 
     for record in references {
         let mut lines = vec![format!(
@@ -584,8 +597,7 @@ async fn select_week_entries(
         );
     let notes = notes_repository
         .list_in_date_range(&start_date, &end_date)
-        .await
-        .map_err(ApiError::from)?;
+        .await?;
 
     let mut used_notes = 0usize;
     for note in notes {
@@ -603,8 +615,7 @@ async fn select_week_entries(
             &conversation_repository,
             note,
         )
-        .await
-        .map_err(ApiError::from)?;
+        .await?;
         let note_sources = note.sources;
         let note_citation_keys = note_sources
             .iter()
@@ -636,27 +647,83 @@ async fn select_week_entries(
     Ok(entries)
 }
 
-pub async fn synthesize_journal_entries_impl(
-    request: SynthesizeJournalEntriesRequestDto,
+/// The job kind of a journal synthesis; its subject is the destination.
+pub const JOURNAL_SYNTHESIS: &str = "journal.synthesis";
+const PLAN: &str = "plan";
+const SCRATCH: &str = "scratch";
+/// Progress is told in hundredths: the number of parts is known only once the
+/// entries are gathered.
+const PROGRESS_TOTAL: u32 = 100;
+const GATHERED: u32 = 5;
+const WRITING: u32 = 90;
+
+/// One synthesis at a time, one per destination; one stopped by a restart
+/// resumes from its last finished part.
+pub fn synthesis_job_config() -> JobKindConfig {
+    JobKindConfig::new(RecoveryPolicy::Requeue)
+        .concurrency(1)
+        .exclusive_per_subject()
+}
+
+fn step_key(index: usize) -> String {
+    format!("map:{index}")
+}
+
+fn encode<T: serde::Serialize>(value: &T) -> Result<serde_json::Value> {
+    serde_json::to_value(value).map_err(|error| AppError::Serialization(error.to_string()))
+}
+
+fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {
+    serde_json::from_value(value).map_err(|error| AppError::Serialization(error.to_string()))
+}
+
+impl SynthesisDestinationDto {
+    /// The job's subject: two syntheses into one page never interleave.
+    fn subject(&self) -> String {
+        match self {
+            Self::Capture => "capture".to_string(),
+            Self::Note { note_id } => format!("note:{note_id}"),
+            Self::Week { title } => format!("week:{title}"),
+        }
+    }
+}
+
+/// What the gathered entries came to: one prompt per part, and what the
+/// finished synthesis cites. Saved once, so a resumed synthesis reads the same
+/// entries it started with.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SynthesisPlan {
+    scope: String,
+    entry_count: usize,
+    prompts: Vec<String>,
+    conversation_ids: Vec<String>,
+    citations: Vec<SynthesisCitationDto>,
+    sources: Vec<SourceDto>,
+}
+
+/// One part's notes, saved as soon as the model writes them.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StepOutput {
+    output: String,
+}
+
+/// The conversation a part is being written in, so a restart can remove it.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Scratch {
+    conversation_id: Option<String>,
+}
+
+/// Gathers the entries a synthesis reads and plans its parts.
+async fn plan_synthesis(
     container: &Container,
-    window: tauri::Window,
-    on_progress: tauri::ipc::Channel<SynthesisProgressDto>,
-) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    let report = |stage, entry_count, chunk_index, chunk_count| {
-        // A closed renderer must not turn a completed generation into an error.
-        let _ = on_progress.send(SynthesisProgressDto {
-            stage,
-            entry_count,
-            chunk_index,
-            chunk_count,
-        });
-    };
-    report(SynthesisStage::Gathering, None, None, None);
+    request: &SynthesizeJournalEntriesRequestDto,
+) -> Result<SynthesisPlan> {
     let normalized_scope = normalize_synthesis_scope(request.scope.as_deref());
 
     let mut seen = HashSet::new();
     let mut conversation_ids = Vec::new();
-    for id in request.conversation_ids {
+    for id in &request.conversation_ids {
         let normalized = id.trim();
         if normalized.is_empty() {
             continue;
@@ -677,9 +744,9 @@ pub async fn synthesize_journal_entries_impl(
         select_week_entries(container, max_entries).await?
     } else {
         if conversation_ids.is_empty() {
-            return Err(ApiError::from(AppError::InvalidInput(
+            return Err(AppError::InvalidInput(
                 "At least one conversation ID is required for journal synthesis".to_string(),
-            )));
+            ));
         }
 
         if conversation_ids.len() > max_entries {
@@ -689,17 +756,14 @@ pub async fn synthesize_journal_entries_impl(
         let mut selected = Vec::new();
         for conversation_id in &conversation_ids {
             let conversation =
-                conversation::get_conversation_impl(container, conversation_id.clone())
-                    .await
-                    .map_err(ApiError::from)?;
+                conversation::get_conversation_impl(container, conversation_id.clone()).await?;
             let Some(conversation) = conversation else {
                 continue;
             };
 
             let messages =
                 conversation::get_conversation_messages_impl(container, conversation_id.clone())
-                    .await
-                    .map_err(ApiError::from)?;
+                    .await?;
             let transcript = build_synthesis_transcript(&messages);
             let (sources, prompt_messages) = source_keys_by_message(&messages);
             if transcript.is_empty() {
@@ -728,113 +792,406 @@ pub async fn synthesize_journal_entries_impl(
         } else {
             "No synthesizable message content found in selected conversations"
         };
-        return Err(ApiError::from(AppError::InvalidInput(message.to_string())));
+        return Err(AppError::InvalidInput(message.to_string()));
     }
 
     let mut entries = entries;
     let sources = assign_synthesis_source_ids(&mut entries);
     let chunks = chunk_journal_synthesis_entries(&entries);
-    let tool_preferences = ToolPreferences {
-        knowledge_base: false,
-        web_search: false,
-        deep_research_mode: false,
+    let prompts = chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| build_journal_map_prompt(chunk, index + 1, chunks.len()))
+        .collect();
+    Ok(SynthesisPlan {
+        scope: normalized_scope,
+        entry_count: entries.len(),
+        prompts,
+        conversation_ids: entries
+            .iter()
+            .filter(|entry| entry.kind == SynthesisEntryKind::Conversation)
+            .map(|entry| entry.conversation_id.clone())
+            .collect(),
+        citations: build_synthesis_citations(&entries),
+        sources,
+    })
+}
+
+/// The prompts say "use only the provided entry transcripts", and each part
+/// runs in a scratch conversation that belongs to no space the entries came
+/// from: anything retrieved for it is by definition from the wrong place.
+fn closed_book() -> ToolPreferences {
+    ToolPreferences {
         followup_mode: true,
         turn_mode: Some("followup".to_string()),
-        enabled_tools: None,
-        focus_document_ids: None,
-        explorer_focus: None,
-        // The prompts say "use only the provided entry transcripts", and the
-        // turn runs in a scratch conversation that belongs to no space the
-        // entries came from. Anything retrieved for it is by definition from
-        // the wrong place.
         closed_book: true,
-    };
+        ..ToolPreferences::default()
+    }
+}
 
-    let mut synthesis_conversation_id: Option<String> = None;
-    let synthesis_result = async {
-        let mut map_outputs = Vec::new();
+/// What a synthesis needs from the app: its entries, and model turns in
+/// scratch conversations of their own.
+#[async_trait]
+pub(crate) trait SynthesisWork: Send + Sync {
+    async fn plan(&self, selection: &SynthesizeJournalEntriesRequestDto) -> Result<SynthesisPlan>;
+    /// A conversation for one part, removed once the part is written.
+    async fn open_scratch(&self) -> Result<String>;
+    async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse>;
+    async fn remove_scratch(&self, conversation_id: String);
+}
 
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            report(
-                SynthesisStage::Reading,
-                Some(entries.len()),
-                Some(chunk_index + 1),
-                Some(chunks.len()),
-            );
-            let map_prompt = build_journal_map_prompt(chunk, chunk_index + 1, chunks.len());
-            let map_response = run_chat_with_conversation_impl(
-                container,
-                synthesis_conversation_id.clone(),
-                map_prompt,
-                Some(tool_preferences.clone()),
-                None,
-                None,
-                None,
-                None,
-                window.clone(),
-            )
-            .await
-            .map_err(ApiError::from)?;
+/// The app's entries and models.
+struct AppSynthesis {
+    container: Container,
+}
 
-            synthesis_conversation_id = Some(map_response.conversation_id.clone());
-            let map_output = extract_latest_assistant_message(&map_response).ok_or_else(|| {
-                ApiError::from(AppError::Other(
-                    "Synthesis map stage returned no assistant output".to_string(),
-                ))
-            })?;
-            map_outputs.push(map_output);
-        }
+#[async_trait]
+impl SynthesisWork for AppSynthesis {
+    async fn plan(&self, selection: &SynthesizeJournalEntriesRequestDto) -> Result<SynthesisPlan> {
+        plan_synthesis(&self.container, selection).await
+    }
 
-        report(
-            SynthesisStage::Writing,
-            Some(entries.len()),
-            None,
-            Some(chunks.len()),
-        );
-        let reduce_prompt = build_journal_reduce_prompt(&map_outputs);
-        let reduce_response = run_chat_with_conversation_impl(
-            container,
-            synthesis_conversation_id.clone(),
-            reduce_prompt,
-            Some(tool_preferences.clone()),
-            None,
-            None,
-            None,
-            None,
-            window.clone(),
+    async fn open_scratch(&self) -> Result<String> {
+        let llm = self.container.get_or_load_llm().await?;
+        Ok(ChatPolicy::create_conversation(
+            &self.container,
+            CreateConversationRequestDto {
+                title: "Journal synthesis".to_string(),
+                model_name: llm.model_name().to_string(),
+                system_prompt: None,
+            },
+        )
+        .await?
+        .conversation
+        .id)
+    }
+
+    async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse> {
+        run_unwatched_turn(
+            &self.container,
+            conversation_id.to_string(),
+            prompt.to_string(),
+            closed_book(),
         )
         .await
-        .map_err(ApiError::from)?;
+    }
 
-        synthesis_conversation_id = Some(reduce_response.conversation_id.clone());
-        let synthesis = extract_latest_assistant_message(&reduce_response).ok_or_else(|| {
-            ApiError::from(AppError::Other(
-                "Synthesis reduce stage returned no assistant output".to_string(),
-            ))
-        })?;
+    async fn remove_scratch(&self, conversation_id: String) {
+        if let Err(error) =
+            conversation::delete_conversation_unmetered(&self.container, conversation_id).await
+        {
+            warn!(%error, "Could not remove a synthesis scratch conversation");
+        }
+    }
+}
 
-        Ok::<SynthesizeJournalEntriesResponseDto, ApiError>(SynthesizeJournalEntriesResponseDto {
+/// Runs saved syntheses: gathers the entries once, writes each part's notes
+/// and saves them as it goes, then merges them into the staged result. The
+/// renderer saves that to the destination after its open editors have saved.
+pub struct JournalSynthesisJob {
+    work: Arc<dyn SynthesisWork>,
+}
+
+impl JournalSynthesisJob {
+    pub fn new(container: Container) -> Self {
+        Self::with(Arc::new(AppSynthesis { container }))
+    }
+
+    pub(crate) fn with(work: Arc<dyn SynthesisWork>) -> Self {
+        Self { work }
+    }
+
+    async fn report(&self, context: &JobContext, current: u32, activity: &SynthesisActivityDto) {
+        let message = match activity.stage {
+            SynthesisStage::Gathering => "Gathering conversation context".to_string(),
+            SynthesisStage::Reading => match (activity.chunk_index, activity.chunk_count) {
+                (Some(index), Some(count)) if count > 1 => {
+                    format!("Reviewing part {index} of {count}")
+                }
+                _ => "Reviewing the material".to_string(),
+            },
+            SynthesisStage::Writing => "Writing the synthesis".to_string(),
+        };
+        let saved = match encode(activity) {
+            Ok(activity) => context.progress(current, &message, Some(&activity)).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = saved {
+            warn!(job_id = context.id(), %error, "Could not save synthesis progress");
+        }
+    }
+
+    /// Removes the scratch conversation an earlier attempt left behind.
+    async fn discard_scratch(&self, context: &JobContext) -> Result<()> {
+        let scratch: Scratch = context
+            .checkpoint(SCRATCH)
+            .await?
+            .map(decode)
+            .transpose()?
+            .unwrap_or_default();
+        if let Some(id) = scratch.conversation_id {
+            self.work.remove_scratch(id).await;
+            context
+                .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// One model turn in a scratch conversation of its own. `None` when the
+    /// job stopped first.
+    async fn write(&self, context: &JobContext, prompt: &str) -> Result<Option<String>> {
+        let scratch = self.work.open_scratch().await?;
+        context
+            .put_checkpoint(
+                SCRATCH,
+                &encode(&Scratch {
+                    conversation_id: Some(scratch.clone()),
+                })?,
+            )
+            .await?;
+        let answered = context
+            .until_cancelled(self.work.answer(&scratch, prompt))
+            .await;
+        self.work.remove_scratch(scratch).await;
+        context
+            .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
+            .await?;
+        match answered {
+            None => Ok(None),
+            Some(answered) => extract_latest_assistant_message(&answered?)
+                .map(Some)
+                .ok_or_else(|| AppError::Other("The model wrote nothing for this part.".into())),
+        }
+    }
+}
+
+#[async_trait]
+impl JobHandler for JournalSynthesisJob {
+    async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let request: SynthesisRequest = decode(context.job().requested.clone())?;
+        self.discard_scratch(context).await?;
+        let plan: SynthesisPlan = match context.checkpoint(PLAN).await? {
+            Some(saved) => decode(saved)?,
+            None => {
+                self.report(
+                    context,
+                    0,
+                    &SynthesisActivityDto {
+                        stage: SynthesisStage::Gathering,
+                        entry_count: None,
+                        chunk_index: None,
+                        chunk_count: None,
+                    },
+                )
+                .await;
+                let Some(plan) = context
+                    .until_cancelled(self.work.plan(&request.selection))
+                    .await
+                else {
+                    return Ok(JobOutcome::Stopped);
+                };
+                let plan = plan?;
+                if !context.put_checkpoint(PLAN, &encode(&plan)?).await? {
+                    return Ok(JobOutcome::Stopped);
+                }
+                plan
+            }
+        };
+
+        let parts = plan.prompts.len();
+        let mut outputs = Vec::with_capacity(parts);
+        for (index, prompt) in plan.prompts.iter().enumerate() {
+            if let Some(saved) = context.checkpoint(&step_key(index)).await? {
+                outputs.push(decode::<StepOutput>(saved)?.output);
+                continue;
+            }
+            let share = (WRITING - GATHERED) * u32::try_from(index).unwrap_or(u32::MAX)
+                / u32::try_from(parts.max(1)).unwrap_or(u32::MAX);
+            self.report(
+                context,
+                GATHERED + share,
+                &SynthesisActivityDto {
+                    stage: SynthesisStage::Reading,
+                    entry_count: Some(plan.entry_count),
+                    chunk_index: Some(index + 1),
+                    chunk_count: Some(parts),
+                },
+            )
+            .await;
+            let Some(output) = self.write(context, prompt).await? else {
+                return Ok(JobOutcome::Stopped);
+            };
+            if !context
+                .put_checkpoint(
+                    &step_key(index),
+                    &encode(&StepOutput {
+                        output: output.clone(),
+                    })?,
+                )
+                .await?
+            {
+                return Ok(JobOutcome::Stopped);
+            }
+            outputs.push(output);
+        }
+
+        self.report(
+            context,
+            WRITING,
+            &SynthesisActivityDto {
+                stage: SynthesisStage::Writing,
+                entry_count: Some(plan.entry_count),
+                chunk_index: None,
+                chunk_count: Some(parts),
+            },
+        )
+        .await;
+        let Some(synthesis) = self
+            .write(context, &build_journal_reduce_prompt(&outputs))
+            .await?
+        else {
+            return Ok(JobOutcome::Stopped);
+        };
+        let result = SynthesizeJournalEntriesResponseDto {
             synthesis,
-            scope: normalized_scope.clone(),
-            entry_count: entries.len(),
-            chunk_count: chunks.len(),
-            conversation_ids: entries
-                .iter()
-                .filter(|entry| entry.kind == SynthesisEntryKind::Conversation)
-                .map(|entry| entry.conversation_id.clone())
-                .collect(),
-            citations: build_synthesis_citations(&entries),
-            sources: sources.clone(),
+            scope: plan.scope,
+            entry_count: plan.entry_count,
+            chunk_count: parts,
+            conversation_ids: plan.conversation_ids,
+            citations: plan.citations,
+            sources: plan.sources,
+        };
+        if !context.stage(encode(&result)?).await? {
+            return Ok(JobOutcome::Stopped);
+        }
+        Ok(JobOutcome::Completed {
+            result_ref: request.destination.subject(),
+            message: "Synthesis ready".into(),
         })
     }
-    .await;
-
-    if let Some(temp_conversation_id) = synthesis_conversation_id {
-        let _ = conversation::delete_conversation_impl(container, temp_conversation_id).await;
-    }
-
-    synthesis_result
 }
+
+/// What a synthesis job was asked: the entries, where the result goes, and
+/// how the renderer labels it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SynthesisRequest {
+    selection: SynthesizeJournalEntriesRequestDto,
+    destination: SynthesisDestinationDto,
+    title: String,
+    heading: String,
+}
+
+fn synthesis_dto(job: &JobRecord) -> Result<JournalSynthesisDto> {
+    let request: SynthesisRequest = decode(job.requested.clone())?;
+    Ok(JournalSynthesisDto {
+        job: JobDto::from(job),
+        title: request.title,
+        heading: request.heading,
+        destination: request.destination,
+        conversation_ids: request.selection.conversation_ids,
+        activity: job.activity.clone().and_then(|value| decode(value).ok()),
+    })
+}
+
+async fn synthesis_job(jobs: &JobRuntime, job_id: &str) -> Result<JobRecord> {
+    let job = jobs.store().get(job_id).await?;
+    if job.kind != JOURNAL_SYNTHESIS {
+        return Err(AppError::NotFound("Synthesis not found".into()));
+    }
+    Ok(job)
+}
+
+/// Starts a synthesis as a job. The destination is fixed now: the result is
+/// saved there however long the job takes, across restarts.
+pub async fn synthesize_journal_entries_impl(
+    request: StartJournalSynthesisRequestDto,
+    jobs: &Arc<JobRuntime>,
+) -> Result<JournalSynthesisDto> {
+    let subject = request.destination.subject();
+    let requested = encode(&SynthesisRequest {
+        selection: request.request,
+        destination: request.destination,
+        title: request.title,
+        heading: request.heading,
+    })?;
+    let job = jobs
+        .submit(&NewJob {
+            kind: JOURNAL_SYNTHESIS.into(),
+            subject_id: Some(subject),
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            payload_hash: format!("{:x}", Sha256::digest(requested.to_string().as_bytes())),
+            requested,
+            progress_total: PROGRESS_TOTAL,
+            message: "Waiting to synthesize".into(),
+        })
+        .await?;
+    synthesis_dto(&job)
+}
+
+/// Every synthesis not yet saved or dismissed, newest first.
+pub async fn list_journal_syntheses_impl(jobs: &JobRuntime) -> Result<Vec<JournalSynthesisDto>> {
+    jobs.store()
+        .list_latest(&[JOURNAL_SYNTHESIS], 50, 0)
+        .await?
+        .iter()
+        .map(synthesis_dto)
+        .collect()
+}
+
+/// A finished synthesis's result, for the renderer to save.
+pub async fn get_journal_synthesis_result_impl(
+    job_id: &str,
+    jobs: &JobRuntime,
+) -> Result<SynthesizeJournalEntriesResponseDto> {
+    let job = synthesis_job(jobs, job_id).await?;
+    match (job.status, job.staged_result) {
+        (JobStatus::Completed, Some(result)) => decode(result),
+        _ => Err(AppError::InvalidState(
+            "This synthesis has not finished.".into(),
+        )),
+    }
+}
+
+/// Records that a finished synthesis was saved to its destination, by
+/// removing it. False when it already was: a result is saved once.
+pub async fn mark_journal_synthesis_applied_impl(job_id: &str, jobs: &JobRuntime) -> Result<bool> {
+    let job = match synthesis_job(jobs, job_id).await {
+        Ok(job) => job,
+        Err(AppError::NotFound(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if job.status != JobStatus::Completed {
+        return Err(AppError::InvalidState(
+            "This synthesis has not finished.".into(),
+        ));
+    }
+    jobs.store().delete(job_id).await?;
+    Ok(true)
+}
+
+/// Removes a synthesis that ended without a result. One still running is
+/// refused.
+pub async fn dismiss_journal_synthesis_impl(job_id: &str, jobs: &JobRuntime) -> Result<()> {
+    synthesis_job(jobs, job_id).await?;
+    jobs.store().delete(job_id).await
+}
+
+/// Tries a failed or interrupted synthesis again, keeping the parts it wrote.
+pub async fn retry_journal_synthesis_impl(
+    job_id: &str,
+    jobs: &Arc<JobRuntime>,
+) -> Result<JournalSynthesisDto> {
+    synthesis_job(jobs, job_id).await?;
+    let job = jobs
+        .retry(job_id, &uuid::Uuid::new_v4().to_string())
+        .await?;
+    synthesis_dto(&job)
+}
+
+#[cfg(test)]
+mod job_tests;
+
 #[cfg(test)]
 mod week_scope_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

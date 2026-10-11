@@ -1,0 +1,1346 @@
+//! HyDE Generator Service
+//!
+//! Generates hypothetical document embeddings (HyDE) for query expansion.
+//! Uses LLM to rewrite questions into retrieval-oriented intent expansions
+//! that semantically match what relevant documents would contain.
+//!
+//! ## Purpose
+//!
+//! - For greetings: Fast-path with no LLM call
+//! - For questions: Generate hypothetical document via LLM
+//! - For commands: Generate expanded command interpretation
+//!
+//! ## Architecture
+//!
+//! ```text
+//! QueryType + Query Text
+//!         ↓
+//!   HyDEGenerator
+//!         ↓
+//!   ┌─────┴─────┐
+//!   │           │
+//! Greeting   Question/Command
+//!   │           │
+//! Fast-path   LLM Call
+//!   │           │
+//!   └─────┬─────┘
+//!         ↓
+//! HyDEInterpretation
+//! ```
+
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use crate::application::ports::LLMPort;
+use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
+use crate::shared::error::{AppError, Result};
+use crate::shared::text::safe_truncate;
+use lazy_regex::regex;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
+
+/// Wall-clock cap for one query-planning completion, including queueing and
+/// prompt processing. Local models can spend more than 30 seconds on those
+/// phases alone, especially when classification and rewriting share a model.
+/// Allow three minutes before falling back, while retaining a finite bound
+/// below the provider's ten-minute default for these pre-retrieval calls.
+const REWRITE_TIME_BUDGET: Duration = Duration::from_secs(3 * 60);
+
+/// Prompt template for question expansion via HyDE.
+///
+/// Instructs the LLM to expand intent and retrieval vocabulary without
+/// providing an answer.
+const QUESTION_HYDE_TEMPLATE: &str = r#"You are an expert assistant helping with document retrieval.
+
+Your task: Rewrite and expand the user question into retrieval-oriented text that captures intent and likely terminology found in relevant documents.
+
+Guidelines:
+- Write 2-4 short sentences (max 90 words)
+- Preserve key entities, places, dates, and constraints from the question
+- Add closely related terms, aliases, and corrected spellings when helpful
+- Focus on what relevant documents would discuss, not the final answer
+- Do NOT answer the question directly
+- Do NOT assert facts that are not explicitly present in the query
+- Do NOT use first-person narration (no "I", "we")
+- Do NOT explain what you're doing; output only the expansion text
+
+Question: {query}
+
+Expansion:"#;
+
+/// Prompt template for follow-up query expansion with conversation context.
+///
+/// Instructs the LLM to resolve references in the follow-up against recent
+/// conversation turns, then emit retrieval-oriented expansion text.
+const FOLLOWUP_HYDE_TEMPLATE: &str = r#"You are an expert assistant helping with document retrieval.
+
+Your task: Infer what the follow-up question is referring to using recent conversation context, then rewrite it into retrieval-oriented text.
+
+Guidelines:
+- Resolve pronouns and references ("those", "it", "they", "that") using context
+- Preserve key entities, compounds, nutrients, and constraints already discussed
+- Write 2-4 short sentences (max 90 words)
+- Focus on terms likely to appear in relevant documents
+- Do NOT answer the question directly
+- Do NOT invent facts not present in the follow-up or context
+- Output only the expansion text
+
+Recent conversation context:
+{context}
+
+Follow-up question:
+{query}
+
+Expansion:"#;
+
+/// Prompt template for command interpretation.
+///
+/// Expands a command into a description of what documents would be relevant.
+const COMMAND_HYDE_TEMPLATE: &str = r#"You are an expert assistant helping with document retrieval.
+
+Your task: Describe what kind of documents would be relevant for this command. Write 2-3 sentences describing the target documents.
+
+Guidelines:
+- Focus on document characteristics, not actions
+- Use terminology that would appear in relevant documents
+- Be specific and concrete
+- Do NOT explain what you're doing, just write the description
+
+Command: {query}
+
+Description:"#;
+
+/// Prompt template for contextual follow-up classification.
+///
+/// The model must output only `1` (context-dependent follow-up) or `0`
+/// (standalone query).
+const FOLLOWUP_CLASSIFIER_TEMPLATE: &str = r#"You are classifying whether a user query depends on previous conversation context.
+
+Return exactly one character:
+- 1 = context-dependent follow-up
+- 0 = standalone query
+
+Context:
+{context}
+
+Query:
+{query}
+
+Answer:"#;
+
+/// Prompt template for web search query generation.
+///
+/// Produces one query string suitable for a web search bar.
+///
+/// The length rule and the rule against copying out lists are what keep it a
+/// query. Unbounded, the model retells the question — and a question a reader
+/// spent a paragraph on becomes a paragraph-long "query" that matches nothing.
+/// The worked example teaches the same thing by showing it, which a small
+/// utility model follows more reliably than it follows a rule.
+const WEB_SEARCH_QUERY_TEMPLATE: &str = r#"You are rewriting user input into a web search query.
+
+Task:
+- Return exactly ONE search query line.
+- Use 3 to 8 words. A search engine handed a sentence matches nothing.
+- Keep key entities, exact names, and important dates.
+- Do not copy out a list of items the input names. Search for what is being
+  asked about them.
+- Remove filler like "go into detail" or "please explain".
+- Prefer specific terms over generic wording.
+- Do not answer the question.
+- Output only the query text.
+
+Example input: I have read The Hobbit, The Lord of the Rings and The Silmarillion, what else should I read?
+Example search query: fantasy novels similar to Tolkien
+
+User input:
+{query}
+
+Search query:"#;
+
+/// Prompt template for contextual web search query generation.
+///
+/// Uses recent context to resolve short follow-ups and generic commands.
+///
+/// Same rules as [`WEB_SEARCH_QUERY_TEMPLATE`], and they matter more here: the
+/// context runs to thousands of characters, and a model asked to rewrite a
+/// follow-up against it will happily copy whatever the reader enumerated back
+/// out as the query. A reader who lists what they already have is asking about
+/// what they do not have, so the list is the one part not to search for.
+const WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE: &str = r#"You are rewriting user input into a web search query.
+
+Task:
+- Return exactly ONE search query line for a search engine.
+- Use 3 to 8 words. A search engine handed a sentence matches nothing.
+- If the latest user input is short or generic (for example "search web"),
+  infer the topic from recent conversation context.
+- Keep key entities, exact names, and important dates.
+- Do not copy out a list of items the input or the context names. Search for
+  what is being asked about them.
+- Remove filler and conversational wording.
+- Do not answer the question.
+- Output only the query text.
+
+Example input: I have read The Hobbit, The Lord of the Rings and The Silmarillion, what else should I read?
+Example search query: fantasy novels similar to Tolkien
+
+Recent conversation context:
+{context}
+
+Latest user input:
+{query}
+
+Search query:"#;
+
+/// Prompt template for deep-research follow-up searches.
+///
+/// The follow-ups used to be mined from the first search's snippets: the words
+/// several results shared, two at a time, bolted onto the query's own words.
+/// What several snippets share is the pages' furniture as often as their
+/// subject, so they went out as "steps greens garden step learn" and "steps
+/// greens garden beginner right". Choosing another angle on a subject takes
+/// understanding it, so the utility model writes them from the same reading of
+/// the turn the main query came from.
+const RESEARCH_FOLLOWUPS_TEMPLATE: &str = r#"You are planning web searches for a research question.
+
+The main search is already written. Write {count} MORE searches that each look
+at a different part of the same subject — the other things the reader would
+need to know to act on it.
+
+Rules:
+- One search per line. No numbering, bullets, quotes or commentary.
+- Each search is 3 to 8 words, written the way a person types into a search bar.
+- Every search names the subject, so it makes sense on its own.
+- Each covers a different aspect: for example timing, cost, problems,
+  comparisons, how-to, or requirements. Do not reword the main search.
+- Never use words about the conversation or the request itself, such as
+  "attached", "chat", "file", "previous", "research", "next steps" or "list".
+- Do not answer the question.
+
+Example main search: fantasy novels similar to Tolkien
+Example searches:
+epic fantasy series with invented languages
+best standalone fantasy novels for adults
+classic mythology retellings like The Silmarillion
+
+Recent conversation context:
+{context}
+
+Latest user input:
+{query}
+
+Main search: {root}
+Searches:"#;
+
+/// The follow-up searches in a model's reply to [`RESEARCH_FOLLOWUPS_TEMPLATE`]:
+/// one per line, cleaned the way the main query is, anything that is not a
+/// search-bar query dropped, and none repeating `root` or each other.
+fn parse_research_followups(raw: &str, root: &str, count: usize) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::from([root.trim().to_lowercase()]);
+    raw.lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches(|ch: char| {
+                    ch.is_ascii_digit() || matches!(ch, '-' | '*' | '•' | '.' | ')' | ' ')
+                })
+                .to_string()
+        })
+        .map(|line| normalize_web_search_query(&line))
+        .filter(|line| {
+            let words = line.split_whitespace().count();
+            (2..=MAX_WEB_SEARCH_QUERY_WORDS).contains(&words)
+        })
+        .filter(|line| seen.insert(line.to_lowercase()))
+        .take(count)
+        .collect()
+}
+
+/// Service for generating HyDE interpretations.
+///
+/// Coordinates LLM calls to expand queries into hypothetical documents
+/// for semantic search enhancement.
+///
+/// # Design Decision: No Tool Intent Classification
+///
+/// Tool intent classification (vault_only, web_only, etc.) was previously
+/// performed as a second LLM call per query, but the result was never consumed
+/// by the RAG pipeline. This added 500-2000ms of wasted latency per query.
+/// The classification has been removed; if routing is needed in the future,
+/// it should be wired end-to-end before being re-enabled.
+pub struct HyDEGenerator {
+    llm: Arc<dyn LLMPort>,
+    /// The turn's stop button, when the rewrites run inside one.
+    cancel: Option<CancellationToken>,
+}
+
+fn compact_hyde_text(raw: &str) -> String {
+    const MAX_WORDS: usize = 90;
+    let words: Vec<&str> = raw.split_whitespace().collect();
+    if words.len() <= MAX_WORDS {
+        return raw.trim().to_string();
+    }
+    words
+        .iter()
+        .take(MAX_WORDS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tokenize_guard_terms(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                current.push(lower);
+            }
+        } else if !current.is_empty() {
+            tokens.push(current.clone());
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn term_information_score(term: &str) -> f32 {
+    if term.is_empty() {
+        return 0.0;
+    }
+
+    let len = term.len() as f32;
+    let alpha_count = term.chars().filter(|c| c.is_ascii_alphabetic()).count() as f32;
+    if alpha_count <= 0.0 {
+        return 0.0;
+    }
+
+    let unique_ratio = (term.chars().collect::<HashSet<char>>().len() as f32 / len).min(1.0);
+    let alpha_ratio = (alpha_count / len).min(1.0);
+    let length_boost = (len + 1.0).ln();
+
+    alpha_ratio * (0.62 + 0.38 * unique_ratio) * length_boost
+}
+
+fn is_informative_term(term: &str) -> bool {
+    term.len() >= 4 && term_information_score(term) >= 0.9
+}
+
+fn build_retrieval_fallback(query: &str) -> String {
+    let question = query.trim().trim_end_matches(&['?', '.', '!'][..]).trim();
+    let mut seen = HashSet::new();
+    let keywords: Vec<String> = tokenize_guard_terms(question)
+        .into_iter()
+        .filter(|token| is_informative_term(token))
+        .filter(|token| seen.insert(token.clone()))
+        .take(8)
+        .collect();
+
+    if keywords.is_empty() {
+        return question.to_string();
+    }
+
+    format!(
+        "{question}. Retrieval focus terms: {}.",
+        keywords.join(", ")
+    )
+}
+
+fn has_placeholder_artifacts(text: &str) -> bool {
+    regex!(
+        r"(?ix)
+        \[
+            \s*
+            (the\s+)?(subject|topic|entity|item|thing)
+            \s*
+        \]
+        |
+        <\s*(subject|topic|entity|item|thing)\s*>
+        "
+    )
+    .is_match(text)
+}
+
+fn looks_like_direct_answer(query: &str, hyde_text: &str) -> bool {
+    let hyde_terms: Vec<String> = tokenize_guard_terms(hyde_text)
+        .into_iter()
+        .filter(|token| is_informative_term(token))
+        .collect();
+    if hyde_terms.is_empty() {
+        return false;
+    }
+
+    let query_terms: HashSet<String> = tokenize_guard_terms(query)
+        .into_iter()
+        .filter(|token| is_informative_term(token))
+        .collect();
+    let shared_count = hyde_terms
+        .iter()
+        .filter(|term| query_terms.contains(*term))
+        .count();
+    let novelty_count = hyde_terms
+        .iter()
+        .filter(|term| !query_terms.contains(*term))
+        .count();
+    let shared_ratio = shared_count as f32 / hyde_terms.len() as f32;
+    let sentence_count = hyde_text
+        .split(&['.', '!', '?'][..])
+        .filter(|segment| !segment.trim().is_empty())
+        .count();
+    let hyde_word_count = hyde_text.split_whitespace().count();
+    let is_question = query.trim_end().ends_with('?');
+
+    is_question
+        && hyde_word_count <= 28
+        && sentence_count <= 2
+        && novelty_count <= 2
+        && shared_ratio >= 0.55
+}
+
+/// The most words a rewrite can have and still be a search query.
+///
+/// The prompt asks for three to eight; this is the net under it, not the
+/// target. Past it the model has retold the question rather than rewritten it,
+/// and an engine given the retelling matches nothing specific: it falls back
+/// on whatever page shares one common word, which is how a search for what to
+/// grow indoors came back with the dictionary definition of "indoor".
+///
+/// A rewrite over the line is discarded, not cut down to it. The first twelve
+/// words of a retelling are no more a search query than the whole of it, and
+/// cutting one to fit is how the failure stayed invisible: the query went out
+/// as its first twenty-four words, ending mid-phrase on a dangling adjective,
+/// looking deliberate.
+const MAX_WEB_SEARCH_QUERY_WORDS: usize = 12;
+
+fn normalize_web_search_query(raw: &str) -> String {
+    let mut line = raw
+        .lines()
+        .find(|candidate| !candidate.trim().is_empty())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    for prefix in ["search query:", "query:"] {
+        if line.to_ascii_lowercase().starts_with(prefix) {
+            line = line[prefix.len()..].trim().to_string();
+            break;
+        }
+    }
+
+    if line.starts_with('"') && line.ends_with('"') && line.len() >= 2 {
+        line = line[1..line.len() - 1].trim().to_string();
+    }
+    if line.starts_with('\'') && line.ends_with('\'') && line.len() >= 2 {
+        line = line[1..line.len() - 1].trim().to_string();
+    }
+
+    let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    compact.trim_matches(&['.', ';'][..]).trim().to_string()
+}
+
+impl HyDEGenerator {
+    /// Create a new HyDE generator with an LLM backend.
+    pub fn new(llm: Arc<dyn LLMPort>) -> Self {
+        Self { llm, cancel: None }
+    }
+
+    /// Withdraw every rewrite from the backend's queue, or abort it, when
+    /// `cancel` fires.
+    pub fn with_cancellation(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    /// Run a self-contained rewrite prompt with the caller's time budget.
+    ///
+    /// Keep the model's normal reasoning behavior. A truncated or failed
+    /// completion is an error, never a partial rewrite.
+    async fn rewrite(&self, prompt: &str) -> Result<String> {
+        let response = self
+            .llm
+            .complete(&CompletionRequest {
+                input: vec![CompletionInput::Message {
+                    role: "user".into(),
+                    content: prompt.to_string(),
+                }],
+                time_budget: Some(REWRITE_TIME_BUDGET),
+                // Rewrites run inside a chat turn, which someone is waiting on.
+                priority: crate::application::ports::llm_port::InferencePriority::Interactive,
+                cancel: self.cancel.clone(),
+                ..Default::default()
+            })
+            .await?;
+        if !response.tool_calls.is_empty() {
+            return Err(AppError::InvalidState(
+                "Unexpected tool call in query rewrite".into(),
+            ));
+        }
+        if matches!(
+            response.finish_reason.as_str(),
+            "length" | "max_tokens" | "incomplete" | "failed"
+        ) {
+            return Err(AppError::InvalidState(format!(
+                "Query rewrite stopped before completing: {}",
+                response.finish_reason
+            )));
+        }
+        Ok(response.text)
+    }
+
+    /// Classify whether a query is context-dependent follow-up.
+    pub async fn classify_followup_with_context(
+        &self,
+        query: &str,
+        conversation_context: &str,
+    ) -> Result<bool> {
+        if query.trim().is_empty() || conversation_context.trim().is_empty() {
+            return Ok(false);
+        }
+
+        let prompt = FOLLOWUP_CLASSIFIER_TEMPLATE
+            .replace("{query}", query)
+            .replace("{context}", conversation_context);
+        let output = self.rewrite(&prompt).await.map_err(|e| {
+            error!(
+                error = %e,
+                query = %query,
+                "Follow-up classifier LLM call failed"
+            );
+            AppError::Other(format!("Follow-up classification failed: {}", e))
+        })?;
+
+        let decision = output
+            .chars()
+            .find(|ch| *ch == '0' || *ch == '1')
+            .unwrap_or('0');
+        Ok(decision == '1')
+    }
+
+    /// Generate a search-bar-ready web query from user input and optional context.
+    pub async fn generate_web_search_query(
+        &self,
+        query: &str,
+        conversation_context: Option<&str>,
+    ) -> Result<String> {
+        if query.trim().is_empty() {
+            return Err(AppError::InvalidInput("Query cannot be empty".to_string()));
+        }
+
+        let prompt =
+            if let Some(context) = conversation_context.filter(|ctx| !ctx.trim().is_empty()) {
+                WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE
+                    .replace("{context}", context)
+                    .replace("{query}", query)
+            } else {
+                WEB_SEARCH_QUERY_TEMPLATE.replace("{query}", query)
+            };
+
+        debug!(
+            query_len = query.len(),
+            context_len = conversation_context.map(|ctx| ctx.len()).unwrap_or(0),
+            prompt_len = prompt.len(),
+            prompt_preview = %safe_truncate(&prompt, 240),
+            "HyDE web query prompt prepared"
+        );
+
+        let generated = self.rewrite(&prompt).await.map_err(|e| {
+            error!(
+                error = %e,
+                query = %query,
+                "HyDE web query generation LLM call failed"
+            );
+            AppError::Other(format!("HyDE web query generation failed: {}", e))
+        })?;
+
+        let normalized = normalize_web_search_query(generated.trim());
+        if normalized.is_empty() {
+            return Ok(query.trim().to_string());
+        }
+
+        let word_count = normalized.split_whitespace().count();
+        if word_count > MAX_WEB_SEARCH_QUERY_WORDS {
+            // The caller falls back to its lexical query builder, which is
+            // built from the reader's own words and bounded by construction.
+            warn!(
+                word_count,
+                query_preview = %safe_truncate(&normalized, 180),
+                "Discarding a web-search rewrite that came back as a retelling, not a query"
+            );
+            return Err(AppError::InvalidState(format!(
+                "Query rewrite returned {word_count} words; a search query may have at most \
+                 {MAX_WEB_SEARCH_QUERY_WORDS}"
+            )));
+        }
+
+        info!(
+            query_len = normalized.len(),
+            query_preview = %safe_truncate(&normalized, 180),
+            "Generated web-search query via HyDE"
+        );
+        Ok(normalized)
+    }
+
+    /// Up to `count` further searches on the subject of `root`, each from a
+    /// different angle, for deep research to run after it.
+    ///
+    /// Fewer than `count` — or none — when the model's lines are not usable
+    /// queries. Deep research then searches less; it never pads with noise.
+    pub async fn generate_research_followups(
+        &self,
+        root: &str,
+        query: &str,
+        conversation_context: Option<&str>,
+        count: usize,
+    ) -> Result<Vec<String>> {
+        if count == 0 || root.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let context = conversation_context
+            .filter(|ctx| !ctx.trim().is_empty())
+            .unwrap_or("(none)");
+        let prompt = RESEARCH_FOLLOWUPS_TEMPLATE
+            .replace("{count}", &count.to_string())
+            .replace("{context}", context)
+            .replace("{query}", query)
+            .replace("{root}", root.trim());
+        let generated = self.rewrite(&prompt).await.map_err(|e| {
+            error!(error = %e, root = %root, "Research follow-up generation failed");
+            AppError::Other(format!("Research follow-up generation failed: {e}"))
+        })?;
+        let followups = parse_research_followups(&generated, root, count);
+        info!(
+            requested = count,
+            written = followups.len(),
+            followups = ?followups,
+            "Generated deep-research follow-up searches"
+        );
+        Ok(followups)
+    }
+
+    /// Generate HyDE interpretation for a query.
+    ///
+    /// Handles different query types:
+    /// - **Greeting**: Fast-path, returns immediately without LLM call
+    /// - **Question**: Calls LLM to generate hypothetical answer document
+    /// - **Command**: Calls LLM to expand command interpretation
+    /// - **Followup**: Currently uses question template (future: context-aware)
+    pub async fn generate(
+        &self,
+        query_type: QueryType,
+        query: impl Into<String>,
+    ) -> Result<HyDEInterpretation> {
+        self.generate_with_context(query_type, query, None).await
+    }
+
+    /// Generate HyDE interpretation for a query with optional conversation context.
+    pub async fn generate_with_context(
+        &self,
+        query_type: QueryType,
+        query: impl Into<String>,
+        conversation_context: Option<&str>,
+    ) -> Result<HyDEInterpretation> {
+        let query = query.into();
+
+        if query.trim().is_empty() {
+            return Err(AppError::InvalidInput("Query cannot be empty".to_string()));
+        }
+
+        match query_type {
+            QueryType::Greeting => self.generate_greeting(query).await,
+            QueryType::Question => self.generate_question(query).await,
+            QueryType::Command => self.generate_command(query).await,
+            QueryType::Followup => self.generate_followup(query, conversation_context).await,
+        }
+    }
+
+    /// Fast-path for greetings - no LLM call needed.
+    async fn generate_greeting(&self, query: String) -> Result<HyDEInterpretation> {
+        debug!("HyDE fast-path for greeting: {}", query);
+        Ok(HyDEInterpretation::for_greeting(query))
+    }
+
+    /// Generate retrieval-focused expansion text for a question.
+    async fn generate_question(&self, query: String) -> Result<HyDEInterpretation> {
+        info!("Generating HyDE for question: {}", query);
+
+        let prompt = QUESTION_HYDE_TEMPLATE.replace("{query}", &query);
+        debug!(
+            query_len = query.len(),
+            prompt_len = prompt.len(),
+            prompt_preview = %safe_truncate(&prompt, 240),
+            "HyDE question prompt prepared"
+        );
+
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
+            error!(
+                error = %e,
+                query = %query,
+                "HyDE question generation LLM call failed"
+            );
+            AppError::Other(format!("HyDE generation failed: {}", e))
+        })?;
+
+        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        if looks_like_direct_answer(&query, &hyde_text) {
+            warn!(
+                query = %query,
+                hyde_preview = %safe_truncate(&hyde_text, 180),
+                "HyDE question output resembled a direct answer; replacing with retrieval expansion fallback"
+            );
+            hyde_text = build_retrieval_fallback(&query);
+        }
+        if has_placeholder_artifacts(&hyde_text) {
+            warn!(
+                query = %query,
+                hyde_preview = %safe_truncate(&hyde_text, 180),
+                "HyDE question output contained unresolved placeholders; replacing with retrieval expansion fallback"
+            );
+            hyde_text = build_retrieval_fallback(&query);
+        }
+
+        if hyde_text.is_empty() {
+            info!("LLM returned empty HyDE text, falling back to raw query");
+            return Ok(HyDEInterpretation::raw_only(query, QueryType::Question));
+        }
+
+        info!(
+            "Generated HyDE ({} chars) for question: {}",
+            hyde_text.len(),
+            &query
+        );
+        debug!(
+            hyde_word_count = hyde_text.split_whitespace().count(),
+            hyde_preview = %safe_truncate(&hyde_text, 240),
+            "HyDE question output"
+        );
+        if hyde_text.trim().eq_ignore_ascii_case(query.trim()) {
+            warn!(
+                query = %query,
+                "HyDE question output is identical to original query"
+            );
+        }
+
+        Ok(HyDEInterpretation::for_question(query, hyde_text))
+    }
+
+    /// Generate command interpretation.
+    async fn generate_command(&self, query: String) -> Result<HyDEInterpretation> {
+        info!("Generating HyDE for command: {}", query);
+
+        let prompt = COMMAND_HYDE_TEMPLATE.replace("{query}", &query);
+        debug!(
+            query_len = query.len(),
+            prompt_len = prompt.len(),
+            prompt_preview = %safe_truncate(&prompt, 240),
+            "HyDE command prompt prepared"
+        );
+
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
+            error!(
+                error = %e,
+                query = %query,
+                "HyDE command generation LLM call failed"
+            );
+            AppError::Other(format!("HyDE generation failed: {}", e))
+        })?;
+
+        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        if looks_like_direct_answer(&query, &hyde_text) {
+            warn!(
+                query = %query,
+                hyde_preview = %safe_truncate(&hyde_text, 180),
+                "HyDE followup output resembled a direct answer; replacing with retrieval expansion fallback"
+            );
+            hyde_text = build_retrieval_fallback(&query);
+        }
+        if has_placeholder_artifacts(&hyde_text) {
+            warn!(
+                query = %query,
+                hyde_preview = %safe_truncate(&hyde_text, 180),
+                "HyDE command output contained unresolved placeholders; replacing with retrieval expansion fallback"
+            );
+            hyde_text = build_retrieval_fallback(&query);
+        }
+
+        if hyde_text.is_empty() {
+            info!("LLM returned empty HyDE text for command, falling back to raw query");
+            return Ok(HyDEInterpretation::raw_only(query, QueryType::Command));
+        }
+
+        info!(
+            "Generated HyDE ({} chars) for command: {}",
+            hyde_text.len(),
+            &query
+        );
+        debug!(
+            hyde_word_count = hyde_text.split_whitespace().count(),
+            hyde_preview = %safe_truncate(&hyde_text, 240),
+            "HyDE command output"
+        );
+        if hyde_text.trim().eq_ignore_ascii_case(query.trim()) {
+            warn!(
+                query = %query,
+                "HyDE command output is identical to original query"
+            );
+        }
+
+        Ok(HyDEInterpretation::hybrid(
+            query,
+            hyde_text,
+            QueryType::Command,
+        ))
+    }
+
+    /// Generate interpretation for follow-up question.
+    async fn generate_followup(
+        &self,
+        query: String,
+        conversation_context: Option<&str>,
+    ) -> Result<HyDEInterpretation> {
+        info!("Generating HyDE for followup: {}", query);
+
+        let prompt =
+            if let Some(context) = conversation_context.filter(|ctx| !ctx.trim().is_empty()) {
+                FOLLOWUP_HYDE_TEMPLATE
+                    .replace("{context}", context)
+                    .replace("{query}", &query)
+            } else {
+                QUESTION_HYDE_TEMPLATE.replace("{query}", &query)
+            };
+        debug!(
+            query_len = query.len(),
+            context_len = conversation_context.map(|ctx| ctx.len()).unwrap_or(0),
+            prompt_len = prompt.len(),
+            prompt_preview = %safe_truncate(&prompt, 240),
+            "HyDE followup prompt prepared"
+        );
+
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
+            error!(
+                error = %e,
+                query = %query,
+                "HyDE followup generation LLM call failed"
+            );
+            AppError::Other(format!("HyDE generation failed: {}", e))
+        })?;
+
+        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        if has_placeholder_artifacts(&hyde_text) {
+            warn!(
+                query = %query,
+                hyde_preview = %safe_truncate(&hyde_text, 180),
+                "HyDE followup output contained unresolved placeholders; replacing with retrieval expansion fallback"
+            );
+            hyde_text = build_retrieval_fallback(&query);
+        }
+
+        if hyde_text.is_empty() {
+            info!("LLM returned empty HyDE text for followup, falling back to raw query");
+            return Ok(HyDEInterpretation::raw_only(query, QueryType::Followup));
+        }
+
+        info!(
+            "Generated HyDE ({} chars) for followup: {}",
+            hyde_text.len(),
+            &query
+        );
+        debug!(
+            hyde_word_count = hyde_text.split_whitespace().count(),
+            hyde_preview = %safe_truncate(&hyde_text, 240),
+            "HyDE followup output"
+        );
+        if hyde_text.trim().eq_ignore_ascii_case(query.trim()) {
+            warn!(
+                query = %query,
+                "HyDE followup output is identical to original query"
+            );
+        }
+
+        Ok(HyDEInterpretation::hybrid(
+            query,
+            hyde_text,
+            QueryType::Followup,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use crate::domain::qa::hyde::SearchStrategy;
+    use async_trait::async_trait;
+
+    /// A small model numbers its lines, quotes some, repeats the main search
+    /// and wanders into prose; only the usable, distinct queries survive.
+    #[test]
+    fn research_followups_keep_only_distinct_search_bar_queries() {
+        let raw = "1. when to plant leafy greens in spring\n\
+                   - \"common pests on lettuce and kale\"\n\
+                   \n\
+                   Next steps growing greens for home garden\n\
+                   greens\n\
+                   Here are some searches you could run to learn more about growing greens at home this year\n\
+                   • succession sowing salad greens\n\
+                   when to plant leafy greens in spring\n\
+                   harvesting greens cut and come again";
+        let followups =
+            parse_research_followups(raw, "next steps growing greens for home garden", 3);
+        assert_eq!(
+            followups,
+            vec![
+                "when to plant leafy greens in spring",
+                "common pests on lettuce and kale",
+                "succession sowing salad greens",
+            ]
+        );
+    }
+
+    /// Shared mock LLM for testing HyDE generation.
+    struct MockLLM {
+        response: String,
+    }
+
+    impl MockLLM {
+        fn new(response: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for MockLLM {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text(
+                self.respond(request.user_text()).await?,
+            ))
+        }
+        fn model_name(&self) -> &str {
+            "mock-llm"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl MockLLM {
+        async fn respond(&self, _prompt: &str) -> Result<String> {
+            Ok(self.response.clone())
+        }
+    }
+
+    /// Typed-completion mock that records every request and refuses the
+    /// legacy path, so a rewrite that skips `complete` fails loudly.
+    struct TypedLLM {
+        response: String,
+        finish_reason: String,
+        requests: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    impl TypedLLM {
+        fn new(response: impl Into<String>, finish_reason: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+                finish_reason: finish_reason.into(),
+                requests: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<CompletionRequest> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for TypedLLM {
+        async fn complete(
+            &self,
+            request: &CompletionRequest,
+        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            self.requests.lock().unwrap().push(request.clone());
+            Ok(crate::application::ports::llm_port::CompletionResponse {
+                text: self.response.clone(),
+                finish_reason: self.finish_reason.clone(),
+                ..Default::default()
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "typed-llm"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// A stop press must reach a rewrite still queued behind other work.
+    #[tokio::test]
+    async fn every_rewrite_carries_the_turns_cancellation() {
+        let llm = Arc::new(TypedLLM::new("Rust ownership and borrowing.", "stop"));
+        let turn = tokio_util::sync::CancellationToken::new();
+        let generator = HyDEGenerator::new(llm.clone()).with_cancellation(turn.clone());
+        generator
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 1);
+        let carried = requests[0].cancel.clone().expect("the turn's token");
+        assert!(!carried.is_cancelled());
+        turn.cancel();
+        assert!(carried.is_cancelled());
+
+        let untied = Arc::new(TypedLLM::new("Rust ownership and borrowing.", "stop"));
+        HyDEGenerator::new(untied.clone())
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        assert!(untied.requests()[0].cancel.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_typed_rewrites_keep_model_default_reasoning() {
+        let llm = Arc::new(TypedLLM::new(
+            "Rust ownership, borrowing, and lifetimes in systems programming.",
+            "stop",
+        ));
+        let generator = HyDEGenerator::new(llm.clone());
+
+        generator
+            .classify_followup_with_context("what about those?", "User: Rust ownership")
+            .await
+            .unwrap();
+        generator
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        generator
+            .generate(QueryType::Question, "How does Rust ownership work?")
+            .await
+            .unwrap();
+        generator
+            .generate(QueryType::Command, "find notes on Rust ownership")
+            .await
+            .unwrap();
+        let followup = generator
+            .generate_with_context(
+                QueryType::Followup,
+                "and borrowing?",
+                Some("User: How does Rust ownership work?"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(followup.search_strategy, SearchStrategy::Hybrid);
+
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 5);
+        for request in &requests {
+            assert!(request.reasoning_effort.is_none());
+            assert_eq!(request.time_budget, Some(REWRITE_TIME_BUDGET));
+            assert!(request.tools.is_empty());
+            assert!(request.json_schema.is_none());
+            assert!(matches!(
+                request.input.as_slice(),
+                [CompletionInput::Message { role, .. }] if role == "user"
+            ));
+        }
+        let CompletionInput::Message { content, .. } = &requests[2].input[0] else {
+            unreachable!("asserted above");
+        };
+        assert!(content.contains("Question: How does Rust ownership work?"));
+    }
+
+    #[tokio::test]
+    async fn test_typed_rewrite_truncated_at_length_is_an_error() {
+        let llm = Arc::new(TypedLLM::new("Rust ownership and", "length"));
+        let generator = HyDEGenerator::new(llm);
+
+        let result = generator
+            .generate(QueryType::Question, "How does Rust ownership work?")
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_greeting_fast_path() {
+        let mock_llm = Arc::new(MockLLM::new("This should not be called"));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Greeting, "Hello!")
+            .await
+            .unwrap();
+
+        assert_eq!(result.query_type, QueryType::Greeting);
+        assert_eq!(result.original_query, "Hello!");
+        assert!(result.hyde_text.is_none());
+        assert_eq!(result.search_strategy, SearchStrategy::RawOnly);
+    }
+
+    #[tokio::test]
+    async fn test_question_generates_hyde() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "Domain-Driven Design is a software development approach that focuses on modeling complex business domains.",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Question, "What is DDD?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.query_type, QueryType::Question);
+        assert_eq!(result.original_query, "What is DDD?");
+        assert!(result.hyde_text.is_some());
+        assert!(result.hyde_text.unwrap().contains("Domain-Driven Design"));
+        assert_eq!(result.search_strategy, SearchStrategy::HyDEOnly);
+    }
+
+    #[tokio::test]
+    async fn test_command_generates_hyde_hybrid() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "Documents about file system operations, search algorithms, and document indexing.",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Command, "search for documents")
+            .await
+            .unwrap();
+
+        assert_eq!(result.query_type, QueryType::Command);
+        assert_eq!(result.original_query, "search for documents");
+        assert!(result.hyde_text.is_some());
+        assert_eq!(result.search_strategy, SearchStrategy::Hybrid);
+    }
+
+    #[tokio::test]
+    async fn test_followup_generates_hyde_hybrid() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "The benefits include better code organization and maintainability.",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Followup, "what are the benefits?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.query_type, QueryType::Followup);
+        assert_eq!(result.original_query, "what are the benefits?");
+        assert!(result.hyde_text.is_some());
+        assert_eq!(result.search_strategy, SearchStrategy::Hybrid);
+    }
+
+    #[tokio::test]
+    async fn test_empty_query_returns_error() {
+        let mock_llm = Arc::new(MockLLM::new("response"));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator.generate(QueryType::Question, "").await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_llm_response_falls_back_to_raw() {
+        let mock_llm = Arc::new(MockLLM::new(""));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Question, "What is Rust?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.query_type, QueryType::Question);
+        assert!(result.hyde_text.is_none());
+        assert_eq!(result.search_strategy, SearchStrategy::RawOnly);
+    }
+
+    #[tokio::test]
+    async fn test_whitespace_trimmed() {
+        let mock_llm = Arc::new(MockLLM::new("  Trimmed response  "));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let result = generator
+            .generate(QueryType::Question, "test query")
+            .await
+            .unwrap();
+
+        let hyde = result.hyde_text.unwrap();
+        assert_eq!(hyde, "Trimmed response");
+        assert!(!hyde.starts_with(' '));
+        assert!(!hyde.ends_with(' '));
+    }
+
+    #[tokio::test]
+    async fn test_prompt_templates_contain_query() {
+        assert!(QUESTION_HYDE_TEMPLATE.contains("{query}"));
+        assert!(COMMAND_HYDE_TEMPLATE.contains("{query}"));
+        assert!(WEB_SEARCH_QUERY_TEMPLATE.contains("{query}"));
+        assert!(WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE.contains("{query}"));
+        assert!(WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE.contains("{context}"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_web_search_query_normalizes_prefix() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "Search query: \"SAVE America Act House passed Senate Trump endorsement\"",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let query = generator
+            .generate_web_search_query("What is the SAVE America Act that passed the House?", None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            query,
+            "SAVE America Act House passed Senate Trump endorsement"
+        );
+    }
+
+    /// The turn in the log: asked for crops beyond the ones they already grow,
+    /// the model answered with the reader's list copied back out. The old cap
+    /// cut that to its first twenty-four words and searched for it, ending on
+    /// a dangling "continuous" — and a search engine given a paragraph matches
+    /// on one common word, so the sources came back including the dictionary
+    /// definition of "indoor".
+    #[tokio::test]
+    async fn test_generate_web_search_query_rejects_a_retelling() {
+        let mock_llm = Arc::new(MockLLM::new(
+            "indoor vegetable garden list supplement existing crops spinach chard kale sage \
+             dill basil tomatoes thyme oregano golden beets beets bell peppers limited space \
+             continuous harvest",
+        ));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let error = generator
+            .generate_web_search_query(
+                "I'm keeping my herbs and greens. I need things beyond this",
+                Some("User is planning an indoor garden of spinach, chard, kale and basil"),
+            )
+            .await
+            .expect_err("a retelling is not a search query");
+
+        assert!(
+            error.to_string().contains("25 words"),
+            "the failure should say how long the rewrite was: {error}"
+        );
+    }
+
+    /// Twelve words is the net, not the target. A rewrite that reaches it is
+    /// still something an engine can work with, so it goes out unaltered —
+    /// nothing is trimmed to fit any more.
+    #[tokio::test]
+    async fn test_generate_web_search_query_keeps_a_query_at_the_limit() {
+        let at_the_limit = "SAVE America Act House vote Senate schedule Trump endorsement \
+                            2026 amendments filibuster";
+        let mock_llm = Arc::new(MockLLM::new(at_the_limit));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let query = generator
+            .generate_web_search_query("What is happening with the SAVE America Act?", None)
+            .await
+            .unwrap();
+
+        assert_eq!(query.split_whitespace().count(), 12);
+        assert_eq!(query, at_the_limit);
+    }
+
+    /// The bound belongs in the prompt too, not only in the guard. The guard
+    /// can only throw a rewrite away, and a turn that loses its rewrite falls
+    /// back to a query assembled out of keywords.
+    #[tokio::test]
+    async fn test_web_search_prompts_bound_the_query_and_forbid_lists() {
+        for template in [
+            WEB_SEARCH_QUERY_TEMPLATE,
+            WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE,
+        ] {
+            assert!(template.contains("Use 3 to 8 words"));
+            assert!(template.contains("Do not copy out a list"));
+            assert!(template.contains("Example search query:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_generate_web_search_query_falls_back_to_input_when_empty() {
+        let mock_llm = Arc::new(MockLLM::new("   "));
+        let generator = HyDEGenerator::new(mock_llm);
+
+        let raw = "What is the SAVE America Act?";
+        let query = generator
+            .generate_web_search_query(raw, Some("User asked about SAVE Act"))
+            .await
+            .unwrap();
+
+        assert_eq!(query, raw);
+    }
+
+    #[tokio::test]
+    async fn test_greeting_no_llm_call() {
+        struct PanicLLM;
+
+        #[async_trait]
+        impl LLMPort for PanicLLM {
+            async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::from_text(
+                    self.respond(request.user_text()).await?,
+                ))
+            }
+            fn model_name(&self) -> &str {
+                "panic-llm"
+            }
+
+            fn max_context_tokens(&self) -> usize {
+                4096
+            }
+
+            fn count_tokens(&self, text: &str) -> usize {
+                text.len()
+            }
+
+            async fn is_ready(&self) -> Result<bool> {
+                Ok(true)
+            }
+        }
+        impl PanicLLM {
+            async fn respond(&self, _prompt: &str) -> Result<String> {
+                unreachable!("PanicLLM is test-only mock - LLM should not be called for greetings")
+            }
+        }
+
+        let panic_llm = Arc::new(PanicLLM);
+        let generator = HyDEGenerator::new(panic_llm);
+
+        let result = generator
+            .generate(QueryType::Greeting, "Hi!")
+            .await
+            .unwrap();
+        assert_eq!(result.query_type, QueryType::Greeting);
+    }
+}

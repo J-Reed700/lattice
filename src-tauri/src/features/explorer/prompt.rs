@@ -55,8 +55,11 @@ impl ExplorerTurn {
     /// `None` for an ordinary chat. A folder that has gone missing since it was
     /// chosen also gives `None`: the turn then runs as a plain chat rather than
     /// failing, and the viewer is where the user finds out.
+    /// `folders` is the app's folder index; the turn searches the folder's
+    /// index when it is the open one.
     pub async fn resolve(
         pool: &SqlitePool,
+        folders: Option<&super::index::manager::FolderIndexManager>,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
     ) -> Option<Self> {
@@ -70,7 +73,10 @@ impl ExplorerTurn {
         };
         match Scope::open(&root) {
             Ok(scope) => {
-                let index = super::index::manager::search_for_root(scope.root()).await;
+                let index = match folders {
+                    Some(folders) => folders.search_for(scope.root()).await,
+                    None => None,
+                };
                 Some(Self {
                     scope,
                     focus: focus.cloned(),

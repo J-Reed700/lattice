@@ -5,7 +5,6 @@ use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::types::ValidatedFilePath;
 use std::path::PathBuf;
-use tauri::State;
 
 /// Creates a database backup for disaster recovery
 ///
@@ -29,24 +28,6 @@ use tauri::State;
 /// * `AppError::RateLimitExceeded` - Too many backup requests (rate limited to 50/min)
 /// * `AppError::InvalidInput` - Invalid backup path (directory traversal detected)
 /// * `AppError::Other` - Failed to create backup file or database access error
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Create backup at default location
-/// const backupPath = await invoke<string>('create_backup', {
-///   backupPath: null
-/// });
-///
-/// console.log(`Backup created: ${backupPath}`);
-///
-/// // Create backup at custom location
-/// const customPath = await invoke<string>('create_backup', {
-///   backupPath: '/Users/example/backups/lattice-2024-01-15.lattice-backup'
-/// });
-/// ```
 ///
 /// # Backup Format
 ///
@@ -168,14 +149,4 @@ pub async fn create_backup_impl(
     }
 
     result.map(|dto| dto.backup_path)
-}
-
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn create_backup(
-    backup_path: Option<String>,
-    container: State<'_, Container>,
-) -> Result<String, AppError> {
-    create_backup_impl(backup_path, container.inner()).await
 }

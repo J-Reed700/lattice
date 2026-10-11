@@ -87,7 +87,6 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         greetingPromptTemplate: '',
         ragPromptTemplate: '',
         noContextPromptTemplate: '',
-        toolFollowupPromptTemplate: '',
       },
       verification: { enabled: false, temperature: 0, topP: 1, topK: 1 },
       toolOutput: {

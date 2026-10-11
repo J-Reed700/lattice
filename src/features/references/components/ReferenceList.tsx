@@ -12,6 +12,7 @@ import { PanelLeft } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
+import { usePassageReferencesQuery } from '@/features/reading/hooks/usePassageReferencesQuery';
 import { PassageListItem } from '@/features/references/components/PassageListItem';
 import { ReferenceListItem } from '@/features/references/components/ReferenceListItem';
 import { ReferenceOriginPicker } from '@/features/references/components/ReferenceOriginPicker';
@@ -21,7 +22,6 @@ import type {
   UseReferenceInboxResult,
 } from '@/features/references/hooks/useReferenceInbox';
 import type { InboxItem } from '@/features/references/model/inboxItems';
-import { usePassageReferencesQuery } from '@/hooks/queries/usePassageReferencesQuery';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { PassageReferenceDto } from '@/types/api/references';
 import { chatReferenceKey } from '@/utils/chatReferenceIndex';

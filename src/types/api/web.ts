@@ -20,44 +20,6 @@ export type UrlPreview = import('../../lib/bindings').UrlPreview;
 export type CleanArticle = import('../../lib/bindings').CleanArticle;
 
 /**
- * Download status information
- */
-export interface DownloadStatus {
-  /** Download session ID */
-  id: string;
-  /** Download URL */
-  url: string;
-  /** Destination file path */
-  destination: string;
-  /** Current download state */
-  state: string;
-  /** Bytes downloaded so far */
-  bytesDownloaded: number;
-  /** Total file size in bytes (if known) */
-  totalBytes: number | null;
-  /** Download speed in bytes/second */
-  bytesPerSecond: number;
-  /** Download progress percentage (0-100) */
-  percentage: number | null;
-  /** Estimated time remaining in seconds */
-  etaSeconds: number | null;
-  /** Error message if failed */
-  errorMessage: string | null;
-  /** Number of retry attempts */
-  retryCount: number;
-  /** Creation timestamp (ISO 8601) */
-  createdAt: string;
-  /** Start timestamp (ISO 8601) */
-  startedAt: string | null;
-  /** Completion timestamp (ISO 8601) */
-  completedAt: string | null;
-  /** Associated model name */
-  modelName?: string;
-  /** Associated model ID */
-  modelId?: string;
-}
-
-/**
  * Batch download result
  */
 export interface BatchDownloadResult {

@@ -48,6 +48,12 @@ pub struct SidecarHandle {
     /// for — a GPU machine running CPU-only, or a halved context. Callers
     /// log it; without it a degradation is invisible outside a warn line.
     pub(super) degraded: Option<String>,
+
+    /// Admission for this server, shared by every role's client on it: the
+    /// roles compete for the same slots and the same window, so they queue in
+    /// one place. Sized from the server's `/props` the first time a role
+    /// connects.
+    pub(super) scheduler: tokio::sync::OnceCell<Arc<InferenceScheduler>>,
 }
 
 /// A handle's slot in the process registry. The registry lives in Tauri
@@ -68,8 +74,21 @@ impl Registration {
 }
 
 impl SidecarHandle {
+    /// This server's scheduler, made by `size` on first use.
+    pub(crate) async fn scheduler<F, Fut>(&self, size: F) -> Arc<InferenceScheduler>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = InferenceScheduler>,
+    {
+        Arc::clone(
+            self.scheduler
+                .get_or_init(|| async { Arc::new(size().await) })
+                .await,
+        )
+    }
+
     /// Base URL of the local llama-server HTTP API, e.g.
-    /// `http://127.0.0.1:53412`. Pass to `SidecarLLMClient`.
+    /// `http://127.0.0.1:53412`. Pass to `LlamaCppLlm::sidecar`.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
@@ -142,7 +161,7 @@ impl Drop for SidecarHandle {
         // `RunEvent::ExitRequested`, synchronous, runs before the
         // tokio runtime stops). This Drop remains as a safety net for
         // handles dropped outside app shutdown — e.g. when the user
-        // swaps active models and the old SidecarLLMClient goes out
+        // swaps active models and the old `LlamaCppLlm` goes out
         // of scope mid-session. No holder awaits while holding the child
         // mutex, so a plain lock cannot stall here; `try_lock` used to
         // drop the kill silently whenever it lost the race.
@@ -337,6 +356,7 @@ impl SpawnedChild {
             registration: self.registration.take(),
             _port: port,
             degraded: None,
+            scheduler: tokio::sync::OnceCell::new(),
         }
     }
 }

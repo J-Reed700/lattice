@@ -6,11 +6,11 @@ use sqlx::SqlitePool;
 
 use crate::application::ports::MentionRepositoryPort;
 use crate::features::mentions::mapper::MentionMapper;
+use crate::features::mentions::repository::MentionRepository;
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
 };
-use crate::infrastructure::persistence::repositories::MentionRepository;
 use crate::interfaces::di::Container;
 
 #[derive(Clone)]

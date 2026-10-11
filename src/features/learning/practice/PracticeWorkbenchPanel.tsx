@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowDownRight, BookOpen, Check, ChevronRight, CircleHelp, Lightbulb, MessageCircle, Send, ShieldCheck, Sparkles, Unlock, X } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   useAcceptLearningPracticeProposal,
   useChangeLearningPracticeMode,
@@ -18,9 +19,9 @@ import {
 } from '@/features/learning/practice/useLearningPractice';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningLessonDto, LearningPracticeHintLevel, LearningPracticeTaskKind, LearningPracticeMode, LearningPracticeSessionDto, LearningProgramDto, LearningSourceLibraryItemDto, SaveLearningPracticeArtifactRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 
 
 type Mode = LearningPracticeMode;
@@ -374,6 +375,5 @@ function ResultPanel({ result }: { result: NonNullable<LearningPracticeSessionDt
 function assistanceLabel(kind: string) { return ({ source_opened: 'Opened a frozen source', hint: 'Requested a tutor hint', solution_revealed: 'Revealed worked solution', mode_changed: 'Changed aid contract' } as Record<string, string>)[kind] ?? kind; }
 function ConfirmDialog({ title, description, confirmLabel, pending, onCancel, onConfirm }: { title: string; description: string; confirmLabel: string; pending: boolean; onCancel: () => void; onConfirm: () => void }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { cancelRef.current?.focus(); const listener = (event: KeyboardEvent) => { if (event.key === 'Escape' && !pending) onCancel(); }; window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener); }, [onCancel, pending]);
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4" role="presentation"><section role="dialog" aria-modal="true" aria-labelledby="solution-confirm-title" aria-describedby="solution-confirm-description" onKeyDown={(event) => { if (event.key !== 'Tab') return; const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled)')); if (!focusable.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }} className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"><h3 id="solution-confirm-title" className="font-serif text-2xl text-text-primary">{title}</h3><p id="solution-confirm-description" className="mt-3 text-sm leading-6 text-text-secondary">{description}</p><div className="mt-5 flex flex-wrap justify-end gap-2"><button ref={cancelRef} type="button" disabled={pending} onClick={onCancel} className="rounded-full border border-border px-4 py-2.5 text-sm font-medium text-text-secondary disabled:opacity-50">Keep working</button><button type="button" disabled={pending} onClick={onConfirm} className="rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{pending ? 'Saving…' : confirmLabel}</button></div></section></div>;
+  return <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}><DialogContent hideClose overlayClassName="bg-black/45" className="block max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl" onOpenAutoFocus={(event) => { event.preventDefault(); cancelRef.current?.focus(); }} onEscapeKeyDown={(event) => { if (pending) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}><DialogTitle asChild><h3 className="font-serif text-2xl text-text-primary">{title}</h3></DialogTitle><DialogDescription asChild><p className="mt-3 text-sm leading-6 text-text-secondary">{description}</p></DialogDescription><div className="mt-5 flex flex-wrap justify-end gap-2"><button ref={cancelRef} type="button" disabled={pending} onClick={onCancel} className="rounded-full border border-border px-4 py-2.5 text-sm font-medium text-text-secondary disabled:opacity-50">Keep working</button><button type="button" disabled={pending} onClick={onConfirm} className="rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50">{pending ? 'Saving…' : confirmLabel}</button></div></DialogContent></Dialog>;
 }

@@ -103,7 +103,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use futures::stream::{self, Stream, StreamExt};
+use futures::stream::{self, StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -115,13 +115,9 @@ use lattice::application::ports::conversation_memory::{
     SourceReadLimits,
 };
 use lattice::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, StreamChunk, ToolDefinition,
+    CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
 };
 use lattice::application::ports::LLMPort;
-use lattice::application::services::conversation_memory::{
-    prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
-    COMPACTION_DEADLINE,
-};
 use lattice::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
     SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
@@ -129,6 +125,10 @@ use lattice::domain::conversation::memory::{
 };
 use lattice::domain::conversation::MessageRole;
 use lattice::features::conversation::chat::memory_context::build_memory_plan;
+use lattice::features::conversation::memory::{
+    prompts, CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger,
+    COMPACTION_DEADLINE,
+};
 use lattice::features::conversation::repository::ConversationRepository;
 use lattice::features::llm::engine::ollama_client::OllamaClient;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
@@ -786,10 +786,6 @@ impl EvalLlm {
 
 #[async_trait]
 impl LLMPort for EvalLlm {
-    fn supports_typed_completions(&self) -> bool {
-        self.inner.supports_typed_completions()
-    }
-
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let system = request
             .input
@@ -907,116 +903,6 @@ impl LLMPort for EvalLlm {
         unreachable!("provider_attempts is clamped to at least one")
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        let system = context.join("\n");
-        let kind = Self::classify(&system);
-        let started = Instant::now();
-        if let Some(intercepted) = self.intercept(kind, prompt).await {
-            return match intercepted {
-                Ok(text) => {
-                    self.record(
-                        kind,
-                        &text,
-                        Vec::new(),
-                        started.elapsed(),
-                        None,
-                        1,
-                        Vec::new(),
-                    );
-                    Ok(text)
-                }
-                Err(error) => {
-                    self.record(
-                        kind,
-                        "",
-                        Vec::new(),
-                        started.elapsed(),
-                        Some(error.to_string()),
-                        1,
-                        Vec::new(),
-                    );
-                    Err(error)
-                }
-            };
-        }
-        let mut retry_reasons = Vec::new();
-        for attempt in 1..=self.provider_attempts {
-            let outcome = self.inner.generate(prompt, context, images.clone()).await;
-            let retry_reason = match &outcome {
-                Ok(text) if text.trim().is_empty() => {
-                    Some("provider returned an empty generation".to_string())
-                }
-                Err(error) if Self::retryable_error(error) => Some(error.to_string()),
-                _ => None,
-            };
-            if let Some(reason) = retry_reason {
-                retry_reasons.push(reason);
-                if attempt < self.provider_attempts {
-                    tokio::time::sleep(self.retry_delay(attempt)).await;
-                    continue;
-                }
-                let error = match outcome {
-                    Ok(_) => AppError::Network(format!(
-                        "provider returned an empty generation after {attempt} attempts"
-                    )),
-                    Err(error) => error,
-                };
-                self.record(
-                    kind,
-                    "",
-                    Vec::new(),
-                    started.elapsed(),
-                    Some(error.to_string()),
-                    attempt,
-                    retry_reasons,
-                );
-                return Err(error);
-            }
-            let error = outcome.as_ref().err().map(ToString::to_string);
-            self.record(
-                kind,
-                outcome.as_ref().map_or("", String::as_str),
-                Vec::new(),
-                started.elapsed(),
-                error,
-                attempt,
-                retry_reasons,
-            );
-            return outcome;
-        }
-        unreachable!("provider_attempts is clamped to at least one")
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        // The suite never streams: it grades whole answers and tool calls, and
-        // a partial stream cannot be graded for provenance.
-        Err(AppError::InternalError(
-            "the evaluation harness does not stream".into(),
-        ))
-    }
-
-    async fn generate_streaming_with_tools(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-        _tools: Option<&[ToolDefinition]>,
-    ) -> Result<Box<dyn Stream<Item = Result<StreamChunk>> + Send + Unpin + '_>> {
-        Err(AppError::InternalError(
-            "the evaluation harness does not stream".into(),
-        ))
-    }
-
     fn model_name(&self) -> &str {
         self.inner.model_name()
     }
@@ -1058,10 +944,6 @@ struct TwoToolsThenAnswer {
 
 #[async_trait]
 impl LLMPort for TwoToolsThenAnswer {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
-
     async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let response = match call {
@@ -1086,25 +968,11 @@ impl LLMPort for TwoToolsThenAnswer {
                 ..Default::default()
             },
         };
-        Ok(response)
-    }
-
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        Ok("unused".into())
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(futures::stream::empty()))
+        // The calls replay as themselves, so each result answers a call.
+        Ok(CompletionResponse {
+            replay: response.tool_calls.clone(),
+            ..response
+        })
     }
 
     fn model_name(&self) -> &str {
@@ -1130,10 +998,6 @@ impl LLMPort for TwoToolsThenAnswer {
 
 #[async_trait]
 impl LLMPort for EmptyThenAnswer {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
-
     async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(CompletionResponse {
@@ -1144,24 +1008,6 @@ impl LLMPort for EmptyThenAnswer {
             },
             ..Default::default()
         })
-    }
-
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        Ok("recovered".into())
-    }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(futures::stream::empty()))
     }
 
     fn model_name(&self) -> &str {
@@ -3117,7 +2963,7 @@ async fn targeted_bounded_memory_cells_from_env() {
     let _ = {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(
-                "lattice::application::services::conversation_memory=info",
+                "lattice::features::conversation::memory=info",
             ))
             .with_test_writer()
             .try_init()

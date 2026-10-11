@@ -2,6 +2,7 @@
 //! shown, and who gets to choose the opening documents.
 
 use super::*;
+use crate::application::ports::llm_port::CompletionResponse;
 
 /// Replays one canned plan and records what it was asked.
 struct SummaryPlannerStub {
@@ -29,28 +30,11 @@ impl SummaryPlannerStub {
 
 #[async_trait::async_trait]
 impl LLMPort for SummaryPlannerStub {
-    async fn generate(
-        &self,
-        prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        self.prompts
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .push(prompt.to_string());
-        Ok(self.response.clone())
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(
+            self.respond(request.user_text()).await?,
+        ))
     }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(Box::pin(futures::stream::empty())))
-    }
-
     fn model_name(&self) -> &str {
         "summary-planner-stub"
     }
@@ -65,6 +49,15 @@ impl LLMPort for SummaryPlannerStub {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+impl SummaryPlannerStub {
+    async fn respond(&self, prompt: &str) -> Result<String> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(prompt.to_string());
+        Ok(self.response.clone())
     }
 }
 
@@ -103,6 +96,7 @@ async fn the_catalog_carries_summaries_when_the_tier_has_them() {
         None,
         &catalog,
         &summaries(&[("doc-1", "A manual about preflight and engine start.")]),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -117,9 +111,16 @@ async fn the_catalog_carries_summaries_when_the_tier_has_them() {
 async fn an_empty_summary_map_reproduces_the_plain_catalog() {
     let with_tier = SummaryPlannerStub::new(PLAN);
     let catalog = catalog();
-    plan(&with_tier, "engine start", None, &catalog, &HashMap::new())
-        .await
-        .unwrap();
+    plan(
+        &with_tier,
+        "engine start",
+        None,
+        &catalog,
+        &HashMap::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     let without_tier = SummaryPlannerStub::new(PLAN);
     plan(
         &without_tier,
@@ -127,6 +128,7 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
         None,
         &catalog,
         &HashMap::new(),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -145,6 +147,7 @@ async fn catalog_summaries_are_truncated_per_document() {
         None,
         &catalog,
         &summaries(&[("doc-1", &long)]),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

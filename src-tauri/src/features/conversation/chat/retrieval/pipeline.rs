@@ -1,5 +1,5 @@
 use super::*;
-use crate::features::conversation::chat::cancellation::is_cancel_requested;
+use crate::features::conversation::chat::cancellation::{is_cancel_requested, turn_token};
 use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
 use crate::features::conversation::chat::turn_record::{
     TurnRecorder, TurnStepKind, TurnStepLinkDto,
@@ -62,7 +62,7 @@ pub(super) async fn run_retrieval_pipeline(
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     highlight_terms: &[String],
-    available_for_rag: usize,
+    evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
@@ -88,7 +88,7 @@ pub(super) async fn run_retrieval_pipeline(
         kb_unavailable_reason: None,
         kb_attempted: false,
         sources: Vec::new(),
-        available_for_rag,
+        evidence,
         sub_timings: RetrievalSubTimingMetrics::default(),
         searched_documents: 0,
         scope_is_linked: false,
@@ -113,7 +113,7 @@ pub(super) async fn run_retrieval_pipeline(
     }
 
     let utility_llm: Arc<dyn crate::application::ports::LLMPort> =
-        match container.get_or_load_utility_llm().await {
+        match (container.utility_llm_loader())().await {
             Ok(Some(util)) => {
                 tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
                 util
@@ -160,7 +160,7 @@ pub(super) async fn run_retrieval_pipeline(
             conversation_id,
             conversation_document_context,
             highlight_terms,
-            available_for_rag,
+            evidence.remaining(),
             llm,
             tool_output_settings.excerpt_chars as usize,
         )
@@ -178,7 +178,7 @@ pub(super) async fn run_retrieval_pipeline(
         highlight_terms,
         excerpt_chars: tool_output_settings.excerpt_chars as usize,
         tuning,
-        page_budget_chars: super::page_budget::page_budget_chars(available_for_rag),
+        page_budget_chars: super::page_budget::page_budget_chars(&evidence),
         wiki_planned: retrieval_plan.should_search_wiki,
         web_planned: retrieval_plan.should_search_web,
         attachment_digest,
@@ -201,6 +201,7 @@ pub(super) async fn run_retrieval_pipeline(
             tuning,
             focus,
             recorder,
+            &turn_token(request_id),
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
@@ -485,7 +486,8 @@ impl ExternalLookup<'_> {
         // HyDE and web-query rewriting run on the utility LLM (small, fast,
         // local) when set, not the chat LLM. See utility_llm resolution above.
         let hyde_service =
-            crate::features::qa::hyde::HyDEService::new(Arc::clone(self.utility_llm));
+            crate::features::search::hyde::HyDEService::new(Arc::clone(self.utility_llm))
+                .with_cancellation(turn_token(self.request_id));
         let hyde_context = if interpret || search_web {
             let conversation = build_hyde_context_window_for_conversation(
                 self.conv_service,
@@ -725,7 +727,7 @@ impl ExternalLookup<'_> {
             Some(wiki_query.clone()),
         );
 
-        let executor = self.container.function_executor();
+        let executor = self.container.tools();
         let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "wiki_search",
@@ -878,7 +880,7 @@ impl ExternalLookup<'_> {
             "fetch_url_content",
             serde_json::json!({ "url": url }),
         );
-        let executor = self.container.function_executor();
+        let executor = self.container.tools();
         let outcome = match tokio::time::timeout(timeout, executor.execute(call)).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(error)) => return Err(error.to_string()),
@@ -1083,7 +1085,7 @@ impl ExternalLookup<'_> {
             serde_json::json!(["duckduckgo", "bing"])
         };
 
-        let executor = self.container.function_executor();
+        let executor = self.container.tools();
         let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "web_search",

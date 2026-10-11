@@ -12,12 +12,12 @@ import { MessageCircle, PanelLeft, PenLine, Plus } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
-import { SpacePickerPopover, useOpenSpaces } from '@/features/chat/components/SpacePickerPopover';
 import { EntryListItem } from '@/features/journal/components/EntryListItem';
 import { JournalCalendarPopover } from '@/features/journal/components/JournalCalendarPopover';
 import { JournalPickerMenu } from '@/features/journal/components/JournalPickerMenu';
 import { PageList } from '@/features/journal/components/PageList';
 import type { EntryFilter, JournalEntrySummary, UseJournalEntriesResult } from '@/features/journal/hooks/useJournalEntries';
+import { SpacePickerPopover, useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 

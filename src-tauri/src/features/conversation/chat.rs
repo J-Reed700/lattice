@@ -7,7 +7,8 @@
 //! # Features
 //!
 //! - **Conversation History**: Maintains persistent chat history
-//! - **Context Window Management**: Token-aware truncation (75% for context, 25% for generation)
+//! - **Context Window Management**: one budget from the context assembler for
+//!   the prompt's every pool and the generation reservation
 //! - **Auto-titling**: Generates conversation titles from first message
 //! - **Security**: Rate limiting, input validation, audit logging
 //!
@@ -29,13 +30,13 @@
 //! });
 //! ```
 
+use self::intent::{IntentClassifier, IntentInput, TurnIntent};
+use self::router::{RouterAction, RouterInput, RouterService};
 use crate::application::services::conversation_context::build_conversation_context;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::settings::dto::{CustomToolSettingsDto, RouterSettingsDto};
-use crate::infrastructure::services::intent::{IntentClassifier, IntentInput, TurnIntent};
-use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::shared::error::{AppError, Result};
 use crate::shared::text::extract_highlight_terms;
 use std::collections::HashSet;
@@ -45,7 +46,7 @@ use tracing::{info, warn};
 
 mod desktop;
 pub mod ports;
-pub use desktop::chat_with_conversation_impl;
+pub use desktop::{app_event_sink, chat_with_conversation_impl};
 
 /// Transport-independent delivery of a typed chat event.
 pub type ChatEventSink = Arc<dyn Fn(ChatStreamEventDto) -> Result<()> + Send + Sync>;
@@ -59,6 +60,7 @@ mod prior_evidence;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
+pub mod intent;
 pub mod memory_context;
 mod persistence;
 pub(crate) use persistence::index_memory_note;
@@ -66,18 +68,21 @@ mod prompting;
 pub(crate) mod source_snapshots;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
 // sufficiency judgement instead of reimplementing it.
+mod research_job;
 pub mod retrieval;
+pub mod router;
+pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
 mod tool_loop;
 pub mod turn_record;
 mod verification;
 mod web_steps;
 
-use self::attachments::{attachment_token_budget, build_turn_attachments, TurnAttachments};
+use self::attachments::{build_turn_attachments, TurnAttachments};
 
 /// How much of an attachment the web-query rewriter is shown. Enough to name
 /// the subject, small enough that the utility model stays fast.
 const ATTACHMENT_DIGEST_CHARS: usize = 900;
-use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
+use self::cancellation::{begin_turn_within, finish_turn, is_cancel_requested};
 use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
@@ -85,9 +90,8 @@ use self::persistence::{
 use self::prompting::{build_kb_context, PromptMessageBuilder};
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    assign_citation_ids, available_rag_budget, citation_ids_by_chunk, confine_document_context,
-    deduplicate_sources, load_recent_document_metadata, response_token_budget,
-    run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
+    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
@@ -98,7 +102,7 @@ pub use self::turn_record::{
 };
 pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
-use crate::features::explorer::prompt::ExplorerTurn;
+pub(crate) use crate::features::explorer::prompt::ExplorerTurn;
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -109,8 +113,13 @@ struct TurnCancellationGuard {
 }
 
 impl TurnCancellationGuard {
-    fn start(request_id: String, conversation_id: &str) -> Result<Self> {
-        if !begin_turn(&request_id, conversation_id) {
+    /// `parent` is the stop of the job running the turn, if one is.
+    fn start(
+        request_id: String,
+        conversation_id: &str,
+        parent: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<Self> {
+        if !begin_turn_within(&request_id, conversation_id, parent) {
             return Err(AppError::InvalidState(
                 "A generation with this request ID is already in flight.".to_string(),
             ));
@@ -141,15 +150,30 @@ use routing::*;
 use tools::*;
 use turn::run_turn;
 
-fn elapsed_ms(start: Instant) -> u64 {
-    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+/// Runs a turn no window watches, such as a part of a journal synthesis: its
+/// stream goes nowhere and only its answer is used.
+pub(crate) async fn run_unwatched_turn(
+    container: &dyn ChatRuntime,
+    conversation_id: String,
+    message: String,
+    tool_preferences: ToolPreferences,
+) -> Result<ChatResponse> {
+    run_turn(
+        container,
+        Some(conversation_id),
+        message,
+        Some(tool_preferences),
+        None,
+        None,
+        None,
+        None,
+        Arc::new(|_| Ok(())),
+    )
+    .await
 }
 
-/// Characters the Explorer folder block may take: a sixth of the window, so
-/// the open file is visible on a small local model without crowding out the
-/// question, its history and the reply. Three characters a token errs short.
-fn explorer_block_chars(context_tokens: usize) -> usize {
-    (context_tokens / 6).clamp(500, 8_000) * 3
+fn elapsed_ms(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Generation allowance for one turn, shared by tool rounds and provider retries.
@@ -209,25 +233,6 @@ async fn get_or_create_conversation_id(
     }
 }
 
-fn budget_search_results_for_prompt<'a>(
-    search_results: &'a [crate::features::search::dto::SearchResultDto],
-    available_for_rag: usize,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-) -> Vec<&'a crate::features::search::dto::SearchResultDto> {
-    let mut rag_tokens_used = 0usize;
-    search_results
-        .iter()
-        .filter(|result| {
-            let chunk_tokens = llm.count_tokens(&result.content);
-            if rag_tokens_used + chunk_tokens > available_for_rag {
-                return false;
-            }
-            rag_tokens_used += chunk_tokens;
-            true
-        })
-        .collect()
-}
-
 /// Derive a conversation title from the user's first message.
 ///
 /// Truncation is by **characters**, not bytes. `&message[..50]` panics when
@@ -247,5 +252,7 @@ fn generate_title(message: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod test_runtime;
 #[cfg(test)]
 mod tests;

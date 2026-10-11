@@ -28,10 +28,7 @@ use super::format::{
 };
 
 /// Tables whose rows are cleared from the snapshot. All are re-derivable
-/// from documents, chunks, conversations, and learning source versions after
-/// a restore. `learning_source_retrieval_index` is rebuilt lazily: the next
-/// lesson that loads a program's references re-embeds any source version
-/// whose cached rows are missing.
+/// from documents, chunks and conversations after a restore.
 pub const EXCLUDED_TABLES: &[&str] = &[
     "text_embeddings",
     "image_embeddings",
@@ -41,7 +38,6 @@ pub const EXCLUDED_TABLES: &[&str] = &[
     "clusters",
     "cluster_runs",
     "chat_starter_cache",
-    "learning_source_retrieval_index",
 ];
 
 /// zstd compression level for the payload. 3 is the zstd default: it keeps
@@ -270,7 +266,7 @@ pub async fn snapshot_database(
     // text_embeddings -> text_chunks, image_embeddings -> documents,
     // conversation_memory_vectors -> conversations, chunk_sparse_terms ->
     // text_chunks, cluster_members -> clusters/documents, clusters ->
-    // cluster_runs, learning_source_retrieval_index -> learning_source_versions.
+    // cluster_runs.
     // The list above is already child-before-parent, so the order would be
     // safe even with enforcement on.)
     let options = SqliteConnectOptions::new()
@@ -1476,73 +1472,6 @@ mod tests {
         assert_eq!(info.conversation_count, 0);
         assert_eq!(info.migration_version, report.migration_version);
         assert!(info.table_count > 10, "schema should survive the snapshot");
-    }
-
-    #[tokio::test]
-    async fn snapshot_drops_the_learning_reference_index_but_keeps_source_text() {
-        let dir = tempdir().unwrap();
-        let live = dir.path().join("lattice.db");
-        let pool = migrated_pool(&live).await;
-
-        sqlx::query(
-            "INSERT INTO learning_programs \
-             (id, title, goal, status, revision, prior_knowledge, minutes_per_session, \
-              model_name, created_at) \
-             VALUES ('prog-1', 'Rust', 'Learn Rust', 'active', 1, '', 30, 'model', 0)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO learning_source_library \
-             (id, program_id, kind, origin, freshness_policy, created_at, updated_at) \
-             VALUES ('src-1', 'prog-1', 'pasted', 'user', 'fixed', 0, 0)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO learning_source_versions \
-             (id, program_id, source_id, version_number, title, full_text, excerpt, \
-              content_sha256, word_count, truncated, extraction_version, acquired_at) \
-             VALUES ('ver-1', 'prog-1', 'src-1', 1, 'Ownership', 'Ownership rules.', \
-                     'Ownership rules.', 'sha', 2, 0, 'pasted_v1', 0)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO learning_source_retrieval_index \
-             (program_id, source_version_id, chunk_ordinal, chunk_text, start_byte, end_byte, \
-              embedding_model, embedding_json, created_at) \
-             VALUES ('prog-1', 'ver-1', 0, 'Ownership rules.', 0, 16, 'v1:model', '[0.5]', 0)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let dest = dir.path().join("snapshot.db");
-        let report = snapshot_database(&pool, &dest).await.unwrap();
-        pool.close().await;
-
-        assert!(report
-            .excluded_tables
-            .iter()
-            .any(|t| t == "learning_source_retrieval_index"));
-        let snap = read_only_pool(&dest).await;
-        assert_eq!(
-            count(
-                &snap,
-                "SELECT COUNT(*) FROM learning_source_retrieval_index"
-            )
-            .await,
-            0
-        );
-        assert_eq!(
-            count(&snap, "SELECT COUNT(*) FROM learning_source_versions").await,
-            1
-        );
-        snap.close().await;
     }
 
     #[tokio::test]

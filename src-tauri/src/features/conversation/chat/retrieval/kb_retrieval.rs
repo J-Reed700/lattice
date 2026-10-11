@@ -7,10 +7,11 @@ use tracing::{info, warn};
 use crate::application::contracts::search::CorpusDocument;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::focus::FocusScope;
+use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
-use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
+use crate::features::search::use_cases::RerankOptions;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
 
 // Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
@@ -29,6 +30,8 @@ pub(super) async fn run_kb_retrieval(
     tuning: &RetrievalTuningSettingsDto,
     focus: &FocusScope,
     recorder: &TurnRecorder,
+    // The turn's stop button, which the planner's model calls carry.
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> super::KbRetrievalOutcome {
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
@@ -124,7 +127,7 @@ pub(super) async fn run_kb_retrieval(
         };
     }
 
-    let repository = ConversationRepository::new(container.db_pool().clone());
+    let repository = container.chat_records();
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
     let plan_step = recorder.begin_guarded(
@@ -153,7 +156,7 @@ pub(super) async fn run_kb_retrieval(
                     "retrieval: planner skipped — short message continues the previous turn"
                 );
                 plan
-            } else if let Ok(Some(utility)) = container.get_or_load_utility_llm().await {
+            } else if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
                 let history = super::build_hyde_context_window_for_conversation(
                     conv_service,
                     conversation_id,
@@ -166,6 +169,7 @@ pub(super) async fn run_kb_retrieval(
                     history.as_deref(),
                     &catalog,
                     &summaries.summaries,
+                    cancel,
                 )
                 .await
                 .unwrap_or_else(|error| {
@@ -219,14 +223,13 @@ pub(super) async fn run_kb_retrieval(
     // The shortlist a reranker gets to see. The corrective pass reuses it so
     // both passes contribute the same number of candidates to the fusion.
     let candidate_limit = if enable_reranking && !plan.start_at_beginning {
-        kb_search_limit.saturating_mul(3).min(64)
+        RerankOptions::candidate_pool(kb_search_limit)
     } else {
         kb_search_limit
     };
     let response = super::corpus_plan::retrieve(
-        &repository,
-        container.semantic_search_use_case().as_ref(),
-        container.hybrid_search_use_case().as_ref(),
+        repository.as_ref(),
+        container.library_search().as_ref(),
         validated_message,
         &plan,
         &scope,
@@ -312,11 +315,12 @@ pub(super) async fn run_kb_retrieval(
             conv_service,
             conversation_id,
             validated_message,
-            &repository,
+            repository.as_ref(),
             &catalog,
             &scope,
             &correction,
             candidate_limit,
+            cancel,
         )
         .await;
         if let Some((second_pass, retry_queries)) = retry {
@@ -324,6 +328,7 @@ pub(super) async fn run_kb_retrieval(
             let second_count = second_pass.results.len();
             let first_results = std::mem::take(&mut search_response.results);
             search_response.results = super::corpus_plan::fuse_passes(
+                container.library_search().as_ref(),
                 first_results,
                 second_pass.results,
                 candidate_limit,
@@ -382,7 +387,7 @@ pub(super) async fn run_kb_retrieval(
         .results
         .truncate(kb_search_limit.max(if plan.start_at_beginning { 16 } else { 1 }));
     if let Err(error) = super::corpus_plan::expand_evidence(
-        &repository,
+        repository.as_ref(),
         &mut search_response.results,
         &scope.document_ids,
         kb_search_limit + 8,
@@ -510,13 +515,14 @@ async fn corrective_pass(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
-    repository: &ConversationRepository,
+    repository: &dyn ChatRecords,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
     correction: &super::corpus_plan::CorrectionRequest,
     limit: usize,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<(SearchResponseDto, Vec<String>)> {
-    let Ok(Some(utility)) = container.get_or_load_utility_llm().await else {
+    let Ok(Some(utility)) = (container.utility_llm_loader())().await else {
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
     };
@@ -532,6 +538,7 @@ async fn corrective_pass(
         history.as_deref(),
         catalog,
         correction,
+        cancel,
     )
     .await
     {
@@ -543,8 +550,7 @@ async fn corrective_pass(
     };
     match super::corpus_plan::retrieve(
         repository,
-        container.semantic_search_use_case().as_ref(),
-        container.hybrid_search_use_case().as_ref(),
+        container.library_search().as_ref(),
         validated_message,
         &retry_plan,
         scope,
@@ -619,8 +625,6 @@ async fn summary_tier(
     message: &str,
     scope: &super::SpaceDocumentScope,
 ) -> SummaryTier {
-    use crate::features::summaries::search::SummarySearchPort;
-
     let Some(search) = container.summary_search().await else {
         return SummaryTier::default();
     };

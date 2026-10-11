@@ -14,7 +14,7 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::application::ports::LLMPort;
-use crate::application::services::conversation_memory::{
+use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
 };
@@ -118,13 +118,16 @@ pub fn summary_pool_for(llm: &Arc<dyn LLMPort>) -> usize {
 const TYPICAL_TURN_FIXED_TOKENS: usize = 1_200;
 
 fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
-    use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
+    use crate::application::services::context_assembler::{
+        BudgetAllocation, BudgetRequest, ModelCapacity,
+    };
     let capacity = ModelCapacity::new(model, context_tokens);
+    let plan = |fixed| BudgetAllocation::plan(&capacity, &BudgetRequest::new(fixed, 0, 0));
     // A window too small for the typical turn is planned with what it can
     // hold; the smaller pool is the safe side of the error.
-    BudgetAllocation::plan(&capacity, fixed)
-        .or_else(|_| BudgetAllocation::plan(&capacity, fixed / 2))
-        .or_else(|_| BudgetAllocation::plan(&capacity, 0))
+    plan(fixed)
+        .or_else(|_| plan(fixed / 2))
+        .or_else(|_| plan(0))
         .map(|allocation| allocation.summary)
         .unwrap_or(256)
 }
@@ -134,8 +137,13 @@ fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
 /// Runs at most one pass. A successful job (including a partial commit or no-op)
 /// is not permission to generate: the caller must reassemble and verify that no
 /// unprocessed source is missing. Errors leave the transcript intact and prevent
-/// generation from using the incomplete pre-compaction plan.
-pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> Result<()> {
+/// generation from using the incomplete pre-compaction plan. `cancel` is the
+/// turn's stop button.
+pub async fn compact_for_turn(
+    container: &Container,
+    conversation_id: &str,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<()> {
     let job = build_job(container, None).await?.ok_or_else(|| {
         AppError::ServiceNotAvailable(
             "No utility model is available to compact this conversation.".into(),
@@ -147,6 +155,7 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
             conversation_id,
             CompactionRequest {
                 trigger: CompactionTrigger::Automatic,
+                cancellation: Some(cancel),
                 ..Default::default()
             },
         )
@@ -172,19 +181,15 @@ pub async fn compact_for_turn(container: &Container, conversation_id: &str) -> R
 }
 
 /// Consolidation follows a committed answer and cannot change its success.
-/// The shared job slots coalesce queued requests through the durable watermark.
+///
+/// Its model calls go out at maintenance priority, so the backend's scheduler
+/// keeps them behind the user's next turn and out of the slot it holds for
+/// interactive work. The conversation's compaction slot coalesces queued
+/// requests through the durable watermark: a consolidation waiting behind
+/// another of the same conversation finds nothing left to do.
 pub fn consolidate_after_turn(container: Container, conversation_id: String) {
     let cancel = crate::shared::runtime::background::cancellation_token();
     crate::shared::runtime::background::spawn(async move {
-        static MAINTENANCE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-        let permit = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return,
-            permit = MAINTENANCE.acquire() => permit,
-        };
-        let Ok(_permit) = permit else {
-            return;
-        };
         let result: Result<()> = async {
             if !container
                 .get_settings_use_case()
@@ -231,7 +236,9 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
-    use crate::application::services::context_assembler::{BudgetAllocation, ModelCapacity};
+    use crate::application::services::context_assembler::{
+        BudgetAllocation, BudgetRequest, ModelCapacity,
+    };
 
     /// On a 4k window the turn's fixed costs are most of the prompt; a pool
     /// sized against an empty prompt accepted summaries the turn then dropped.
@@ -239,13 +246,37 @@ mod tests {
     fn a_summary_pool_on_a_small_window_fits_the_turn_that_carries_it() {
         let capacity = ModelCapacity::new("small", 4_096);
         let fixed = 1_500;
-        let turn_pool = BudgetAllocation::plan(&capacity, fixed).unwrap().summary;
-        let empty_prompt_pool = BudgetAllocation::plan(&capacity, 0).unwrap().summary;
+        let turn_pool = BudgetAllocation::plan(&capacity, &BudgetRequest::new(fixed, 0, 0))
+            .unwrap()
+            .summary;
+        let empty_prompt_pool = BudgetAllocation::plan(&capacity, &BudgetRequest::new(0, 0, 0))
+            .unwrap()
+            .summary;
 
         let pool = summary_pool("small", 4_096, fixed);
 
         assert_eq!(pool, turn_pool);
         assert!(pool < empty_prompt_pool, "{pool} vs {empty_prompt_pool}");
+    }
+
+    /// The one-at-a-time maintenance semaphore kept consolidation from crowding
+    /// out the next turn. The scheduler does that now, so consolidation must
+    /// queue as upkeep — while compaction the user is waiting on must not.
+    #[test]
+    fn consolidation_queues_as_upkeep_and_a_waited_on_compaction_does_not() {
+        use crate::application::ports::llm_port::InferencePriority;
+        assert_eq!(
+            CompactionTrigger::Maintenance.priority(),
+            InferencePriority::Maintenance
+        );
+        assert_eq!(
+            CompactionTrigger::Automatic.priority(),
+            InferencePriority::Interactive
+        );
+        assert_eq!(
+            CompactionTrigger::Manual.priority(),
+            InferencePriority::Interactive
+        );
     }
 
     /// A laptop sidecar takes minutes per extraction; the remote default

@@ -5,30 +5,13 @@
  * and the automatic themes produced by `corpus_shape`.
  */
 
-export interface CorpusTypeCountDto {
-  type: string;
-  count: number;
-}
+export type CorpusTypeCountDto = import('../../lib/bindings').CorpusTypeCountDto;
 
-export interface CorpusShapeDto {
-  total: number;
-  byType: CorpusTypeCountDto[];
-  grownLast7Days: number;
-}
+export type CorpusShapeDto = import('../../lib/bindings').CorpusShapeDto;
 
-export interface CitingConversationDto {
-  conversationId: string;
-  title: string;
-  updatedAt: string;
-  passageCount: number;
-}
+export type CitingConversationDto = import('../../lib/bindings').CitingConversationDto;
 
-export interface SimilarDocumentDto {
-  documentId: string;
-  title: string;
-  filePath: string | null;
-  score: number;
-}
+export type SimilarDocumentDto = import('../../lib/bindings').SimilarDocumentDto;
 
 export type ClusterLabelSource = 'llm' | 'inherited_exact' | 'inherited_jaccard' | 'fallback';
 
@@ -38,15 +21,7 @@ export type ClusterLabelSource = 'llm' | 'inherited_exact' | 'inherited_jaccard'
  */
 export type ClusterDto = import('../../lib/bindings').ClusterDto;
 
-export interface ClusterRunDto {
-  runId: string;
-  ranAt: string;
-  docCount: number;
-  clusterCount: number;
-  noiseCount: number;
-  durationMs: number;
-  llmCalls: number;
-}
+export type ClusterRunDto = import('../../lib/bindings').ClusterRunDto;
 
 export interface ClusterProgressPayload {
   phase: 'loading' | 'clustering' | 'labeling' | 'saving';
@@ -54,8 +29,4 @@ export interface ClusterProgressPayload {
   total: number;
 }
 
-export interface QuickCaptureResultDto {
-  noteId: string;
-  noteTitle: string;
-  created: boolean;
-}
+export type QuickCaptureResultDto = import('../../lib/bindings').QuickCaptureResultDto;

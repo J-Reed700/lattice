@@ -18,6 +18,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let indexing_state = container.indexing.indexing_state().clone();
             let app_handle = app.clone();
 
+            // raw-spawn: plugin setup has no tokio context; ends when the indexing state drops
             tauri::async_runtime::spawn(async move {
                 let mut rx = indexing_state.subscribe();
                 while let Ok(progress) = rx.recv().await {
@@ -34,9 +35,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             file_commands::get_file_metadata,
             file_commands::read_file_content,
             file_commands::read_file_bytes,
-            commands::get_file_content,
-            commands::update_file_metadata,
-            commands::delete_file_index,
             commands::remove_indexed_file,
             commands::list_indexed_files,
             commands::list_all_documents,
@@ -50,7 +48,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::reindex_file,
             commands::delete_document,
             commands::rename_document,
-            commands::validate_file_path,
             file_commands::open_file,
             file_commands::open_file_by_id,
             commands::get_file_path_by_id,
@@ -62,7 +59,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_corpus_shape,
             commands::list_conversations_citing_document,
             crate::features::file::custom_collections::commands::list_custom_collections,
-            crate::features::file::custom_collections::commands::import_legacy_custom_collections,
             crate::features::file::custom_collections::commands::create_custom_collection,
             crate::features::file::custom_collections::commands::rename_custom_collection,
             crate::features::file::custom_collections::commands::move_custom_collection,

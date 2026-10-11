@@ -21,7 +21,7 @@ export const modelApi = {
    * @returns Array of downloaded model records
    */
   getDownloadedModels: async (): Promise<ApiResult<DownloadedModel[]>> =>
-    apiCall<Wire.DownloadedModelResponse[]>('get_models_with_metadata'),
+    apiCall<Wire.DownloadedModelResponse[]>('list_downloaded_models'),
 
   /**
    * Checks if a model is already downloaded.
@@ -136,7 +136,7 @@ export const modelApi = {
     modelId: string,
     deleteFile: boolean = false,
   ): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_downloaded_model_and_file', { modelId, deleteFile }),
+    apiCall<void>('delete_model', { modelId, deleteFile }),
 
   /**
    * Gets system hardware capabilities for model selection.
@@ -264,4 +264,20 @@ export const modelApi = {
    */
   clearActiveEmbeddingModel: async (): Promise<ApiResult<void>> =>
     apiCall<void>('clear_active_embedding_model'),
+
+  /**
+   * Asks whether this machine still needs the first-run model bundle.
+   *
+   * @returns The status as a JSON string (kept small for the backend future)
+   */
+  checkFirstRunStatus: async (): Promise<ApiResult<string>> =>
+    apiCall<string>('check_first_run_status'),
+
+  /**
+   * Starts the first-run download of the recommended embedding model.
+   *
+   * @returns The backend's start message
+   */
+  downloadDefaultEmbeddingModel: async (): Promise<ApiResult<string>> =>
+    apiCall<string>('download_default_embedding_model'),
 };

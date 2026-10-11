@@ -8,11 +8,10 @@ use crate::features::learning::{
     tests,
 };
 use crate::{
-    features::study::{dto::*, repository::StudyRepository},
+    features::learning::recall::{study_dto::*, study_repository::StudyRepository},
     shared::error::Result,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::Row;
 use std::str::FromStr;
 
 fn id() -> String {
@@ -49,7 +48,7 @@ async fn active_program(
 }
 
 #[tokio::test]
-async fn recall_versions_scheduler_replay_and_study_guard_are_durable() -> Result<()> {
+async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
     let pool = tests::pool().await?;
     let program = active_program(&pool).await?;
     let memory = LearningRepository::new(pool.clone());
@@ -112,52 +111,24 @@ async fn recall_versions_scheduler_replay_and_study_guard_are_durable() -> Resul
     changed_rating.rating = StudyRating::Easy;
     assert!(recall.review_card(&changed_rating).await.is_err());
 
-    let fsrs = ChangeLearningRecallSchedulerRequestDto {
-        operation_id: id(),
-        program_id: program.summary.id.clone(),
-        card_id: card_id.clone(),
-        expected_review_count: 1,
-        scheduler_version: LearningRecallSchedulerVersion::Fsrs6V1,
-    };
-    let fsrs_replay = recall.change_scheduler(&fsrs).await?;
+    let first = reviewed
+        .cards
+        .first()
+        .map(|card| card.scheduler.clone())
+        .ok_or_else(|| crate::shared::error::AppError::NotFound("recall card".into()))?;
+    assert!(first.stability.is_some() && first.difficulty.is_some());
+    assert!(first.interval_days >= 1);
     assert_eq!(
-        fsrs_replay
-            .cards
-            .first()
-            .map(|card| card.scheduler.scheduler_version),
-        Some(LearningRecallSchedulerVersion::Fsrs6V1)
+        first.last_reviewed_at,
+        Some(
+            first.due_at
+                - first.interval_days * crate::features::learning::recall::schedule::DAY_MS
+        )
     );
-    let mut changed_scheduler_payload = fsrs.clone();
-    changed_scheduler_payload.expected_review_count = 0;
-    assert!(recall
-        .change_scheduler(&changed_scheduler_payload)
-        .await
-        .is_err());
-    let switched = recall.change_scheduler(&fsrs).await?;
-    assert_eq!(
-        switched
-            .cards
-            .first()
-            .map(|card| card.scheduler.scheduler_version),
-        Some(LearningRecallSchedulerVersion::Fsrs6V1)
-    );
-    let row = sqlx::query("SELECT scheduler_version,review_count FROM study_cards WHERE id=?")
-        .bind(&card_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
-    assert_eq!(row.get::<String, _>("scheduler_version"), "fsrs_6_v1");
-    assert_eq!(row.get::<i64, _>("review_count"), 1);
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT scheduler_version FROM study_reviews WHERE id=?")
-            .bind(&review.review_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?,
-        "expanding_v1"
-    );
-    let ordinary_study = StudyRepository::new(pool.clone());
-    assert!(ordinary_study
+
+    // The deck view reviews the same card through the same scheduler.
+    let study = StudyRepository::new(pool.clone());
+    let studied = study
         .review(
             &ReviewStudyCardRequestDto {
                 review_id: id(),
@@ -166,32 +137,22 @@ async fn recall_versions_scheduler_replay_and_study_guard_are_durable() -> Resul
                 rating: StudyRating::Good,
                 selected_option: Some(1),
             },
-            chrono::Utc::now().timestamp_millis(),
+            first.due_at,
         )
-        .await
-        .is_err());
-
-    let reverse = ChangeLearningRecallSchedulerRequestDto {
-        operation_id: id(),
-        scheduler_version: LearningRecallSchedulerVersion::ExpandingV1,
-        ..fsrs
-    };
-    let reversed = recall.change_scheduler(&reverse).await?;
-    assert_eq!(
-        reversed
-            .cards
-            .first()
-            .map(|card| card.scheduler.scheduler_version),
-        Some(LearningRecallSchedulerVersion::ExpandingV1)
-    );
-    assert_eq!(
-        reversed.cards.first().map(|card| card.versions.len()),
-        Some(1)
-    );
-    assert_eq!(
-        reversed.cards.first().map(|card| card.scheduler.due_at),
-        reviewed.cards.first().map(|card| card.scheduler.due_at)
-    );
+        .await?;
+    assert_eq!(studied.review_count, 2);
+    // A card saved without source versions still opens in the deck view.
+    assert_eq!(studied.source.file_name, "Personal recall card");
+    let after = recall.workspace(&program.summary.id).await?;
+    let schedule = after
+        .cards
+        .first()
+        .map(|card| card.scheduler.clone())
+        .ok_or_else(|| crate::shared::error::AppError::NotFound("recall card".into()))?;
+    assert_eq!(schedule.review_count, 2);
+    assert_eq!(schedule.due_at, studied.due_at);
+    assert!(schedule.due_at > first.due_at);
+    assert_eq!(after.cards.first().map(|card| card.versions.len()), Some(1));
     Ok(())
 }
 
@@ -266,7 +227,9 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         .get_selector(&other.summary.id, &selector_id)
         .await
         .is_err());
-    let degraded_embedder = crate::application::ports::MockEmbeddingPort::new_degraded();
+    // A pasted source has no library copy, so even with the library at hand
+    // it is ranked by keyword.
+    let library = crate::features::learning::reference_collection::tests::FakeLibrary::default();
     let search = recall
         .search_sources(
             &SearchLearningSourcesSemanticallyRequestDto {
@@ -274,7 +237,7 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
                 query: "repeated rule".into(),
                 limit: 10,
             },
-            Some(&degraded_embedder),
+            Some(&library),
         )
         .await?;
     assert!(!search.is_empty());
@@ -417,7 +380,7 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
 }
 
 #[tokio::test]
-async fn legacy_study_cards_and_review_history_bootstrap_into_recall() -> Result<()> {
+async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -> Result<()> {
     let pool = tests::pool().await?;
     let program = active_program(&pool).await?;
     let memory = LearningRepository::new(pool.clone());
@@ -438,17 +401,17 @@ async fn legacy_study_cards_and_review_history_bootstrap_into_recall() -> Result
             .await
             .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
     let card_id = id();
-    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format,scheduler_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(&card_id).bind(&deck_id).bind("Legacy question").bind("Yes")
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)")
+        .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
         .bind("[\"No\",\"Yes\"]").bind(1_i64).bind("Old note")
-        .bind("{}").bind("legacy").bind(chrono::Utc::now().timestamp_millis())
-        .bind("multiple_choice").bind("expanding_v1")
+        .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
+        .bind("multiple_choice")
         .execute(&pool).await
         .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
     let review_id = id();
-    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option,scheduler_version) VALUES(?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
         .bind(&review_id).bind(&card_id).bind(100_i64).bind("good").bind("quiz")
-        .bind(1_i64).bind(1_i64).bind("expanding_v1")
+        .bind(1_i64).bind(1_i64)
         .execute(&pool).await
         .map_err(|error| crate::shared::error::AppError::Database(error.to_string()))?;
 
@@ -633,7 +596,7 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
         cloze_deletions: vec![],
     };
     assert!(
-        crate::features::learning::recall_repository::validate_content(
+        crate::features::learning::recall::recall_content::validate_content(
             LearningRecallCardFormat::MultipleChoice,
             &content
         )
@@ -643,7 +606,7 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
     content.correct_option_index = None;
     content.cloze_deletions = vec!["deletion".into(), "deletion".into()];
     assert!(
-        crate::features::learning::recall_repository::validate_content(
+        crate::features::learning::recall::recall_content::validate_content(
             LearningRecallCardFormat::Cloze,
             &content
         )
@@ -652,7 +615,7 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
     content.cloze_deletions = vec![];
     content.language = Some("rust".into());
     assert!(
-        crate::features::learning::recall_repository::validate_content(
+        crate::features::learning::recall::recall_content::validate_content(
             LearningRecallCardFormat::QuestionAnswer,
             &content
         )

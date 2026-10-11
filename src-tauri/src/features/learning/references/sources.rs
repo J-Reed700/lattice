@@ -1,5 +1,6 @@
 //! Acquire immutable, bounded source snapshots for Learning Studio.
 
+use crate::application::ports::LibraryPassagesPort;
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
 use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
@@ -67,25 +68,29 @@ pub(in crate::features::learning) fn preview(
         acquired_at: chrono::Utc::now().timestamp_millis(),
     }
 }
+/// Capture every indexed chunk of a library document, in order. The joined
+/// text is what retrieval later maps the library's chunk hits back onto.
 pub(in crate::features::learning) async fn capture_document(
-    library: &crate::features::learning::source_library::LearningSourceLibraryRepository,
+    library: &dyn LibraryPassagesPort,
     document_id: &str,
 ) -> Result<crate::features::learning::source_library::CapturedLearningSource> {
-    let (title, chunks) = library
-        .library_document_text(document_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::InvalidInput(
-                "The document has no indexed text. Let its import finish first.".into(),
-            )
-        })?;
+    let document = library.document_text(document_id).await?.ok_or_else(|| {
+        AppError::InvalidInput(
+            "The document has no indexed text. Let its import finish first.".into(),
+        )
+    })?;
     let captured = crate::features::learning::source_library::CapturedLearningSource {
-        title,
+        title: document.title,
         publisher: None,
         requested_url: None,
         resolved_url: None,
         truncated: false,
-        text: chunks.join("\n\n"),
+        text: document
+            .chunks
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         extraction_version: "document_chunks_v2".into(),
     };
     validate_capture(&captured)?;
@@ -121,13 +126,11 @@ pub async fn acquire(
         ));
     }
 
-    let library = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-        container.db_pool().clone(),
-    );
+    let library = container.library_passages();
     let mut sources = Vec::new();
     let mut references = Vec::new();
     for document_id in &request.document_ids {
-        let captured = capture_document(&library, document_id).await?;
+        let captured = capture_document(library.as_ref(), document_id).await?;
         let id = uuid::Uuid::new_v4().to_string();
         sources.push(preview(&id, &captured));
         references.push(InitialReference {

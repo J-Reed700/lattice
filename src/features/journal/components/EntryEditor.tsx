@@ -4,8 +4,6 @@ import { PanelRight } from 'lucide-react';
 
 import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
 import { IconButton } from '@/components/ui/IconButton';
-import { FilePreviewModal } from '@/features/chat/components/FilePreviewModal';
-import { SourceCitations } from '@/features/chat/components/SourceCitations';
 import { EntryActionRail } from '@/features/journal/components/EntryActionRail';
 import { EntryFromConversation } from '@/features/journal/components/EntryFromConversation';
 import { EntryHeader } from '@/features/journal/components/EntryHeader';
@@ -15,8 +13,10 @@ import type { SynthesisScope, WeekCandidateCounts } from '@/features/journal/com
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSources';
 import { journalCitationMap, toJournalCitationSource } from '@/features/journal/model/journalCitationSources';
+import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
+import { SourceCitations } from '@/features/reading/components/SourceCitations';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { locatorFromSource } from '@/shared/sources/passageLocator';
-import { useChatReaderStore } from '@/stores/chatReaderStore';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
 import type { SourceWithMetadata } from '@/types/conversation';
 

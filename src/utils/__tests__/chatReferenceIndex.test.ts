@@ -24,6 +24,19 @@ const buildNote = (overrides: Partial<WorkspaceNote>): WorkspaceNote => ({
 });
 
 describe('chatReferenceIndex', () => {
+  it('says which journal owns the note a capture landed in', () => {
+    const capture = (id: string, messageId: string) => ({
+      id, conversationId: 'conv_alpha', conversationTitle: 'Alpha', capturedAt: '2026-02-19T10:00:00.000Z', messageCount: 1,
+      messages: [{ id: messageId, role: 'assistant', content: 'A', createdAt: '2026-02-19T10:00:00.000Z' }],
+    });
+    const index = buildCapturedChatReferenceIndex([
+      buildNote({ id: 'note_journal', journalId: 'journal_reading', conversationSnapshots: [capture('capture_1', 'msg_1')] }),
+      buildNote({ id: 'note_unfiled', conversationSnapshots: [capture('capture_2', 'msg_2')] }),
+    ]);
+    expect(index.get(chatReferenceKey('conv_alpha', 'msg_1'))?.journalId).toBe('journal_reading');
+    expect(index.get(chatReferenceKey('conv_alpha', 'msg_2'))?.journalId).toBeNull();
+  });
+
   it('indexes capture snapshots and ignores non-capture snapshots', () => {
     const notes = [
       buildNote({

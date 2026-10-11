@@ -40,12 +40,9 @@ pub mod chunk_mapper;
 pub mod document_mapper;
 // TODO: Add mention_mapper when mention entity structure is finalized
 
-pub use crate::features::embedding::persistence_mapper::EmbeddingMapper;
-pub use crate::features::tags::persistence_mapper::TagMapper;
 pub use chunk_mapper::ChunkMapper;
 pub use document_mapper::DocumentMapper;
 
 // DB models are private to infrastructure crate (prevent leakage)
-pub(crate) use crate::features::tags::persistence_mapper::TagModel;
 pub(crate) use chunk_mapper::ChunkModel;
 pub(crate) use document_mapper::DocumentModel;

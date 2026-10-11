@@ -1,5 +1,6 @@
 //! Studio's subject-neutral IPC contract. Answer keys are excluded from lesson DTOs.
-use crate::features::{daily_notes::commands::WorkspaceNoteDto, study::dto::StudyDeckDto};
+use crate::features::daily_notes::commands::WorkspaceNoteDto;
+use crate::features::learning::recall::study_dto::StudyDeckDto;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -276,7 +277,6 @@ pub struct LearningMemoryDto {
     pub drafts: Vec<LearningCardDraftDto>,
     pub accepted_cards: Vec<LearningCardOriginDto>,
     pub due_count: i64,
-    pub scheduler_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

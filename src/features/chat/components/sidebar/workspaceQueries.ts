@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createJournal } from '@/features/journal/api/queries';
-import { conversationKeys } from '@/hooks/queries/conversationKeys';
 import { VaultAPI } from '@/lib/api';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 
 export { useJournalsQuery, useCapturedReferencesQuery, JOURNALS_QUERY_KEY } from '@/features/journal/api/queries';
@@ -27,23 +27,6 @@ export function useAddConversationsToJournalMutation() {
     }))),
     onSuccess: () => client.invalidateQueries({ queryKey: conversationKeys.all }),
   });
-}
-export function useSpaceMutations() {
-  const client = useQueryClient();
-  const invalidate = () => client.invalidateQueries({ queryKey: conversationKeys.all });
-  const create = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.createConversationSpace>[0]) => value(await VaultAPI.createConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  const update = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.updateConversationSpace>[0]) => value(await VaultAPI.updateConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  const archive = useMutation({
-    mutationFn: async (request: Parameters<typeof VaultAPI.archiveConversationSpace>[0]) => value(await VaultAPI.archiveConversationSpace(request)),
-    onSuccess: invalidate,
-  });
-  return { create, update, archive };
 }
 export function useSidebarBookmarksQuery(query: string, spaceId: string | null, enabled = true) {
   return useQuery({

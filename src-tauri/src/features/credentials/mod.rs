@@ -10,17 +10,12 @@
 //! - `crate::features::credentials::use_cases` — CRUD use cases
 //! - `crate::features::credentials::adapter::CredentialsAdapter` —
 //!   OS keyring impl of `CredentialsPort`
-//! - `crate::features::credentials::commands` — Tauri command impls
-//! - `crate::features::credentials::plugin::init()` — Tauri plugin
-//!   (directory-shaped)
 //!
 //! `CredentialsPort` stays in `application/ports/`. Keyring primitives
-//! (keyring_storage, migration) remain in `infrastructure/security/` —
-//! those are shared security infrastructure used by multiple features.
+//! (keyring_storage) remain in `infrastructure/security/` — shared security
+//! infrastructure used by multiple features.
 
 pub mod adapter;
-pub mod commands;
 pub mod di;
 pub mod dto;
-pub mod plugin;
 pub mod use_cases;

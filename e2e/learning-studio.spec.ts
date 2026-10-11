@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import type { MockArgs } from "./fixtures/tauri";
 import { openStudioSection } from "./helpers/learningStudioNavigation";
+import type { CommandName } from "../src/shared/ipc/routes.generated";
 
 import {
   installLearningStudioBackend,
@@ -165,20 +167,14 @@ test("Study activity remains interactive across tabs and handles a slow referenc
   await installLearningStudioBackend(page);
   await openProgram(page);
   await page.evaluate(() => {
-    const win = window as unknown as {
-      __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown> };
-      __STUDY_ACTIVITY_TEST__: { fail: () => void; release: () => void };
-    };
-    const original = win.__TAURI_INTERNALS__.invoke;
-    win.__TAURI_INTERNALS__.invoke = (command, args) => {
-      if (command !== 'plugin:learning|refresh_learning_source') return original(command, args);
-      return new Promise((resolve, reject) => {
-        win.__STUDY_ACTIVITY_TEST__ = {
-          fail: () => reject('The reference website did not respond.'),
-          release: () => resolve(original(command, args)),
-        };
-      });
-    };
+    const ipc = window.__LATTICE_IPC__;
+    const refresh = ipc.handlers.refresh_learning_source!;
+    ipc.handlers.refresh_learning_source = (args, bridge) => new Promise((resolve, reject) => {
+      (window as unknown as { __STUDY_ACTIVITY_TEST__: { fail: () => void; release: () => void } }).__STUDY_ACTIVITY_TEST__ = {
+        fail: () => reject('The reference website did not respond.'),
+        release: () => resolve(refresh(args, bridge)),
+      };
+    });
   });
   await openStudioSection(page, 'Sources');
   await page.getByRole('button', { name: 'Check for changes', exact: true }).click();
@@ -610,7 +606,7 @@ async function runLearningStudioJourney(
         }
       ).__LATTICE_LEARNING_STATE__.calls.filter(
         (call) =>
-          call.command === "plugin:learning|generate_learning_card_drafts",
+          call.command === "generate_learning_card_drafts",
       ).length,
   );
   expect(generationCalls).toBe(2);
@@ -765,7 +761,7 @@ async function runCanvasJourney(
       revision: state.canvasWorkspace.canvases[0].revision,
       callCount: state.canvasMutationCalls.filter(
         (call: { command: string }) =>
-          call.command === "plugin:learning|save_learning_canvas",
+          call.command === "save_learning_canvas",
       ).length,
       savedRevisionCount: state.canvasSavedRevisions.length,
     };
@@ -796,7 +792,7 @@ async function runCanvasJourney(
           }
         ).__LATTICE_LEARNING_STATE__;
         return state.canvasMutationCalls.filter(
-          (call) => call.command === "plugin:learning|save_learning_canvas",
+          (call) => call.command === "save_learning_canvas",
         ).length;
       }),
     )
@@ -833,7 +829,7 @@ async function runCanvasJourney(
   });
   expect(firstCanvas.sceneJson.elements).toHaveLength(1);
   const saveAttempts = savedState.canvasMutationCalls
-    .filter((call) => call.command === "plugin:learning|save_learning_canvas")
+    .filter((call) => call.command === "save_learning_canvas")
     .slice(saveBaseline.callCount);
   expect(saveAttempts).toHaveLength(2);
   expect(saveAttempts[1].request).toEqual(saveAttempts[0].request);
@@ -879,7 +875,7 @@ async function runCanvasJourney(
         ).__LATTICE_LEARNING_STATE__;
         return state.calls.filter(
           (call) =>
-            call.command === "plugin:learning|get_learning_canvas_workspace",
+            call.command === "get_learning_canvas_workspace",
         ).length;
       }),
     )
@@ -1241,7 +1237,7 @@ async function runSourceLibraryJourney(
         (item) => item.id === sourceId,
       )?.revision,
       refreshCallCount: state.sourceMutationCalls.filter(
-        (call) => call.command === "plugin:learning|refresh_learning_source",
+        (call) => call.command === "refresh_learning_source",
       ).length,
     };
   }, addedSourceId);
@@ -1281,7 +1277,7 @@ async function runSourceLibraryJourney(
     );
     const refreshCalls = state.sourceMutationCalls.filter(
       (call) =>
-        call.command === "plugin:learning|refresh_learning_source" &&
+        call.command === "refresh_learning_source" &&
         call.request.sourceId === sourceId,
     );
     return {
@@ -1553,7 +1549,7 @@ async function runSourceLibraryJourney(
     ).__LATTICE_LEARNING_STATE__;
     return state.calls.filter(
       (call) =>
-        call.command === "plugin:learning|get_learning_source_workspace",
+        call.command === "get_learning_source_workspace",
     ).length;
   });
   await reopened.getByRole("button", { name: "Reload sources" }).click();
@@ -1567,7 +1563,7 @@ async function runSourceLibraryJourney(
         ).__LATTICE_LEARNING_STATE__;
         return state.calls.filter(
           (call) =>
-            call.command === "plugin:learning|get_learning_source_workspace",
+            call.command === "get_learning_source_workspace",
         ).length;
       }),
     )
@@ -1629,16 +1625,8 @@ async function runSourceLibraryJourney(
   ).toBeVisible();
 
   const otherProgramSources = await page.evaluate(async () => {
-    const invoke = (
-      window as unknown as {
-        __LATTICE_TEST_INVOKE__?: (
-          command: string,
-          args?: unknown,
-        ) => Promise<unknown>;
-      }
-    ).__LATTICE_TEST_INVOKE__;
-    if (!invoke) throw new Error("Tauri fixture invoke missing");
-    return invoke("plugin:learning|get_learning_source_workspace", {
+    const invoke = window.__LATTICE_IPC__.invoke;
+    return invoke("get_learning_source_workspace", {
       id: "program-learning-other",
     });
   });
@@ -1647,16 +1635,8 @@ async function runSourceLibraryJourney(
     sources: [],
   });
   const otherProgramSearch = await page.evaluate(async () => {
-    const invoke = (
-      window as unknown as {
-        __LATTICE_TEST_INVOKE__?: (
-          command: string,
-          args?: unknown,
-        ) => Promise<unknown>;
-      }
-    ).__LATTICE_TEST_INVOKE__;
-    if (!invoke) throw new Error("Tauri fixture invoke missing");
-    return invoke("plugin:learning|search_learning_sources", {
+    const invoke = window.__LATTICE_IPC__.invoke;
+    return invoke("search_learning_sources", {
       request: {
         programId: "program-learning-other",
         query: "UPDATED_SOURCE_SENTINEL",
@@ -1701,17 +1681,9 @@ test("Learning Sources library remains accessible without overflow at 390px", as
   await runSourceLibraryJourney(page, 390, 844);
 });
 
-async function fixtureInvokeError(page: Page, command: string, args: unknown) {
+async function fixtureInvokeError(page: Page, command: CommandName, args: MockArgs) {
   return page.evaluate(async ({ command, args }) => {
-    const invoke = (
-      window as unknown as {
-        __LATTICE_TEST_INVOKE__?: (
-          command: string,
-          args?: unknown,
-        ) => Promise<unknown>;
-      }
-    ).__LATTICE_TEST_INVOKE__;
-    if (!invoke) throw new Error("Tauri fixture invoke missing");
+    const invoke = window.__LATTICE_IPC__.invoke;
     try {
       await invoke(command, args);
       return null;
@@ -1837,7 +1809,7 @@ async function runPracticeWorkbenchJourney(
     ).__LATTICE_LEARNING_STATE__;
     const calls = state.practiceMutationCalls.filter(
       (item) =>
-        item.command === "plugin:learning|save_learning_practice_artifact" &&
+        item.command === "save_learning_practice_artifact" &&
         item.request.sessionId === sessionId,
     );
     return {
@@ -1892,7 +1864,7 @@ async function runPracticeWorkbenchJourney(
     ).__LATTICE_LEARNING_STATE__;
     const calls = state.practiceMutationCalls.filter(
       (item) =>
-        item.command === "plugin:learning|save_learning_practice_artifact" &&
+        item.command === "save_learning_practice_artifact" &&
         item.request.sessionId === sessionId,
     );
     return {
@@ -1987,18 +1959,7 @@ async function runPracticeWorkbenchJourney(
   await expect(workbench.getByRole("button", { name: /Review reveal choice/ })).toHaveCount(0);
 
   const demoDenials = await page.evaluate(async (sessionId) => {
-    const invoke = (
-      window as unknown as {
-        __LATTICE_TEST_INVOKE__?: (
-          command: string,
-          args?: unknown,
-        ) => Promise<unknown>;
-        __LATTICE_LEARNING_STATE__: {
-          practiceSessions: Map<string, { summary: { revision: number } }>;
-        };
-      }
-    ).__LATTICE_TEST_INVOKE__;
-    if (!invoke) throw new Error("Tauri fixture invoke missing");
+    const invoke = window.__LATTICE_IPC__.invoke;
     const revision = (
       window as unknown as {
         __LATTICE_LEARNING_STATE__: {
@@ -2021,18 +1982,18 @@ async function runPracticeWorkbenchJourney(
       }
     };
     return Promise.all([
-      attempt("plugin:learning|request_learning_tutor_response", {
+      attempt("request_learning_tutor_response", {
         ...base,
         requestKind: "hint",
         prompt: "Give an orienting hint.",
         hintLevel: "orienting_question",
       }),
-      attempt("plugin:learning|open_learning_practice_source", {
+      attempt("open_learning_practice_source", {
         ...base,
         sourceId: "logical-source-field-notes",
         versionId: "source-version-field-notes-1",
       }),
-      attempt("plugin:learning|reveal_learning_practice_solution", base),
+      attempt("reveal_learning_practice_solution", base),
     ]);
   }, started.summary!.id);
   expect(demoDenials).toEqual([
@@ -2193,12 +2154,12 @@ async function runPracticeWorkbenchJourney(
     const op = state.practiceSessions.get(sessionId)!.summary.revision;
     return {
       revision: op,
-      opens: state.practiceMutationCalls.filter((item) => item.command === "plugin:learning|open_learning_practice_source" && item.request.sessionId === sessionId).length,
-      versionReads: state.calls.filter((item) => item.command === "plugin:learning|get_learning_source_version").length,
+      opens: state.practiceMutationCalls.filter((item) => item.command === "open_learning_practice_source" && item.request.sessionId === sessionId).length,
+      versionReads: state.calls.filter((item) => item.command === "get_learning_source_version").length,
     };
   }, started.summary!.id);
   expect(postSubmitCalls.versionReads).toBeGreaterThan(0);
-  const immutableSaveError = await fixtureInvokeError(page, "plugin:learning|save_learning_practice_artifact", {
+  const immutableSaveError = await fixtureInvokeError(page, "save_learning_practice_artifact", {
     request: {
       operationId: crypto.randomUUID(),
       programId: "program-learning-1",
@@ -2350,7 +2311,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await portability.getByRole("button", { name: "Cancel preview" }).click();
   const cancelled = await page.evaluate(() => {
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string }>; portabilityWorkspace: { imports: unknown[]; importPreviews: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
-    return { cancelCalls: state.packMutationCalls.filter((item) => item.command === "plugin:learning|cancel_learning_pack_import_preview").length, importCount: state.portabilityWorkspace.imports.length, status: state.portabilityWorkspace.importPreviews[0]?.status };
+    return { cancelCalls: state.packMutationCalls.filter((item) => item.command === "cancel_learning_pack_import_preview").length, importCount: state.portabilityWorkspace.imports.length, status: state.portabilityWorkspace.importPreviews[0]?.status };
   });
   expect(cancelled).toMatchObject({ cancelCalls: 1, importCount: 0, status: "cancelled" });
 
@@ -2388,19 +2349,17 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await recall.getByRole("textbox", { name: "Why was this card changed?" }).fill("Clarify the comparison details");
   await recall.getByRole("button", { name: "Save card version", exact: true }).click();
   await expect(recall.getByRole("status")).toContainText("Card version saved.");
-  await recall.getByRole("button", { name: "FSRS 6 v1", exact: true }).first().click();
-  await expect(recall.getByRole("status")).toContainText("Schedule changed to FSRS 6 · v1.");
   await recall.getByRole("button", { name: "Reveal answer", exact: true }).first().click();
   await recall.getByRole("button", { name: "good", exact: true }).first().click();
   await expect(recall.getByRole("status")).toContainText("Review saved to this card’s schedule.");
   await recall.getByRole("button", { name: "Mark as duplicate", exact: true }).click();
   await expect(recall.getByRole("status")).toContainText("Duplicate suggestion confirmed.");
   const recallState = await page.evaluate(() => {
-    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { recallV2Workspace: { cards: Array<{ id: string; contentRevision: number; content: { prompt: string }; scheduler: { schedulerVersion: string; reviewCount: number }; versions: unknown[]; reviewHistory: unknown[] }>; duplicates: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
+    const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { recallV2Workspace: { cards: Array<{ id: string; contentRevision: number; content: { prompt: string }; scheduler: { reviewCount: number }; versions: unknown[]; reviewHistory: unknown[] }>; duplicates: Array<{ status: string }> } } }).__LATTICE_LEARNING_STATE__;
     const card = state.recallV2Workspace.cards.find((item) => item.id === "recall-card-e2e");
     return { revision: card?.contentRevision, prompt: card?.content.prompt, versionCount: card?.versions.length, scheduler: card?.scheduler, reviewCount: card?.reviewHistory.length, duplicate: state.recallV2Workspace.duplicates[0]?.status };
   });
-  expect(recallState).toMatchObject({ revision: 2, prompt: "Which measure and period should be recorded?", versionCount: 2, scheduler: { schedulerVersion: "fsrs_6_v1", reviewCount: 1 }, reviewCount: 1, duplicate: "confirmed" });
+  expect(recallState).toMatchObject({ revision: 2, prompt: "Which measure and period should be recorded?", versionCount: 2, scheduler: { reviewCount: 1 }, reviewCount: 1, duplicate: "confirmed" });
 
   if (width === 390) {
     const overflow = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);

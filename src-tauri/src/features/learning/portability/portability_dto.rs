@@ -2,12 +2,12 @@
 //! versioned recall. Pack bytes, credentials, private chat, answer keys, and
 //! hidden practical checks never cross these contracts.
 
+use crate::features::learning::recall::study_dto::StudyRating;
 use crate::features::learning::{
     dto::{LearningSourceVersionSummaryDto, LearningSourceWorkspaceDto},
     pack::LearningPackManifest,
     source_selector::{LearningQuoteMatchStatus, LearningTextQuoteSelector},
 };
-use crate::features::study::dto::StudyRating;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -217,14 +217,6 @@ pub enum LearningRecallCardFormat {
     Reconstruction,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LearningRecallSchedulerVersion {
-    ExpandingV1,
-    #[serde(rename = "fsrs_6_v1")]
-    Fsrs6V1,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningRecallContentDto {
@@ -242,7 +234,6 @@ pub struct LearningRecallContentDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningRecallSchedulerStateDto {
-    pub scheduler_version: LearningRecallSchedulerVersion,
     pub stability: Option<f64>,
     pub difficulty: Option<f64>,
     pub last_reviewed_at: Option<i64>,
@@ -304,7 +295,6 @@ pub struct LearningRecallWorkspaceDto {
     pub cards: Vec<LearningRecallCardDto>,
     pub duplicates: Vec<LearningRecallDuplicateSuggestionDto>,
     pub due_count: i64,
-    pub fsrs_available: bool,
     pub scheduler_disclosure: String,
 }
 
@@ -328,16 +318,6 @@ pub struct DecideLearningRecallDuplicateRequestDto {
     pub program_id: String,
     pub suggestion_id: String,
     pub accept: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ChangeLearningRecallSchedulerRequestDto {
-    pub operation_id: String,
-    pub program_id: String,
-    pub card_id: String,
-    pub expected_review_count: i64,
-    pub scheduler_version: LearningRecallSchedulerVersion,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

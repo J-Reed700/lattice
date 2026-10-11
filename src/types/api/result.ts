@@ -6,17 +6,10 @@
  */
 
 /**
- * Structured error from backend API
- *
- * Note: code is typed as string to accept any backend error code,
- * including codes not yet added to ErrorCode enum.
- * Frontend should check against ErrorCode constants for known codes.
+ * Structured error from the backend. Errors that never reached a command
+ * (Tauri's own rejections, renderer exceptions) are carried as `UNKNOWN`.
  */
-export interface ApiError {
-  code: string;
-  message: string;
-  details?: Record<string, unknown>;
-}
+export type ApiError = import('../../lib/bindings').ApiError;
 
 /**
  * Success result wrapping data payload

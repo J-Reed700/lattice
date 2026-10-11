@@ -763,15 +763,6 @@ mod tests {
             ))
         }
 
-        fn batch_job_repository(
-            &self,
-        ) -> Result<Box<dyn crate::application::ports::BatchJobRepositoryPort + Send + '_>>
-        {
-            Err(AppError::InvalidState(
-                "Batch job repository not used in test".to_string(),
-            ))
-        }
-
         fn system_repository(
             &self,
         ) -> Result<Box<dyn crate::domain::repositories::SystemRepository + Send + '_>> {

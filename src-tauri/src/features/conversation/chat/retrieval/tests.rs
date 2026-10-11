@@ -170,7 +170,7 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         kb_attempted: false,
         web_queries: Vec::new(),
         sources: Vec::new(),
-        available_for_rag: 0,
+        evidence: Default::default(),
         sub_timings: RetrievalSubTimingMetrics::default(),
         searched_documents: 0,
         scope_is_linked: false,
@@ -599,7 +599,7 @@ fn web_query_strips_tracking_even_for_a_short_product_link() {
 /// side so both sets of sources reach the answer.
 #[test]
 fn an_intent_that_needs_the_web_still_searches_the_vault() {
-    let intent = crate::infrastructure::services::intent::TurnIntent {
+    let intent = crate::features::conversation::chat::intent::TurnIntent {
         needs_knowledge_base: false,
         needs_web: true,
         is_followup: false,

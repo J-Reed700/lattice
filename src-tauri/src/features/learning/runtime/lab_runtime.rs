@@ -647,7 +647,7 @@ pub fn materialize_workspace(root: &Path, spec: &LearningLabExecutionSpec) -> Re
     Ok(())
 }
 
-async fn bounded_read<R: AsyncRead + Unpin>(
+pub(super) async fn bounded_read<R: AsyncRead + Unpin>(
     mut reader: R,
     limit: usize,
 ) -> std::io::Result<(Vec<u8>, bool)> {
@@ -814,8 +814,11 @@ pub async fn execute_container_lab(
         .take()
         .ok_or_else(|| AppError::InternalError("Lab runtime did not provide stderr.".into()))?;
     let output_limit = spec.limits.output_bytes;
-    let stdout_task = tokio::spawn(bounded_read(stdout, output_limit));
-    let stderr_task = tokio::spawn(bounded_read(stderr, output_limit));
+    // raw-spawn: both pipe readers are joined below, before this returns
+    let (stdout_task, stderr_task) = (
+        tokio::spawn(bounded_read(stdout, output_limit)),
+        tokio::spawn(bounded_read(stderr, output_limit)),
+    );
     let name = container_name(&spec.run_id);
     let deadline = tokio::time::sleep(Duration::from_secs(spec.limits.timeout_seconds));
     tokio::pin!(deadline);

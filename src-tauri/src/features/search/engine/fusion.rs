@@ -1,10 +1,10 @@
 //! Weighted reciprocal-rank fusion.
 //!
-//! This is the one implementation. Direct search, the chat use case and the
-//! chat pipeline's two-pass union all fuse ranked lists, and each of them used
-//! to carry its own copy of the same six lines — which is how one of them came
-//! to ignore its branch weights entirely, and how two of them came to return a
-//! nondeterministic order for tied scores.
+//! This is the one implementation. The library search orchestrator
+//! (`HybridSearchUseCase`) fuses through it, for single queries, multi-query
+//! plans and chat's two-pass union alike. Separate copies of the same six
+//! lines are how one path once came to ignore its branch weights entirely,
+//! and how two came to return a nondeterministic order for tied scores.
 
 use std::collections::HashMap;
 
@@ -23,14 +23,6 @@ impl WeightedRanking {
     pub fn new(weight: f32, ids: Vec<String>) -> Self {
         Self { weight, ids }
     }
-
-    /// From a branch that reports `(id, score)`; the scores are dropped.
-    pub fn from_scored(weight: f32, results: Vec<(String, f32)>) -> Self {
-        Self {
-            weight,
-            ids: results.into_iter().map(|(id, _score)| id).collect(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,16 +40,6 @@ impl FusionResult {
     pub fn branch_rank(&self, branch: usize) -> Option<usize> {
         self.branch_ranks.get(branch).copied().flatten()
     }
-
-    /// Branch 0 under the conventional vector-then-lexical branch order.
-    pub fn vector_rank(&self) -> Option<usize> {
-        self.branch_rank(0)
-    }
-
-    /// Branch 1 under the conventional vector-then-lexical branch order.
-    pub fn bm25_rank(&self) -> Option<usize> {
-        self.branch_rank(1)
-    }
 }
 
 pub struct ReciprocalRankFusion {
@@ -67,10 +49,6 @@ pub struct ReciprocalRankFusion {
 impl ReciprocalRankFusion {
     pub fn new(k: f32) -> Self {
         Self { k }
-    }
-
-    pub fn with_default() -> Self {
-        Self::new(crate::shared::constants::DEFAULT_RRF_K)
     }
 
     /// Fuse any number of weighted ranked branches.
@@ -124,121 +102,18 @@ impl ReciprocalRankFusion {
 
         results
     }
-
-    /// [`Self::fuse_ranked`], truncated.
-    pub fn fuse_ranked_top_k(
-        &self,
-        branches: Vec<WeightedRanking>,
-        top_k: usize,
-    ) -> Vec<FusionResult> {
-        let mut results = self.fuse_ranked(branches);
-        results.truncate(top_k);
-        results
-    }
-
-    /// Unweighted two-branch fusion, in vector-then-lexical branch order.
-    pub fn fuse(
-        &self,
-        vector_results: Vec<(String, f32)>,
-        bm25_results: Vec<(String, f32)>,
-    ) -> Vec<FusionResult> {
-        self.fuse_weighted(vector_results, bm25_results, 1.0, 1.0)
-    }
-
-    /// Weighted two-branch fusion, in vector-then-lexical branch order.
-    pub fn fuse_weighted(
-        &self,
-        vector_results: Vec<(String, f32)>,
-        bm25_results: Vec<(String, f32)>,
-        vector_weight: f32,
-        bm25_weight: f32,
-    ) -> Vec<FusionResult> {
-        self.fuse_ranked(vec![
-            WeightedRanking::from_scored(vector_weight, vector_results),
-            WeightedRanking::from_scored(bm25_weight, bm25_results),
-        ])
-    }
-
-    pub fn fuse_top_k(
-        &self,
-        vector_results: Vec<(String, f32)>,
-        bm25_results: Vec<(String, f32)>,
-        top_k: usize,
-    ) -> Vec<FusionResult> {
-        let mut results = self.fuse(vector_results, bm25_results);
-        results.truncate(top_k);
-        results
-    }
-
-    /// Vector, BM25 and learned-sparse in one fusion, each with its own weight.
-    ///
-    /// The weights are not optional. An earlier version folded the first two
-    /// branches into an intermediate list and fused that against the third,
-    /// which threw the configured weights away *and* halved every vector and
-    /// BM25 rank contribution relative to sparse — so turning the third branch
-    /// on silently gave it about half the vote.
-    pub fn fuse_three_sources(
-        &self,
-        vector_results: Vec<(String, f32)>,
-        bm25_results: Vec<(String, f32)>,
-        sparse_results: Vec<(String, f32)>,
-        weights: ThreeBranchWeights,
-        top_k: usize,
-    ) -> Vec<FusionResult> {
-        self.fuse_ranked_top_k(
-            vec![
-                WeightedRanking::from_scored(weights.vector, vector_results),
-                WeightedRanking::from_scored(weights.bm25, bm25_results),
-                WeightedRanking::from_scored(weights.sparse, sparse_results),
-            ],
-            top_k,
-        )
-    }
-}
-
-/// How the three-branch fusion splits its vote.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ThreeBranchWeights {
-    pub vector: f32,
-    pub bm25: f32,
-    pub sparse: f32,
-}
-
-impl ThreeBranchWeights {
-    /// Give the learned sparse branch half of the lexical vote rather than a
-    /// vote of its own.
-    ///
-    /// Sparse and BM25 are both lexical signals over the same text — an
-    /// expanded-term match and a literal-term match. Handing each of them the
-    /// full keyword weight would move the vector/lexical balance from the
-    /// tuned `0.7 / 0.3` to `0.7 / 0.6` merely by enabling a branch, which is
-    /// not what enabling a branch is supposed to mean. Splitting keeps the
-    /// balance and lets the two lexical branches agree or disagree inside it.
-    pub fn splitting_keyword_weight(vector_weight: f32, keyword_weight: f32) -> Self {
-        Self {
-            vector: vector_weight,
-            bm25: keyword_weight / 2.0,
-            sparse: keyword_weight / 2.0,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn unit_weights_reproduce_plain_rrf() {
-        let rrf = ReciprocalRankFusion::new(60.0);
-        let vector = vec![("a".to_string(), 0.9), ("b".to_string(), 0.8)];
-        let bm25 = vec![("b".to_string(), 3.0), ("c".to_string(), 2.0)];
-        let plain = rrf.fuse(vector.clone(), bm25.clone());
-        let weighted = rrf.fuse_weighted(vector, bm25, 1.0, 1.0);
-        let ids = |r: &[FusionResult]| r.iter().map(|x| x.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&plain), ids(&weighted));
-        for (p, w) in plain.iter().zip(&weighted) {
-            assert!((p.score - w.score).abs() < 1e-7);
-        }
+    fn ranking(weight: f32, ids: &[&str]) -> WeightedRanking {
+        WeightedRanking::new(weight, ids.iter().map(|id| (*id).to_owned()).collect())
+    }
+
+    fn first(fused: &[FusionResult]) -> Option<&str> {
+        fused.first().map(|r| r.id.as_str())
     }
 
     /// The failure this exists for: one branch's confident first hit versus a
@@ -248,117 +123,49 @@ mod tests {
     /// small `k` is what lets the sole hit through.
     #[test]
     fn vector_weight_and_small_k_let_a_sole_top_hit_beat_two_mediocre_agreements() {
-        let mut vector: Vec<(String, f32)> = vec![("japanese".to_string(), 0.8)];
-        vector.extend((0..5).map(|i| (format!("filler{i}"), 0.5)));
-        vector.push(("global".to_string(), 0.4)); // vector rank 7
-        let mut bm25: Vec<(String, f32)> = vec![("global".to_string(), 5.0)]; // bm25 rank 1
-        bm25.extend((0..10).map(|i| (format!("lex{i}"), 1.0)));
+        let mut vector = vec!["japanese".to_owned()];
+        vector.extend((0..5).map(|i| format!("filler{i}")));
+        vector.push("global".to_owned()); // vector rank 7
+        let mut bm25 = vec!["global".to_owned()]; // bm25 rank 1
+        bm25.extend((0..10).map(|i| format!("lex{i}")));
+        let branches = |vector_weight, bm25_weight| {
+            vec![
+                WeightedRanking::new(vector_weight, vector.clone()),
+                WeightedRanking::new(bm25_weight, bm25.clone()),
+            ]
+        };
 
-        let plain = ReciprocalRankFusion::new(60.0).fuse(vector.clone(), bm25.clone());
-        assert_eq!(plain.first().map(|r| r.id.as_str()), Some("global"));
+        let plain = ReciprocalRankFusion::new(60.0).fuse_ranked(branches(1.0, 1.0));
+        assert_eq!(first(&plain), Some("global"));
 
         // 0.7/61 < 0.7/67 + 0.3/61: the agreement still wins at k = 60.
-        let weighted_flat =
-            ReciprocalRankFusion::new(60.0).fuse_weighted(vector.clone(), bm25.clone(), 0.7, 0.3);
-        assert_eq!(weighted_flat.first().map(|r| r.id.as_str()), Some("global"));
+        let weighted_flat = ReciprocalRankFusion::new(60.0).fuse_ranked(branches(0.7, 0.3));
+        assert_eq!(first(&weighted_flat), Some("global"));
 
         // 0.7/6 > 0.7/12 + 0.3/6: a steep curve plus the weight flips it.
-        let weighted_steep = ReciprocalRankFusion::new(5.0).fuse_weighted(vector, bm25, 0.7, 0.3);
-        assert_eq!(
-            weighted_steep.first().map(|r| r.id.as_str()),
-            Some("japanese")
-        );
+        let weighted_steep = ReciprocalRankFusion::new(5.0).fuse_ranked(branches(0.7, 0.3));
+        assert_eq!(first(&weighted_steep), Some("japanese"));
         // The agreement is not discarded, only outranked.
         assert!(weighted_steep.iter().any(|r| r.id == "global"));
     }
 
     #[test]
-    fn test_rrf_fusion_basic() {
-        let rrf = ReciprocalRankFusion::with_default();
+    fn a_passage_both_branches_found_scores_both_contributions() {
+        let fused = ReciprocalRankFusion::new(60.0)
+            .fuse_ranked(vec![ranking(1.0, &["doc1"]), ranking(1.0, &["doc1"])]);
 
-        let vector_results = vec![
-            ("doc1".to_string(), 0.95),
-            ("doc2".to_string(), 0.85),
-            ("doc3".to_string(), 0.75),
-        ];
-
-        let bm25_results = vec![
-            ("doc3".to_string(), 10.0),
-            ("doc1".to_string(), 8.0),
-            ("doc4".to_string(), 6.0),
-        ];
-
-        let results = rrf.fuse(vector_results, bm25_results);
-
-        assert!(results.len() >= 3);
-        assert_eq!(results[0].id, "doc1");
-        assert!(results[0].vector_rank().is_some());
-        assert!(results[0].bm25_rank().is_some());
-    }
-
-    #[test]
-    fn test_rrf_fusion_scoring() {
-        let rrf = ReciprocalRankFusion::new(60.0);
-
-        let results = rrf.fuse(
-            vec![("doc1".to_string(), 0.95)],
-            vec![("doc1".to_string(), 10.0)],
-        );
-
-        assert_eq!(results.len(), 1);
+        assert_eq!(fused.len(), 1);
         let expected_score = 1.0 / 61.0 + 1.0 / 61.0;
-        assert!((results[0].score - expected_score).abs() < 1e-6);
+        assert!((fused[0].score - expected_score).abs() < 1e-6);
     }
 
     #[test]
-    fn test_rrf_asymmetric_results() {
-        let rrf = ReciprocalRankFusion::with_default();
-        let results = rrf.fuse(
-            vec![("doc1".to_string(), 0.95), ("doc2".to_string(), 0.85)],
-            vec![("doc3".to_string(), 10.0)],
-        );
-        assert_eq!(results.len(), 3);
-    }
-
-    #[test]
-    fn test_rrf_top_k() {
-        let rrf = ReciprocalRankFusion::with_default();
-        let results = rrf.fuse_top_k(
-            vec![
-                ("doc1".to_string(), 0.95),
-                ("doc2".to_string(), 0.85),
-                ("doc3".to_string(), 0.75),
-            ],
-            vec![
-                ("doc3".to_string(), 10.0),
-                ("doc4".to_string(), 8.0),
-                ("doc5".to_string(), 6.0),
-            ],
-            2,
-        );
-        assert_eq!(results.len(), 2);
-    }
-
-    #[test]
-    fn test_rrf_rank_tracking() {
-        let rrf = ReciprocalRankFusion::with_default();
-
-        let results = rrf.fuse(
-            vec![("doc1".to_string(), 0.95), ("doc2".to_string(), 0.85)],
-            vec![("doc2".to_string(), 10.0), ("doc3".to_string(), 8.0)],
-        );
-
-        let doc1 = results.iter().find(|r| r.id == "doc1").unwrap();
-        assert_eq!(doc1.vector_rank(), Some(0));
-        assert_eq!(doc1.bm25_rank(), None);
-
-        let doc2 = results.iter().find(|r| r.id == "doc2").unwrap();
-        assert_eq!(doc2.vector_rank(), Some(1));
-        assert_eq!(doc2.bm25_rank(), Some(0));
-
-        let doc3 = results.iter().find(|r| r.id == "doc3").unwrap();
-        assert_eq!(doc3.vector_rank(), None);
-        assert_eq!(doc3.bm25_rank(), Some(1));
+    fn a_passage_only_one_branch_found_is_kept() {
+        let fused = ReciprocalRankFusion::new(10.0).fuse_ranked(vec![
+            ranking(1.0, &["doc1", "doc2"]),
+            ranking(1.0, &["doc3"]),
+        ]);
+        assert_eq!(fused.len(), 3);
     }
 
     /// Per-branch ranks stay truthful however many branches there are, which
@@ -366,9 +173,9 @@ mod tests {
     #[test]
     fn every_branch_reports_its_own_rank() {
         let fused = ReciprocalRankFusion::new(10.0).fuse_ranked(vec![
-            WeightedRanking::new(0.7, vec!["a".into(), "b".into()]),
-            WeightedRanking::new(0.15, vec!["b".into(), "c".into()]),
-            WeightedRanking::new(0.15, vec!["c".into(), "a".into()]),
+            ranking(0.7, &["a", "b"]),
+            ranking(0.15, &["b", "c"]),
+            ranking(0.15, &["c", "a"]),
         ]);
         let of = |id: &str| {
             fused
@@ -384,10 +191,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_inside_one_branch_is_counted_once() {
-        let fused = ReciprocalRankFusion::new(10.0).fuse_ranked(vec![WeightedRanking::new(
-            1.0,
-            vec!["a".into(), "a".into()],
-        )]);
+        let fused = ReciprocalRankFusion::new(10.0).fuse_ranked(vec![ranking(1.0, &["a", "a"])]);
         assert_eq!(fused.len(), 1);
         assert!((fused[0].score - 1.0 / 11.0).abs() < 1e-7);
         assert_eq!(fused[0].branch_rank(0), Some(0));
@@ -396,119 +200,17 @@ mod tests {
     #[test]
     fn tied_scores_order_deterministically() {
         let rrf = ReciprocalRankFusion::new(10.0);
-        let branches = || {
-            vec![WeightedRanking::new(
-                1.0,
-                vec!["zulu".into(), "alpha".into()],
-            )]
-        };
-        let first: Vec<String> = rrf
-            .fuse_ranked(branches())
+        let ordered: Vec<String> = rrf
+            .fuse_ranked(vec![ranking(1.0, &["zulu", "alpha"])])
             .into_iter()
             .map(|r| r.id)
             .collect();
         // Equal-weight, same-rank entries: the id is the only stable ordering.
-        let tied = rrf.fuse_ranked(vec![
-            WeightedRanking::new(1.0, vec!["zulu".into()]),
-            WeightedRanking::new(1.0, vec!["alpha".into()]),
-        ]);
-        assert_eq!(first, vec!["zulu".to_string(), "alpha".to_string()]);
+        let tied = rrf.fuse_ranked(vec![ranking(1.0, &["zulu"]), ranking(1.0, &["alpha"])]);
+        assert_eq!(ordered, vec!["zulu".to_string(), "alpha".to_string()]);
         assert_eq!(
             tied.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
             vec!["alpha", "zulu"]
         );
-    }
-
-    #[test]
-    fn three_way_fusion_promotes_what_all_three_branches_found() {
-        let rrf = ReciprocalRankFusion::new(60.0);
-        let weights = ThreeBranchWeights::splitting_keyword_weight(0.7, 0.3);
-
-        let fused = rrf.fuse_three_sources(
-            vec![
-                ("shared".to_string(), 0.9),
-                ("vector_only".to_string(), 0.8),
-            ],
-            vec![("shared".to_string(), 7.0), ("bm25_only".to_string(), 6.0)],
-            vec![
-                ("shared".to_string(), 3.0),
-                ("sparse_only".to_string(), 2.0),
-            ],
-            weights,
-            10,
-        );
-
-        // Every branch's candidates survive; none is dropped for being unique.
-        let ids: Vec<&str> = fused.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids.len(), 4);
-        for id in ["shared", "vector_only", "bm25_only", "sparse_only"] {
-            assert!(ids.contains(&id), "{id} was lost in three-way fusion");
-        }
-        assert_eq!(fused.first().map(|r| r.id.as_str()), Some("shared"));
-    }
-
-    #[test]
-    fn three_way_fusion_keeps_a_sparse_only_hit_reachable() {
-        let fused = ReciprocalRankFusion::new(60.0).fuse_three_sources(
-            vec![("v".to_string(), 0.5)],
-            vec![("b".to_string(), 1.0)],
-            vec![("s".to_string(), 1.0)],
-            ThreeBranchWeights::splitting_keyword_weight(0.7, 0.3),
-            10,
-        );
-        assert_eq!(fused.len(), 3);
-        assert!(fused.iter().any(|r| r.id == "s"));
-    }
-
-    /// Turning the third branch on must not move the vector/lexical balance.
-    /// With the branch empty, the split lexical weight has to fuse to exactly
-    /// the two-way ranking it would have produced on its own.
-    #[test]
-    fn an_empty_sparse_branch_does_not_reorder_the_other_two() {
-        let rrf = ReciprocalRankFusion::new(10.0);
-        let vector = vec![
-            ("a".to_string(), 0.9),
-            ("b".to_string(), 0.8),
-            ("c".to_string(), 0.7),
-        ];
-        let bm25 = vec![("b".to_string(), 7.0), ("d".to_string(), 6.0)];
-
-        let two_way = rrf.fuse_weighted(vector.clone(), bm25.clone(), 0.7, 0.3);
-        let three_way = rrf.fuse_three_sources(
-            vector,
-            bm25,
-            Vec::new(),
-            ThreeBranchWeights::splitting_keyword_weight(0.7, 0.3),
-            10,
-        );
-
-        assert_eq!(
-            two_way.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            three_way.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-        );
-    }
-
-    /// The bug the weights argument exists for: the sparse branch used to get
-    /// half the total vote because the other two were folded together first.
-    #[test]
-    fn the_sparse_branch_cannot_outvote_a_confident_vector_hit() {
-        let rrf = ReciprocalRankFusion::new(10.0);
-        let weights = ThreeBranchWeights::splitting_keyword_weight(0.7, 0.3);
-        let fused = rrf.fuse_three_sources(
-            vec![("dense_top".to_string(), 0.9)],
-            vec![("lexical_top".to_string(), 5.0)],
-            vec![("lexical_top".to_string(), 5.0)],
-            weights,
-            10,
-        );
-        // 0.7/11 = 0.0636 against 0.15/11 + 0.15/11 = 0.0273.
-        assert_eq!(fused.first().map(|r| r.id.as_str()), Some("dense_top"));
-    }
-
-    #[test]
-    fn splitting_the_keyword_weight_preserves_the_lexical_total() {
-        let weights = ThreeBranchWeights::splitting_keyword_weight(0.7, 0.3);
-        assert_eq!(weights.vector, 0.7);
-        assert!((weights.bm25 + weights.sparse - 0.3).abs() < 1e-7);
     }
 }

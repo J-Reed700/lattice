@@ -36,14 +36,14 @@ export default defineConfig({
         statements: 60,
         // These lifecycle, I/O and import boundaries must retain complete
         // coverage individually; a well-covered sibling cannot hide a gap.
-        'src/{lib/pendingSaves,hooks/useFileContent,hooks/useDebounce,utils/batchHistory,utils/batchImport,components/Downloads/downloadFormat}.ts': {
+        'src/{lib/pendingSaves,features/reading/hooks/useFileContent,hooks/useDebounce,utils/batchHistory,utils/batchImport,features/model/components/Downloads/downloadFormat}.ts': {
           perFile: true,
           lines: 100,
           functions: 100,
           branches: 100,
           statements: 100,
         },
-        'src/components/Ingest/BatchUrlImport.tsx': {
+        'src/features/files/components/Ingest/BatchUrlImport.tsx': {
           lines: 92,
           functions: 95,
           branches: 75,

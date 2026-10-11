@@ -94,11 +94,12 @@ export const batchApi = {
   },
 
   /**
-   * Retries failed items through the matching importer. File retries update
-   * their original job; an optional path replaces one selected failed file.
+   * Retries failed items as a new attempt of the import, which takes over
+   * its files; history lists the import once, as that attempt. An optional
+   * path replaces one selected failed file.
    *
    * @param jobId - ID of job with failed items
-   * @returns New job ID for the retry operation
+   * @returns The new attempt's job ID
    */
   retryFailedBatchItems: async (
     jobId: string,

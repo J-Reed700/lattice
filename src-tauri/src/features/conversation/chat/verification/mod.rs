@@ -517,7 +517,6 @@ mod tests {
     use std::time::Duration;
 
     use async_trait::async_trait;
-    use futures::stream::Stream;
 
     use super::test_support::source;
     use super::*;
@@ -559,33 +558,6 @@ mod tests {
 
     #[async_trait]
     impl LLMPort for ScriptedLlm {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<String> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            if !self.delay.is_zero() {
-                tokio::time::sleep(self.delay).await;
-            }
-            Ok(self
-                .replies
-                .get(call)
-                .or_else(|| self.replies.last())
-                .cloned()
-                .unwrap_or_default())
-        }
-
-        async fn generate_streaming(
-            &self,
-            _prompt: &str,
-            _context: &[String],
-            _images: Option<Vec<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unimplemented!("streaming is not used by the claim judge")
-        }
-
         async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             if !self.delay.is_zero() {
@@ -601,10 +573,6 @@ mod tests {
                 first_token_logprobs: self.logprobs.clone(),
                 ..Default::default()
             })
-        }
-
-        fn supports_typed_completions(&self) -> bool {
-            self.logprobs.is_some()
         }
 
         fn model_name(&self) -> &str {
@@ -822,9 +790,22 @@ mod tests {
         assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
     }
 
-    /// Real sleeps rather than a paused clock: `tokio`'s `test-util` feature is
-    /// not enabled for this crate. One 200ms call against a 400ms budget leaves
-    /// too little for a second, with wide margins on either side of the check.
+    /// A judge over `llm`, behind a scheduler with `slots` slots: how many
+    /// claims run side by side is the backend's decision, not the judge's.
+    fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize, budget: Duration) -> ClaimJudge {
+        use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
+        let scheduler = Arc::new(InferenceScheduler::new(
+            "judge-test",
+            BackendCapacity::concurrent(slots),
+        ));
+        ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler, 4096)) as Arc<dyn LLMPort>)
+            .with_time_budget(budget)
+    }
+
+    /// Real sleeps rather than a paused clock. A one-slot backend serves one
+    /// 200ms call inside a 300ms budget; the next is cut off when the budget
+    /// ends and the last never starts. The judge's old one-call-at-a-time cap
+    /// is now the backend's slot count, and the budget still bounds the whole.
     #[tokio::test]
     async fn time_budget_leaves_later_numeric_claims_unverified() {
         let response = "Yields rose by 42 percent in treated plots [1].\n\
@@ -838,21 +819,21 @@ mod tests {
             ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_millis(200)),
         );
         let verifier = GroundingVerifier {
-            judge: Some(
-                ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
-                    .with_concurrency(1)
-                    .with_time_budget(Duration::from_millis(400)),
-            ),
+            judge: Some(scheduled_judge(
+                Arc::clone(&llm),
+                1,
+                Duration::from_millis(300),
+            )),
         };
 
+        let started = std::time::Instant::now();
         let report = verifier.verify(response, &sources).await;
 
-        assert_eq!(report.claims_evaluated, 3);
-        assert_eq!(
-            llm.call_count(),
-            1,
-            "the budget must stop further judge calls"
+        assert!(
+            started.elapsed() < Duration::from_millis(600),
+            "judging must not outlive its budget"
         );
+        assert_eq!(report.claims_evaluated, 3);
         assert_eq!(report.claims[0].method, VerificationMethod::Judge);
         // Unreached and carrying a figure: not checked, and said so.
         for claim in &report.claims[1..] {
@@ -868,9 +849,8 @@ mod tests {
         assert_eq!(report.metadata_json()["verdictCounts"]["unverified"], 2);
     }
 
-    /// The same three claims and the same budget, which serves one call in a
-    /// row: judged side by side, all three fit. The whole point of running
-    /// claims concurrently.
+    /// The same three claims and a backend with room for them: judged side by
+    /// side, all three fit a budget that serves one call in a row.
     #[tokio::test]
     async fn concurrent_calls_judge_more_claims_inside_the_same_budget() {
         let response = "Yields rose by 42 percent in treated plots [1].\n\
@@ -883,12 +863,13 @@ mod tests {
         let llm = Arc::new(
             ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]).with_delay(Duration::from_millis(200)),
         );
+        // Four slots: three for the judge, one kept for the user's next turn.
         let verifier = GroundingVerifier {
-            judge: Some(
-                ClaimJudge::new(Arc::clone(&llm) as Arc<dyn LLMPort>)
-                    .with_concurrency(3)
-                    .with_time_budget(Duration::from_millis(400)),
-            ),
+            judge: Some(scheduled_judge(
+                Arc::clone(&llm),
+                4,
+                Duration::from_millis(400),
+            )),
         };
 
         let started = std::time::Instant::now();

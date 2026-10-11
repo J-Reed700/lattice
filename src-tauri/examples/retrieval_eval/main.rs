@@ -12,9 +12,10 @@
 //! `--mode embedding` (the default) keeps the historical behaviour: rank documents by the
 //! maximum passage cosine of the raw embedding model, optionally reranking the top-48 pool.
 //!
-//! `--mode production` runs the app's real retrieval path instead: the indexer's contextual
-//! chunking, a USearch HNSW index, an in-memory SQLite FTS5 table, `HybridSearchService`
-//! reciprocal-rank fusion (k = 10), the shared cross-encoder blend, and the chat feature's
+//! `--mode production` runs chat's library search instead: the indexer's contextual chunking, a
+//! USearch HNSW index, an in-memory SQLite FTS5 table, and `HybridSearchUseCase` — the one
+//! orchestrator chat, the tool executor and the search page run — with its reciprocal-rank
+//! fusion (k = 10), chat's cross-encoder stage when a reranker is given, and the chat feature's
 //! neighbouring-section evidence expansion.
 //!
 //! `--strategy`, `--compression` and `--sparse` select the retrieval features under
@@ -134,9 +135,9 @@ const USAGE: &str = "usage: retrieval_eval [--mode embedding|production] [--top-
 
 /// How the production hybrid path fuses its vector and BM25 branches.
 ///
-/// The defaults are the application's (`features::search::di::build`): RRF at
-/// `k = 10` with the 0.7 / 0.3 branch weights `SearchConfig` carries. Weights
-/// of `1,1` reproduce plain unweighted RRF.
+/// The defaults are the application's: RRF at `k = 10` with the 0.7 / 0.3
+/// branch weights every hybrid request carries (`SearchRequestDto::hybrid`).
+/// Weights of `1,1` reproduce plain unweighted RRF.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FusionSpec {
     pub rrf_k: f32,
@@ -553,7 +554,7 @@ async fn run_production(
         Arc::clone(&model),
         &args.embedding_dir,
         &dataset.documents,
-        reranker.clone(),
+        reranker,
         args.top_k,
         production::IndexOptions {
             compression: compression.clone(),
@@ -570,8 +571,11 @@ async fn run_production(
     let evidence_limit = args.top_k + NEIGHBOR_HEADROOM;
     for query in &dataset.queries {
         let start = Instant::now();
-        let query_vector = model.embed_query(&query.text).await?;
-        let (mut chunks, sufficiency) = index.rank(&query.text, &query_vector).await?;
+        let production::Ranking {
+            mut chunks,
+            sufficiency,
+            reranked,
+        } = index.rank(&query.text).await?;
         // Fused (and, when enabled, reranked) ordering before section neighbours join the
         // evidence set. Neighbours are appended context, never first-stage ranking evidence.
         let (first_stage_ids, _) =
@@ -581,18 +585,7 @@ async fn run_production(
 
         // Branch diagnostics run outside the timed region so latency stays comparable
         // with embedding mode: one query embedding plus one retrieval.
-        let vector_branch = index
-            .branch_documents(&query.text, &query_vector, production::VECTOR_BRANCH)
-            .await?;
-        let bm25_branch = index
-            .branch_documents(&query.text, &query_vector, production::BM25_BRANCH)
-            .await?;
-        let mut branches = serde_json::Map::new();
-        branches.insert("vector".to_owned(), serde_json::json!(vector_branch));
-        branches.insert("bm25".to_owned(), serde_json::json!(bm25_branch));
-        if let Some(sparse_branch) = index.sparse_documents(&query.text).await? {
-            branches.insert("sparse".to_owned(), serde_json::json!(sparse_branch));
-        }
+        let branches = index.branch_documents(&query.text).await;
 
         let (ranked_ids, scores) =
             documents_in_order(chunks.iter().map(|c| (c.document_id.as_str(), c.score)));
@@ -610,7 +603,7 @@ async fn run_production(
             "score_spread": score_spread,
             "latency_ms": latency_ms,
             "model_identity": model.model_identity(),
-            "reranked": reranker.is_some(),
+            "reranked": reranked,
             "embedding_strategy": strategy_label(args.strategy),
             "compression": compression_token,
             "sparse": sparse_enabled,

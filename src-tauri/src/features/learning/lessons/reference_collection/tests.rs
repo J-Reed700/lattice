@@ -4,7 +4,7 @@ use crate::features::learning::{
     repository::LearningRepository, source_library::CapturedLearningSource,
     sources::InitialReference, tests,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::{HashMap, HashSet};
 
 #[test]
 fn verification_windows_restore_conditions_without_changing_source_bytes() -> Result<()> {
@@ -90,76 +90,102 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
     Ok(())
 }
 
-struct Embedder {
-    identity: &'static str,
-    calls: AtomicUsize,
-    fail: bool,
+/// A library holding fixed documents. Search returns the scoped documents'
+/// chunks containing a query word, in document order, and records each scope.
+#[derive(Default)]
+pub(in crate::features::learning) struct FakeLibrary {
+    documents: HashMap<String, Vec<LibraryChunk>>,
+    importing: HashSet<String>,
+    scopes: std::sync::Mutex<Vec<HashSet<String>>>,
 }
-#[async_trait::async_trait]
-impl EmbeddingPort for Embedder {
-    async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
-        if self.fail {
-            return Err(invalid("Embedding fixture unavailable"));
-        }
-        // Deterministic semantics for plumbing tests, not a quality benchmark.
-        let text = text.to_lowercase();
-        Ok(vec![
-            if text.contains("ownership") || text.contains("borrowing") {
-                1.0
-            } else {
-                0.0
-            },
-            if text.contains("pastry") || text.contains("crust") {
-                1.0
-            } else {
-                0.0
-            },
-            if text.contains("photosynthesis")
-                || text.contains("chloroplast")
-                || text.contains("sunlight conversion")
-            {
-                1.0
-            } else {
-                0.0
-            },
-            0.1,
-        ])
+
+impl FakeLibrary {
+    pub(in crate::features::learning) fn with_document(
+        mut self,
+        id: &str,
+        chunks: &[&str],
+    ) -> Self {
+        let chunks = chunks
+            .iter()
+            .enumerate()
+            .map(|(index, text)| LibraryChunk {
+                id: format!("{id}#{index}"),
+                text: (*text).into(),
+            })
+            .collect();
+        self.documents.insert(id.into(), chunks);
+        self
     }
-    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let mut out = Vec::new();
-        for text in texts {
-            out.push(self.embed_single(text).await?);
-        }
-        Ok(out)
-    }
-    fn model_identity(&self) -> String {
-        self.identity.into()
-    }
-    fn dimension(&self) -> usize {
-        4
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-fn embedder(identity: &'static str) -> Embedder {
-    Embedder {
-        identity,
-        calls: AtomicUsize::new(0),
-        fail: false,
+    fn scopes(&self) -> Vec<HashSet<String>> {
+        self.scopes.lock().unwrap().clone()
     }
 }
 
-async fn collection_fixture(pool: &SqlitePool) -> Result<(String, Vec<LearningSourceDto>)> {
+#[async_trait::async_trait]
+impl LibraryPassagesPort for FakeLibrary {
+    fn model_identity(&self) -> String {
+        "fixture-library-model".into()
+    }
+    async fn document_text(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<crate::application::ports::LibraryDocumentText>> {
+        if self.importing.contains(document_id) {
+            return Err(invalid("The document is not fully indexed."));
+        }
+        Ok(self.documents.get(document_id).map(|chunks| {
+            crate::application::ports::LibraryDocumentText {
+                title: format!("{document_id}.md"),
+                file_path: format!("/library/{document_id}"),
+                chunks: chunks.clone(),
+            }
+        }))
+    }
+    async fn search(
+        &self,
+        query: &str,
+        document_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<crate::application::ports::LibraryPassageHit>> {
+        self.scopes.lock().unwrap().push(document_ids.clone());
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let mut scoped: Vec<_> = document_ids.iter().collect();
+        scoped.sort();
+        let mut hits = Vec::new();
+        for document_id in scoped {
+            for chunk in self.documents.get(document_id).into_iter().flatten() {
+                let text = chunk.text.to_lowercase();
+                if words.iter().any(|word| text.contains(word.as_str())) {
+                    hits.push(crate::application::ports::LibraryPassageHit {
+                        document_id: document_id.clone(),
+                        chunk_id: chunk.id.clone(),
+                        score: 1.0,
+                    });
+                }
+            }
+        }
+        hits.truncate(limit);
+        Ok(hits)
+    }
+}
+
+const OWNERSHIP: [&str; 2] = [
+    "# Ownership\nBorrowing gives access without transferring ownership. 🦀",
+    "Lifetimes describe how long a reference stays valid.",
+];
+const PLANTS: [&str; 1] = ["# Plant cells\nPhotosynthesis takes place in chloroplasts."];
+
+/// A program with a document snapshot, a web snapshot and a second document
+/// snapshot, captured the way the app captures them.
+async fn collection_fixture(
+    pool: &SqlitePool,
+    documents: [&str; 2],
+) -> Result<(String, Vec<LearningSourceDto>)> {
     let mut program = tests::fixture();
     let texts = [
-        format!(
-            "{}\n# Ownership\nBorrowing gives access without transferring ownership. 🦀\n",
-            "Background without the target concept.\n".repeat(2200)
-        ),
-        "# Pastry\nKeep butter cold when making a flaky pie crust.".into(),
-        "# Plant cells\nPhotosynthesis takes place in chloroplasts.".into(),
+        OWNERSHIP.join("\n\n"),
+        "# Pastry\nKeep butter cold when making a flaky pie crust.".to_string(),
+        PLANTS.join("\n\n"),
     ];
     program.sources = texts
         .iter()
@@ -167,22 +193,24 @@ async fn collection_fixture(pool: &SqlitePool) -> Result<(String, Vec<LearningSo
         .map(|(i, text)| LearningSourceDto {
             id: uuid::Uuid::new_v4().to_string(),
             title: format!("Reference {i}"),
-            url: (i == 0).then(|| "https://example.org/v1/guide".into()),
+            url: (i == 1).then(|| "https://example.org/pastry".into()),
             excerpt: text.chars().take(2400).collect(),
             acquired_at: 1,
         })
         .collect();
+    let origins = [documents[0], "https://example.org/pastry", documents[1]];
     let references: Vec<_> = program
         .sources
         .iter()
         .zip(&texts)
-        .map(|(s, text)| InitialReference {
+        .zip(origins)
+        .map(|((s, text), origin)| InitialReference {
             source_id: s.id.clone(),
-            origin: s.id.clone(),
+            origin: origin.into(),
             captured: CapturedLearningSource {
                 title: s.title.clone(),
                 publisher: None,
-                requested_url: s.url.as_ref().map(|_| "https://example.org/guide".into()),
+                requested_url: s.url.clone(),
                 resolved_url: s.url.clone(),
                 text: text.clone(),
                 truncated: false,
@@ -196,91 +224,108 @@ async fn collection_fixture(pool: &SqlitePool) -> Result<(String, Vec<LearningSo
     Ok((program.summary.id, sources))
 }
 
+fn source_of<'s>(
+    sources: &'s [LearningSourceDto],
+    hit: &ReferencePassage,
+) -> &'s LearningSourceDto {
+    sources.iter().find(|s| s.id == hit.source_id).unwrap()
+}
+
 #[tokio::test]
-async fn whole_sources_and_three_subjects_use_the_same_hybrid_path() -> Result<()> {
+async fn document_snapshots_rank_through_the_library_scoped_to_their_program() -> Result<()> {
     let pool = tests::pool().await?;
-    let (id, sources) = collection_fixture(&pool).await?;
-    assert!(sources.iter().any(|source| source.excerpt.len() > 64_000));
-    let urls = sqlx::query("SELECT requested_url,resolved_url FROM learning_source_versions WHERE program_id=? AND title='Reference 0'").bind(&id).fetch_one(&pool).await.map_err(db)?;
+    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    // Another program's document must never enter this program's scope.
+    collection_fixture(&pool, ["doc-elsewhere", "doc-elsewhere-2"]).await?;
+    let library = FakeLibrary::default()
+        .with_document("doc-ownership", &OWNERSHIP)
+        .with_document("doc-plants", &PLANTS)
+        .with_document("doc-elsewhere", &OWNERSHIP);
+    let collection = ReferenceCollection::load(&pool, &id, &sources, Some(&library)).await?;
+    assert_eq!(collection.mode(), "hybrid");
     assert_eq!(
-        urls.get::<String, _>("requested_url"),
-        "https://example.org/guide"
+        collection.embedding_model().as_deref(),
+        Some("fixture-library-model")
     );
-    assert_eq!(
-        urls.get::<String, _>("resolved_url"),
-        "https://example.org/v1/guide"
-    );
-    let embedding = embedder("fixture-v1");
-    let collection = ReferenceCollection::load(&pool, &id, &sources, Some(&embedding)).await?;
-    for (query, expected) in [
-        ("ownership borrowing", "Borrowing gives access"),
-        ("pastry crust", "Keep butter cold"),
-        ("photosynthesis", "chloroplasts"),
-        ("sunlight conversion", "chloroplasts"),
+    for (query, expected, kind) in [
+        ("borrowing", "Borrowing gives access", "hybrid"),
+        ("photosynthesis", "chloroplasts", "hybrid"),
+        ("pastry crust", "Keep butter cold", "lexical_fallback"),
     ] {
         let hits = collection.retrieve(query, 2).await?;
         assert!(hits[0].text.contains(expected), "{query}: {hits:?}");
-        assert_eq!(hits[0].retrieval_kind, "hybrid");
-        let original = sources.iter().find(|s| s.id == hits[0].source_id).unwrap();
+        assert_eq!(hits[0].retrieval_kind, kind, "{query}");
         assert_eq!(
-            &original.excerpt[hits[0].start_byte..hits[0].end_byte],
+            &source_of(&sources, &hits[0]).excerpt[hits[0].start_byte..hits[0].end_byte],
             hits[0].text
         );
     }
-    let calls = embedding.calls.load(Ordering::SeqCst);
-    ReferenceCollection::load(&pool, &id, &sources, Some(&embedding)).await?;
-    assert_eq!(calls, embedding.calls.load(Ordering::SeqCst));
-    let switched = embedder("fixture-v2");
-    ReferenceCollection::load(&pool, &id, &sources, Some(&switched)).await?;
-    assert!(switched.calls.load(Ordering::SeqCst) > 0);
+    let program_documents: HashSet<String> = ["doc-ownership", "doc-plants"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert!(library
+        .scopes()
+        .iter()
+        .all(|scope| *scope == program_documents));
     Ok(())
 }
 
 #[tokio::test]
-async fn fallback_scope_and_interrupted_index_are_explicit() -> Result<()> {
+async fn a_changed_or_importing_library_document_falls_back_to_keywords() -> Result<()> {
     let pool = tests::pool().await?;
-    let (id, sources) = collection_fixture(&pool).await?;
-    let (other_id, other_sources) = collection_fixture(&pool).await?;
-    let embedding = embedder("fixture-v1");
-    ReferenceCollection::load(&pool, &other_id, &other_sources, Some(&embedding)).await?;
+    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    let mut library = FakeLibrary::default()
+        .with_document(
+            "doc-ownership",
+            &["A rewritten chapter about something else."],
+        )
+        .with_document("doc-plants", &PLANTS);
+    library.importing.insert("doc-plants".into());
+    let collection = ReferenceCollection::load(&pool, &id, &sources, Some(&library)).await?;
+    assert_eq!(collection.mode(), "lexical_fallback");
+    assert_eq!(collection.embedding_model(), None);
+    for query in ["borrowing", "photosynthesis"] {
+        let hits = collection.retrieve(query, 2).await?;
+        assert_eq!(hits[0].retrieval_kind, "lexical_fallback", "{query}");
+        assert_eq!(
+            &source_of(&sources, &hits[0]).excerpt[hits[0].start_byte..hits[0].end_byte],
+            hits[0].text
+        );
+    }
+    assert!(library.scopes().iter().all(HashSet::is_empty));
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_a_library_every_snapshot_is_ranked_by_keyword() -> Result<()> {
+    let pool = tests::pool().await?;
+    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
     let lexical = ReferenceCollection::load(&pool, &id, &sources, None).await?;
     assert!(lexical.retrieve("sunlight conversion", 3).await?.is_empty());
     let hits = lexical.retrieve("photosynthesis", 3).await?;
     assert!(!hits.is_empty());
-    assert!(hits
-        .iter()
-        .all(|h| sources.iter().any(|s| s.id == h.source_id)));
     assert!(hits.iter().all(|h| h.retrieval_kind == "lexical_fallback"));
-    let failing = Embedder {
-        fail: true,
-        ..embedder("fixture-v1")
-    };
-    assert!(
-        ReferenceCollection::load(&pool, &id, &sources, Some(&failing))
-            .await
-            .is_err()
-    );
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM learning_source_retrieval_index WHERE program_id=?",
-    )
-    .bind(&id)
-    .fetch_one(&pool)
-    .await
-    .map_err(db)?;
-    assert_eq!(count, 0);
-    ReferenceCollection::load(&pool, &id, &sources, Some(&embedding)).await?;
-    // A partial/corrupt cache is rebuilt, not treated as a finished version.
-    sqlx::query(
-        "DELETE FROM learning_source_retrieval_index WHERE program_id=? AND chunk_ordinal=0",
-    )
-    .bind(&id)
-    .execute(&pool)
-    .await
-    .map_err(db)?;
-    let before = embedding.calls.load(Ordering::SeqCst);
-    ReferenceCollection::load(&pool, &id, &sources, Some(&embedding)).await?;
-    assert!(embedding.calls.load(Ordering::SeqCst) > before);
+    assert_eq!(lexical.mode(), "lexical_fallback");
     Ok(())
+}
+
+#[test]
+fn library_chunks_are_located_in_order_and_a_missing_chunk_rejects_the_snapshot() {
+    let chunk = |id: &str, text: &str| LibraryChunk {
+        id: id.into(),
+        text: text.into(),
+    };
+    let text = "alpha beta\n\nalpha gamma";
+    let located = locate_chunks(
+        text,
+        &[chunk("1", "alpha beta"), chunk("2", " alpha gamma ")],
+    );
+    assert_eq!(
+        located,
+        Some(vec![("1".into(), 0, 10), ("2".into(), 12, 23)])
+    );
+    assert_eq!(locate_chunks(text, &[chunk("1", "alpha delta")]), None);
 }
 
 #[tokio::test]

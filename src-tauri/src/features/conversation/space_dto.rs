@@ -131,6 +131,16 @@ pub struct RemoveConversationFromJournalRequestDto {
     pub conversation_id: String,
 }
 
+/// Pins or unpins an entry in one journal; the conversation's own pin in the
+/// Chat sidebar is separate.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetJournalEntryPinnedRequestDto {
+    pub journal_space_id: String,
+    pub conversation_id: String,
+    pub pinned: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListJournalConversationsQueryDto {

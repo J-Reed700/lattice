@@ -1,34 +1,69 @@
-//! Remote llama.cpp server adapter. Uses Chat Completions, independently of Ollama.
+//! llama-server over its OpenAI-compatible Chat Completions routes.
+//!
+//! One client for the bundled sidecar and for a server the user runs: the
+//! same messages, tool calls, reasoning, streaming, retry, `/props`,
+//! `/tokenize` and slot pinning. The two differ only in where the server is
+//! (the base URL), how it authenticates (default headers) and who owns its
+//! process: a sidecar's client holds the handle that keeps it running.
 use crate::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
         CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ToolDefinition,
     },
 };
+use crate::features::llm::engine::sidecar_manager::SidecarHandle;
+use crate::features::llm::engine::GenerationConfig;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use futures::StreamExt;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::Duration;
 
 mod retry;
-/// The bundled sidecar speaks the same stream and needs the same distinction
-/// between prompt processing and generation for its first-token allowance.
-pub(crate) use retry::ProgressWatch;
 pub(crate) mod streaming;
 #[cfg(test)]
 mod tests;
 
+/// How long a bundled server may go silent once it has started answering.
+const SIDECAR_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `/health` answers in milliseconds on a live server.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// What one client asks of its server.
+#[derive(Debug, Clone)]
+pub(crate) struct ServerConfig {
+    /// The model named in each request and reported by the port.
+    pub model: String,
+    /// The user's sampling defaults and output ceiling.
+    pub generation: GenerationConfig,
+    /// The window prompt and answer share.
+    pub context_window: usize,
+    /// Longest silence tolerated once a response has started streaming.
+    pub stall_timeout: Duration,
+    /// Whether the model's chat template carries a native tool-call format.
+    pub supports_tools: bool,
+    /// Hold the server to [`retry::prefill_allowance`] before it starts
+    /// answering. Set for a bundled server: every request reaching it went
+    /// through its scheduler, so nothing of anyone else's queues ahead and
+    /// silence means it has hung. A server the user runs may be busy with
+    /// other clients' work; waiting for it is bounded only by the time budget.
+    pub prefill_guard: bool,
+}
+
 pub struct LlamaCppLlm {
     client: reqwest::Client,
+    /// The `/v1` root the chat routes live under.
     base_url: String,
-    settings: LLMSettingsDto,
-    /// Longest silence tolerated once a response has started streaming.
-    stall_timeout: Duration,
+    config: ServerConfig,
+    /// The bundled server this client keeps running, when it owns one.
+    process: Option<Arc<SidecarHandle>>,
 }
 
 impl LlamaCppLlm {
+    /// A server the user runs, as Chat settings describe it.
     pub fn new(settings: &LLMSettingsDto) -> Result<Self> {
         let connection = &settings.llama_cpp;
         let base_url = validate_connection(connection)?;
@@ -38,16 +73,69 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(connection)?,
+            client: http_client(remote_headers(connection)?)?,
             base_url,
-            settings: settings.clone(),
-            stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
+            config: ServerConfig {
+                model: connection.model.clone(),
+                generation: GenerationConfig {
+                    temperature: settings.temperature,
+                    top_p: settings.top_p,
+                    top_k: settings.top_k,
+                    max_tokens: settings.max_tokens as usize,
+                    repeat_penalty: settings.repeat_penalty,
+                },
+                context_window: settings.context_window as usize,
+                stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
+                supports_tools: true,
+                prefill_guard: false,
+            },
+            process: None,
+        })
+    }
+
+    /// The bundled server behind `process`, which this client keeps running.
+    ///
+    /// Every request carries the server's bearer token as a default header, so
+    /// a route added later cannot forget it.
+    pub(crate) fn sidecar(
+        process: Arc<SidecarHandle>,
+        model: String,
+        generation: GenerationConfig,
+        supports_tools: bool,
+    ) -> Result<Self> {
+        let config = ServerConfig {
+            model,
+            generation,
+            context_window: process.context_size() as usize,
+            stall_timeout: SIDECAR_STALL_TIMEOUT,
+            supports_tools,
+            prefill_guard: true,
+        };
+        let mut client = Self::connect(process.endpoint(), process.api_token(), config)?;
+        client.process = Some(process);
+        Ok(client)
+    }
+
+    /// A client for the llama-server at `endpoint` that authenticates with a
+    /// bearer `token`, as a bundled server does.
+    fn connect(endpoint: &str, token: &str, config: ServerConfig) -> Result<Self> {
+        let mut headers = HeaderMap::new();
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+            AppError::InvalidConfig("Sidecar API token is not a valid header".into())
+        })?;
+        bearer.set_sensitive(true);
+        headers.insert(AUTHORIZATION, bearer);
+        Ok(Self {
+            client: http_client(headers)?,
+            base_url: format!("{}/v1", endpoint.trim_end_matches('/')),
+            config,
+            process: None,
         })
     }
 
     pub async fn test_connection(connection: &LlamaCppSettingsDto) -> Result<Vec<String>> {
         let base_url = validate_connection(connection)?;
-        let client = http_client(connection)?;
+        let client = http_client(remote_headers(connection)?)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -111,14 +199,20 @@ impl LlamaCppLlm {
         const ESTIMATE_SAFETY_DIVISOR: usize = 2;
         const MIN_OUTPUT_TOKENS: u32 = 1024;
 
-        let window = self.settings.context_window as usize;
+        let window = self.config.context_window;
         let prompt_chars: usize = messages
             .iter()
             .map(|message| message.to_string().chars().count())
             .sum();
-        let prompt_tokens = prompt_chars.div_ceil(4) * ESTIMATE_SAFETY / ESTIMATE_SAFETY_DIVISOR;
+        let prompt_tokens = crate::application::ports::llm_port::tokens_for_chars(
+            prompt_chars,
+            crate::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+        ) * ESTIMATE_SAFETY
+            / ESTIMATE_SAFETY_DIVISOR;
         let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
-        let allowed = requested.min(room).max(MIN_OUTPUT_TOKENS);
+        // The floor guards against the window clamp, never against a cap
+        // the caller asked for: a 512-token verdict stays 512.
+        let allowed = requested.min(room.max(MIN_OUTPUT_TOKENS));
         if allowed < requested {
             tracing::debug!(
                 requested,
@@ -131,42 +225,60 @@ impl LlamaCppLlm {
         allowed
     }
 
-    fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
+    /// The streamed Chat Completions body for `request`, refusing tool traffic
+    /// a model without a tool-call template would render as text.
+    fn body(&self, request: &CompletionRequest) -> Result<Value> {
+        let carries_tools = !request.tools.is_empty()
+            || request.input.iter().any(|item| {
+                matches!(
+                    item,
+                    CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. }
+                )
+            });
+        if carries_tools && !self.config.supports_tools {
+            return Err(AppError::InvalidConfig(
+                "This local model does not support tool calling".into(),
+            ));
+        }
         let messages = chat_messages(&request.input)?;
-        let requested_output = request.effective_max_output_tokens(self.settings.max_tokens);
+        let generation = &self.config.generation;
+        let configured_output = u32::try_from(generation.max_tokens).unwrap_or(u32::MAX);
+        let requested_output = request.effective_max_output_tokens(configured_output);
         let max_tokens = self.output_room_for(&messages, requested_output);
         let sampling = request.sampling.unwrap_or_default();
         let mut body = serde_json::Map::from_iter([
-            ("model".into(), json!(self.settings.llama_cpp.model)),
+            ("model".into(), json!(self.config.model)),
             ("messages".into(), json!(messages)),
-            ("stream".into(), json!(stream)),
-            (
-                "temperature".into(),
-                json!(sampling.temperature.unwrap_or(self.settings.temperature)),
-            ),
-            (
-                "top_p".into(),
-                json!(sampling.top_p.unwrap_or(self.settings.top_p)),
-            ),
-            (
-                "top_k".into(),
-                json!(sampling.top_k.unwrap_or(self.settings.top_k)),
-            ),
-            ("repeat_penalty".into(), json!(self.settings.repeat_penalty)),
-            ("max_tokens".into(), json!(max_tokens)),
-        ]);
-        if stream {
-            body.insert("stream_options".into(), json!({"include_usage": true}));
+            ("stream".into(), json!(true)),
+            // A final usage frame, so a streamed completion reports tokens.
+            ("stream_options".into(), json!({"include_usage": true})),
             // Prompt-processing events keep a long or queued prompt exempt from
             // stall detection rather than arming it, so a slow first batch is not
             // mistaken for a stalled server. Servers without support ignore the field.
-            body.insert("return_progress".into(), json!(true));
-        }
+            ("return_progress".into(), json!(true)),
+            (
+                "temperature".into(),
+                json!(sampling.temperature.unwrap_or(generation.temperature)),
+            ),
+            (
+                "top_p".into(),
+                json!(sampling.top_p.unwrap_or(generation.top_p)),
+            ),
+            (
+                "top_k".into(),
+                json!(sampling.top_k.unwrap_or(generation.top_k)),
+            ),
+            ("repeat_penalty".into(), json!(generation.repeat_penalty)),
+            ("max_tokens".into(), json!(max_tokens)),
+        ]);
+        // With no level, the template keeps its normal reasoning behaviour.
         if let Some(effort) = request
             .reasoning_effort
             .as_deref()
             .filter(|effort| *effort != "none")
         {
+            // Recent builds read the field; the template kwarg is what older
+            // ones honour.
             body.insert("reasoning_effort".into(), json!(effort));
             body.insert(
                 "chat_template_kwargs".into(),
@@ -192,40 +304,82 @@ impl LlamaCppLlm {
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}}),
             );
         }
+        // The scheduler's slot: a conversation returns to the slot whose KV
+        // cache holds its prefix. The retry path may still turn reuse off.
+        if let Some(slot) = request.assigned_slot {
+            body.insert("id_slot".into(), json!(slot));
+            body.insert("cache_prompt".into(), json!(true));
+        }
         Ok(Value::Object(body))
     }
 
-    fn legacy_request(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> CompletionRequest {
-        let mut input = crate::application::services::completion_input::from_context(
-            &self.settings.prompts.system_prompt,
-            context,
-            prompt,
-        );
-        if let Some(images) = images.filter(|images| !images.is_empty()) {
-            let mut content = vec![json!({"type":"text","text":prompt})];
-            content.extend(images.into_iter().map(|image| {
-                let url = if image.starts_with("data:") {
-                    image
-                } else {
-                    format!("data:image/png;base64,{image}")
-                };
-                json!({"type":"image_url","image_url":{"url":url}})
-            }));
-            // Replace the final text-only user message, retaining its position.
-            input.pop();
-            input.push(CompletionInput::Native {
-                value: json!({"role":"user","content":content}),
-            });
-        }
-        CompletionRequest {
-            input,
-            ..Default::default()
-        }
+    /// The server's root URL, without the `/v1` the chat routes live under.
+    fn server_root(&self) -> &str {
+        self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url)
+    }
+
+    /// Whether the bundled server this client owns has exited. A server the
+    /// user runs is never known to be gone.
+    fn process_exited(&self) -> bool {
+        self.process
+            .as_ref()
+            .is_some_and(|process| !process.is_running())
+    }
+
+    /// Behind this server's shared scheduler, with an exact tokenizer when it
+    /// answers like a llama-server.
+    ///
+    /// A bundled server carries its scheduler on its process handle, sized
+    /// from `/props` slots over the `--ctx-size` it was launched with. A
+    /// remote one is keyed by URL and sized from `/props` alone; one that does
+    /// not answer it gets one slot and no pinning.
+    pub(crate) async fn schedule(self) -> Arc<dyn LLMPort> {
+        use crate::features::llm::scheduler::{
+            llama_server_capacity, remote_llama_cpp_scheduler, BackendCapacity, InferenceScheduler,
+            ScheduledLlm, ServerTokenizer,
+        };
+        let (scheduler, is_llama_server) = match &self.process {
+            Some(process) => {
+                let scheduler = process
+                    .scheduler(|| async {
+                        let window = self.config.context_window;
+                        let slots = match llama_server_capacity(&self.client, self.server_root())
+                            .await
+                        {
+                            Some((slots, _)) => slots,
+                            None => {
+                                tracing::warn!(
+                                    "llama-server did not report its slots; scheduling one request at a time"
+                                );
+                                1
+                            }
+                        };
+                        tracing::info!(slots, window, "Local llama-server scheduler sized");
+                        InferenceScheduler::new(
+                            format!("llama-server {}", self.server_root()),
+                            BackendCapacity::llama_server(slots, window),
+                        )
+                    })
+                    .await;
+                (scheduler, true)
+            }
+            None => {
+                remote_llama_cpp_scheduler(
+                    &self.client,
+                    self.server_root(),
+                    self.config.context_window,
+                )
+                .await
+            }
+        };
+        let tokenizer =
+            is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
+        let output_limit = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
+        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler, output_limit);
+        Arc::new(match tokenizer {
+            Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
+            None => scheduled,
+        })
     }
 }
 
@@ -321,29 +475,43 @@ fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
 
 #[async_trait]
 impl LLMPort for LlamaCppLlm {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     fn supports_tool_calling(&self) -> bool {
-        true
+        self.config.supports_tools
     }
     fn provider_name(&self) -> &str {
-        "llamacpp"
+        if self.process.is_some() {
+            "local-sidecar"
+        } else {
+            "llamacpp"
+        }
     }
     fn model_name(&self) -> &str {
-        &self.settings.llama_cpp.model
+        &self.config.model
     }
     fn max_context_tokens(&self) -> usize {
-        self.settings.context_window as usize
+        self.config.context_window
     }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
+    /// A crashed bundled server leaves this client cached with a dead port;
+    /// saying so lets the role cache drop it and start a fresh server.
+    fn is_alive(&self) -> bool {
+        !self.process_exited()
     }
+    /// A bundled server is ready once `/health` answers. A remote one must
+    /// also list the configured model, since it may serve several.
     async fn is_ready(&self) -> Result<bool> {
+        if self.process.is_some() {
+            let health = self
+                .client
+                .get(format!("{}/health", self.server_root()))
+                .timeout(HEALTH_TIMEOUT)
+                .send()
+                .await;
+            return Ok(health.is_ok_and(|response| response.status().is_success()));
+        }
         let response = self
             .client
             .get(format!("{}/models", self.base_url))
-            .timeout(self.stall_timeout)
+            .timeout(self.config.stall_timeout)
             .send()
             .await
             .map_err(network_error)?;
@@ -391,58 +559,6 @@ impl LLMPort for LlamaCppLlm {
         self.complete_reliably(request, on_text, Some(on_reasoning), Some(on_retry))
             .await
     }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        let response = self
-            .complete(&self.legacy_request(prompt, context, images))
-            .await?;
-        if response.finish_reason == "length" {
-            return Err(AppError::InvalidState(
-                "llama.cpp reached the output token limit before completing the response".into(),
-            ));
-        }
-        Ok(response.text)
-    }
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        let request = self.legacy_request(prompt, context, images);
-        let output = async_stream::try_stream! {
-            let (sender, mut receiver) = futures::channel::mpsc::unbounded();
-            let on_text = |text| sender.unbounded_send(text).map_err(|_| {
-                AppError::InvalidState("Generation consumer disconnected".into())
-            });
-            let completion = self.complete_with_progress(&request, &on_text);
-            tokio::pin!(completion);
-            let result = loop {
-                tokio::select! {
-                    biased;
-                    Some(text) = receiver.next() => { yield text; }
-                    result = &mut completion => break result,
-                }
-            };
-            let response = result?;
-            if !response.tool_calls.is_empty() {
-                Err(AppError::InvalidState("Unexpected tool call in text generation".into()))?;
-            }
-            // A plain text stream has no way to say it was cut short.
-            if response.finish_reason == "length" {
-                Err(AppError::InvalidState(
-                    "llama.cpp reached the output token limit before completing the response".into(),
-                ))?;
-            }
-            while let Ok(text) = receiver.try_recv() { yield text; }
-        };
-        Ok(Box::new(Box::pin(output)))
-    }
 }
 
 pub fn validate_connection(connection: &LlamaCppSettingsDto) -> Result<String> {
@@ -472,9 +588,8 @@ pub fn validate_connection(connection: &LlamaCppSettingsDto) -> Result<String> {
     })
 }
 
-/// No client-wide read or total timeout: generations are bounded by their time
-/// budget and stall detection, probes by per-request timeouts.
-fn http_client(connection: &LlamaCppSettingsDto) -> Result<reqwest::Client> {
+/// The authentication header Chat settings configure for a remote server.
+fn remote_headers(connection: &LlamaCppSettingsDto) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     if !connection.auth_header_name.trim().is_empty() {
         let name = HeaderName::from_bytes(connection.auth_header_name.trim().as_bytes())
@@ -484,6 +599,12 @@ fn http_client(connection: &LlamaCppSettingsDto) -> Result<reqwest::Client> {
         value.set_sensitive(true);
         headers.insert(name, value);
     }
+    Ok(headers)
+}
+
+/// No client-wide read or total timeout: generations are bounded by their time
+/// budget and stall detection, probes by per-request timeouts.
+fn http_client(headers: HeaderMap) -> Result<reqwest::Client> {
     crate::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
@@ -656,13 +777,13 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     // The assistant message is replayed as the server returned it, so it has
     // to agree with the calls the tool results will answer: the same ids, and
     // arguments the chat template can parse again.
-    let mut provider_output = message.clone();
+    let mut assistant = message.clone();
     let dropped = message
         .get("tool_calls")
         .and_then(Value::as_array)
         .is_some_and(|all| all.len() > raw_calls.len());
     if repaired || dropped {
-        if let Some(object) = provider_output.as_object_mut() {
+        if let Some(object) = assistant.as_object_mut() {
             object.insert(
                 "tool_calls".into(),
                 Value::Array(
@@ -707,7 +828,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .pointer("/usage/completion_tokens")
             .and_then(Value::as_u64)
             .unwrap_or_default(),
-        provider_output,
+        replay: vec![CompletionInput::Native { value: assistant }],
         // Non-streaming servers can include reasoning tokens in this array.
         // Without token/channel alignment, do not treat them as verdict confidence.
         first_token_logprobs: choice

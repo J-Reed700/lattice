@@ -1,5 +1,6 @@
-//! The compare pipeline: validate → resolve → retrieve → one prompt per
-//! document → tolerant parse → map quotes back to chunks → assemble.
+//! The compare pipeline: validate → resolve → retrieve → one grounded call per
+//! document → tolerant parse → map quotes back to the chunks it carried →
+//! assemble.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -8,7 +9,11 @@ use std::time::Duration;
 use futures::{stream, StreamExt};
 use tracing::debug;
 
+use crate::application::ports::llm_port::InferencePriority;
 use crate::application::ports::{LLMPort, RepositoryPort};
+use crate::application::services::grounded_generation::{
+    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
+};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::timestamps::now_db_timestamp;
@@ -17,7 +22,7 @@ use super::dto::{
     CompareCellDto, CompareCitationDto, CompareDocumentsRequestDto, CompareRowDto, CompareTableDto,
 };
 use super::parser::parse_compare_response;
-use super::prompt::build_compare_prompt;
+use super::prompt::{build_compare_task, PASSAGES_HEADING};
 use super::retrieval::{retrieve_for_document, truncate_chars, RetrievedChunk};
 
 pub const MAX_DOCUMENTS: usize = 12;
@@ -25,13 +30,10 @@ pub const MAX_COLUMNS: usize = 6;
 pub const MAX_COLUMN_CHARS: usize = 80;
 pub const CHUNKS_PER_COLUMN: usize = 3;
 pub const MAX_CHUNKS_PER_DOCUMENT: usize = 10;
-pub const MAX_CHUNK_CHARS: usize = 1_200;
-pub const MAX_CONTEXT_CHARS: usize = 9_000;
 pub const MAX_VALUE_CHARS: usize = 400;
 pub const MAX_EXCERPT_CHARS: usize = 320;
 pub const DOCUMENT_CONCURRENCY: usize = 2;
 pub const PER_DOCUMENT_TIMEOUT_SECS: u64 = 120;
-pub const SEMANTIC_THRESHOLD: f32 = 0.25;
 
 /// Minimum share of a quote's words that must appear in a chunk before the
 /// citation is trusted. Catches a model that dropped a comma.
@@ -199,6 +201,49 @@ pub(super) fn assemble_cells(
         .collect()
 }
 
+/// The model's answer for one row, and the chunks its prompt carried.
+///
+/// The prompt carries each passage once, the best ranked first when the
+/// window cannot hold them all; someone is waiting on the table.
+pub(super) async fn fill_row(
+    llm: &dyn LLMPort,
+    title: &str,
+    columns: &[String],
+    chunks: &[RetrievedChunk],
+) -> Result<(String, Vec<RetrievedChunk>)> {
+    let mut request = GroundedRequest::new("", build_compare_task(title, columns));
+    request.evidence_heading = PASSAGES_HEADING.to_string();
+    request.evidence = chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| EvidencePassage {
+            id: chunk.chunk_id.clone(),
+            label: format!("[{}]", index + 1),
+            text: chunk.content.clone(),
+            // Retrieval order is relevance order.
+            rank: 1.0 / (index + 1) as f32,
+        })
+        .collect();
+    request.selection = EvidenceSelection::BestFirst;
+    request.call = CallOptions {
+        priority: InferencePriority::Interactive,
+        ..Default::default()
+    };
+    let output = grounded_generation::generate(llm, request).await?;
+    debug!(
+        carried = output.used_evidence_ids.len(),
+        left_out = output.accounting.evicted.len(),
+        input_tokens = output.accounting.total_input,
+        "compare: row request planned"
+    );
+    let carried = chunks
+        .iter()
+        .filter(|chunk| output.used_evidence_ids.contains(&chunk.chunk_id))
+        .cloned()
+        .collect();
+    Ok((output.text, carried))
+}
+
 async fn build_row(
     container: &Container,
     llm: &Arc<dyn LLMPort>,
@@ -215,9 +260,8 @@ async fn build_row(
         ));
     }
 
-    let prompt = build_compare_prompt(&document.title, columns, &chunks);
-    let context: Vec<String> = chunks.iter().map(|chunk| chunk.content.clone()).collect();
-    let raw = llm.generate(&prompt, &context, None).await?;
+    // A quote is only mapped to a chunk the model was actually shown.
+    let (raw, chunks) = fill_row(llm.as_ref(), &document.title, columns, &chunks).await?;
 
     let parsed = parse_compare_response(&raw, columns);
     if parsed.is_empty() {

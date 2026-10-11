@@ -74,6 +74,44 @@ while reducing stored vector bytes by 16x. These are fixture results, not
 universal quality guarantees; future default changes still require a comparable
 production-path run.
 
+## Production mode now runs chat's search (2026-10-09)
+
+Until this date, production mode built `HybridSearchService`, which only the tool
+executor and the search page used; chat searched through `HybridSearchUseCase`
+plus its own branch fusion and a separate rerank step. Every production-mode number
+from 2026-09-16 to 2026-09-19 therefore described a path chat did not run, and the
+harness had also stopped running at all once vault-wide search began reading
+`documents.owner_conversation_id`, which its schema lacked.
+
+`HybridSearchUseCase` is now the one library search orchestrator: chat's first pass,
+its follow-up `semantic_search` calls, the tool executor, the search page and this
+harness all run it, including chat's branch depth (three candidates per result), its
+0.15 vector floor, its per-document cap of four, and its cross-encoder stage.
+`HybridSearchService` is deleted. A production-mode run now measures chat's search for
+one planned query; see [Production mode](#production-mode) for what a turn adds around it.
+
+v3, Qwen3-Embedding-0.6B (`~/.cache/lattice/models/qwen3-embedding-0.6b`) on Metal,
+`--mode production --top-k 10`, chunk-first, no compression, sparse off, scored with
+`rag_eval.py --k 5`:
+
+| Run | recall@5 | nDCG@5 | MRR@5 | passage recall@5 | median latency |
+|---|---|---|---|---|---|
+| 2026-09-19 "After", `HybridSearchService` ([results](2026-09-19-V3-MODERNIZATION-RESULTS.md)) | 0.7755 | 0.6925 | 0.7007 | 0.7688 | 24.9 ms |
+| 2026-10-09, chat's orchestrator | 0.7755 | 0.6904 | 0.6978 | 0.7630 | 52.0 ms |
+
+Recall is unchanged; nDCG, MRR and passage recall are slightly lower, mostly on noisy
+OCR text (nDCG@5 0.344 → 0.313) and semantic paraphrase (0.492 → 0.482). The two runs
+differ in the search code and in three weeks of other changes, so the delta is not
+attributable to the orchestrator alone. The latency was measured while other builds
+were running on the same machine and is not comparable with the earlier figure.
+Results: `results/2026-10-09-v3-chat-path-metrics.json` and
+`results/2026-10-09-v3-chat-path-run.jsonl`.
+
+No reranked run was made: no reranker checkpoint was present on the machine. The
+reranker and sparse-branch decisions still stand on the old path's numbers and need
+re-running on this one. Defaults are unchanged: reranking and the sparse branch stay
+off.
+
 ### Grading convention for hard negatives
 
 A regional or superseded variant is graded 0 for a question that does not name its
@@ -149,7 +187,7 @@ candidate coverage and ordering separately.
 
 ### Production mode
 
-Runs the app's real retrieval path over the fixture instead of raw cosine:
+Runs chat's library search over the fixture instead of raw cosine:
 
 ```sh
 cd src-tauri
@@ -168,11 +206,13 @@ into a `USearchVectorIndex` (HNSW, cosine, f32) and chunk rows into an in-memory
 SQLite database whose production `chunks_fts_insert` trigger mirrors them into
 both FTS5 tables: the `porter unicode61` index every query reads, and the
 `trigram` index consulted only for a query that contains CJK. Queries then run
-through a real `HybridSearchService` built with the
-same dependencies `features::search::di::build` uses — the USearch index,
-`BM25Search`, and `SearchEnrichmentService` — so both branches, reciprocal-rank
-weighted fusion at k = 10, and the shared cross-encoder blend are the production code, not a
-reimplementation. Finally, section-neighbour evidence expansion is applied.
+through `HybridSearchUseCase`, the one library search orchestrator chat, the tool
+executor and the search page share, composed as `features::search::di::build`
+composes it — the USearch index, `SqliteTextSearch`, the chunk repository — and
+asked exactly what chat's first pass asks for one planned query: the vector and
+BM25 branches at three candidates per result, weighted reciprocal-rank fusion at
+k = 10 with chat's per-document cap, and, with a reranker, chat's own
+cross-encoder stage. Finally, section-neighbour evidence expansion is applied.
 
 `--top-k` (default 50) sets how many chunk candidates each query retrieves before
 they are collapsed to a document ranking. It needs to stay well above the `--k`
@@ -187,9 +227,11 @@ its own SQL. Note that expansion is a no-op for a single-chunk document, and for
 any chunk whose section is NULL; on these fixtures only the long drill records are
 long enough to produce neighbours.
 
-Production mode still does not exercise workspace scoping, recency boosting, query
-expansion, or answer generation, and it has no page ranges, so `page_number` is
-always NULL.
+Production mode still does not exercise what a chat turn adds around that search:
+the corpus planner's query rewrites (each query is searched as written, as one
+planned query), HyDE text in the rerank query, document openings and section
+lookups, the corrective retry, workspace scoping, and answer generation. It has no
+page ranges, so `page_number` is always NULL.
 
 ### Embedding strategy
 
@@ -246,9 +288,10 @@ SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
 ### Reranking
 
 Pass a reranker directory as the optional third argument in either mode. In
-embedding mode it reranks the top-48 passage pool; in production mode it turns on
-`SearchConfig::enable_reranking`, so `HybridSearchService` widens its own candidate
-pool and applies its own blend stage:
+embedding mode it reranks the top-48 passage pool; in production mode the fused
+pool is widened as chat widens it (three times `--top-k`, at most 64) and passed
+through the orchestrator's rerank stage — the stage chat calls — at chat's default
+candidate cap (48) and query budget, then cut to `--top-k`:
 
 ```sh
 cd src-tauri
@@ -267,8 +310,8 @@ and reranker scores with the production weights, then reports document rankings;
 
 Reranking exercises the production prompt or pair encoding and the production score
 blend. In embedding mode it still omits fusion and chat generation; in production
-mode the blend is applied by `HybridSearchService` itself, over a fused candidate
-pool. Every run records the embedding artifact/preprocessing fingerprint.
+mode the blend is applied by the orchestrator's rerank stage, over the widened
+fused pool, exactly as in chat. Every run records the embedding artifact/preprocessing fingerprint.
 Qwen3-Reranker uses a roughly 1.1 GB checkpoint and is expected to be slower than
 the 22M-parameter MiniLM cross-encoder, so compare memory and latency as well as
 ranking metrics.
@@ -295,19 +338,23 @@ Production rows add these fields so a regression is attributable:
   the appended section neighbours, which is what makes a document-level miss
   traceable to a passage.
 - `branch_ranked_ids` — `{"vector": [...], "bm25": [...]}`, plus `"sparse"` when the
-  learned sparse branch ran, each branch run on its own through the same service and
+  learned sparse branch ran: each branch's list exactly as the fusion received it,
   collapsed to documents. When fused recall drops, these say whether the vector side,
   the lexical side, the sparse side, or the fusion lost the document.
 - `first_stage_ranked_ids` means "before neighbour expansion" in production mode
-  and "before reranking" in embedding mode. Reranking happens inside
-  `HybridSearchService`, so the pre-rerank order is not separately observable there.
+  and "before reranking" in embedding mode. In production mode it is taken after the
+  rerank stage, so the pre-rerank order is not separately observable there.
+- `reranked` — in production mode, whether the cross-encoder stage actually applied
+  its blend to this query (it does not for a single result, or when the reranker
+  fails).
 - `compression` — the stored vector layout token (`"mrl256i8"`, `"mrl512f32"`, …) or
   `"none"`. Two runs with different tokens indexed different vector spaces.
 - `sparse` — whether the learned sparse branch actually ran.
 - `sufficient`, `sufficiency_reasons`, `term_coverage` — the chat pipeline's own
   post-rerank verdict on the fused ranking, from
-  `chat::retrieval::assess_retrieval_sufficiency`, computed before neighbour
-  expansion over a plan holding just this query. `sufficiency_reasons` are the
+  `chat::retrieval::assess_retrieval_sufficiency`, computed where chat computes it:
+  over the whole (widened) pool, before the cut to `--top-k` and before neighbour
+  expansion, over a plan holding just this query. `sufficiency_reasons` are the
   pipeline's reason codes (`"low_term_coverage"`, `"no_reranker"`, …), not prose.
   The verdict only runs in production mode; embedding mode has no fusion to judge.
 

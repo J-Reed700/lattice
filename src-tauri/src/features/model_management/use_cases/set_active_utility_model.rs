@@ -1,6 +1,6 @@
 //! Sets the active utility model (HyDE expansion, router/intent classification).
 
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
 

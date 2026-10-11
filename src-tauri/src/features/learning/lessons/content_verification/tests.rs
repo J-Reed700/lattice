@@ -6,6 +6,7 @@
 )]
 use super::*;
 use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use crate::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -29,6 +30,9 @@ struct Model {
     failing_judge: bool,
     incomplete_coverage: bool,
     hold_bad_claim: bool,
+    /// Fail every batched check as a server that cannot finish a group does,
+    /// so the claims are checked one at a time.
+    batch_unavailable: bool,
     extracted_sections: Mutex<Vec<Vec<usize>>>,
     audited_sections: Mutex<Vec<Vec<usize>>>,
     fail_coverage_at: Option<usize>,
@@ -43,6 +47,7 @@ impl Model {
             failing_judge: false,
             incomplete_coverage: false,
             hold_bad_claim: false,
+            batch_unavailable: false,
             extracted_sections: Mutex::new(Vec::new()),
             audited_sections: Mutex::new(Vec::new()),
             fail_coverage_at: None,
@@ -53,6 +58,164 @@ impl Model {
 fn context(prompt: &str) -> Value {
     serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap()
 }
+/// A typed request as the prompts the scripted fixtures answer: one per claim
+/// of a batched check, otherwise one. A generation request reads as its system
+/// instructions followed by the user's request; a single claim check reads as
+/// its user prompt, which is where the check states the claim.
+pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
+    let (system, user) = fixture_messages(request);
+    if let Some(batch) = fixture_batch(user) {
+        let challenge = system.starts_with("Plan independent evidence searches");
+        return batch
+            .into_iter()
+            .map(|(claim, passages, _)| {
+                let evidence = passages
+                    .iter()
+                    .enumerate()
+                    .map(|(index, text)| format!("[passage-{index}]\n{text}"))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if challenge {
+                    format!("{system}\n\nSource passages:\n{evidence}\n\nClaim: {claim}")
+                } else {
+                    format!("Source passages:\n{evidence}\n\nClaim: {claim}\n\nCompare every factual part with the passages before deciding.")
+                }
+            })
+            .collect();
+    }
+    let challenge = system.starts_with("Plan independent evidence searches");
+    if (is_claim_check(user) && !challenge) || system.is_empty() {
+        return vec![user.to_owned()];
+    }
+    vec![format!("{system}\n\n{user}")]
+}
+
+/// The fixture's replies to [`fixture_prompts`], answered in the typed
+/// protocol: one batched reply, a check's verdict as its last line, or the
+/// reply text unchanged.
+pub(crate) fn fixture_completion(
+    request: &CompletionRequest,
+    replies: Vec<String>,
+) -> CompletionResponse {
+    let (system, user) = fixture_messages(request);
+    let text = if let Some(batch) = fixture_batch(user) {
+        let challenge = system.starts_with("Plan independent evidence searches");
+        let checks: Vec<Value> = batch
+            .iter()
+            .enumerate()
+            .zip(replies)
+            .map(|((index, (_, _, evidence_ids)), reply)| {
+                let id = json!(format!("claim-{index}"));
+                if challenge {
+                    let queries = serde_json::from_str::<Value>(&reply)
+                        .map(|value| value["queries"].clone())
+                        .unwrap_or_else(|_| json!([]));
+                    json!({"id": id, "queries": queries})
+                } else {
+                    json!({"id": id, "response": verdict_last(&reply, evidence_ids)})
+                }
+            })
+            .collect();
+        json!({ "checks": checks }).to_string()
+    } else if is_claim_check(user) && system.contains("End with a third line: Verdict") {
+        let local: Vec<String> = (0..64).map(|index| format!("passage-{index}")).collect();
+        replies
+            .into_iter()
+            .next()
+            .map(|reply| verdict_last(&reply, &local))
+            .unwrap_or_default()
+    } else {
+        replies.concat()
+    };
+    CompletionResponse::from_text(text)
+}
+
+fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
+    let message = |wanted: &str| {
+        request.input.iter().rev().find_map(|item| match item {
+            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+                if role == wanted =>
+            {
+                Some(content.as_str())
+            }
+            _ => None,
+        })
+    };
+    (
+        message("system").unwrap_or(""),
+        message("user").unwrap_or(""),
+    )
+}
+
+fn is_claim_check(user: &str) -> bool {
+    user.starts_with("Source passages:") || user.starts_with("Audit claim fidelity.")
+}
+
+/// One claim of a batched check: its text, its permitted passages and their
+/// bank identifiers.
+type FixtureClaim = (String, Vec<String>, Vec<String>);
+
+fn fixture_batch(user: &str) -> Option<Vec<FixtureClaim>> {
+    let batch: Value = serde_json::from_str(user).ok()?;
+    let bank = batch["sourcePassages"].as_array()?;
+    let text_of = |id: &str| {
+        bank.iter()
+            .find(|passage| passage["id"] == id)
+            .and_then(|passage| passage["text"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    batch["claims"].as_array().map(|claims| {
+        claims
+            .iter()
+            .map(|claim| {
+                let ids: Vec<String> = claim["evidenceIds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect();
+                (
+                    claim["claim"].as_str().unwrap_or_default().to_owned(),
+                    ids.iter().map(|id| text_of(id)).collect(),
+                    ids,
+                )
+            })
+            .collect()
+    })
+}
+
+/// A label-first fixture verdict ("supported\nReason: …\nSource passage:
+/// passage-0") rewritten to state the comparison first and the verdict last,
+/// with the passage named by `ids` (the claim's own numbering mapped to the
+/// identifiers the request used). Anything else is returned as written.
+fn verdict_last(reply: &str, ids: &[String]) -> String {
+    let mut lines = reply.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Some(label) = lines.next().filter(|line| {
+        ["supported", "contradicted", "unsupported"].contains(&line.to_ascii_lowercase().as_str())
+    }) else {
+        return reply.to_owned();
+    };
+    let mut reason = None;
+    let mut passage = "none".to_owned();
+    for line in lines {
+        if let Some(value) = line.strip_prefix("Reason:") {
+            reason = Some(value.trim().to_owned());
+        } else if let Some(value) = line.strip_prefix("Source passage:") {
+            let value = value.trim();
+            passage = value
+                .strip_prefix("passage-")
+                .and_then(|index| index.parse::<usize>().ok())
+                .and_then(|index| ids.get(index).cloned())
+                .unwrap_or_else(|| value.to_owned());
+        }
+    }
+    match reason {
+        Some(reason) => format!("Reason: {reason}\nSource passage: {passage}\nVerdict: {label}"),
+        None => reply.to_owned(),
+    }
+}
+
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Update claims after a lesson edit.") {
@@ -105,7 +268,34 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
 }
 #[async_trait::async_trait]
 impl LLMPort for Model {
-    async fn generate(&self, prompt: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompts = fixture_prompts(request);
+        if self.batch_unavailable && prompts.len() > 1 {
+            return Err(AppError::ServiceNotAvailable(
+                "fixture server cannot finish a group".into(),
+            ));
+        }
+        let mut replies = Vec::new();
+        for prompt in prompts {
+            replies.push(self.respond(&prompt).await?);
+        }
+        Ok(fixture_completion(request, replies))
+    }
+    fn model_name(&self) -> &str {
+        self.name
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+impl Model {
+    async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             self.extracted_sections
                 .lock()
@@ -180,27 +370,8 @@ impl LLMPort for Model {
             prompt.chars().take(100).collect::<String>()
         )))
     }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(invalid("unused"))
-    }
-    fn model_name(&self) -> &str {
-        self.name
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
 }
+
 fn candidate(statement: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":format!("{} ", statement).repeat(24),"rubric":[]}],"questions":[]})
 }
@@ -517,12 +688,28 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     }
     #[async_trait::async_trait]
     impl LLMPort for InterruptedRepair {
-        async fn generate(
-            &self,
-            prompt: &str,
-            context: &[String],
-            images: Option<Vec<String>>,
-        ) -> Result<String> {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            self.model.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.model.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.model.max_context_tokens()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl InterruptedRepair {
+        async fn respond(&self, prompt: &str) -> Result<String> {
             if prompt.starts_with("Repair verified lesson defects.") {
                 if self.repairs.fetch_add(1, Ordering::Relaxed) == 1 {
                     return Err(AppError::Network(
@@ -542,29 +729,10 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                     self.good_checks.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            self.model.generate(prompt, context, images).await
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
-        fn model_name(&self) -> &str {
-            self.model.model_name()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.model.count_tokens(text)
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.model.max_context_tokens()
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
+            self.model.respond(prompt).await
         }
     }
+
     let pool = crate::features::learning::tests::pool().await?;
     let repository = LearningRepository::new(pool.clone());
     let program = crate::features::learning::tests::fixture();
@@ -577,7 +745,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         })
         .await?;
     let program = repository.get(&program.summary.id).await?;
-    let jobs = LearningCurriculumRepository::new(pool);
+    let jobs = LearningCurriculumRepository::new(pool.clone());
     jobs.plan(&program.summary.id).await?;
     let target = &program.modules[0].lessons[0].id;
     let job = jobs
@@ -590,7 +758,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             progress_total: 1,
         })
         .await?;
-    jobs.begin_job(&job.id).await?;
+    JobStore::new(pool.clone()).claim(&job.id).await?;
     let model = InterruptedRepair {
         model: Model::new(),
         repairs: AtomicUsize::new(0),
@@ -610,7 +778,9 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     })
     .await;
     let error = first.unwrap_err();
-    jobs.fail_job(&job.id, &error.to_string()).await?;
+    JobStore::new(pool.clone())
+        .fail(&job.id, "generation_failed", &error.to_string())
+        .await?;
     let partial = jobs.lesson_draft(&job.id, target).await?.unwrap();
     assert!(partial.pending_repair.is_some());
     let partial: Value = serde_json::from_str(&partial.candidate)?;
@@ -627,7 +797,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             expected_revision: program.summary.revision,
         })
         .await?;
-    jobs.begin_job(&retry.id).await?;
+    JobStore::new(pool.clone()).claim(&retry.id).await?;
     let (_, report) = lesson_drafts::run(&jobs, &retry.id, target, async {
         let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
         assert!(
@@ -673,12 +843,28 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
-        async fn generate(
-            &self,
-            prompt: &str,
-            context: &[String],
-            images: Option<Vec<String>>,
-        ) -> Result<String> {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            "gradual-repair-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl GradualRepair {
+        async fn respond(&self, prompt: &str) -> Result<String> {
             if prompt.starts_with("Extract lesson claims.") {
                 let data = self::context(prompt);
                 let unit = &data["units"][0];
@@ -731,29 +917,10 @@ async fn repairs_continue_with_fewer_defects_and_escalate_repeated_defects() -> 
             {
                 return Ok("contradicted\nReason: The fixture reference preserves whitespace rather than removing it.\nSource passage: passage-0".into());
             }
-            self.inner.generate(prompt, context, images).await
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
-        fn model_name(&self) -> &str {
-            "gradual-repair-fixture"
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.len() / 4
-        }
-        fn max_context_tokens(&self) -> usize {
-            128_000
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
+            self.inner.respond(prompt).await
         }
     }
+
     for repeats_once in [false, true] {
         let model = GradualRepair {
             inner: Model::new(),
@@ -861,12 +1028,28 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
     }
     #[async_trait::async_trait]
     impl LLMPort for CoverageModel {
-        async fn generate(
-            &self,
-            prompt: &str,
-            context_data: &[String],
-            history: Option<Vec<String>>,
-        ) -> Result<String> {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.inner.max_context_tokens()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.inner.count_tokens(text)
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl CoverageModel {
+        async fn respond(&self, prompt: &str) -> Result<String> {
             if prompt.starts_with("Audit claim fidelity.")
                 && prompt.contains("\"id\":\"unit-0-passage-")
                 && self
@@ -940,29 +1123,10 @@ async fn missing_claim_coverage_is_corrected_without_rewriting_lesson_content() 
                 }
                 return Ok(response.to_string());
             }
-            self.inner.generate(prompt, context_data, history).await
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            Err(invalid("unused"))
-        }
-        fn model_name(&self) -> &str {
-            self.inner.model_name()
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.inner.max_context_tokens()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.inner.count_tokens(text)
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
+            self.inner.respond(prompt).await
         }
     }
+
     let model = CoverageModel {
         inner: Model::new(),
         audits: std::sync::atomic::AtomicUsize::new(0),
@@ -1475,9 +1639,6 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
     struct TruncatedJudge(std::sync::atomic::AtomicUsize);
     #[async_trait::async_trait]
     impl LLMPort for TruncatedJudge {
-        fn supports_typed_completions(&self) -> bool {
-            true
-        }
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             assert!(request.no_time_limit);
             assert!(request.max_output_tokens.unwrap() > 512);
@@ -1498,17 +1659,7 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
                 ..Default::default()
             })
         }
-        async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-            unreachable!()
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
-        }
+
         fn model_name(&self) -> &str {
             "truncated-judge"
         }
@@ -1542,20 +1693,6 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
 
 #[async_trait::async_trait]
 impl LLMPort for TypedModel {
-    async fn generate(&self, _: &str, _: &[String], _: Option<Vec<String>>) -> Result<String> {
-        Ok(self.response.text.clone())
-    }
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(invalid("unused"))
-    }
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
         Ok(self.response.clone())
     }

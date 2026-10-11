@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::application::ports::ConversationHistoryPort;
 use sqlx::SqlitePool;
 
-use crate::application::services::conversation_memory::CompactionSlots;
+use crate::features::conversation::handoff::HandoffsInFlight;
+use crate::features::conversation::memory::CompactionSlots;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::service::ConversationService;
 use crate::features::conversation::use_cases::CreateConversationUseCase;
@@ -34,6 +35,8 @@ pub struct ConversationDi {
     /// The memory ledger port, shared so every caller sees one snapshot read.
     pub conversation_memory:
         Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>,
+    /// Conversations a continue-in-new-chat handoff is summarizing.
+    pub handoffs_in_flight: Arc<HandoffsInFlight>,
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
@@ -49,6 +52,7 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
         conversation_context,
         compaction_slots: Arc::new(CompactionSlots::default()),
         conversation_memory,
+        handoffs_in_flight: Arc::new(HandoffsInFlight::default()),
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
             conversation_service.clone(),
@@ -89,6 +93,10 @@ impl Container {
     /// Shared compaction slots. One per process, by construction.
     pub fn compaction_slots(&self) -> Arc<CompactionSlots> {
         Arc::clone(self.ai.compaction_slots())
+    }
+
+    pub(crate) fn handoffs_in_flight(&self) -> Arc<HandoffsInFlight> {
+        Arc::clone(self.ai.handoffs_in_flight())
     }
 
     /// The conversation-memory ledger port.

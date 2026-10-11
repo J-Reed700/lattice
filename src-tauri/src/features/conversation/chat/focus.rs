@@ -16,7 +16,6 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::repository::ConversationRepository;
 
 /// The documents a turn is confined to, after the space scope has had its say.
 #[derive(Debug, Clone, Default)]
@@ -46,7 +45,7 @@ impl FocusScope {
             return Self::default();
         }
 
-        let repository = ConversationRepository::new(container.db_pool().clone());
+        let repository = container.chat_records();
         let space_scope = match repository.retrieval_document_scope(conversation_id).await {
             Ok(Some((_, ids))) => ids,
             Ok(None) => {

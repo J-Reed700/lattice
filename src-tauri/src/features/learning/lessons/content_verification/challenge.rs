@@ -2,7 +2,8 @@
 //! This separate pass may raise research questions, never approve an unsupported
 //! claim or turn the model's recollection into evidence of a contradiction.
 use super::*;
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use crate::application::ports::llm_port::InferencePriority;
+use crate::application::services::grounded_generation::{GroundedRequest, Streaming};
 
 mod batch;
 pub(super) use batch::guard_batch;
@@ -21,6 +22,57 @@ struct Question {
     rationale: String,
 }
 
+/// Room held back for each claim's questions; the answer may also use what
+/// the prompt leaves of the window.
+const QUESTIONS_OUTPUT_TOKENS: usize = 1200;
+
+fn challenge_request(
+    system: &str,
+    prompt: String,
+    schema: Value,
+    claims: usize,
+) -> GroundedRequest {
+    let mut request = crate::features::learning::model_call::structured(
+        system,
+        prompt,
+        schema,
+        QUESTIONS_OUTPUT_TOKENS * claims,
+        "low",
+    );
+    request.output_fills_window = true;
+    request.call.sampling = Some(SamplingOverride::deterministic());
+    request.call.no_time_limit = true;
+    request.call.priority = InferencePriority::Verification;
+    request.call.cache_key = crate::features::learning::lesson_progress::cache_key();
+    request
+}
+
+async fn send_challenge(
+    llm: &dyn LLMPort,
+    request: GroundedRequest,
+    too_large: &str,
+) -> Result<crate::application::services::grounded_generation::GroundedOutput> {
+    let receive = |text: String| {
+        crate::features::learning::lesson_progress::received(&text);
+        Ok(())
+    };
+    let retry = |attempt: usize| {
+        crate::features::learning::lesson_progress::model_retry(attempt);
+        Ok(())
+    };
+    crate::features::learning::model_call::send(
+        llm,
+        request,
+        Some(&Streaming {
+            on_text: &receive,
+            on_retry: Some(&retry),
+        }),
+        None,
+        too_large,
+    )
+    .await
+}
+
 async fn questions(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Result<Questions> {
     let evidence = passages
         .iter()
@@ -30,62 +82,21 @@ async fn questions(llm: &dyn LLMPort, claim: &str, passages: &[String]) -> Resul
         .join("\n\n");
     let prompt = format!("Source passages:\n{evidence}\n\nClaim: {claim}");
     let schema = json!({"type":"object","additionalProperties":false,"required":["queries"],"properties":{"queries":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["query","rationale"],"properties":{"query":{"type":"string","minLength":3,"maxLength":240},"rationale":{"type":"string","minLength":1,"maxLength":800}}}}}});
-    let remaining = llm
-        .max_context_tokens()
-        .saturating_sub(llm.count_tokens(SYSTEM) + llm.count_tokens(&prompt));
-    if remaining < 1200 {
-        return Err(invalid(
-            "The evidence challenge does not fit in the model's context window.",
-        ));
+    let request = challenge_request(SYSTEM, prompt, schema, 1);
+    let _model_call = crate::features::learning::lesson_progress::model_call();
+    let response = send_challenge(
+        llm,
+        request,
+        "The evidence challenge does not fit in the model's context window.",
+    )
+    .await?;
+    if !matches!(
+        response.finish_reason.as_str(),
+        "stop" | "end_turn" | "completed"
+    ) {
+        return Err(invalid("The evidence challenge response did not complete."));
     }
-    let raw = if llm.supports_typed_completions() {
-        let request = CompletionRequest {
-            input: vec![
-                CompletionInput::Message {
-                    role: "system".into(),
-                    content: SYSTEM.into(),
-                },
-                CompletionInput::Message {
-                    role: "user".into(),
-                    content: prompt,
-                },
-            ],
-            json_schema: Some(schema),
-            sampling: Some(SamplingOverride::deterministic()),
-            reasoning_effort: Some("low".into()),
-            max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32),
-            no_time_limit: true,
-            ..Default::default()
-        };
-        let _model_call = crate::features::learning::lesson_progress::model_call();
-        let response = llm
-            .complete_with_retry_progress(
-                &request,
-                &|text| {
-                    crate::features::learning::lesson_progress::received(&text);
-                    Ok(())
-                },
-                &|attempt| {
-                    crate::features::learning::lesson_progress::model_retry(attempt);
-                    Ok(())
-                },
-            )
-            .await?;
-        if !matches!(
-            response.finish_reason.as_str(),
-            "stop" | "end_turn" | "completed"
-        ) {
-            return Err(invalid("The evidence challenge response did not complete."));
-        }
-        response.text
-    } else {
-        llm.generate(
-            &format!("{SYSTEM}\n\nReturn JSON matching this schema: {schema}\n\n{prompt}"),
-            &[],
-            None,
-        )
-        .await?
-    };
+    let raw = response.text;
     let questions: Questions = crate::features::learning::generation::parse_json(&raw)?;
     validate_questions(&questions)?;
     Ok(questions)

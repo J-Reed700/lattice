@@ -1,58 +1,66 @@
-//! Durable redelivery after a temporary service or connection outage.
+//! How lesson jobs run under the job runtime: one preparation per course,
+//! resumption after a restart, and durable redelivery after a temporary
+//! service or connection outage.
 use super::*;
+use crate::shared::runtime::jobs::{
+    Backoff, Deferral, JobFailure, JobKindConfig, JobRecord, RecoveryPolicy,
+};
 
-impl LearningCurriculumRepository {
-    pub(in crate::features::learning) async fn defer_job(
-        &self,
-        id: &str,
-        error: &AppError,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let row = sqlx::query(
-            "SELECT status,kind,retry_count,activity_json FROM learning_generation_jobs WHERE id=?",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        // Cancellation and completed publication always win over late failures.
-        if row.get::<String, _>("status") != "running"
-            || row.get::<String, _>("kind") != "lesson_preparation"
-        {
-            tx.commit().await.map_err(db)?;
-            return Ok(());
-        }
-        let stamp = now();
-        let retries = row.get::<i64, _>("retry_count");
-        // This caps the delay between attempts, never the job's running time or
-        // number of attempts. The dispatcher releases the worker while waiting.
-        let delay_ms = (30_000_i64 << retries.clamp(0, 4) as u32).min(300_000);
-        let mut activity: Option<curriculum::LearningGenerationActivity> = row
-            .get::<Option<String>, _>("activity_json")
-            .as_deref()
-            .map(decode)
-            .transpose()?;
-        if let Some(activity) = &mut activity {
+pub(in crate::features::learning) const LESSON_PREPARATION: &str = "learning.lesson_preparation";
+
+/// Jobs for a course share its source snapshots and accepted outline: each one
+/// refreshes and re-embeds the same sources and seeds the same snapshot, and
+/// two at once would do that work twice over the same rows. Different courses
+/// are independent, and how their model calls share the backend is the
+/// inference scheduler's decision. A running preparation resumes from its
+/// checkpoints after a restart.
+pub(in crate::features::learning) fn lesson_job_config() -> JobKindConfig {
+    JobKindConfig::new(RecoveryPolicy::Requeue)
+        .exclusive_per_subject()
+        .backoff(Backoff::default())
+}
+
+/// A disconnected model request is deferred work, not a failed lesson review.
+/// Repeated outages never exhaust a budget; the delay between attempts grows
+/// to five minutes.
+pub(in crate::features::learning) fn lesson_failure(
+    job: &JobRecord,
+    error: &AppError,
+) -> JobFailure {
+    if !JobFailure::is_transient(error) {
+        return JobFailure::Fail {
+            code: "generation_failed".into(),
+            message: error.to_string(),
+        };
+    }
+    let activity = job
+        .activity
+        .clone()
+        .and_then(|value| {
+            serde_json::from_value::<curriculum::LearningGenerationActivity>(value).ok()
+        })
+        .map(|mut activity| {
             activity.model_running = false;
             activity.response_characters = 0;
             activity.model_attempt = 0;
-            activity.last_activity_at = stamp;
+            activity.last_activity_at = now();
+            activity
+        })
+        .and_then(|activity| serde_json::to_value(activity).ok());
+    let message = match error {
+        AppError::Network(_) => "Connection interrupted; saved work will resume automatically",
+        AppError::RateLimitExceeded(_) => {
+            "The model service is rate limiting requests; preparation will retry automatically"
         }
-        let message = match error {
-            AppError::Network(_) => "Connection interrupted; saved work will resume automatically",
-            AppError::RateLimitExceeded(_) => "The model service is rate limiting requests; preparation will retry automatically",
-            _ => "The model service could not finish the request; preparation will retry automatically",
-        };
-        let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. Repeated service failures can prevent further progress until the service recovers. You can leave this screen or cancel.";
-        let detail = format!("{error} {recovery}");
-        sqlx::query("UPDATE learning_generation_jobs SET status='pending',finished_at=NULL,error_code='temporarily_unavailable',error_message=?,progress_message=?,heartbeat_at=?,activity_json=?,retry_not_before=?,retry_count=? WHERE id=? AND status='running'")
-            .bind(detail).bind(message).bind(stamp).bind(activity.as_ref().map(encode).transpose()?)
-            .bind(stamp.saturating_add(delay_ms)).bind(retries.saturating_add(1)).bind(id)
-            .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_generation_job_events(job_id,ordinal,status,progress_current,message,created_at) SELECT j.id,(SELECT coalesce(max(ordinal),-1)+1 FROM learning_generation_job_events WHERE job_id=j.id),'pending',j.progress_current,?,? FROM learning_generation_jobs j WHERE j.id=?")
-            .bind(message).bind(stamp).bind(id).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)
-    }
+        _ => "The model service could not finish the request; preparation will retry automatically",
+    };
+    let recovery = "Your draft and completed checks are saved. Preparation retries automatically while Lattice is open, with increasing delays of up to five minutes. Repeated service failures can prevent further progress until the service recovers. You can leave this screen or cancel.";
+    JobFailure::Defer(Deferral {
+        code: "temporarily_unavailable".into(),
+        message: format!("{error} {recovery}"),
+        progress_message: message.into(),
+        activity,
+    })
 }
 
 #[cfg(test)]

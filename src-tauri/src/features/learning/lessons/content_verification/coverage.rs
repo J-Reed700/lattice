@@ -356,27 +356,20 @@ pub(in crate::features::learning) async fn live_mapping_fixture(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use crate::features::learning::content_verification::tests::{
+        fixture_completion, fixture_prompts,
+    };
 
     struct FidelityModel(&'static str);
     #[async_trait::async_trait]
     impl LLMPort for FidelityModel {
-        async fn generate(
-            &self,
-            prompt: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<String> {
-            assert!(prompt.starts_with("Audit claim fidelity."));
-            assert!(prompt.contains("Claim: Equal inputs guarantee identical results."));
-            Ok(self.0.into())
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
         }
         fn model_name(&self) -> &str {
             "fidelity-protocol-fixture"
@@ -391,30 +384,24 @@ mod tests {
             Ok(true)
         }
     }
+    impl FidelityModel {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            assert!(prompt.starts_with("Audit claim fidelity."));
+            assert!(prompt.contains("Claim: Equal inputs guarantee identical results."));
+            Ok(self.0.into())
+        }
+    }
 
     struct ConcurrentFidelityModel(std::sync::atomic::AtomicUsize);
 
     #[async_trait::async_trait]
     impl LLMPort for ConcurrentFidelityModel {
-        async fn generate(
-            &self,
-            prompt: &str,
-            context: &[String],
-            stops: Option<Vec<String>>,
-        ) -> Result<String> {
-            if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                futures::future::pending::<()>().await;
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
             }
-            FidelityModel("supported\nReason: The fixture assertions are represented.\nSource passage: passage-0")
-                .generate(prompt, context, stops).await
-        }
-        async fn generate_streaming(
-            &self,
-            _: &str,
-            _: &[String],
-            _: Option<Vec<String>>,
-        ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-            unreachable!()
+            Ok(fixture_completion(request, replies))
         }
         fn model_name(&self) -> &str {
             "concurrent-fidelity-fixture"
@@ -427,6 +414,15 @@ mod tests {
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+    }
+    impl ConcurrentFidelityModel {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                futures::future::pending::<()>().await;
+            }
+            FidelityModel("supported\nReason: The fixture assertions are represented.\nSource passage: passage-0")
+                .respond(prompt).await
         }
     }
 

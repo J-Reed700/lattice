@@ -36,12 +36,19 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     content: &[Value],
 ) -> Result<Value> {
     let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, _) = tests::batch_scheduler_tests::setup(&pool).await?;
-    crate::features::learning::lesson_progress::run(&repo, &job, async {
-        Ok(serde_json::to_value(
-            inventory::extract(llm, content).await?,
-        )?)
-    })
+    let (_, job, _) = tests::batch_scheduler_tests::setup(&pool).await?;
+    crate::features::learning::lesson_progress::run(
+        &crate::shared::runtime::jobs::JobContext::detached(
+            &crate::shared::runtime::jobs::JobStore::new(pool.clone()),
+            &job,
+        )
+        .await?,
+        async {
+            Ok(serde_json::to_value(
+                inventory::extract(llm, content).await?,
+            )?)
+        },
+    )
     .await
 }
 mod repair;

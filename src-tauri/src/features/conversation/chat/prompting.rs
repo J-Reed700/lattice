@@ -428,19 +428,6 @@ pub(super) fn enforce_numeric_citation_format(template: &str) -> String {
     format!("{template}\n\nCitation rule: Use only the supplied numeric passage labels, such as [1], [2]. Each number identifies one passage, not an entire document. Place the citation immediately after the claim it supports. The cited passage must directly support that claim; a shared keyword is not evidence. If no passage supports a claim, say so instead of inventing a citation. Do not output [#] or [^1].")
 }
 
-pub(super) fn render_tool_followup_prompt(
-    template: &str,
-    question: &str,
-    previous_response: &str,
-) -> String {
-    let rendered = template.replace("{question}", question);
-    if previous_response.trim().is_empty() {
-        rendered.replace("{previous_response}", "")
-    } else {
-        rendered.replace("{previous_response}", previous_response)
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod citation_numbering_tests {

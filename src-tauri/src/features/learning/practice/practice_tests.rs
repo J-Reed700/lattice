@@ -13,9 +13,7 @@ use sqlx::{
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
+use crate::features::learning::persistence::db;
 
 async fn setup(pool: &SqlitePool) -> Result<(LearningProgramDto, String)> {
     sqlx::query("PRAGMA foreign_keys=ON")

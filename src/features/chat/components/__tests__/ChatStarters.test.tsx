@@ -13,7 +13,7 @@ const queryResult = vi.hoisted(() => ({
   askedFor: undefined as string | null | undefined,
 }));
 
-vi.mock('@/hooks/queries/useChatStartersQuery', () => ({
+vi.mock('@/features/chat/hooks/useChatStartersQuery', () => ({
   useChatStartersQuery: (spaceId: string | null) => {
     queryResult.askedFor = spaceId;
     return queryResult.current;

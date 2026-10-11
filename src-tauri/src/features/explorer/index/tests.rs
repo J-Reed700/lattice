@@ -12,10 +12,13 @@ use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
 use crate::features::search::engine::vector_search::USearchVectorIndex;
+use crate::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use crate::shared::Result;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
+use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -171,25 +174,47 @@ impl Rig {
                 save_every: 8,
             },
             debounce: Duration::from_millis(100),
-            background: false,
         }
     }
 
-    fn manager_with(
+    /// A manager over a job database of its own.
+    async fn manager_with(
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
     ) -> Arc<FolderIndexManager> {
-        let events = Arc::clone(&self.events);
-        FolderIndexManager::new(
-            config,
-            Arc::new(Source(embedder)),
-            Arc::new(move |status: &FolderIndexStatusDto| events.lock().push(status.clone())),
-        )
+        self.manager_on(config, embedder, jobs_database().await)
+            .await
     }
 
-    fn manager(&self, embedder: &Arc<FakeEmbedder>) -> Arc<FolderIndexManager> {
+    /// A manager over `pool`'s jobs, as the app is after a start: its builds
+    /// registered, saved ones resuming. Every status a build saves is
+    /// collected in `events`.
+    async fn manager_on(
+        &self,
+        config: ManagerConfig,
+        embedder: Option<Arc<FakeEmbedder>>,
+        pool: SqlitePool,
+    ) -> Arc<FolderIndexManager> {
+        let jobs = JobRuntime::with_poll_interval(pool, Duration::from_millis(50));
+        let events = Arc::clone(&self.events);
+        jobs.observe(move |job| {
+            let status = job
+                .activity
+                .clone()
+                .and_then(|activity| serde_json::from_value(activity).ok());
+            if let Some(status) = status {
+                events.lock().push(status);
+            }
+        });
+        let manager = FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs);
+        manager.register().await.unwrap();
+        manager
+    }
+
+    async fn manager(&self, embedder: &Arc<FakeEmbedder>) -> Arc<FolderIndexManager> {
         self.manager_with(self.config(), Some(Arc::clone(embedder)))
+            .await
     }
 
     /// A project folder under the fake home.
@@ -209,6 +234,19 @@ impl Rig {
         dirs.sort();
         dirs
     }
+}
+
+/// The app database's job tables, in memory and kept for the test's length.
+async fn jobs_database() -> SqlitePool {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect(":memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    pool
 }
 
 fn text(root: &Path) -> String {
@@ -372,7 +410,7 @@ mod rules {
     async fn the_disk_root_home_its_ancestors_and_the_data_dir_are_refused() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let parent = rig.home.parent().unwrap().to_path_buf();
         // The data directory's parent holds the index itself.
         let data = rig.base.parent().unwrap().to_path_buf();
@@ -407,7 +445,7 @@ mod rules {
         let embedder = FakeEmbedder::new("model-a");
         let mut config = rig.config();
         config.limits.max_files = 5;
-        let manager = rig.manager_with(config, Some(Arc::clone(&embedder)));
+        let manager = rig.manager_with(config, Some(Arc::clone(&embedder))).await;
         let files: Vec<(String, String)> = (0..8)
             .map(|n| (format!("src/file_{n}.rs"), format!("fn f{n}() {{}}\n")))
             .collect();
@@ -432,7 +470,7 @@ mod rules {
     #[tokio::test(flavor = "multi_thread")]
     async fn no_embedding_model_leaves_the_folder_unindexed() {
         let rig = Rig::new();
-        let manager = rig.manager_with(rig.config(), None);
+        let manager = rig.manager_with(rig.config(), None).await;
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
         let status = open_settled(&manager, &root).await;
         assert_eq!(status.state, FolderIndexState::Unavailable);
@@ -448,7 +486,7 @@ mod incremental {
     async fn only_new_and_changed_files_are_embedded_and_deleted_ones_disappear() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let root = rig.project(
             "project",
             &[
@@ -545,10 +583,11 @@ mod incremental {
                 .unwrap()
                 .with_coalesced_saves(),
         );
-        let status = Arc::new(StatusCell::new(
-            FolderIndexStatusDto::new("", "", FolderIndexState::Scanning),
-            Arc::new(|_: &FolderIndexStatusDto| {}),
-        ));
+        let status = Arc::new(StatusCell::new(FolderIndexStatusDto::new(
+            "",
+            "",
+            FolderIndexState::Scanning,
+        )));
         let indexer = Indexer {
             store: Arc::clone(&store),
             vectors: Arc::clone(&vectors),
@@ -588,64 +627,6 @@ mod incremental {
         assert_eq!(embedded.len(), 2, "{embedded:?}");
         assert_eq!(vectors.count(), 3);
         store.close().await;
-    }
-}
-
-mod cancellation {
-    use super::*;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn closing_stops_the_run_and_reopening_resumes_it() {
-        let rig = Rig::new();
-        let embedder = FakeEmbedder::new("model-a");
-        embedder.delay_ms.store(40, Ordering::SeqCst);
-        let manager = rig.manager(&embedder);
-        let files: Vec<(String, String)> = (0..40)
-            .map(|n| {
-                (
-                    format!("src/m{n:02}.rs"),
-                    format!("pub fn item_{n}() {{}}\n"),
-                )
-            })
-            .collect();
-        let refs: Vec<(&str, &str)> = files
-            .iter()
-            .map(|(a, b)| (a.as_str(), b.as_str()))
-            .collect();
-        let root = rig.project("slow", &refs);
-        manager.open(&text(&root)).await.unwrap();
-        // Ten batches of four; wait for a few, then close mid-run.
-        for _ in 0..500 {
-            if embedder.batches.load(Ordering::SeqCst) >= 3 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        manager.close().await;
-        let at_close = embedder.batches.load(Ordering::SeqCst);
-        assert!(
-            at_close < 10,
-            "the run should not have finished: {at_close}"
-        );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(
-            embedder.batches.load(Ordering::SeqCst),
-            at_close,
-            "nothing runs after close"
-        );
-        let done_before = embedder.embedded().len();
-
-        embedder.delay_ms.store(0, Ordering::SeqCst);
-        embedder.forget_calls();
-        let status = open_settled(&manager, &root).await;
-        assert_eq!(status.state, FolderIndexState::Ready);
-        assert_eq!(status.files_indexed, 40);
-        let resumed = embedder.embedded().len();
-        assert!(
-            resumed < 40 && resumed + done_before >= 40,
-            "resumed {resumed} after {done_before}"
-        );
-        manager.close().await;
     }
 }
 
@@ -689,32 +670,52 @@ mod progress {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn passages_move_after_every_batch_and_files_at_saves() {
-        let rig = Rig::new();
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        for n in 0..12 {
+            write(
+                &root,
+                &format!("src/m{n:02}.rs"),
+                &format!("pub fn item_{n}() {{}}\n"),
+            );
+        }
+        write(&root, ".gitignore", ".index-under-test/\n");
+        let dir = root.join(".index-under-test");
+        let store = Arc::new(FolderStore::open(&dir).await.unwrap());
         let embedder = FakeEmbedder::new("model-a");
-        // Slower than the event throttle, so every batch is told.
+        // Slower than the status throttle, so every batch is told.
         embedder.delay_ms.store(300, Ordering::SeqCst);
-        let manager = rig.manager(&embedder);
-        let files: Vec<(String, String)> = (0..12)
-            .map(|n| {
-                (
-                    format!("src/m{n:02}.rs"),
-                    format!("pub fn item_{n}() {{}}\n"),
-                )
-            })
-            .collect();
-        let refs: Vec<(&str, &str)> = files
-            .iter()
-            .map(|(a, b)| (a.as_str(), b.as_str()))
-            .collect();
-        let root = rig.project("steady", &refs);
-        let status = open_settled(&manager, &root).await;
-        assert_eq!(status.state, FolderIndexState::Ready);
-        assert_eq!((status.passages_embedded, status.passages_total), (12, 12));
-        assert_eq!((status.files_indexed, status.files_total), (12, 12));
-        assert_eq!(status.passages_per_second, None);
-
-        let events = rig.events.lock().clone();
-        let indexing: Vec<&FolderIndexStatusDto> = events
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let status = Arc::new(StatusCell::new(FolderIndexStatusDto::new(
+            "",
+            "",
+            FolderIndexState::Scanning,
+        )));
+        let sink = Arc::clone(&told);
+        status.attach(Arc::new(move |status: &FolderIndexStatusDto| {
+            sink.lock().push(status.clone())
+        }));
+        let indexer = Indexer {
+            store: Arc::clone(&store),
+            vectors: Arc::new(
+                USearchVectorIndex::open_or_create(DIM, store::vectors_path(&dir, "model-a"))
+                    .unwrap()
+                    .with_coalesced_saves(),
+            ),
+            embedder: embedder.clone(),
+            scope: Scope::open(&text(&root)).unwrap(),
+            prefix: String::new(),
+            status: Arc::clone(&status),
+            cancel: CancellationToken::new(),
+            limits: Limits {
+                max_files: 50,
+                batch_size: 4,
+                save_every: 8,
+            },
+        };
+        assert_eq!(indexer.run().await.unwrap(), Outcome::Done);
+        let told = told.lock().clone();
+        let indexing: Vec<&FolderIndexStatusDto> = told
             .iter()
             .filter(|event| event.state == FolderIndexState::Indexing)
             .collect();
@@ -722,9 +723,9 @@ mod progress {
             .iter()
             .map(|event| event.passages_embedded)
             .collect();
-        // Batches of four, a save every eight.
-        assert_eq!(embedded, vec![0, 4, 8, 12], "{embedded:?}");
-        assert!(indexing.iter().all(|event| event.passages_total == 12));
+        // Batches of four, a save every eight; the ignore file is a passage.
+        assert_eq!(embedded, vec![0, 4, 8, 12, 13], "{embedded:?}");
+        assert!(indexing.iter().all(|event| event.passages_total == 13));
         assert_eq!(
             indexing[1].files_indexed, 0,
             "files move when a save marks them"
@@ -733,7 +734,7 @@ mod progress {
             indexing.iter().all(|event| event.eta_seconds.is_none()),
             "no estimate inside the first ten seconds"
         );
-        manager.close().await;
+        store.close().await;
     }
 }
 
@@ -767,7 +768,7 @@ mod search {
     async fn a_path_prefix_keeps_results_inside_it() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let root = rig.project(
             "project",
             &[
@@ -812,7 +813,7 @@ mod registry {
     async fn a_sub_folder_reuses_its_parents_index() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let parent = rig.project(
             "repo",
             &[
@@ -853,7 +854,7 @@ mod registry {
     async fn a_folder_with_its_own_index_keeps_using_it() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let parent = rig.project(
             "code",
             &[
@@ -886,7 +887,7 @@ mod registry {
     async fn no_index_is_deleted_unless_asked() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         for n in 0..10 {
             let root = rig.project(&format!("p{n}"), &[("main.rs", "fn main() {}\n")]);
             open_settled(&manager, &root).await;
@@ -899,7 +900,7 @@ mod registry {
     async fn deleting_a_sub_folders_index_leaves_the_parents_alone() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let parent = rig.project(
             "repo",
             &[
@@ -937,7 +938,7 @@ mod registry {
         let embedder = FakeEmbedder::new("model-a");
         let mut config = rig.config();
         config.limits.max_files = 3;
-        let manager = rig.manager_with(config, Some(Arc::clone(&embedder)));
+        let manager = rig.manager_with(config, Some(Arc::clone(&embedder))).await;
         let root = rig.project(
             "big",
             &[
@@ -999,7 +1000,7 @@ mod registry {
             "project",
             &[("src/retry.rs", RETRY_RS), ("src/parser.rs", PARSER_RS)],
         );
-        let manager = rig.manager(&first);
+        let manager = rig.manager(&first).await;
         open_settled(&manager, &root).await;
         manager.close().await;
         assert_eq!(first.embedded().len(), 2);
@@ -1007,7 +1008,7 @@ mod registry {
         assert!(store::vectors_path(&dir, "model-a").exists());
 
         let second = FakeEmbedder::new("model-b");
-        let manager = rig.manager(&second);
+        let manager = rig.manager(&second).await;
         let status = open_settled(&manager, &root).await;
         assert_eq!(status.state, FolderIndexState::Ready);
         assert_eq!(second.embedded().len(), 2, "every chunk embedded again");
@@ -1023,7 +1024,7 @@ mod registry {
     async fn rebuild_starts_over_and_delete_removes_the_index() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
         open_settled(&manager, &root).await;
         embedder.forget_calls();
@@ -1079,7 +1080,7 @@ mod model {
     async fn search_folder_returns_line_referenced_passages_within_its_allowance() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let body: String = (1..=60)
             .map(|n| format!("    retry_step_{n}();\n"))
             .collect();
@@ -1124,7 +1125,7 @@ mod model {
     async fn first_step_passages_ride_in_the_block_within_half_its_budget() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let long: String = (1..=400)
             .map(|n| format!("line {n} of the open file\n"))
             .collect();
@@ -1180,7 +1181,7 @@ mod model {
     async fn an_empty_index_adds_no_passages_and_no_tool() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let manager = rig.manager(&embedder);
+        let manager = rig.manager(&embedder).await;
         let root = rig.project("empty", &[("logo.png", "\u{0}\u{0}binary only")]);
         let status = open_settled(&manager, &root).await;
         assert_eq!(status.state, FolderIndexState::Ready);
@@ -1206,23 +1207,19 @@ mod model {
     }
 }
 
-mod background {
+/// Builds as jobs: one per folder at a time, the open folder's first, and
+/// resumed after a restart.
+mod builds {
     use super::*;
+    use crate::features::explorer::index::FOLDER_INDEX;
 
-    fn background_manager(rig: &Rig, embedder: &Arc<FakeEmbedder>) -> Arc<FolderIndexManager> {
-        let config = ManagerConfig {
-            background: true,
-            ..rig.config()
-        };
-        rig.manager_with(config, Some(Arc::clone(embedder)))
-    }
-
+    /// `count` files whose passages name `name`, so whose they are is plain.
     fn many_files(rig: &Rig, name: &str, count: usize) -> PathBuf {
         let files: Vec<(String, String)> = (0..count)
             .map(|n| {
                 (
                     format!("src/m{n:02}.rs"),
-                    format!("pub fn item_{n}() {{}}\n"),
+                    format!("pub fn {name}_item_{n}() {{}}\n"),
                 )
             })
             .collect();
@@ -1233,11 +1230,79 @@ mod background {
         rig.project(name, &refs)
     }
 
-    /// Opens `root` and moves on after a few batches, leaving it paused.
-    async fn pause_part_way(manager: &FolderIndexManager, embedder: &FakeEmbedder, root: &Path) {
+    /// `root`'s builds, newest first.
+    async fn builds_of(manager: &FolderIndexManager, root: &Path) -> Vec<JobRecord> {
+        manager
+            .jobs
+            .store()
+            .list_for_subject(FOLDER_INDEX, &text(root))
+            .await
+            .unwrap()
+    }
+
+    /// `root`'s newest build, once it has finished.
+    async fn finished(manager: &FolderIndexManager, root: &Path) -> JobRecord {
+        for _ in 0..3_000 {
+            if let Some(job) = builds_of(manager, root).await.into_iter().next() {
+                if job.status.is_finished() {
+                    return job;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("{} never finished its build", root.display());
+    }
+
+    async fn job_messages(pool: &SqlitePool, id: &str) -> Vec<String> {
+        sqlx::query_scalar("SELECT message FROM job_events WHERE job_id=? ORDER BY ordinal")
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_is_a_job_whose_activity_carries_the_status() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = rig.manager(&embedder).await;
+        let root = rig.project(
+            "project",
+            &[("src/retry.rs", RETRY_RS), ("src/parser.rs", PARSER_RS)],
+        );
+        open_settled(&manager, &root).await;
+        let job = finished(&manager, &root).await;
+        assert_eq!(job.status, JobStatus::Completed);
+        assert_eq!(job.kind, FOLDER_INDEX);
+        assert_eq!(job.subject_id.as_deref(), Some(text(&root).as_str()));
+        assert_eq!((job.progress_current, job.progress_total), (100, 100));
+        let activity: FolderIndexStatusDto =
+            serde_json::from_value(job.activity.clone().unwrap()).unwrap();
+        assert_eq!(activity.state, FolderIndexState::Ready);
+        assert_eq!(activity.root, text(&root));
+        assert_eq!(
+            (activity.passages_embedded, activity.passages_total),
+            (2, 2)
+        );
+
+        // Opening it again builds again, incrementally, and keeps one build
+        // on record.
+        manager.close().await;
+        open_settled(&manager, &root).await;
+        finished(&manager, &root).await;
+        assert_eq!(builds_of(&manager, &root).await.len(), 1);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closing_a_folder_leaves_its_build_running() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
         embedder.delay_ms.store(40, Ordering::SeqCst);
-        embedder.forget_calls();
-        manager.open(&text(root)).await.unwrap();
+        let manager = rig.manager(&embedder).await;
+        let root = many_files(&rig, "slow", 40);
+        manager.open(&text(&root)).await.unwrap();
+        // Ten batches of four; wait for a few, then close mid-run.
         for _ in 0..500 {
             if embedder.batches.load(Ordering::SeqCst) >= 3 {
                 break;
@@ -1245,152 +1310,187 @@ mod background {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         manager.close().await;
-        assert!(
-            embedder.embedded().len() < 40,
-            "the run should have been stopped part-way"
-        );
-    }
+        assert!(embedder.batches.load(Ordering::SeqCst) < 10);
 
-    /// The newest status the app was told for `root`, once it is `state`.
-    async fn told(rig: &Rig, root: &Path, state: FolderIndexState) -> FolderIndexStatusDto {
-        let root = text(root);
-        for _ in 0..1_000 {
-            let found = rig
-                .events
-                .lock()
-                .iter()
-                .rev()
-                .find(|status| status.root == root)
-                .filter(|status| status.state == state)
-                .cloned();
-            if let Some(status) = found {
-                return status;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("{root} never became {state:?}");
-    }
+        // Reopening while it runs joins that build rather than starting one.
+        manager.open(&text(&root)).await.unwrap();
+        let live = builds_of(&manager, &root).await;
+        assert_eq!(live.len(), 1, "one build per folder");
+        manager.close().await;
 
-    async fn summary_of(manager: &FolderIndexManager, root: &Path) -> FolderIndexSummaryState {
-        let indexes = manager.index_dirs().await;
-        manager.summaries(&[root.to_path_buf()], &indexes).await[0].state
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_paused_folder_finishes_once_the_open_one_is_done() {
-        let rig = Rig::new();
-        let embedder = FakeEmbedder::new("model-a");
-        let manager = background_manager(&rig, &embedder);
-        let slow = many_files(&rig, "slow", 40);
-        let quick = rig.project("quick", &[("src/retry.rs", RETRY_RS)]);
-        pause_part_way(&manager, &embedder, &slow).await;
-        assert_eq!(
-            summary_of(&manager, &slow).await,
-            FolderIndexSummaryState::Partial
-        );
-
+        let job = finished(&manager, &root).await;
+        assert_eq!(job.status, JobStatus::Completed);
+        assert_eq!(embedder.embedded().len(), 40, "every passage, once");
+        embedder.forget_calls();
         embedder.delay_ms.store(0, Ordering::SeqCst);
-        let status = open_settled(&manager, &quick).await;
+        let status = open_settled(&manager, &root).await;
         assert_eq!(status.state, FolderIndexState::Ready);
+        assert_eq!(status.files_indexed, 40);
+        assert!(embedder.embedded().is_empty());
+        manager.close().await;
+    }
 
-        let finished = told(&rig, &slow, FolderIndexState::Ready).await;
-        assert_eq!(finished.files_indexed, 40);
-        assert_eq!(finished.passages_embedded, finished.passages_total);
-        // The folder picked stays open, and the paused one's turn was not an
-        // open: it does not jump ahead of it in the list.
-        let open = manager.status(&text(&quick)).await.unwrap();
-        assert_eq!(open.state, FolderIndexState::Ready);
-        let indexes = manager.index_dirs().await;
-        let opened = |root: &Path| {
-            indexes
+    #[tokio::test(flavor = "multi_thread")]
+    async fn opening_a_folder_puts_its_build_ahead_of_the_one_running() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let pool = jobs_database().await;
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .await;
+        let first = many_files(&rig, "first", 40);
+        let second = many_files(&rig, "second", 8);
+        let gate = BatchGate::new(2);
+        *embedder.batch_gate.lock() = Some(Arc::clone(&gate));
+        manager.open(&text(&first)).await.unwrap();
+        gate.blocked.notified().await;
+
+        // The first folder's build gives up its turn at its next batch.
+        manager.open(&text(&second)).await.unwrap();
+        *embedder.batch_gate.lock() = None;
+        gate.permits.close();
+        let second_build = finished(&manager, &second).await;
+        assert_eq!(second_build.status, JobStatus::Completed);
+        let first_build = finished(&manager, &first).await;
+        assert_eq!(first_build.status, JobStatus::Completed);
+
+        let embedded = embedder.embedded();
+        let of = |name: &str| {
+            embedded
                 .iter()
-                .find(|entry| entry.root.as_deref() == Some(root))
-                .map(|entry| entry.last_opened)
-                .unwrap()
+                .enumerate()
+                .filter(|(_, text)| text.contains(name))
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>()
         };
-        assert!(opened(&quick) > opened(&slow));
-
-        // With nothing left paused, the finished index is closed.
-        for _ in 0..500 {
-            if manager.background().await.is_none() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert!(manager.background().await.is_none());
+        let (firsts, seconds) = (of("first_item"), of("second_item"));
+        assert_eq!((firsts.len(), seconds.len()), (40, 8), "each passage once");
         assert_eq!(
-            summary_of(&manager, &slow).await,
-            FolderIndexSummaryState::Indexed
+            seconds.last().unwrap() - seconds[0],
+            7,
+            "the opened folder's build ran whole, without the other between"
         );
-        manager.close().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn opening_a_folder_stops_the_background_until_its_run_is_done() {
-        let rig = Rig::new();
-        let embedder = FakeEmbedder::new("model-a");
-        let manager = background_manager(&rig, &embedder);
-        let slow = many_files(&rig, "slow", 40);
-        let quick = rig.project("quick", &[("src/retry.rs", RETRY_RS)]);
-        let other = rig.project("other", &[("src/parser.rs", PARSER_RS)]);
-        pause_part_way(&manager, &embedder, &slow).await;
-
-        // Let the quick folder finish, then hold the actual background batch.
-        // An old Indexing event from pause_part_way is not proof it resumed.
-        let background_gate = BatchGate::new(1);
-        *embedder.batch_gate.lock() = Some(Arc::clone(&background_gate));
-        embedder.delay_ms.store(0, Ordering::SeqCst);
-        rig.events.lock().clear();
-        open_settled(&manager, &quick).await;
-        background_gate.blocked.notified().await;
-        let cancelled = manager.background_cancellation_token().await.unwrap();
-
-        // The new foreground folder stays active while its priority is checked.
-        let foreground_gate = BatchGate::new(0);
-        *embedder.batch_gate.lock() = Some(Arc::clone(&foreground_gate));
-        let other_root = text(&other);
-        let (opened, ()) = tokio::join!(manager.open(&other_root), async {
-            cancelled.cancelled().await;
-            background_gate.permits.close();
-        });
-        opened.unwrap();
+        assert!(firsts[0] < seconds[0] && firsts[39] > seconds[7]);
         assert!(
-            manager.background().await.is_none(),
-            "the folder being opened goes first"
-        );
-        assert_eq!(
-            summary_of(&manager, &slow).await,
-            FolderIndexSummaryState::Partial
-        );
-
-        foreground_gate.permits.close();
-        assert_eq!(manager.settled().await.state, FolderIndexState::Ready);
-        let finished = told(&rig, &slow, FolderIndexState::Ready).await;
-        assert_eq!(finished.files_indexed, 40);
-        manager.close().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn nothing_resumes_while_the_open_folder_is_still_indexing() {
-        let rig = Rig::new();
-        let embedder = FakeEmbedder::new("model-a");
-        let manager = background_manager(&rig, &embedder);
-        let slow = many_files(&rig, "slow", 40);
-        let busy = many_files(&rig, "busy", 40);
-        pause_part_way(&manager, &embedder, &slow).await;
-        rig.events.lock().clear();
-
-        embedder.delay_ms.store(40, Ordering::SeqCst);
-        manager.open(&text(&busy)).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert!(manager.background().await.is_none());
-        let slow_root = text(&slow);
-        assert!(
-            !rig.events
-                .lock()
+            job_messages(&pool, &first_build.id)
+                .await
                 .iter()
-                .any(|status| status.root == slow_root),
-            "the paused folder waits for the open one"
+                .any(|message| message == "Waiting for its turn"),
+            "the first build queued again rather than ending"
+        );
+        manager.close().await;
+    }
+
+    /// Opens `root` and stops the app part-way through its build.
+    async fn stopped_part_way(
+        rig: &Rig,
+        embedder: &Arc<FakeEmbedder>,
+        pool: &SqlitePool,
+        root: &Path,
+    ) -> JobRecord {
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(embedder)), pool.clone())
+            .await;
+        let gate = BatchGate::new(2);
+        *embedder.batch_gate.lock() = Some(Arc::clone(&gate));
+        manager.open(&text(root)).await.unwrap();
+        gate.blocked.notified().await;
+        manager.jobs.close();
+        gate.permits.close();
+        manager.jobs.drain().await;
+        manager.close().await;
+        *embedder.batch_gate.lock() = None;
+        let job = builds_of(&manager, root).await.remove(0);
+        assert_eq!(job.status, JobStatus::Pending, "saved to resume");
+        assert!(embedder.embedded().len() < 40);
+        job
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_stopped_by_a_restart_resumes_at_the_next_start() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let pool = jobs_database().await;
+        let root = many_files(&rig, "resumed", 40);
+        let stopped = stopped_part_way(&rig, &embedder, &pool, &root).await;
+        let before = embedder.embedded().len();
+        embedder.forget_calls();
+
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .await;
+        let job = finished(&manager, &root).await;
+        assert_eq!(job.id, stopped.id);
+        assert_eq!(job.status, JobStatus::Completed);
+        assert_eq!(
+            embedder.embedded().len() + before,
+            40,
+            "the build resumes where it stopped"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_whose_folder_is_gone_fails_at_the_next_start() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let pool = jobs_database().await;
+        let root = many_files(&rig, "gone", 40);
+        stopped_part_way(&rig, &embedder, &pool, &root).await;
+        std::fs::remove_dir_all(&root).unwrap();
+        embedder.forget_calls();
+
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .await;
+        let job = finished(&manager, &root).await;
+        assert_eq!(job.status, JobStatus::Failed);
+        assert_eq!(job.error_code.as_deref(), Some("folder_missing"));
+        assert!(embedder.embedded().is_empty());
+    }
+
+    /// After its build, the open folder follows saves through its watcher.
+    /// Those updates are not jobs, so they are announced on their own.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watcher_update_after_the_build_is_announced_without_a_job() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let manager = rig.manager(&embedder).await;
+        let announced = Arc::new(Mutex::new(Vec::<FolderIndexStatusDto>::new()));
+        let sink = Arc::clone(&announced);
+        manager.on_folder_changed(Arc::new(move |status: &FolderIndexStatusDto| {
+            sink.lock().push(status.clone())
+        }));
+        let root = rig.project("watched", &[("src/retry.rs", RETRY_RS)]);
+        let opened = open_settled(&manager, &root).await;
+        assert_eq!(opened.files_indexed, 1);
+        let builds = builds_of(&manager, &root).await.len();
+
+        write(&root, "src/parser.rs", PARSER_RS);
+
+        let status = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let found = announced
+                    .lock()
+                    .iter()
+                    .rev()
+                    .find(|status| {
+                        status.state == FolderIndexState::Ready && status.files_indexed == 2
+                    })
+                    .cloned();
+                if let Some(status) = found {
+                    return status;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the watcher's update was never announced");
+        assert_eq!(status.root, text(&root));
+        assert_eq!(status.passages_embedded, 2);
+        assert_eq!(
+            builds_of(&manager, &root).await.len(),
+            builds,
+            "a small change is no job of its own"
         );
         manager.close().await;
     }

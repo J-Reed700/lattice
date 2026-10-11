@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { parseMessageSources, type JournalMessageSource } from '@/features/journal/hooks/useJournalSources';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 

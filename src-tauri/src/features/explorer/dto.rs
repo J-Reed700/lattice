@@ -118,6 +118,9 @@ pub struct ExplorerFolderDto {
     pub instructions: Option<String>,
     /// The space its threads belong to; General unless one was chosen.
     pub space_id: String,
+    /// The thread the folder's chat last showed; `None` when it has none or
+    /// that thread was deleted.
+    pub last_thread_id: Option<String>,
 }
 
 /// The folders list, with the home folder so paths under it can be shown

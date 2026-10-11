@@ -15,7 +15,7 @@
 
 use crate::application::ports::{Filter, RepositoryPort};
 use crate::features::tags::entity::Tag as TagEntity;
-use crate::infrastructure::persistence::mappers::{TagMapper, TagModel};
+use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use crate::shared::error::{AppError, Result};
 use crate::shared::types::TagName;
 use async_trait::async_trait;

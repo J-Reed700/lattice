@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
@@ -22,8 +21,9 @@ import {
   type JournalMessageSource,
   type JournalSourceSummary,
 } from '@/features/journal/hooks/useJournalSources';
+import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import VaultAPI from '@/lib/api';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 

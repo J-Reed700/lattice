@@ -1,24 +1,18 @@
 //! Durable attempt/session storage for the Grounded Practice Workbench.
 use crate::features::learning::dto::*;
+use crate::features::learning::{
+    operations::Operation,
+    persistence::{db, hash_text, now},
+};
 use crate::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 const MAX_ARTIFACT_CHARS: usize = 24_000;
 const MAX_TUTOR_PROMPT_CHARS: usize = 2_000;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
-fn digest(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 fn json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| AppError::Serialization(e.to_string()))
@@ -250,7 +244,7 @@ impl LearningPracticeRepository {
                 .unwrap_or_default(),
             sha256: row
                 .get::<Option<String>, _>("artifact_sha")
-                .unwrap_or_else(|| digest("")),
+                .unwrap_or_else(|| hash_text("")),
             updated_at: row
                 .get::<Option<i64>, _>("artifact_updated")
                 .unwrap_or(summary.created_at),
@@ -479,19 +473,9 @@ impl LearningPracticeRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let row=sqlx::query("SELECT program_id,session_id,kind,payload_hash FROM learning_practice_operations WHERE operation_id=?").bind(operation_id).fetch_optional(&self.pool).await.map_err(db)?;
-        let Some(r) = row else { return Ok(false) };
-        if r.get::<String, _>("program_id") == program_id
-            && r.get::<String, _>("session_id") == session_id
-            && r.get::<String, _>("kind") == kind
-            && r.get::<String, _>("payload_hash") == payload_hash
-        {
-            Ok(true)
-        } else {
-            Err(invalid(
-                "Operation ID was already used with different practice data.",
-            ))
-        }
+        practice_operation(operation_id, program_id, session_id, kind, payload_hash)
+            .seen(&self.pool)
+            .await
     }
 
     async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
@@ -515,19 +499,6 @@ impl LearningPracticeRepository {
             None => Err(AppError::NotFound("Learning program not found".into())),
         }
     }
-    async fn record_operation(
-        tx: &mut Transaction<'_, Sqlite>,
-        operation_id: &str,
-        program_id: &str,
-        session_id: &str,
-        kind: &str,
-        payload_hash: &str,
-        response_id: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query("INSERT INTO learning_practice_operations(operation_id,program_id,session_id,kind,payload_hash,response_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(operation_id).bind(program_id).bind(session_id).bind(kind).bind(payload_hash).bind(response_id).bind(now()).execute(&mut **tx).await.map_err(db)?;
-        Ok(())
-    }
-
     pub async fn start(
         &self,
         req: &StartLearningPracticeSessionRequestDto,
@@ -537,9 +508,18 @@ impl LearningPracticeRepository {
         uuid(&req.lesson_id, "lesson")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(row)=sqlx::query("SELECT program_id,session_id,kind,payload_hash FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<String,_>("program_id")==req.program_id && row.get::<String,_>("session_id")==req.session_id && row.get::<String,_>("kind")=="start" && row.get::<String,_>("payload_hash")==payload_hash { tx.commit().await.map_err(db)?; return self.workspace(&req.program_id).await; }
-            return Err(invalid("Operation ID was already used with different practice data."));
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "start",
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
         }
         Self::verify_active(&mut tx, &req.program_id).await?;
         let program_revision: Option<i64> =
@@ -649,7 +629,7 @@ impl LearningPracticeRepository {
         let timestamp = now();
         sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at,task_kind,revises_session_id) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?,?,?)")
             .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(digest(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(hash_text(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         if let Some(details) = inherited_assistance {
             Self::insert_assistance(
                 &mut tx,
@@ -664,15 +644,14 @@ impl LearningPracticeRepository {
             )
             .await?;
         }
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "start",
             payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -703,8 +682,18 @@ impl LearningPracticeRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)? {
-            if r.get::<String,_>("payload_hash")==payload_hash && r.get::<String,_>("program_id")==req.program_id && r.get::<String,_>("session_id")==req.session_id && r.get::<String,_>("kind")=="save_artifact" {tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;} return Err(invalid("Operation ID was already used with different practice data."));
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "save_artifact",
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
         }
         Self::verify_active(&mut tx, &req.program_id).await?;
         if summary.status != LearningPracticeSessionStatus::Active {
@@ -719,16 +708,15 @@ impl LearningPracticeRepository {
         if update.rows_affected() != 1 {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(digest(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
-        Self::record_operation(
-            &mut tx,
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(hash_text(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "save_artifact",
             payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -754,7 +742,19 @@ impl LearningPracticeRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("payload_hash")==payload_hash&&r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("session_id")==req.session_id&&r.get::<String,_>("kind")=="change_mode"{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));}
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "change_mode",
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         let (current, artifact_revision) = self
             .current_state_in_tx(&mut tx, &req.program_id, &req.session_id)
             .await?;
@@ -787,15 +787,14 @@ impl LearningPracticeRepository {
             t,
         )
         .await?;
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "change_mode",
             payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -881,7 +880,19 @@ impl LearningPracticeRepository {
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("payload_hash")==payload_hash&&r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("session_id")==req.session_id&&r.get::<String,_>("kind")=="open_source"{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));}
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "open_source",
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         let (s, ar) = self
             .current_state_in_tx(&mut tx, &req.program_id, &req.session_id)
             .await?;
@@ -928,15 +939,14 @@ impl LearningPracticeRepository {
             t,
         )
         .await?;
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "open_source",
             payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -953,8 +963,18 @@ impl LearningPracticeRepository {
         uuid(&turn.id, "tutor turn")?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
-        if let Some(r)=sqlx::query("SELECT program_id,session_id,kind,payload_hash FROM learning_practice_operations WHERE operation_id=?").bind(&turn.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{
-            if r.get::<String,_>("program_id")==program_id&&r.get::<String,_>("session_id")==session_id&&r.get::<String,_>("kind")=="tutor"&&r.get::<String,_>("payload_hash")==turn.payload_hash{tx.commit().await.map_err(db)?;return self.workspace(program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));
+        if practice_operation(
+            &turn.operation_id,
+            program_id,
+            session_id,
+            "tutor",
+            &turn.payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(program_id).await;
         }
         let (s, ar) = self
             .current_state_in_tx(&mut tx, program_id, session_id)
@@ -1000,15 +1020,14 @@ impl LearningPracticeRepository {
             t,
         )
         .await?;
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &turn.operation_id,
             program_id,
             session_id,
             "tutor",
             &turn.payload_hash,
-            Some(&turn.id),
         )
+        .record(&mut *tx, &turn.id)
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(program_id).await
@@ -1024,7 +1043,19 @@ impl LearningPracticeRepository {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("payload_hash")==payload_hash&&r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("session_id")==req.session_id&&r.get::<String,_>("kind")=="reveal_solution"{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));}
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "reveal_solution",
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         let (s, ar) = self
             .current_state_in_tx(&mut tx, &req.program_id, &req.session_id)
             .await?;
@@ -1056,15 +1087,14 @@ impl LearningPracticeRepository {
             t,
         )
         .await?;
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "reveal_solution",
             payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -1079,7 +1109,19 @@ impl LearningPracticeRepository {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("payload_hash")==write.payload_hash&&r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("session_id")==req.session_id&&r.get::<String,_>("kind")=="submit"{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));}
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            "submit",
+            &write.payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         let (s, ar) = self
             .current_state_in_tx(&mut tx, &req.program_id, &req.session_id)
             .await?;
@@ -1124,15 +1166,14 @@ impl LearningPracticeRepository {
         if upd.rows_affected() != 1 {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             "submit",
             &write.payload_hash,
-            None,
         )
+        .record(&mut *tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -1153,7 +1194,19 @@ impl LearningPracticeRepository {
         };
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
-        if let Some(r)=sqlx::query("SELECT payload_hash,program_id,session_id,kind FROM learning_practice_operations WHERE operation_id=?").bind(&req.operation_id).fetch_optional(&mut *tx).await.map_err(db)?{if r.get::<String,_>("payload_hash")==payload_hash&&r.get::<String,_>("program_id")==req.program_id&&r.get::<String,_>("session_id")==req.session_id&&r.get::<String,_>("kind")==kind{tx.commit().await.map_err(db)?;return self.workspace(&req.program_id).await;}return Err(invalid("Operation ID was already used with different practice data."));}
+        if practice_operation(
+            &req.operation_id,
+            &req.program_id,
+            &req.session_id,
+            kind,
+            payload_hash,
+        )
+        .seen(&mut *tx)
+        .await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.workspace(&req.program_id).await;
+        }
         let (s, _) = self
             .current_state_in_tx(&mut tx, &req.program_id, &req.session_id)
             .await?;
@@ -1173,15 +1226,14 @@ impl LearningPracticeRepository {
         if upd.rows_affected() != 1 {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        Self::record_operation(
-            &mut tx,
+        practice_operation(
             &req.operation_id,
             &req.program_id,
             &req.session_id,
             kind,
             payload_hash,
-            Some(&req.proposal_id),
         )
+        .record(&mut *tx, &req.proposal_id)
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -1257,5 +1309,23 @@ fn parse_task_kind(value: &str) -> Result<LearningPracticeTaskKind> {
         "guided" => Ok(LearningPracticeTaskKind::Guided),
         "independent" => Ok(LearningPracticeTaskKind::Independent),
         _ => Err(AppError::Database("Invalid practice task kind".into())),
+    }
+}
+
+fn practice_operation<'a>(
+    operation_id: &'a str,
+    program_id: &'a str,
+    session_id: &'a str,
+    kind: &'a str,
+    payload_hash: &'a str,
+) -> Operation<'a> {
+    Operation {
+        id: operation_id,
+        scope: "practice",
+        kind,
+        program_id: Some(program_id),
+        subject_id: Some(session_id),
+        payload_hash,
+        conflict: "Operation ID was already used with different practice data.",
     }
 }

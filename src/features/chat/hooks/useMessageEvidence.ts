@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import type { CitationHover } from '@/features/chat/components/CitationHoverCard';
 import type { ClaimHover } from '@/features/chat/components/ClaimHoverCard';
 import { provenanceLabel, sourceProvenance } from '@/features/chat/model/sourceProvenance';
-import { usePassageReferenceIds, useSettingsQuery } from '@/hooks/queries';
-import { useChatReaderStore } from '@/stores/chatReaderStore';
+import { usePassageReferenceIds } from '@/features/reading/hooks/usePassageReferencesQuery';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
 import { createCitationMap } from '@/utils/citations';
 

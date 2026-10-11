@@ -14,9 +14,9 @@ import { queryClient } from '@/lib/queryClient';
 
 const mocks = vi.hoisted(() => ({ review: vi.fn(), generate: vi.fn(), documents: vi.fn(), decks: vi.fn(), deck: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { reviewStudyCard: mocks.review, generateStudyDeck: mocks.generate, listAllDocuments: mocks.documents, listStudyDecks: mocks.decks, getStudyDeck: mocks.deck } }));
-vi.mock('@/components/ContentViewer/ContentViewer', () => ({ ContentViewer: () => <div>Source viewer</div> }));
+vi.mock('@/features/reading/components/ContentViewer/ContentViewer', () => ({ ContentViewer: () => <div>Source viewer</div> }));
 const card: StudyCardDto = {
-  id: 'card', format: 'multiple_choice', schedulerVersion: 'expanding_v1', deckId: 'deck', question: 'What absorbs light in photosynthesis?', answer: 'Chlorophyll',
+  id: 'card', format: 'multiple_choice', deckId: 'deck', question: 'What absorbs light in photosynthesis?', answer: 'Chlorophyll',
   options: ['Chlorophyll', 'Water', 'Oxygen', 'Glucose', 'Carbon dioxide'], correctIndex: 0,
   explanation: 'Chlorophyll absorbs the light used in photosynthesis.', topic: 'Chlorophyll',
   source: { chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' },

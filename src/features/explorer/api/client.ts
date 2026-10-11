@@ -91,6 +91,13 @@ export const explorerApi = {
   ): Promise<ApiResult<void>> =>
     apiCall('explorer_folder_set_pinned', { root, pinned }),
 
+  /** Remembers the thread the folder's chat shows, so the folder reopens on it. */
+  explorerFolderSetLastThread: (
+    root: string,
+    conversationId: string,
+  ): Promise<ApiResult<void>> =>
+    apiCall('explorer_folder_set_last_thread', { root, conversationId }),
+
   /**
    * Sets a folder's system prompt (empty for none) and the space its threads
    * belong to. Its threads move to that space; returns how many moved.

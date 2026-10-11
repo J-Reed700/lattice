@@ -5,6 +5,7 @@
 //! and that a real snapshot plus real recall reach the assembler intact.
 
 use super::*;
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::llm::engine::factory::MockLLMPort;
 use sqlx::SqlitePool;
@@ -442,39 +443,6 @@ async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruct
     );
 }
 
-#[test]
-fn retrieval_is_budgeted_against_the_plans_history_not_the_whole_window() {
-    use super::super::retrieval::available_rag_budget;
-
-    let llm = llm();
-    let window = llm.max_context_tokens();
-    let question = 10;
-    // A long chat: the string context was filled to (nearly) the whole window.
-    let string_history = window - 1_000;
-    assert_eq!(
-        available_rag_budget(window, question, string_history, 0),
-        0,
-        "the string total leaves retrieval nothing"
-    );
-
-    let history =
-        history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, string_history);
-    let rag = available_rag_budget(window, question, history, 0);
-    assert!(
-        rag > 0,
-        "bounded history must leave retrieval room: {history}"
-    );
-
-    // Retrieval sized this way still fits the plan's own input budget.
-    let capacity = ModelCapacity::new(llm.model_name(), window);
-    let allocation = BudgetAllocation::plan(&capacity, 0).unwrap();
-    assert!(llm.count_tokens("You are helpful.") + question + rag <= allocation.input_budget);
-
-    // A short chat is charged what it has, plus the plan's safety margin.
-    let short = history_tokens_for_rag_budget(llm.as_ref(), "You are helpful.", question, 100);
-    assert_eq!(short, 100 + allocation.safety_margin);
-}
-
 #[tokio::test]
 async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unprocessed_source() {
     let pool = database().await;
@@ -523,3 +491,107 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
 }
 
 mod preparation;
+
+/// A backend whose tokenizer reads twice as many tokens as the default
+/// estimate: two characters a token, as dense code or non-English text does.
+struct DenseTokenizer;
+
+#[async_trait::async_trait]
+impl LLMPort for DenseTokenizer {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(
+            self.respond(request.user_text()).await?,
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "dense"
+    }
+    fn max_context_tokens(&self) -> usize {
+        8_192
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok(text.chars().count().div_ceil(2))
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+impl DenseTokenizer {
+    async fn respond(&self, _prompt: &str) -> Result<String> {
+        Ok(String::new())
+    }
+}
+
+fn plan_with(content: &str, input_budget: usize) -> ContextPlan {
+    use crate::application::services::context_assembler::{ContextAccounting, RecallDiagnostics};
+    ContextPlan {
+        messages: vec![
+            crate::application::ports::llm_port::CompletionInput::Message {
+                role: "user".into(),
+                content: content.into(),
+            },
+        ],
+        memory_revision: 0,
+        transcript_revision: 0,
+        accounting: ContextAccounting {
+            input_budget,
+            accounting_method: Some(TokenAccounting::Estimated),
+            ..Default::default()
+        },
+        retrieval: RecallDiagnostics::default(),
+        compaction_required: false,
+        max_output_tokens: 512,
+        used_memory_ids: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn the_final_fit_is_decided_on_the_backends_own_token_count() {
+    let llm: Arc<dyn LLMPort> = Arc::new(DenseTokenizer);
+    let replanned = std::sync::atomic::AtomicBool::new(false);
+
+    // 400 characters: 100 tokens estimated, 200 counted. Fits a 1 000 budget.
+    let settled = settle_exact_count(&llm, plan_with(&"x".repeat(396), 1_000), 50, |_| {
+        replanned.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(plan_with("", 1_000))
+    })
+    .await
+    .unwrap();
+    assert!(!replanned.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        settled.accounting.accounting_method,
+        Some(TokenAccounting::Exact)
+    );
+    let text_tokens = settled.tokenizable_text().chars().count().div_ceil(2);
+    assert_eq!(
+        settled.accounting.total_input,
+        text_tokens + crate::application::services::context_assembler::MESSAGE_FRAMING_TOKENS + 50
+    );
+}
+
+#[tokio::test]
+async fn a_plan_the_estimate_undercounted_is_planned_again_at_the_measured_ratio() {
+    let llm: Arc<dyn LLMPort> = Arc::new(DenseTokenizer);
+    let seen_scale = std::sync::Mutex::new(None);
+
+    // 4 000 characters: ~1 000 estimated, ~2 000 counted, against a 1 500 budget.
+    let settled = settle_exact_count(&llm, plan_with(&"x".repeat(3_996), 1_500), 0, |counter| {
+        *seen_scale.lock().unwrap() = Some(counter("abcdefgh"));
+        Ok(plan_with(&"x".repeat(1_996), 1_500))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        *seen_scale.lock().unwrap(),
+        Some(4),
+        "the re-plan counts eight characters as four tokens, not two"
+    );
+    assert!(settled.accounting.fits(), "{:?}", settled.accounting);
+    assert_eq!(
+        settled.accounting.accounting_method,
+        Some(TokenAccounting::Exact)
+    );
+}

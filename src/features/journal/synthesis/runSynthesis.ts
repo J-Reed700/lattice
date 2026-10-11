@@ -1,98 +1,117 @@
-
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
+import { weeklySynthesisCandidatesKey } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { appendToNote, buildSynthesisBlock, resolveWeekPage } from '@/features/journal/model/synthesisTargets';
-import { useSynthesisStore, type SynthesisJob } from '@/features/journal/synthesis/synthesisStore';
-import { weeklySynthesisCandidatesKey } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
 import { VaultAPI } from '@/lib/api';
+import type { SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
-import type { SynthesizeJournalEntriesRequest, SynthesizeJournalEntriesResponse } from '@/types/api/conversation';
 import { unwrapApiResult } from '@/types/api/result';
+
+import {
+  isSynthesisLive,
+  markSynthesisApplied,
+  rememberSynthesis,
+  startSynthesis,
+  synthesesQueryOptions,
+  synthesisKeys,
+  synthesisResult,
+  type JournalSynthesisDto,
+  type SynthesisDestinationDto,
+} from './api';
+import { setSaving, useSynthesisPanel } from './synthesisPanel';
 
 import type { QueryClient } from '@tanstack/react-query';
 
-type SynthesisDestination = { kind: 'capture' } | { kind: 'note'; noteId: string } | { kind: 'week'; title: string };
 interface SynthesisRequest {
   title: string;
   heading: string;
-  request: SynthesizeJournalEntriesRequest;
-  destination: SynthesisDestination;
+  request: SynthesizeJournalEntriesRequestDto;
+  destination: SynthesisDestinationDto;
 }
 
-/** One shared workflow for the chat menu, palette and Journal. Component unmounts
- * do not discard its result or redirect the user out of their current work. */
+/**
+ * One shared start for the chat menu, palette and Journal. The synthesis runs
+ * as a job, so leaving the page, or closing the app, does not lose it; this
+ * window saves it to its destination as soon as it finishes. False when one
+ * is already running: the panel is shown instead.
+ */
 export async function runSynthesis(options: SynthesisRequest, client: QueryClient): Promise<boolean> {
-  const startedAt = Date.now();
-  let generated: SynthesizeJournalEntriesResponse | undefined;
-  let block: string | undefined;
+  const syntheses = await client.ensureQueryData(synthesesQueryOptions());
+  if (syntheses.some(isSynthesisLive)) {
+    useSynthesisPanel.setState({ minimized: false });
+    return false;
+  }
+  const synthesis = await startSynthesis({
+    request: options.request,
+    destination: options.destination,
+    title: options.title,
+    heading: options.heading,
+  });
+  useSynthesisPanel.setState((panel) => ({
+    minimized: false,
+    saved: null,
+    autoSave: [...panel.autoSave, synthesis.job.id],
+  }));
+  client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, (list) => rememberSynthesis(list, synthesis));
+  return true;
+}
 
-  const execute = async (): Promise<boolean> => {
-    if (useSynthesisStore.getState().job?.status === 'running') {
-      useSynthesisStore.setState({ minimized: false });
-      return false;
+async function saveTo(destination: SynthesisDestinationDto, block: string, result: SynthesizeJournalEntriesResponseDto) {
+  if (destination.kind === 'capture') {
+    const saved = unwrapApiResult(await VaultAPI.quickCapture(block, result.sources, result.conversationIds));
+    return { noteId: saved.noteId, noteTitle: saved.noteTitle };
+  }
+  const note = destination.kind === 'week'
+    ? await resolveWeekPage(destination.title)
+    : unwrapApiResult(await VaultAPI.listWorkspaceNotes()).notes.find(page => page.id === destination.noteId);
+  if (!note) throw new Error('The destination journal page no longer exists.');
+  const saved = await appendToNote(note, block, result.sources, result.conversationIds);
+  return { noteId: saved.id, noteTitle: saved.title };
+}
+
+const applying = new Set<string>();
+
+/**
+ * Saves a finished synthesis to the destination it was started with, after
+ * open editors have saved, then marks it applied so it is saved once.
+ */
+export async function applySynthesis(synthesis: JournalSynthesisDto, client: QueryClient): Promise<boolean> {
+  const jobId = synthesis.job.id;
+  if (applying.has(jobId)) return false;
+  applying.add(jobId);
+  setSaving(jobId, {});
+  try {
+    // Flush open editors before appending to a page they may own. Revision
+    // checks on the write protect edits made while the request is in flight.
+    if (!(await flushPendingSaves())) {
+      throw new Error('Some edits could not be saved. Save them, then retry saving this synthesis.');
     }
-    const id = crypto.randomUUID();
-    const update = (patch: Partial<SynthesisJob>) => {
-      useSynthesisStore.setState(state => state.job?.id === id ? { job: { ...state.job, ...patch } } : state);
-    };
-    useSynthesisStore.setState({
-      minimized: false,
-      job: {
-        id, title: options.title, conversationIds: options.request.conversationIds,
-        status: 'running', stage: generated ? 'saving' : 'gathering', startedAt,
-        entryCount: generated?.entryCount, chunkCount: generated?.chunkCount,
-      },
+    const result = await synthesisResult(jobId);
+    const block = buildSynthesisBlock({
+      heading: synthesis.heading, entryCount: result.entryCount,
+      synthesis: result.synthesis, citations: result.citations,
     });
-    try {
-      if (!generated) {
-        generated = unwrapApiResult(await VaultAPI.synthesizeJournalEntries(options.request, progress => {
-          // Ignore delayed channel messages once saving has begun or this attempt ended.
-          const current = useSynthesisStore.getState().job;
-          if (current?.id !== id || current.status !== 'running' || current.stage === 'saving') return;
-          update({
-            stage: progress.stage,
-            entryCount: progress.entryCount ?? undefined,
-            chunkIndex: progress.chunkIndex ?? undefined,
-            chunkCount: progress.chunkCount ?? undefined,
-          });
-        }));
-        block = buildSynthesisBlock({
-          heading: options.heading, entryCount: generated.entryCount,
-          synthesis: generated.synthesis, citations: generated.citations,
-        });
-      }
-      update({ stage: 'saving', entryCount: generated.entryCount, chunkCount: generated.chunkCount });
-      const destination = options.destination;
-      let noteId: string;
-      let noteTitle: string;
-      // Flush open editors before appending to a page they may own. Revision
-      // checks on the write protect edits made while the request is in flight.
-      if (!(await flushPendingSaves())) {
-        throw new Error('Some edits could not be saved. Save them, then retry saving this synthesis.');
-      }
-      if (destination.kind === 'capture') {
-        const saved = unwrapApiResult(await VaultAPI.quickCapture(block!, generated.sources ?? [], generated.conversationIds));
-        noteId = saved.noteId;
-        noteTitle = saved.noteTitle;
-      } else {
-        const note = destination.kind === 'week'
-          ? await resolveWeekPage(destination.title)
-          : unwrapApiResult(await VaultAPI.listWorkspaceNotes()).notes.find(page => page.id === destination.noteId);
-        if (!note) throw new Error('The destination journal page no longer exists.');
-        const saved = await appendToNote(note, block!, generated.sources ?? [], generated.conversationIds);
-        noteId = saved.id;
-        noteTitle = saved.title;
-      }
-      // Saving succeeded. Cache refresh failures must never offer to append again.
-      update({ status: 'completed', noteId, noteTitle, finishedAt: Date.now() });
-      await Promise.allSettled([
-        client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY }),
-        client.invalidateQueries({ queryKey: weeklySynthesisCandidatesKey }),
-      ]);
-      return true;
-    } catch (error) {
-      update({ status: 'failed', error: error instanceof Error ? error.message : String(error), finishedAt: Date.now(), retry: execute });
-      return false;
-    }
-  };
-  return execute();
+    const { noteId, noteTitle } = await saveTo(synthesis.destination, block, result);
+    await markSynthesisApplied(jobId);
+    // Saving succeeded. Cache refresh failures must never offer to save again.
+    client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, (list) => list?.filter(item => item.job.id !== jobId));
+    useSynthesisPanel.setState((panel) => ({
+      autoSave: panel.autoSave.filter(id => id !== jobId),
+      saved: {
+        jobId, title: synthesis.title, noteId, noteTitle, entryCount: result.entryCount,
+        startedAt: synthesis.job.startedAt ?? synthesis.job.createdAt,
+        finishedAt: synthesis.job.finishedAt ?? Date.now(),
+      },
+    }));
+    setSaving(jobId, null);
+    await Promise.allSettled([
+      client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY }),
+      client.invalidateQueries({ queryKey: weeklySynthesisCandidatesKey }),
+    ]);
+    return true;
+  } catch (error) {
+    setSaving(jobId, { error: error instanceof Error ? error.message : String(error) });
+    return false;
+  } finally {
+    applying.delete(jobId);
+  }
 }

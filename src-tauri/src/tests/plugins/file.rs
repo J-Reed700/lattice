@@ -26,8 +26,7 @@
 //! tauri::State), these tests can be updated to test the actual command logic.
 
 use crate::features::file::dto::FileMetadataDto;
-use crate::features::file::plugin::commands::{IndexingStatus, MetadataUpdate};
-use std::collections::HashMap;
+use crate::features::file::plugin::commands::IndexingStatus;
 
 /// Test that FileMetadata DTO can be created
 #[test]
@@ -124,94 +123,4 @@ fn smoke_test_indexing_status_dto_complete() {
     assert!(!status.active);
     assert_eq!(status.progress, 1.0);
     println!("✅ IndexingStatus DTO handles complete progress");
-}
-
-/// Test that MetadataUpdate DTO can be created with tags
-#[test]
-fn smoke_test_metadata_update_dto_with_tags() {
-    let update = MetadataUpdate {
-        tags: Some(vec!["important".to_string(), "work".to_string()]),
-        custom_fields: None,
-    };
-
-    assert!(update.tags.is_some());
-    assert_eq!(update.tags.unwrap().len(), 2);
-    assert!(update.custom_fields.is_none());
-    println!("✅ MetadataUpdate DTO created with tags");
-}
-
-/// Test that MetadataUpdate DTO can be created with custom fields
-#[test]
-fn smoke_test_metadata_update_dto_with_custom_fields() {
-    let mut fields = HashMap::new();
-    fields.insert("author".to_string(), "John Doe".to_string());
-    fields.insert("category".to_string(), "documentation".to_string());
-
-    let update = MetadataUpdate {
-        tags: None,
-        custom_fields: Some(fields.clone()),
-    };
-
-    assert!(update.tags.is_none());
-    assert!(update.custom_fields.is_some());
-    assert_eq!(update.custom_fields.unwrap().len(), 2);
-    println!("✅ MetadataUpdate DTO created with custom fields");
-}
-
-/// Test that MetadataUpdate DTO handles empty values
-#[test]
-fn smoke_test_metadata_update_dto_empty() {
-    let update = MetadataUpdate {
-        tags: None,
-        custom_fields: None,
-    };
-
-    assert!(update.tags.is_none());
-    assert!(update.custom_fields.is_none());
-    println!("✅ MetadataUpdate DTO handles empty values");
-}
-
-/// Test that MetadataUpdate DTO can handle both tags and custom fields
-#[test]
-fn smoke_test_metadata_update_dto_full() {
-    let mut fields = HashMap::new();
-    fields.insert("status".to_string(), "reviewed".to_string());
-
-    let update = MetadataUpdate {
-        tags: Some(vec!["urgent".to_string()]),
-        custom_fields: Some(fields),
-    };
-
-    assert!(update.tags.is_some());
-    assert!(update.custom_fields.is_some());
-    assert_eq!(update.tags.unwrap().len(), 1);
-    println!("✅ MetadataUpdate DTO handles both tags and custom fields");
-}
-
-/// Test that MetadataUpdate DTO handles empty tag list
-#[test]
-fn smoke_test_metadata_update_dto_empty_tags() {
-    let update = MetadataUpdate {
-        tags: Some(vec![]),
-        custom_fields: None,
-    };
-
-    assert!(update.tags.is_some());
-    assert_eq!(update.tags.unwrap().len(), 0);
-    println!("✅ MetadataUpdate DTO handles empty tag list");
-}
-
-/// Test that MetadataUpdate DTO handles large tag list
-#[test]
-fn smoke_test_metadata_update_dto_many_tags() {
-    let many_tags: Vec<String> = (0..100).map(|i| format!("tag{}", i)).collect();
-
-    let update = MetadataUpdate {
-        tags: Some(many_tags.clone()),
-        custom_fields: None,
-    };
-
-    assert!(update.tags.is_some());
-    assert_eq!(update.tags.unwrap().len(), 100);
-    println!("✅ MetadataUpdate DTO handles large tag list (100 tags)");
 }

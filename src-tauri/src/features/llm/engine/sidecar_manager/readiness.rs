@@ -138,7 +138,7 @@ pub(super) fn spawn_event_drain(
 ) -> tokio::sync::oneshot::Receiver<Result<(), StartupEnd>> {
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
 
-    tokio::spawn(async move {
+    let _ = crate::shared::runtime::background::spawn(async move {
         let mut rx = rx;
         let mut ready_tx = Some(ready_tx);
 

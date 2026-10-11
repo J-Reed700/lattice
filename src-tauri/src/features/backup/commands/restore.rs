@@ -30,19 +30,6 @@ use std::path::PathBuf;
 /// * `AppError::Other` - Failed to access backup file (permissions, corruption)
 /// * `AppError::Other` - Restore operation failed (incompatible format, I/O error)
 ///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Restore from backup file
-/// await invoke('restore_backup', {
-///   backupPath: '/Users/example/backups/lattice-2024-01-15.lattice-backup'
-/// });
-///
-/// console.log('Database restored from backup!');
-/// ```
-///
 /// # Warning
 ///
 /// **This operation is destructive**:
@@ -167,14 +154,4 @@ pub async fn restore_backup_impl(
     }
 
     result.map(|_| ())
-}
-
-/// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
-pub async fn restore_backup(
-    backup_path: String,
-    container: tauri::State<'_, Container>,
-) -> Result<(), AppError> {
-    restore_backup_impl(backup_path, &container).await
 }

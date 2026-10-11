@@ -2,12 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ReferenceReader } from '@/features/references/components/ReferenceReader';
-import { citationDisplayStore } from '@/stores/citationDisplayStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { SourceWithMetadata } from '@/types/conversation';
 
-vi.mock('@/features/chat/components/SourceCitations', () => ({
+vi.mock('@/features/reading/components/SourceCitations', () => ({
   SourceCitations: () => <div>Saved source cards</div>,
 }));
 

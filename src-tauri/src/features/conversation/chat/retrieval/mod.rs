@@ -1,5 +1,7 @@
+use crate::application::services::context_assembler::EvidenceBudget;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::router::RouterAction;
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
@@ -7,7 +9,6 @@ use crate::features::search::engine::query_expansion::dictionaries::select_infor
 use crate::features::settings::dto::{
     RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
 };
-use crate::infrastructure::services::router::RouterAction;
 use crate::shared::error::Result;
 use crate::shared::text::safe_truncate;
 use serde::Serialize;
@@ -169,7 +170,9 @@ pub(super) struct RetrievalPipelineOutcome {
     /// their documents were consulted when they were not.
     pub(super) kb_attempted: bool,
     pub(super) sources: Vec<SourceDto>,
-    pub(super) available_for_rag: usize,
+    /// The evidence budget retrieval was handed, unchanged: what retrieval
+    /// fetched is charged against it when the prompt is assembled.
+    pub(super) evidence: EvidenceBudget,
     pub(super) sub_timings: RetrievalSubTimingMetrics,
     /// Size of the document set the hard space-scope filter actually allowed.
     /// Not the size of the corpus — a scoped conversation must not claim to
@@ -322,7 +325,7 @@ pub(super) async fn run_retrieval_pipeline(
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     highlight_terms: &[String],
-    available_for_rag: usize,
+    evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
     tool_output_settings: &ToolOutputSettingsDto,
     search_settings: &SearchSettingsDto,
@@ -341,7 +344,7 @@ pub(super) async fn run_retrieval_pipeline(
         search_flags,
         conversation_document_context,
         highlight_terms,
-        available_for_rag,
+        evidence,
         attachment_digest,
         tool_output_settings,
         search_settings,
@@ -349,43 +352,6 @@ pub(super) async fn run_retrieval_pipeline(
         recorder,
     )
     .await
-}
-
-/// What a turn has left for retrieved material, once the answer, the prompt's
-/// own overhead, the question and the history are accounted for.
-///
-/// `carried_tokens` is material already committed to the prompt outside
-/// retrieval — today, the files attached to the message. Subtracting it here
-/// is what keeps web pages and knowledge-base passages from being budgeted
-/// against room an attachment has already taken.
-pub(super) fn available_rag_budget(
-    max_tokens: usize,
-    question_tokens: usize,
-    context_history_tokens: usize,
-    carried_tokens: usize,
-) -> usize {
-    const PROMPT_OVERHEAD_TOKENS: usize = 200;
-
-    let response_budget = response_token_budget(max_tokens);
-    max_tokens
-        .saturating_sub(response_budget)
-        .saturating_sub(PROMPT_OVERHEAD_TOKENS)
-        .saturating_sub(question_tokens)
-        .saturating_sub(context_history_tokens)
-        .saturating_sub(carried_tokens)
-}
-
-/// The room set aside for the answer itself.
-///
-/// The prompt is budgeted against the window *minus* this, so the request has
-/// to reserve the same amount when it asks the provider to generate. A
-/// provider that holds prompt and reservation in one context — llama.cpp does —
-/// fails the whole turn when the two together overrun it, which is how a turn
-/// with a big attachment died on a server with room to spare for the prompt.
-pub(super) fn response_token_budget(max_tokens: usize) -> usize {
-    const RESPONSE_TOKEN_BUDGET_RATIO: f64 = 0.25;
-
-    (max_tokens as f64 * RESPONSE_TOKEN_BUDGET_RATIO) as usize
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -408,6 +374,7 @@ async fn run_kb_retrieval(
     tuning: &RetrievalTuningSettingsDto,
     focus: &super::focus::FocusScope,
     recorder: &super::turn_record::TurnRecorder,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
@@ -423,6 +390,7 @@ async fn run_kb_retrieval(
         tuning,
         focus,
         recorder,
+        cancel,
     )
     .await
 }

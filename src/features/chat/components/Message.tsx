@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
-import { useRevealStreamingRef } from '@/components/Explorer/useRevealStreamingRef';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
 import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
@@ -25,17 +24,18 @@ import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { MessageEditor } from '@/features/chat/components/MessageEditor';
-import { SourceCitations } from '@/features/chat/components/SourceCitations';
 import { TangentSelection } from '@/features/chat/components/tangents/TangentSelection';
 import { TurnRecord } from '@/features/chat/components/turn/TurnRecord';
 import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
+import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
+import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
 import { verificationSummaryLine } from '@/features/chat/model/verificationSummary';
-import { useDownloadedModels } from '@/hooks/useDownloadedModels';
-import { useChatReaderStore } from '@/stores/chatReaderStore';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
-import { useConversationsStore } from '@/stores/conversationsStore';
-import type { GenerationOutcome } from '@/stores/conversationsStore.types';
-import { useExplorerStore } from '@/stores/explorerStore';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { SourceCitations } from '@/features/reading/components/SourceCitations';
+import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
@@ -95,8 +95,6 @@ export const Message = memo(({
   const errorMessage = 'error' in message ? message.error : undefined;
 
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const revealInExplorer = useExplorerStore((s) => s.reveal);
-  const openInExplorer = useExplorerStore((s) => s.openFile);
   const messageBookmarkMap = useConversationsStore((s) => s.messageBookmarkMap);
   const messageVerificationMap = useConversationsStore((s) => s.messageVerification);
   const bookmarkMessage = useConversationsStore((s) => s.bookmarkMessage);
@@ -497,7 +495,7 @@ export const Message = memo(({
     hoveredSource, hoveredVerdict, activeEvidence, hasEvidenceMargin, setLit,
   } = useMessageEvidence({
     sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
-    showCitations, claimVerdicts, showsCodeRefs, revealInExplorer, openInExplorer,
+    showCitations, claimVerdicts, showsCodeRefs, revealInExplorer: revealInFolder, openInExplorer: openInFolder,
   });
   useEffect(() => {
     if (!showCitations) setIsVerificationPanelExpanded(false);

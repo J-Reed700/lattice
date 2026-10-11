@@ -6,6 +6,7 @@ use crate::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
 use crate::features::backup::archive::service::ArchiveService;
 use crate::features::backup::use_cases::CreateBackupUseCase;
 use crate::shared::error::Result;
+use crate::shared::runtime::background;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,8 +59,9 @@ impl BackupScheduler {
         let create_backup_use_case = self.create_backup_use_case.clone();
         let settings_repo = self.settings_repo.clone();
         let archive_service = self.archive_service.clone();
+        let cancel = background::cancellation_token();
 
-        let handle = tokio::spawn(async move {
+        let handle = background::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             let mut consecutive_failures: u32 = 0;
             let mut archive_failures: u32 = 0;
@@ -145,12 +147,15 @@ impl BackupScheduler {
                     _ = &mut shutdown_rx => {
                         break;
                     }
+                    _ = cancel.cancelled() => {
+                        break;
+                    }
                 }
             }
         });
 
         state.shutdown_tx = Some(shutdown_tx);
-        state.handle = Some(handle);
+        state.handle = handle;
         Ok(())
     }
 

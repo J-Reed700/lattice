@@ -11,8 +11,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use async_trait::async_trait;
-use futures::stream::Stream;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
@@ -59,29 +59,11 @@ impl ScriptedLlm {
 
 #[async_trait]
 impl LLMPort for ScriptedLlm {
-    async fn generate(
-        &self,
-        prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        self.calls.lock().push(prompt.to_owned());
-        let response = self.responses.lock().pop().unwrap_or_default();
-        if response == "__stall__" {
-            return std::future::pending().await;
-        }
-        Ok(response)
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse::from_text(
+            self.respond(request.user_text()).await?,
+        ))
     }
-
-    async fn generate_streaming(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Ok(Box::new(Box::pin(futures::stream::empty())))
-    }
-
     fn model_name(&self) -> &str {
         "scripted"
     }
@@ -96,6 +78,16 @@ impl LLMPort for ScriptedLlm {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+impl ScriptedLlm {
+    async fn respond(&self, prompt: &str) -> Result<String> {
+        self.calls.lock().push(prompt.to_owned());
+        let response = self.responses.lock().pop().unwrap_or_default();
+        if response == "__stall__" {
+            return std::future::pending().await;
+        }
+        Ok(response)
     }
 }
 
@@ -197,6 +189,13 @@ impl SummarySearchPort for StubSummarySearch {
             .take(limit)
             .cloned()
             .collect())
+    }
+
+    async fn document_summaries(
+        &self,
+        _scope: &HashSet<String>,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        Ok(std::collections::HashMap::new())
     }
 }
 
@@ -447,6 +446,37 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
     assert!(stored[0]
         .summary_text
         .contains("Key topics: preflight, engines"));
+}
+
+/// The source text is the call's evidence: the model reads its opening, as
+/// much as the window and the ceiling allow, ending on a whole passage, and
+/// the response contract still comes last.
+#[tokio::test]
+async fn a_long_document_is_summarized_from_its_opening_with_the_contract_last() {
+    let pool = pool_with_document().await;
+    let mut source = source_with_sections(0);
+    source.body = (0..5_000)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (use_case, prompts) = use_case(
+        true,
+        Some(source),
+        &[r#"{"summary":"Three sentences.","topics":["a"]}"#],
+        &pool,
+        memory_index(),
+    );
+
+    assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
+
+    let prompt = prompts.lock()[0].clone();
+    assert!(
+        prompt.contains("Beginning of the document:\nw0 w1 w2"),
+        "{prompt:.200}"
+    );
+    assert!(!prompt.contains("w4999"));
+    assert!(prompt.split_whitespace().count() < 3_200);
+    assert!(prompt.ends_with("No prose before or after it."));
 }
 
 #[tokio::test]

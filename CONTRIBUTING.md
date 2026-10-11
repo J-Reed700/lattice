@@ -22,7 +22,7 @@ entry points. Put implementation and operational helpers in their owning folders
 | --- | --- |
 | `src/features/<feature>/` | React feature views, hooks, models, and API clients |
 | `src/shared/` | Shared IPC transport and cross-feature primitives |
-| `src/components/` | Shared UI and remaining feature views during migration |
+| `src/components/` | Shared UI primitives and the app shell (`Layout`, `RootLayout`) |
 | `src-tauri/src/features/<feature>/` | Desktop capabilities, including their commands, loaders, services, and repositories |
 | `src-tauri/src/application/` | Cross-feature contracts, ports, and orchestration |
 | `src-tauri/src/domain/` | Business rules grouped into conversation, download, models, and shared entities/value objects |
@@ -66,19 +66,50 @@ one is missing. Filesystem access is appropriate for user-selected imports and
 artifact cleanup; exceptions to the automated check require an inline
 `repository-barrier-allow` comment explaining why.
 
-Frontend command wrappers live in `src/features/<feature>/api/client.ts`.
-`src/lib/api.ts` is the public facade, and `src/shared/ipc/` owns routing,
-transport, and error normalization. Keep shared persisted queries and mutations
-with their feature; every mutation must update or invalidate all relevant query
-keys. Stores and model helpers must not import views.
+Only `src/shared/ipc/transport.ts` calls `invoke()`, and it accepts only a
+command name from the generated `src/shared/ipc/routes.generated.ts`. Feature
+clients in `src/features/<feature>/api/client.ts` wrap the commands;
+`src/lib/api.ts` (`VaultAPI`) loads them on first use. Views
+(`src/components/**`, `src/features/*/components/**`) reach the backend through
+query and mutation hooks: lint rejects a value import of `VaultAPI`, a feature
+client, the transport or a `@tauri-apps` plugin there. The files that predate
+those rules are listed in `eslint.config.js`; lint fails once a listed file no
+longer needs its entry, so the lists only shrink. Do not add to them. Keep
+shared persisted queries and mutations with their feature; every mutation must
+update or invalidate all relevant query keys. Stores and model helpers must not
+import views, and `import/no-restricted-paths` fixes the direction between
+features: Spaces sits below Chat, Journal and Explorer; Chat may import Journal
+but not Explorer; Reading imports no other feature; `src/shared`, shared UI,
+stores and utilities import no feature.
 
 In the frontend, use React Query for state owned by the backend. Zustand is for
 UI-only preferences such as panel state, sorting, and theme. Do not mirror
 backend state in a client store or `localStorage`.
 
 Keep one representation for each domain concept. Rust DTOs exported over IPC
-must be reflected in the generated TypeScript bindings rather than duplicated
-by hand.
+come from the generated TypeScript bindings (`src/lib/bindings`); types in
+`src/types/api` re-export them rather than redeclaring them.
+
+In Rust, `bash scripts/check-rust-layer-boundaries.sh` enforces the inner
+layers: `domain` imports no other layer and touches no filesystem or
+environment, `application` imports no feature, infrastructure or interfaces
+module, and `shared/error` imports no layer or driver. It also ratchets the
+outer ring against `scripts/rust-architecture-check/baseline.txt`:
+infrastructure importing a feature, one feature referencing another, the DI
+`Container` imported outside plugin, command, DI, desktop, setup and
+interfaces files, and raw `tokio`/`tauri`/`std::thread` spawns outside
+`shared/runtime`. A new or rising count fails. After removing violations, run
+`bash scripts/check-rust-layer-boundaries.sh --write-baseline` and commit the
+smaller baselines; never add a line to get a change through.
+
+Use the shared mechanisms instead of a feature-local copy:
+`shared::runtime::background::spawn` for detached tasks (a deliberate raw
+spawn needs a `// raw-spawn: <reason>` comment); a job kind on the shared job
+runtime (`shared/runtime/jobs`, reported on `jobs://status`) for work that
+must survive a restart or show progress; `LLMPort` with typed requests for
+model calls, which the backend's scheduler admits; `grounded_generation` for
+generators outside chat's tool loop; and `HybridSearchUseCase` for library
+retrieval.
 
 When adding a Tauri command, update all five integration points:
 
@@ -87,10 +118,13 @@ When adding a Tauri command, update all five integration points:
 3. The command list in `src-tauri/build.rs`.
 4. The permission entry in `src-tauri/capabilities/main.json`.
 5. The command list in `src-tauri/src/bin/export_bindings/main.rs`, then
-   `npm run bindings:generate`.
+   `npm run bindings:generate`, which also regenerates
+   `src/shared/ipc/routes.generated.ts`.
 
 Missing step 3 or 4 still compiles and is rejected at runtime;
-`npm run contracts:commands` catches it.
+`npm run contracts:commands` catches it. It also fails on a new
+`#[tauri::command]` function that no handler registers
+(`scripts/tauri-command-orphans.baseline`).
 
 Schema changes go in a new dated migration,
 `src-tauri/migrations/YYYYMMDDHHMMSS_name.sql`. Never edit a migration that
@@ -114,13 +148,17 @@ failure artifacts. Use `npm run test:unit` for a non-interactive Vitest run.
 
 ```bash
 npm run type-check
+npm run type-check:e2e
 npm run lint
-npm test -- --run
+npm run contracts:check
+npm run test:unit
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
+cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
+cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
 python3 scripts/check-sql-contracts.py
 python3 scripts/check-tauri-command-inventory.py
 ```

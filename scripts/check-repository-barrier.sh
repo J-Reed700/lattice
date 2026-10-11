@@ -95,6 +95,10 @@ while IFS= read -r -d '' file; do
   if ! is_high_level_file "$file"; then
     continue
   fi
+  # Test modules split into their own files (`mod tests;` under #[cfg(test)]).
+  case "$file" in
+    */tests.rs | *_tests.rs | */tests/*) continue ;;
+  esac
   checked_files=$((checked_files + 1))
   check_matches "$file" "filesystem state" "$FS_PATTERN"
   if owns_no_sql "$file"; then

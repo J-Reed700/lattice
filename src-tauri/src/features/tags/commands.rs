@@ -426,8 +426,6 @@ pub async fn get_all_tags_with_counts_impl(container: &Container) -> Result<Vec<
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
 pub async fn get_all_tags_with_counts_ddd(
     container: State<'_, Container>,
 ) -> Result<Vec<TagWithCountDto>> {
@@ -478,8 +476,6 @@ pub async fn get_document_tags_impl(
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
 pub async fn get_document_tags_ddd(
     container: State<'_, Container>,
     document_id: String,
@@ -684,8 +680,6 @@ pub async fn apply_tags_impl(
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
 pub async fn apply_tags_ddd(
     container: State<'_, Container>,
     request: ApplyTagsRequestDto,
@@ -801,8 +795,6 @@ pub async fn remove_tag_from_document_impl(
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
 pub async fn remove_tag_from_document_ddd(
     container: State<'_, Container>,
     request: RemoveTagRequestDto,
@@ -899,7 +891,7 @@ pub async fn remove_tag_from_document_ddd(
 ///
 /// - **maxTags**: Limit number of tags generated (default: 5, recommended: 3-10)
 /// - **existingTags**: Provide context of already-applied tags to avoid duplicates
-/// - **Model**: Uses configured LLM model (see `get_qa_model`)
+/// - **Model**: Uses the configured LLM model
 ///
 /// # Tag Quality
 ///
@@ -996,8 +988,6 @@ pub async fn generate_tags_impl(
 }
 
 /// ## Tauri Command Layer (Thin Wrapper)
-#[tauri::command]
-#[specta::specta]
 pub async fn generate_tags_ddd(
     container: State<'_, Container>,
     request: GenerateTagsRequestDto,

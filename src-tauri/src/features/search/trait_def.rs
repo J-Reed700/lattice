@@ -2,7 +2,11 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
+use crate::features::search::dto::{SearchRequestDto, SearchResponseDto, SearchResultDto};
 use crate::features::search::engine::service::SearchResult;
+use crate::features::search::use_cases::{
+    HybridSearchUseCase, QueryBranches, RankedBranch, RerankOptions, Reranked,
+};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
@@ -180,112 +184,6 @@ pub trait BM25SearchTrait: Send + Sync {
     async fn rebuild_index(&self) -> Result<()>;
 }
 
-/// Trait for tag management operations
-///
-/// Provides tag creation, retrieval, and document-tag associations.
-/// This trait abstracts the underlying storage and locking mechanisms.
-///
-/// # Implementations
-/// - `TagService`: Production implementation with SQLite and document locks
-/// - `MockTagService`: In-memory mock for testing
-#[async_trait]
-pub trait HybridSearchTrait: Send + Sync {
-    /// Perform hybrid search combining vector and keyword search
-    ///
-    /// # Arguments
-    /// * `query_text` - Query string for keyword search
-    /// * `query_embedding` - Query embedding vector for semantic search
-    /// * `top_k` - Maximum number of results to return
-    /// * `mode` - Search mode (Semantic, Keyword, or Hybrid)
-    ///
-    /// # Returns
-    /// Vector of hybrid search results with fused scores
-    ///
-    /// # Errors
-    /// - `AppError::SearchFailed` if search operation fails
-    ///
-    /// # Example
-    /// ```rust
-    /// let results = service.search(
-    ///     "machine learning",
-    ///     &query_embedding,
-    ///     10,
-    ///     SearchMode::Hybrid
-    /// ).await?;
-    /// ```
-    async fn search(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        top_k: usize,
-        mode: crate::features::search::engine::hybrid::SearchMode,
-    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>;
-
-    /// Perform batch hybrid search for multiple queries
-    ///
-    /// More efficient than calling `search` multiple times.
-    ///
-    /// # Arguments
-    /// * `queries` - Vector of (query_text, query_embedding) pairs
-    /// * `top_k` - Maximum number of results per query
-    /// * `mode` - Search mode (Semantic, Keyword, or Hybrid)
-    ///
-    /// # Returns
-    /// Vector of result vectors (one per query)
-    ///
-    /// # Example
-    /// ```rust
-    /// let queries = vec![
-    ///     ("query1".to_string(), embedding1),
-    ///     ("query2".to_string(), embedding2),
-    /// ];
-    /// let results = service.batch_search(queries, 10, SearchMode::Hybrid).await?;
-    /// ```
-    async fn batch_search(
-        &self,
-        queries: Vec<(String, Vec<f32>)>,
-        top_k: usize,
-        mode: crate::features::search::engine::hybrid::SearchMode,
-    ) -> Result<Vec<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>>;
-
-    /// Search with recency weighting
-    ///
-    /// Boosts scores of recent documents using a time-decay function.
-    ///
-    /// # Arguments
-    /// * `query_text` - Query string for keyword search
-    /// * `query_embedding` - Query embedding vector for semantic search
-    /// * `top_k` - Maximum number of results to return
-    /// * `recency_weight` - Weight for recency boost (0.0-1.0)
-    /// * `max_age_days` - Maximum age in days to consider
-    ///
-    /// # Returns
-    /// Vector of hybrid search results with recency-boosted scores
-    ///
-    /// # Errors
-    /// - `AppError::Configuration` if database pool not configured
-    /// - `AppError::SearchFailed` if search operation fails
-    ///
-    /// # Example
-    /// ```rust
-    /// let results = service.search_with_recency(
-    ///     "recent news",
-    ///     &query_embedding,
-    ///     10,
-    ///     0.3,  // 30% recency weight
-    ///     90    // only consider docs from last 90 days
-    /// ).await?;
-    /// ```
-    async fn search_with_recency(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        top_k: usize,
-        recency_weight: f32,
-        max_age_days: i64,
-    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>;
-}
-
 /// Learned sparse retrieval — the third fusion branch beside dense vectors and
 /// BM25.
 ///
@@ -316,4 +214,77 @@ pub trait SparseSearchTrait: Send + Sync {
         space_id: Option<&str>,
         allowed_document_ids: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>>;
+}
+
+/// The library search a caller outside this feature drives: one scoped query,
+/// its separate branches and their fusion, and the cross-encoder stage.
+///
+/// Implemented by [`HybridSearchUseCase`], so every caller ranks the library
+/// the way the search command does.
+#[async_trait]
+pub trait LibrarySearchTrait: Send + Sync {
+    /// One query under an optional hard scope; see
+    /// [`HybridSearchUseCase::execute_scoped`].
+    async fn execute_scoped(
+        &self,
+        request: SearchRequestDto,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+    ) -> Result<SearchResponseDto>;
+
+    /// Every branch for `query`, unfused.
+    async fn search_branches(
+        &self,
+        query: &str,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        limit: usize,
+        vector_weight: f32,
+        bm25_weight: f32,
+    ) -> QueryBranches;
+
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto>;
+
+    async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked;
+}
+
+#[async_trait]
+impl LibrarySearchTrait for HybridSearchUseCase {
+    async fn execute_scoped(
+        &self,
+        request: SearchRequestDto,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+    ) -> Result<SearchResponseDto> {
+        HybridSearchUseCase::execute_scoped(self, request, space_id, allowed_document_ids).await
+    }
+
+    async fn search_branches(
+        &self,
+        query: &str,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        limit: usize,
+        vector_weight: f32,
+        bm25_weight: f32,
+    ) -> QueryBranches {
+        HybridSearchUseCase::search_branches(
+            self,
+            query,
+            space_id,
+            allowed_document_ids,
+            limit,
+            vector_weight,
+            bm25_weight,
+        )
+        .await
+    }
+
+    fn fuse(&self, branches: Vec<RankedBranch>, limit: usize) -> Vec<SearchResultDto> {
+        HybridSearchUseCase::fuse(self, branches, limit)
+    }
+
+    async fn rerank(&self, response: SearchResponseDto, options: &RerankOptions) -> Reranked {
+        HybridSearchUseCase::rerank(self, response, options).await
+    }
 }

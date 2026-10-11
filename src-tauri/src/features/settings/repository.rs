@@ -96,7 +96,7 @@ fn resolve_out_of_range_values(settings: &mut SettingsDto) {
 /// # Example
 ///
 /// ```rust,ignore
-/// use crate::infrastructure::persistence::repositories::SettingsRepository;
+/// use crate::features::settings::repository::SettingsRepository;
 /// use tauri::api::path::app_data_dir;
 ///
 /// let app_data_dir = app_data_dir(&config).expect("Failed to get app data dir");
@@ -789,28 +789,6 @@ impl SettingsRepository {
             result.add_warning(
                 "llm",
                 "no_context_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .tool_followup_prompt_template
-            .contains("{question}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_followup_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .tool_followup_prompt_template
-            .contains("{previous_response}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_followup_prompt_template missing {previous_response} placeholder".to_string(),
             );
         }
         if !settings

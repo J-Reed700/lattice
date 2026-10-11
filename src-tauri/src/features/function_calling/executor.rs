@@ -45,7 +45,8 @@ use crate::application::ports::{
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::search::use_cases::HybridSearchUseCase;
+use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebServiceTrait;
@@ -83,8 +84,8 @@ pub struct FunctionExecutor {
     /// BM25 search service for keyword search
     bm25_service: Arc<dyn BM25SearchTrait>,
 
-    /// Hybrid search service
-    hybrid_service: Arc<dyn HybridSearchTrait>,
+    /// The library search orchestrator chat runs, for hybrid searches
+    hybrid_search: Arc<HybridSearchUseCase>,
 
     /// Document repository for document operations (DDD ports)
     document_repository: Arc<dyn DocumentRepository>,
@@ -122,7 +123,7 @@ impl FunctionExecutor {
         embedding_service: Arc<dyn EmbeddingServiceTrait>,
         search_service: Arc<dyn SearchServiceTrait>,
         bm25_service: Arc<dyn BM25SearchTrait>,
-        hybrid_service: Arc<dyn HybridSearchTrait>,
+        hybrid_search: Arc<HybridSearchUseCase>,
         document_repository: Arc<dyn DocumentRepository>,
         chunk_repository: Arc<dyn ChunkRepositoryPort>,
         tag_service: Arc<dyn TagServiceTrait>,
@@ -136,7 +137,7 @@ impl FunctionExecutor {
             embedding_service,
             search_service,
             bm25_service,
-            hybrid_service,
+            hybrid_search,
             document_repository,
             chunk_repository,
             tag_service,
@@ -154,7 +155,7 @@ impl FunctionExecutor {
         embedding_service: Arc<dyn EmbeddingServiceTrait>,
         search_service: Arc<dyn SearchServiceTrait>,
         bm25_service: Arc<dyn BM25SearchTrait>,
-        hybrid_service: Arc<dyn HybridSearchTrait>,
+        hybrid_search: Arc<HybridSearchUseCase>,
         document_repository: Arc<dyn DocumentRepository>,
         chunk_repository: Arc<dyn ChunkRepositoryPort>,
         tag_service: Arc<dyn TagServiceTrait>,
@@ -169,7 +170,7 @@ impl FunctionExecutor {
             embedding_service,
             search_service,
             bm25_service,
-            hybrid_service,
+            hybrid_search,
             document_repository,
             chunk_repository,
             tag_service,

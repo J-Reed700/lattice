@@ -41,7 +41,7 @@ adverbs ("specifically") and dropped short subjects ("NASA").
 - `features/conversation/chat/retrieval/mod.rs`
 - `features/conversation/chat/retrieval/external_query.rs`
 - `features/conversation/chat/prior_evidence.rs`
-- `features/qa/hyde/hyde_service.rs`
+- `features/search/hyde/hyde_service.rs`
 
 ## Testing
 

@@ -13,25 +13,31 @@
 //! # Output
 //!
 //! Creates `src/lib/bindings.ts` with:
-//! - TypeScript wrappers and DTOs for the registered plugin commands
+//! - TypeScript wrappers and DTOs for the registered plugin commands, each
+//!   invoking its plugin route (`plugin:<plugin>|<command>`)
 //! - Auto-exported DTOs from command signatures
 //! - A deterministic generated header
+//!
+//! and `src/shared/ipc/routes.generated.ts`, the plugin that owns each command,
+//! which the renderer's transport invokes through.
+//!
+//! `--check` compares both against the committed files and writes neither.
 
+mod routes;
 mod settings;
 
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use std::path::{Path, PathBuf};
 
-fn normalize_generated_bindings(path: &Path) -> std::io::Result<()> {
-    let generated = std::fs::read_to_string(path)?;
+fn normalize_generated_bindings(generated: &str) -> Result<String, String> {
     let generated =
-        settings::normalize_settings_output(&generated).map_err(std::io::Error::other)?;
+        settings::normalize_settings_output(generated).map_err(|error| error.to_string())?;
     let normalized = generated
         .lines()
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(path, format!("{normalized}\n"))
+    Ok(format!("{normalized}\n"))
 }
 
 /// Where `generated` and `committed` first differ, as a 1-based line number and
@@ -63,27 +69,15 @@ fn first_difference(generated: &str, committed: &str) -> Option<(usize, String, 
 }
 
 fn main() {
-    // Determine output path relative to workspace root
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = match manifest_dir.parent() {
-        Some(parent) => parent.to_path_buf(),
-        None => {
-            eprintln!(
-                "✗ Error generating bindings: unable to determine workspace root from {}",
-                manifest_dir.display()
-            );
-            std::process::exit(1);
-        }
-    };
-
-    let canonical_output_path = workspace_root.join("src").join("lib").join("bindings.ts");
     let check_only = std::env::args().skip(1).any(|arg| arg == "--check");
-    let output_path = if check_only {
-        std::env::temp_dir().join(format!("lattice-bindings-{}.ts", uuid::Uuid::new_v4()))
-    } else {
-        canonical_output_path.clone()
-    };
+    if let Err(error) = run(check_only) {
+        eprintln!("✗ {error}");
+        std::process::exit(1);
+    }
+}
 
+/// The two generated files and their contents, rendered from the commands.
+fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
     // Build the tauri_specta builder with all plugin commands.
     // rustfmt::skip: collect_commands! parses each entry as a `path`, and
     // rustfmt would split the turbofish on the generic command across lines.
@@ -96,23 +90,17 @@ fn main() {
             lattice::features::explorer::plugin::explorer_locate_file,
             lattice::features::explorer::plugin::explorer_search,
             lattice::features::explorer::plugin::set_conversation_explorer_root,
-            lattice::features::explorer::plugin::explorer_index_open::<tauri::Wry>,
-            lattice::features::explorer::plugin::explorer_index_close::<tauri::Wry>,
-            lattice::features::explorer::plugin::explorer_index_status::<tauri::Wry>,
-            lattice::features::explorer::plugin::explorer_index_rebuild::<tauri::Wry>,
-            lattice::features::explorer::plugin::explorer_folders_list::<tauri::Wry>,
+            lattice::features::explorer::plugin::explorer_index_open,
+            lattice::features::explorer::plugin::explorer_index_close,
+            lattice::features::explorer::plugin::explorer_index_status,
+            lattice::features::explorer::plugin::explorer_index_rebuild,
+            lattice::features::explorer::plugin::explorer_folders_list,
             lattice::features::explorer::plugin::explorer_folder_rename,
             lattice::features::explorer::plugin::explorer_folder_set_pinned,
+            lattice::features::explorer::plugin::explorer_folder_set_last_thread,
             lattice::features::explorer::plugin::explorer_folder_set_settings,
-            lattice::features::explorer::plugin::explorer_folder_delete_index::<tauri::Wry>,
-            lattice::features::explorer::plugin::explorer_folder_remove::<tauri::Wry>,
-            lattice::features::study::plugin::list_study_decks,
-            lattice::features::study::plugin::get_study_deck,
-            lattice::features::study::plugin::generate_study_deck,
-            lattice::features::study::plugin::generate_conversation_study_deck,
-            lattice::features::study::plugin::review_study_card,
-            lattice::features::study::plugin::update_study_card,
-            lattice::features::study::plugin::delete_study_deck,
+            lattice::features::explorer::plugin::explorer_folder_delete_index,
+            lattice::features::explorer::plugin::explorer_folder_remove,
             lattice::features::learning::plugin::get_learning_plan,
             lattice::features::learning::plugin::get_learning_portability_workspace,
             lattice::features::learning::plugin::export_learning_pack,
@@ -170,7 +158,6 @@ fn main() {
             lattice::features::learning::plugin::get_learning_recall_workspace,
             lattice::features::learning::plugin::save_learning_recall_card,
             lattice::features::learning::plugin::decide_learning_recall_duplicate,
-            lattice::features::learning::plugin::change_learning_recall_scheduler,
             lattice::features::learning::plugin::review_learning_recall_card,
             lattice::features::learning::plugin::get_learning_practice_workspace,
             lattice::features::learning::plugin::get_learning_practice_session,
@@ -204,19 +191,23 @@ fn main() {
             lattice::features::learning::plugin::start_learning_simulation,
             lattice::features::learning::plugin::send_learning_simulation_turn,
             lattice::features::learning::plugin::finish_learning_simulation,
+            lattice::features::learning::plugin::list_study_decks,
+            lattice::features::learning::plugin::get_study_deck,
+            lattice::features::learning::plugin::generate_study_deck,
+            lattice::features::learning::plugin::generate_conversation_study_deck,
+            lattice::features::learning::plugin::review_study_card,
+            lattice::features::learning::plugin::update_study_card,
+            lattice::features::learning::plugin::delete_study_deck,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
             lattice::features::model_management::plugin::commands::download_default_embedding_model,
-            lattice::features::model_management::plugin::commands::cancel_download,
             lattice::features::model_management::plugin::commands::delete_model,
             lattice::features::model_management::plugin::commands::get_model_download_path::<tauri::Wry>,
             lattice::features::model_management::plugin::commands::list_downloaded_models,
             lattice::features::model_management::plugin::commands::is_model_already_downloaded,
-            lattice::features::model_management::plugin::commands::get_download_status,
             lattice::features::model_management::plugin::commands::set_active_embedding_model,
             lattice::features::model_management::plugin::commands::set_active_chat_model,
-            lattice::features::model_management::plugin::commands::set_active_inference_model,
             lattice::features::model_management::plugin::commands::get_active_chat_model,
             lattice::features::model_management::plugin::commands::get_active_embedding_model,
             lattice::features::model_management::plugin::commands::get_active_models,
@@ -226,11 +217,6 @@ fn main() {
             lattice::features::model_management::plugin::commands::clear_active_utility_model,
             lattice::features::model_management::plugin::commands::warm_up_active_chat_model,
             lattice::features::model_management::plugin::commands::warm_up_active_utility_model,
-            lattice::features::model_management::plugin::commands::validate_model_compatibility,
-            lattice::features::model_management::plugin::commands::get_model_info,
-            lattice::features::model_management::plugin::commands::export_model,
-            lattice::features::model_management::plugin::commands::import_model,
-            lattice::features::model_management::plugin::commands::refresh_model_cache,
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
             lattice::features::model_management::commands::get_compatible_models,
@@ -254,9 +240,9 @@ fn main() {
             lattice::features::function_calling::plugin::list_available_functions,
             lattice::features::function_calling::plugin::execute_function,
             lattice::features::function_calling::plugin::get_function_stats,
-            lattice::features::qa::plugin::check_llm_health_wrapper,
-            lattice::features::qa::plugin::generate_chat_starters_wrapper,
+            lattice::features::qa::plugin::check_llm_health,
             lattice::features::conversation::plugin::chat_with_conversation,
+            lattice::features::conversation::plugin::generate_chat_starters,
             lattice::features::conversation::plugin::regenerate_response,
             lattice::features::conversation::plugin::truncate_conversation_after,
             lattice::features::conversation::plugin::fork_conversation,
@@ -285,9 +271,6 @@ fn main() {
             lattice::features::file::plugin::commands::index_file,
             lattice::features::file::plugin::commands::index_directory,
             lattice::features::file::commands::get_file_metadata,
-            lattice::features::file::plugin::commands::get_file_content,
-            lattice::features::file::plugin::commands::update_file_metadata,
-            lattice::features::file::plugin::commands::delete_file_index,
             lattice::features::file::plugin::commands::remove_indexed_file,
             lattice::features::file::plugin::commands::list_indexed_files,
             lattice::features::file::plugin::commands::list_all_documents,
@@ -301,19 +284,11 @@ fn main() {
             lattice::features::file::plugin::commands::reindex_file,
             lattice::features::file::plugin::commands::delete_document,
             lattice::features::file::plugin::commands::rename_document,
-            lattice::features::file::plugin::commands::validate_file_path,
             lattice::features::file::plugin::commands::get_file_path_by_id,
             lattice::features::file::plugin::commands::get_indexed_folders,
             lattice::features::file::plugin::commands::get_indexing_activities,
             lattice::features::file::plugin::commands::get_recent_documents,
             // Credentials Plugin (7 commands)
-            lattice::features::credentials::plugin::commands::credentials_store,
-            lattice::features::credentials::plugin::commands::credentials_get,
-            lattice::features::credentials::plugin::commands::credentials_delete,
-            lattice::features::credentials::plugin::commands::credentials_has,
-            lattice::features::credentials::plugin::commands::credentials_clear_all,
-            lattice::features::credentials::plugin::commands::credentials_set_endpoint,
-            lattice::features::credentials::plugin::commands::credentials_get_endpoint,
             // Health Plugin (4 commands)
             lattice::features::health::plugin::commands::health_check,
             lattice::features::health::plugin::commands::get_system_stats,
@@ -335,13 +310,10 @@ fn main() {
             lattice::features::cache::commands::get_cache_stats,
             lattice::features::cache::commands::get_cache_metrics,
             lattice::features::cache::commands::clear_search_cache,
-            lattice::features::cache::commands::cache_operation,
             // Embeddings Plugin (4 commands)
-            lattice::features::embedding::plugin::embedding_operation,
             lattice::features::embedding::plugin::generate_embedding,
             lattice::features::embedding::plugin::generate_embeddings_batch,
             lattice::features::embedding::plugin::get_embedding_model_info,
-            lattice::features::embedding::plugin::initialize_models,
             // HuggingFace Plugin (4 commands)
             lattice::features::huggingface::plugin::set_huggingface_token,
             lattice::features::huggingface::plugin::get_huggingface_token_status,
@@ -396,7 +368,14 @@ fn main() {
             lattice::features::conversation::plugin::list_message_bookmarks,
             lattice::features::conversation::plugin::list_conversations_explorer,
             lattice::features::conversation::plugin::list_journal_conversations,
+            lattice::features::conversation::plugin::set_journal_entry_pinned,
+            lattice::features::conversation::plugin::list_journal_entry_pins,
             lattice::features::conversation::plugin::synthesize_journal_entries,
+            lattice::features::conversation::plugin::list_journal_syntheses,
+            lattice::features::conversation::plugin::get_journal_synthesis_result,
+            lattice::features::conversation::plugin::mark_journal_synthesis_applied,
+            lattice::features::conversation::plugin::dismiss_journal_synthesis,
+            lattice::features::conversation::plugin::retry_journal_synthesis,
             // Batch plugin
             lattice::features::batch::plugin::batch_import_files,
             lattice::features::batch::plugin::batch_import_urls,
@@ -405,14 +384,13 @@ fn main() {
             lattice::features::batch::plugin::get_batch_history,
             lattice::features::batch::plugin::delete_batch_job,
             lattice::features::batch::plugin::retry_failed_items,
+            lattice::features::jobs::plugin::list_jobs,
             // Backup Plugin (7 commands)
             lattice::features::backup::plugin::plugin_create_backup,
             lattice::features::backup::plugin::plugin_restore_backup,
             lattice::features::backup::plugin::plugin_list_backups,
             lattice::features::backup::plugin::plugin_export_markdown,
             lattice::features::backup::plugin::plugin_export_json,
-            lattice::features::backup::plugin::plugin_export_csv,
-            lattice::features::backup::plugin::plugin_export_html,
             lattice::features::backup::plugin::plugin_get_archive_status,
             lattice::features::backup::plugin::plugin_begin_archive_setup,
             lattice::features::backup::plugin::plugin_confirm_archive_setup,
@@ -439,11 +417,11 @@ fn main() {
             lattice::features::download::plugin::start_model_download,
             lattice::features::download::plugin::pause_download,
             lattice::features::download::plugin::resume_download,
-            lattice::features::download::plugin::download_cancel,
+            lattice::features::download::plugin::cancel_download,
             lattice::features::download::plugin::retry_download,
             lattice::features::download::plugin::remove_download,
             lattice::features::download::plugin::clear_completed_downloads,
-            lattice::features::download::plugin::download_get_status,
+            lattice::features::download::plugin::get_download_status,
             lattice::features::download::plugin::list_downloads,
             // Mentions plugin
             lattice::features::mentions::plugin::extract_mentions,
@@ -479,14 +457,12 @@ fn main() {
             lattice::features::file::plugin::commands::get_corpus_shape,
             lattice::features::file::plugin::commands::list_conversations_citing_document,
             lattice::features::file::custom_collections::commands::list_custom_collections,
-            lattice::features::file::custom_collections::commands::import_legacy_custom_collections,
             lattice::features::file::custom_collections::commands::create_custom_collection,
             lattice::features::file::custom_collections::commands::rename_custom_collection,
             lattice::features::file::custom_collections::commands::move_custom_collection,
             lattice::features::file::custom_collections::commands::delete_custom_collection,
             lattice::features::file::custom_collections::commands::add_documents_to_custom_collection,
             lattice::features::file::custom_collections::commands::remove_documents_from_custom_collection,
-            lattice::features::corpus_shape::commands::cluster_vault_debug,
             lattice::features::corpus_shape::commands::cluster_vault_run::<tauri::Wry>,
             lattice::features::corpus_shape::commands::list_clusters,
             // Transcription plugin (2 commands)
@@ -501,62 +477,86 @@ fn main() {
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()
         .typ::<lattice::features::conversation::chat::ToolPreferences>();
 
-    // Export bindings to file
-    let result = builder.export(
-        Typescript::default()
-            .header(
-                "// Auto-generated TypeScript bindings for Lattice plugins\n\
-                 // DO NOT EDIT - generated by src-tauri/src/bin/export_bindings/main.rs\n\
-                 // To regenerate: cargo run --features bindings-export --bin export_bindings\n\
-                 // @ts-nocheck\n\
-                 // tauri-specta currently emits runtime helpers unused by this app; declarations\n\
-                 // exported from this file remain type-checked at their use sites.",
-            )
-            .bigint(BigIntExportBehavior::Number),
-        output_path.clone(),
-    );
+    let bindings = builder
+        .export_str(
+            Typescript::default()
+                .header(
+                    "// Auto-generated TypeScript bindings for Lattice plugins\n\
+                     // DO NOT EDIT - generated by src-tauri/src/bin/export_bindings/main.rs\n\
+                     // To regenerate: cargo run --features bindings-export --bin export_bindings\n\
+                     // @ts-nocheck\n\
+                     // tauri-specta currently emits runtime helpers unused by this app; declarations\n\
+                     // exported from this file remain type-checked at their use sites.",
+                )
+                .bigint(BigIntExportBehavior::Number),
+        )
+        .map_err(|error| format!("Error generating bindings: {error}"))?;
+    let bindings = normalize_generated_bindings(&bindings)?;
 
-    if result.is_ok() {
-        if let Err(error) = normalize_generated_bindings(&output_path) {
-            eprintln!("Failed to normalize generated bindings: {error}");
-            std::process::exit(1);
+    let capabilities_path = workspace_root
+        .join("src-tauri")
+        .join("capabilities")
+        .join("main.json");
+    let capabilities = std::fs::read_to_string(&capabilities_path)
+        .map_err(|error| format!("cannot read {}: {error}", capabilities_path.display()))?;
+    let owners = routes::command_owners(&capabilities)?;
+    let (bindings, command_routes) = routes::qualify_commands(&bindings, &owners)?;
+
+    Ok(vec![
+        (
+            workspace_root.join("src").join("lib").join("bindings.ts"),
+            bindings,
+        ),
+        (
+            workspace_root
+                .join("src")
+                .join("shared")
+                .join("ipc")
+                .join("routes.generated.ts"),
+            routes::render_routes(&command_routes),
+        ),
+    ])
+}
+
+fn run(check_only: bool) -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "unable to determine workspace root from {}",
+            manifest_dir.display()
+        )
+    })?;
+    let outputs = render(workspace_root)?;
+
+    if !check_only {
+        for (path, contents) in &outputs {
+            std::fs::write(path, contents)
+                .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            println!("Generated {}", path.display());
         }
+        return Ok(());
     }
 
-    match result {
-        Ok(_) if check_only => {
-            let generated = std::fs::read_to_string(&output_path);
-            let committed = std::fs::read_to_string(&canonical_output_path);
-            let _ = std::fs::remove_file(&output_path);
-            match (generated, committed) {
-                (Ok(generated), Ok(committed)) => match first_difference(&generated, &committed) {
-                    None => println!("TypeScript bindings are up to date."),
-                    Some((line, generated, committed)) => {
-                        eprintln!(
-                                "TypeScript bindings are stale. Run `cargo run --features bindings-export --bin export_bindings`.\n\
-                                 First difference at line {line}:\n  generated: {generated}\n  committed: {committed}"
-                            );
-                        std::process::exit(1);
-                    }
-                },
-                (Err(error), _) => {
-                    eprintln!("Failed to read generated bindings: {error}");
-                    std::process::exit(1);
-                }
-                (_, Err(error)) => {
-                    eprintln!("Failed to read committed bindings: {error}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Ok(_) => {
-            println!("Generated {}", canonical_output_path.display());
-        }
-        Err(e) => {
-            eprintln!("✗ Error generating bindings: {}", e);
-            std::process::exit(1);
+    let mut stale = false;
+    for (path, generated) in &outputs {
+        let committed = std::fs::read_to_string(path)
+            .map_err(|error| format!("cannot read committed {}: {error}", path.display()))?;
+        if let Some((line, generated, committed)) = first_difference(generated, &committed) {
+            stale = true;
+            eprintln!(
+                "{} is stale. First difference at line {line}:\n  generated: {generated}\n  committed: {committed}",
+                path.display()
+            );
         }
     }
+    if stale {
+        return Err(
+            "TypeScript bindings are stale. Run `cargo run --features bindings-export --bin export_bindings`."
+                .to_string(),
+        );
+    }
+    println!("TypeScript bindings are up to date.");
+    Ok(())
 }
 
 #[cfg(test)]

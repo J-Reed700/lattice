@@ -2,7 +2,7 @@
 //!
 //! Checks if a model is already downloaded.
 
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::shared::error::Result;
 
 /// Use case for checking if a model is downloaded

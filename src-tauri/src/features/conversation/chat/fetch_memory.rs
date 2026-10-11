@@ -14,6 +14,7 @@
 //! It answers a repeat from memory and states the dead list each round so the
 //! model can route around it.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Enough room for a turn's worth of dead links without letting a model that
@@ -25,7 +26,7 @@ const MAX_REMEMBERED_FAILURES: usize = 64;
 const MAX_REMEMBERED_PAGES: usize = 32;
 
 /// How much of a page the model has been given so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::features::conversation::chat) enum Delivery {
     /// Everything that was extracted is already in front of the model.
     Whole,
@@ -43,15 +44,16 @@ pub(in crate::features::conversation::chat) enum Recall {
     Remainder { text: String, shown_chars: usize },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RememberedPage {
     text: String,
     delivery: Delivery,
 }
 
 /// Every page this turn tried to read: the ones it could not, and why, and the
-/// ones it could, and how much of each the model has seen.
-#[derive(Debug, Default)]
+/// ones it could, and how much of each the model has seen. A research turn
+/// saves it with each round, so a resumed turn still knows what it read.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(in crate::features::conversation::chat) struct FetchMemory {
     failures: BTreeMap<String, String>,
     pages: BTreeMap<String, RememberedPage>,
@@ -137,21 +139,6 @@ impl FetchMemory {
             }
             self.pages.entry(url).or_insert(page);
         }
-    }
-
-    /// One line per dead URL, for the transcript. Empty when nothing failed,
-    /// so a turn that is going well carries no extra prompt weight.
-    pub(in crate::features::conversation::chat) fn advisory(&self) -> Option<String> {
-        if self.failures.is_empty() {
-            return None;
-        }
-        let mut lines = String::from(
-            "These URLs already failed this turn and will not be retried. Do not request them again; choose different sources.",
-        );
-        for (url, reason) in &self.failures {
-            lines.push_str(&format!("\n- {url} ({reason})"));
-        }
-        Some(lines)
     }
 }
 
@@ -239,23 +226,6 @@ mod tests {
             memory.previous_failure("https://example.com/a"),
             Some("HTTP 403 Forbidden")
         );
-    }
-
-    #[test]
-    fn a_quiet_turn_adds_nothing_to_the_prompt() {
-        assert_eq!(FetchMemory::default().advisory(), None);
-    }
-
-    #[test]
-    fn the_advisory_names_every_dead_url() {
-        let mut memory = FetchMemory::default();
-        memory.record_failure("https://example.com/a", "HTTP 403 Forbidden");
-        memory.record_failure("https://example.com/b", "HTTP 404 Not Found");
-        let advisory = memory.advisory().expect("failures were recorded");
-        assert!(advisory.contains("https://example.com/a"));
-        assert!(advisory.contains("HTTP 403 Forbidden"));
-        assert!(advisory.contains("https://example.com/b"));
-        assert!(advisory.contains("HTTP 404 Not Found"));
     }
 
     /// A model that invents URLs must not be able to grow the map forever.

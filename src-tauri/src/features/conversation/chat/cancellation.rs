@@ -1,8 +1,10 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
+
+use crate::shared::error::AppError;
 
 /// How long a cancellation that arrived before its turn registered stays armed.
 /// Long enough to cover a cold model load, short enough that a stop press for a
@@ -12,10 +14,13 @@ const PENDING_CANCEL_TTL: Duration = Duration::from_secs(600);
 /// that never start cannot grow the map without bound.
 const MAX_PENDING_CANCELS: usize = 256;
 
+/// One turn's stop button. The token is what the turn hands every model
+/// request, so a stop press reaches a request still queued behind other work,
+/// or already generating, without waiting for anyone to poll.
 #[derive(Debug, Default)]
 struct TurnCancellationState {
     conversation_id: String,
-    cancel_requested: AtomicBool,
+    token: CancellationToken,
 }
 
 #[derive(Debug)]
@@ -58,10 +63,29 @@ fn prune_pending(pending: &mut HashMap<String, PendingCancel>) {
     }
 }
 
+/// What a stopped turn ends with, wherever it stopped.
+const CANCELLED: &str = "Generation cancelled by user.";
+
+pub(super) fn cancelled_error() -> AppError {
+    AppError::InvalidState(CANCELLED.to_string())
+}
+
+/// Whether a turn ended because it was stopped, not because it failed.
+pub(super) fn is_cancellation(error: &AppError) -> bool {
+    matches!(error, AppError::InvalidState(message) if message == CANCELLED)
+}
+
 // Each entry is one turn, keyed by its request id. A conversation may have
 // more than one turn only when an older/non-store caller overlaps requests;
 // those turns must remain independently cancellable and independently owned.
-pub(super) fn begin_turn(request_id: &str, conversation_id: &str) -> bool {
+//
+// A turn run by a job names the job's stop as `parent`: its own stop button
+// then also fires when the job is cancelled or the app closes.
+pub(super) fn begin_turn_within(
+    request_id: &str,
+    conversation_id: &str,
+    parent: Option<&CancellationToken>,
+) -> bool {
     let mut registry = lock();
     if registry.turns.contains_key(request_id) {
         return false;
@@ -73,11 +97,15 @@ pub(super) fn begin_turn(request_id: &str, conversation_id: &str) -> bool {
         .pending
         .remove(request_id)
         .is_some_and(|entry| entry.conversation_id == conversation_id);
+    let token = parent.map_or_else(CancellationToken::new, CancellationToken::child_token);
+    if already_cancelled {
+        token.cancel();
+    }
     registry.turns.insert(
         request_id.to_string(),
         Arc::new(TurnCancellationState {
             conversation_id: conversation_id.to_string(),
-            cancel_requested: AtomicBool::new(already_cancelled),
+            token,
         }),
     );
     true
@@ -94,7 +122,18 @@ pub(super) fn is_cancel_requested(request_id: &str) -> bool {
     registry
         .turns
         .get(request_id)
-        .is_some_and(|state| state.cancel_requested.load(Ordering::SeqCst))
+        .is_some_and(|state| state.token.is_cancelled())
+}
+
+/// The token a stop press for this turn fires. A turn that never registered
+/// cannot be stopped through the registry, so it gets one that never fires.
+pub(super) fn turn_token(request_id: &str) -> CancellationToken {
+    let registry = lock();
+    registry
+        .turns
+        .get(request_id)
+        .map(|state| state.token.clone())
+        .unwrap_or_default()
 }
 
 pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) -> bool {
@@ -105,12 +144,12 @@ pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) ->
             if state.conversation_id != conversation_id {
                 return false;
             }
-            state.cancel_requested.store(true, Ordering::SeqCst);
+            state.token.cancel();
             return true;
         }
         // The turn has not registered yet — it is still validating input,
         // loading the model, or opening the conversation. Arm the cancellation
-        // so `begin_turn` honours it, instead of reporting an idle conversation
+        // so `begin_turn_within` honours it, instead of reporting an idle conversation
         // and leaving the user's stop press with no effect at all.
         prune_pending(&mut registry.pending);
         registry.pending.insert(
@@ -134,7 +173,7 @@ pub(super) fn request_cancel(conversation_id: &str, request_id: Option<&str>) ->
         .values()
         .filter(|state| state.conversation_id == conversation_id)
     {
-        state.cancel_requested.store(true, Ordering::SeqCst);
+        state.token.cancel();
         cancelled = true;
     }
     cancelled
@@ -151,8 +190,8 @@ mod tests {
         let first = format!("request-a-{suffix}");
         let second = format!("request-b-{suffix}");
 
-        assert!(begin_turn(&first, &conversation_id));
-        assert!(begin_turn(&second, &conversation_id));
+        assert!(begin_turn_within(&first, &conversation_id, None));
+        assert!(begin_turn_within(&second, &conversation_id, None));
         assert!(request_cancel(&conversation_id, Some(&first)));
         assert!(is_cancel_requested(&first));
         assert!(!is_cancel_requested(&second));
@@ -172,7 +211,7 @@ mod tests {
         let owner = format!("owner-{suffix}");
         let other = format!("other-{suffix}");
 
-        assert!(begin_turn(&request_id, &owner));
+        assert!(begin_turn_within(&request_id, &owner, None));
         assert!(!request_cancel(&other, Some(&request_id)));
         assert!(!is_cancel_requested(&request_id));
         finish_turn(&request_id);
@@ -187,7 +226,7 @@ mod tests {
         // The stop press lands while the turn is still loading the model.
         assert!(request_cancel(&conversation_id, Some(&request_id)));
 
-        assert!(begin_turn(&request_id, &conversation_id));
+        assert!(begin_turn_within(&request_id, &conversation_id, None));
         assert!(is_cancel_requested(&request_id));
         finish_turn(&request_id);
     }
@@ -200,7 +239,7 @@ mod tests {
         let other = format!("other-{suffix}");
 
         assert!(request_cancel(&cancelled, Some(&request_id)));
-        assert!(begin_turn(&request_id, &other));
+        assert!(begin_turn_within(&request_id, &other, None));
         assert!(!is_cancel_requested(&request_id));
         finish_turn(&request_id);
     }
@@ -211,15 +250,62 @@ mod tests {
         let conversation_id = format!("conversation-{suffix}");
         let request_id = format!("request-{suffix}");
 
-        assert!(begin_turn(&request_id, &conversation_id));
+        assert!(begin_turn_within(&request_id, &conversation_id, None));
         finish_turn(&request_id);
         // A stop press that arrives after the turn ended arms nothing that a
         // later turn with the same id would inherit.
         assert!(request_cancel(&conversation_id, Some(&request_id)));
         finish_turn(&request_id);
 
-        assert!(begin_turn(&request_id, &conversation_id));
+        assert!(begin_turn_within(&request_id, &conversation_id, None));
         assert!(!is_cancel_requested(&request_id));
         finish_turn(&request_id);
+    }
+
+    #[test]
+    fn a_stop_press_fires_the_token_the_turn_handed_its_model_requests() {
+        let suffix = uuid::Uuid::new_v4();
+        let conversation_id = format!("conversation-{suffix}");
+        let request_id = format!("request-{suffix}");
+
+        assert!(begin_turn_within(&request_id, &conversation_id, None));
+        let token = turn_token(&request_id);
+        assert!(!token.is_cancelled());
+
+        assert!(request_cancel(&conversation_id, Some(&request_id)));
+        assert!(
+            token.is_cancelled(),
+            "the request's token must fire at once"
+        );
+        finish_turn(&request_id);
+
+        assert!(
+            !turn_token(&request_id).is_cancelled(),
+            "an unregistered turn's token never fires"
+        );
+    }
+
+    #[test]
+    fn a_turn_run_by_a_job_stops_when_the_job_does() {
+        let suffix = uuid::Uuid::new_v4();
+        let conversation_id = format!("conversation-{suffix}");
+        let request_id = format!("request-{suffix}");
+        let job = CancellationToken::new();
+
+        assert!(begin_turn_within(&request_id, &conversation_id, Some(&job)));
+        let token = turn_token(&request_id);
+        job.cancel();
+
+        assert!(token.is_cancelled(), "the job's stop reaches the turn");
+        assert!(is_cancel_requested(&request_id));
+        finish_turn(&request_id);
+    }
+
+    #[test]
+    fn only_a_stop_reads_as_a_cancellation() {
+        assert!(is_cancellation(&cancelled_error()));
+        assert!(!is_cancellation(&AppError::InvalidState(
+            "Model returned no answer".into()
+        )));
     }
 }

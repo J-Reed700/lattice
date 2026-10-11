@@ -27,7 +27,8 @@
 //! `crate::domain::value_objects::{SearchMode, SearchQuery}`,
 //! and `crate::domain::repositories::SearchRepository`.
 //!
-//! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, HybridSearchTrait}`.
+//! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, SparseSearchTrait}`.
+//! The library search orchestrator is `use_cases::HybridSearchUseCase`.
 
 pub mod commands;
 pub mod di;
@@ -41,7 +42,8 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-pub use trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait};
+pub use trait_def::{BM25SearchTrait, SearchServiceTrait, SparseSearchTrait};
 pub mod engine;
 pub mod enrichment_service;
+pub mod hyde;
 pub mod repository_tx;

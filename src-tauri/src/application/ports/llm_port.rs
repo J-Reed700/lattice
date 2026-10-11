@@ -1,42 +1,27 @@
 //! LLM interaction port for the application layer.
 //!
-//! This port defines the interface for Large Language Model interactions.
-//! Infrastructure implementations can use Ollama, OpenAI, Anthropic, or other
-//! LLM providers.
+//! One call shape for every provider: a typed [`CompletionRequest`] in, a
+//! [`CompletionResponse`] out. The request carries role-bearing messages,
+//! native tool calls and results, a response schema, sampling, an output cap,
+//! a time budget and the scheduling fields (priority, cancellation, cache
+//! key); the response carries the answer, any displayable reasoning, tool
+//! calls, usage, the finish reason and the items that replay this turn.
 //!
-//! # Purpose
+//! Callers with only a prompt and "Role: content" context use
+//! [`complete_text`](crate::application::services::completion_input::complete_text).
 //!
-//! - Abstracts LLM provider implementation details
-//! - Allows switching between local and remote LLMs
-//! - Enables testing with mock responses
-//! - Supports both synchronous and streaming generation
+//! # Implementations
 //!
-//! # Infrastructure Implementations
-//!
-//! - `OllamaAdapter` - Local Ollama models (llama2, mistral, etc.)
-//! - `AnthropicAdapter` - Claude API (Sonnet, Opus)
-//! - `OpenAIAdapter` - GPT models via OpenAI API
-//! - `MockLLMAdapter` - Test implementation returning fixed responses
-//!
-//! # Example Usage
-//!
-//! ```rust
-//! use crate::application::ports::LLMPort;
-//!
-//! async fn answer_question(
-//!     llm: &impl LLMPort,
-//!     question: &str,
-//!     context: &[String],
-//! ) -> Result<String> {
-//!     llm.generate(question, context).await
-//! }
-//! ```
+//! - `LlamaCppLlm` - llama-server, bundled or remote
+//! - `OllamaClient` - Ollama's native `/api/chat`
+//! - `CloudLlm` - OpenAI Responses and Anthropic Messages
+//! - `ScheduledLlm` - the decorator that admits each call through its backend's scheduler
 
 use crate::shared::error::Result;
 use async_trait::async_trait;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<
@@ -47,6 +32,63 @@ pub type OptionalLlmLoader = std::sync::Arc<
 
 /// Wall-clock allowance for one completion, across retries, when the caller sets none.
 pub const DEFAULT_COMPLETION_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
+
+/// Characters per token assumed until a backend has reported real usage.
+/// English prose tokenizes near four; code, numbers and other scripts run
+/// lower, which is what calibration against reported usage corrects.
+pub const DEFAULT_CHARS_PER_TOKEN: f64 = 4.0;
+
+/// Tokens in `chars` characters at `chars_per_token`, rounded up.
+pub fn tokens_for_chars(chars: usize, chars_per_token: f64) -> usize {
+    if chars == 0 {
+        return 0;
+    }
+    let ratio = if chars_per_token.is_finite() && chars_per_token > 0.0 {
+        chars_per_token
+    } else {
+        DEFAULT_CHARS_PER_TOKEN
+    };
+    (chars as f64 / ratio).ceil() as usize
+}
+
+/// Estimated tokens in `text`, for code with no model port in reach. With a
+/// port, use [`LLMPort::count_tokens`]: it is calibrated against the backend.
+pub fn estimate_tokens(text: &str) -> usize {
+    tokens_for_chars(text.chars().count(), DEFAULT_CHARS_PER_TOKEN)
+}
+
+/// Characters a `tokens` budget can safely hold: three quarters of what the
+/// ratio predicts, so a character budget under-fills on densely tokenized text
+/// rather than overflowing the window it was derived from.
+pub fn chars_within_tokens(tokens: usize, chars_per_token: f64) -> usize {
+    const UNDER_FILL: f64 = 0.75;
+    let ratio = if chars_per_token.is_finite() && chars_per_token > 0.0 {
+        chars_per_token
+    } else {
+        DEFAULT_CHARS_PER_TOKEN
+    };
+    (tokens as f64 * ratio * UNDER_FILL) as usize
+}
+
+/// Who is waiting on a model call. When a backend is busy, a higher priority
+/// is admitted first; equal priorities are served in arrival order.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum InferencePriority {
+    /// Batch generation nobody is watching token by token: lessons,
+    /// assessments, practice, study material.
+    #[default]
+    Background,
+    /// Upkeep that keeps later turns good: memory consolidation, summaries,
+    /// corpus labels, chat starters.
+    Maintenance,
+    /// Checking claims an answer or a lesson already made.
+    Verification,
+    /// A person is waiting on this call: a chat turn and everything inside it.
+    Interactive,
+}
 
 /// Tool definition for LLM function calling.
 ///
@@ -62,47 +104,15 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
 }
 
-/// A tool call returned by the LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    #[serde(default)]
-    pub id: Option<String>,
-    /// Function name being called
-    pub name: String,
-    /// Arguments as a JSON object
-    pub arguments: serde_json::Value,
-}
-
-/// Streaming chunk that can be either content or a tool call.
-#[derive(Debug, Clone)]
-pub enum StreamChunk {
-    /// Text content chunk
-    Content(String),
-    /// Tool call request from the model
-    ToolCalls(Vec<ToolCall>),
-    /// Stream is complete
-    Done,
-}
-
-/// Port for LLM generation operations.
+/// Port for LLM generation.
 ///
-/// Implementations must:
-/// - Support both synchronous and streaming generation
-/// - Handle context window limits gracefully
-/// - Provide model identification
-/// - Be thread-safe (`Send + Sync`)
+/// Implementations must be thread-safe, report the window they were started
+/// with, and fail a request rather than truncate it silently.
 #[async_trait]
 pub trait LLMPort: Send + Sync {
-    fn supports_typed_completions(&self) -> bool {
-        false
-    }
-
-    /// Typed completion preserves native tool IDs/results, usage, and finish state.
-    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-        Err(crate::shared::error::AppError::InvalidConfig(
-            "This provider does not support typed completions".into(),
-        ))
-    }
+    /// One completion. Native tool IDs and results, usage, the finish reason
+    /// and the provider's replay items all survive the round trip.
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse>;
 
     /// Deliver public answer text as it arrives while retaining the complete
     /// native tool response. Providers without streaming keep the default.
@@ -150,178 +160,60 @@ pub trait LLMPort: Send + Sync {
         Ok(response)
     }
 
-    /// Generate a response to a prompt with optional context.
-    ///
-    /// Performs synchronous generation, waiting for the complete response
-    /// before returning. For streaming responses, use `generate_streaming`.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` - The user's question or instruction
-    /// * `context` - Retrieved context chunks to condition the response (e.g., from RAG)
-    ///
-    /// # Returns
-    ///
-    /// The complete generated text response.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if prompt is empty or too long
-    /// - `AppError::Network` if using remote API and network fails
-    /// - `AppError::LLMFailed` if generation fails or times out
-    /// - `AppError::RateLimitExceeded` if API rate limit is hit
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let context = vec![
-    ///     "Rust is a systems programming language.".into(),
-    ///     "Rust has a strong type system.".into(),
-    /// ];
-    /// let response = llm.generate("What is Rust?", &context, None).await?;
-    /// println!("Answer: {}", response);
-    /// ```
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String>;
-
-    /// Generate a response with streaming output.
-    ///
-    /// Returns a stream of text chunks as they are generated. Useful for
-    /// providing real-time feedback in UI applications.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` - The user's question or instruction
-    /// * `context` - Retrieved context chunks to condition the response
-    /// * `images` - Optional list of base64-encoded images for multimodal models
-    ///
-    /// # Returns
-    ///
-    /// A stream of text chunks. Chunks should be concatenated to form the
-    /// complete response.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if prompt is empty or too long
-    /// - `AppError::Network` if using remote API and network fails
-    /// - `AppError::LLMFailed` if generation fails or stream is interrupted
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use futures::StreamExt;
-    ///
-    /// let mut stream = llm.generate_streaming("Explain Rust", &context, None).await?;
-    /// while let Some(chunk) = stream.next().await {
-    ///     print!("{}", chunk);
-    /// }
-    /// ```
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>>;
-
-    /// Get the name/identifier of the underlying model.
-    ///
-    /// Used for logging, debugging, and model-specific configuration.
-    ///
-    /// # Returns
-    ///
-    /// A string identifying the model (e.g., "llama2:13b", "claude-3-sonnet", "gpt-4")
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let model = llm.model_name();
-    /// println!("Using model: {}", model);
-    /// ```
+    /// The name of the underlying model (e.g. "llama3.1:8b", "claude-sonnet"),
+    /// for logs and diagnostics.
     fn model_name(&self) -> &str;
 
-    /// Get the maximum context window size in tokens.
-    ///
-    /// This is the total number of tokens (prompt + context + response) that
-    /// the model can handle. Implementations should enforce this limit.
-    ///
-    /// # Returns
-    ///
-    /// Maximum context size in tokens (e.g., 4096, 8192, 100000)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let max_tokens = llm.max_context_tokens();
-    /// if total_tokens > max_tokens {
-    ///     // Truncate context
-    /// }
-    /// ```
+    /// The context window, in tokens, that prompt and answer share.
     fn max_context_tokens(&self) -> usize;
+
+    /// Characters per token this backend's tokenizer averages.
+    ///
+    /// Starts at [`DEFAULT_CHARS_PER_TOKEN`]; a scheduled backend calibrates it
+    /// against the prompt tokens the server reports.
+    fn chars_per_token(&self) -> f64 {
+        DEFAULT_CHARS_PER_TOKEN
+    }
 
     /// Estimate the number of tokens in a text string.
     ///
-    /// Used for context window management. This is an approximation
-    /// and may not match exact tokenization.
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - The text to count tokens for
-    ///
-    /// # Returns
-    ///
-    /// Estimated token count
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let token_count = llm.count_tokens("Hello world");
-    /// assert!(token_count > 0);
-    /// ```
-    fn count_tokens(&self, text: &str) -> usize;
+    /// Used for context window management: `ceil(chars / chars_per_token)`.
+    /// An approximation; [`Self::count_tokens_exact`] asks the backend's own
+    /// tokenizer where one is reachable.
+    fn count_tokens(&self, text: &str) -> usize {
+        tokens_for_chars(text.chars().count(), self.chars_per_token())
+    }
 
-    /// Check if the LLM service is ready and operational.
+    /// Tokens in `text` as the backend's own tokenizer counts them, where it
+    /// can be asked; otherwise the estimate. [`Self::counts_tokens_exactly`]
+    /// says which.
     ///
-    /// This method is used for health checks and system diagnostics.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(true)` if the service is ready to generate responses
-    /// - `Ok(false)` if the service is not ready (model not loaded, API unavailable, etc.)
-    /// - `Err` if the health check itself fails
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// if llm.is_ready().await? {
-    ///     println!("LLM service is operational");
-    /// } else {
-    ///     println!("LLM service is not ready");
-    /// }
-    /// ```
+    /// For budget decisions that are final, not for every count: it may cost
+    /// a round trip to the server.
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        Ok(self.count_tokens(text))
+    }
+
+    /// Whether [`Self::count_tokens_exact`] reaches a real tokenizer.
+    fn counts_tokens_exactly(&self) -> bool {
+        false
+    }
+
+    /// Whether the service is ready to answer: `Ok(false)` when it is not
+    /// (model not loaded, server unreachable), `Err` when the check itself
+    /// failed.
     async fn is_ready(&self) -> Result<bool>;
 
-    /// Check if this LLM backend supports native tool/function calling.
+    /// Whether this backend accepts `tools` and returns native tool calls.
     ///
-    /// When `true`, the backend can process `tools` in `generate_streaming_with_tools`
-    /// and may yield `StreamChunk::ToolCalls`. When `false`, tools are ignored and
-    /// the conversation chat should rely exclusively on prompt-injected RAG context.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the backend supports tool calling, `false` otherwise.
-    ///
-    /// Default: `false` (conservative -- local models and mocks don't support tools).
+    /// Default: `false` (conservative -- an unknown model template may render
+    /// tool traffic as text).
     fn supports_tool_calling(&self) -> bool {
         false
     }
 
-    /// Get the name of the LLM provider (e.g., "ollama", "local", "mock").
-    ///
-    /// Used for logging, diagnostics, and provider-specific behavior.
+    /// The provider behind this port (e.g. "ollama", "llamacpp",
+    /// "local-sidecar"), for logs and diagnostics.
     ///
     /// Default: "unknown"
     fn provider_name(&self) -> &str {
@@ -335,39 +227,6 @@ pub trait LLMPort: Send + Sync {
     /// nothing of their own to die and stay `true`.
     fn is_alive(&self) -> bool {
         true
-    }
-
-    /// Generate a streaming response with optional tool definitions.
-    ///
-    /// When tools are provided, the stream may yield `StreamChunk::ToolCalls`
-    /// instead of (or in addition to) `StreamChunk::Content`. The caller is
-    /// responsible for executing tool calls and feeding results back.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` - The user's question or instruction
-    /// * `context` - Retrieved context chunks (formatted as "Role: content")
-    /// * `images` - Optional base64-encoded images
-    /// * `tools` - Optional tool definitions for function calling
-    ///
-    /// # Returns
-    ///
-    /// A stream of `StreamChunk` items (content text, tool calls, or done signal).
-    ///
-    /// Default implementation delegates to `generate_streaming` (ignoring tools).
-    async fn generate_streaming_with_tools(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-        tools: Option<&[ToolDefinition]>,
-    ) -> Result<Box<dyn Stream<Item = Result<StreamChunk>> + Send + Unpin + '_>> {
-        // Default: ignore tools and wrap content in StreamChunk::Content
-        let _ = tools;
-        let inner = self.generate_streaming(prompt, context, images).await?;
-        use futures::StreamExt;
-        let mapped = inner.map(|r| r.map(StreamChunk::Content));
-        Ok(Box::new(Box::pin(mapped)))
     }
 }
 
@@ -430,7 +289,7 @@ pub struct CompletionRequest {
     pub reasoning_effort: Option<String>,
     /// Ask providers that support it for displayable reasoning. This controls
     /// summaries or explicit thinking text only; opaque provider state used for
-    /// replay remains separate in `CompletionResponse::provider_output`.
+    /// replay remains separate in `CompletionResponse::replay`.
     #[serde(default)]
     pub include_reasoning: bool,
     /// Sampling for this request. `None` keeps the provider's configuration.
@@ -458,6 +317,23 @@ pub struct CompletionRequest {
     /// them ignore the flag and return `None`.
     #[serde(default)]
     pub want_logprobs: bool,
+    /// Who is waiting on this call. The backend's scheduler admits higher
+    /// priorities first and keeps a slot free for interactive work.
+    #[serde(default)]
+    pub priority: InferencePriority,
+    /// Fires when the caller no longer wants the answer. A queued request
+    /// leaves the queue and an in-flight one is aborted, both with an error.
+    #[serde(skip)]
+    pub cancel: Option<CancellationToken>,
+    /// Requests sharing a key share a prompt prefix (one conversation, one
+    /// course). A llama-server backend sends them to the slot that last served
+    /// the key, so the server reuses that prefix from its KV cache.
+    #[serde(default)]
+    pub cache_key: Option<String>,
+    /// The llama-server slot the backend's scheduler admitted this request to.
+    /// Set by the scheduler on the copy it forwards; callers leave it unset.
+    #[serde(skip)]
+    pub assigned_slot: Option<u32>,
 }
 
 impl CompletionRequest {
@@ -492,6 +368,23 @@ impl CompletionRequest {
     }
 }
 
+#[cfg(test)]
+impl CompletionRequest {
+    /// The last user message: the prompt a scripted test double answers.
+    pub(crate) fn user_text(&self) -> &str {
+        self.input
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                CompletionInput::Message { role, content } if role == "user" => {
+                    Some(content.as_str())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionResponse {
     pub text: String,
@@ -504,13 +397,33 @@ pub struct CompletionResponse {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub finish_reason: String,
-    /// Opaque native output items for replaying provider-specific reasoning state.
-    pub provider_output: serde_json::Value,
+    /// This response as input: appended to the next request, these items
+    /// replay the model's turn in the provider's own shape — its text, its
+    /// tool calls and any signed or opaque reasoning state — so a tool loop
+    /// continues a conversation without knowing which provider it talks to.
+    #[serde(default)]
+    pub replay: Vec<CompletionInput>,
     /// The first generated token's top alternatives as `(token, logprob)`,
     /// most likely first. Present only when the request asked for them and the
     /// provider reports them.
     #[serde(default)]
     pub first_token_logprobs: Option<Vec<(String, f32)>>,
+}
+
+impl CompletionResponse {
+    /// An answer that stopped on its own, replayed as one assistant message.
+    pub fn from_text(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            replay: vec![CompletionInput::Message {
+                role: "assistant".into(),
+                content: text.clone(),
+            }],
+            text,
+            finish_reason: "stop".into(),
+            ..Default::default()
+        }
+    }
 }
 
 /// How many alternatives to request for the first token. Enough to hold every
@@ -604,6 +517,30 @@ mod tests {
             zero.effective_max_output_tokens(provider_limit),
             provider_limit
         );
+    }
+
+    #[test]
+    fn interactive_work_outranks_verification_maintenance_and_background() {
+        use InferencePriority::*;
+        assert!(Interactive > Verification);
+        assert!(Verification > Maintenance);
+        assert!(Maintenance > Background);
+        assert_eq!(CompletionRequest::default().priority, Background);
+    }
+
+    #[test]
+    fn token_estimates_round_up_and_character_budgets_err_short() {
+        assert_eq!(tokens_for_chars(0, 4.0), 0);
+        assert_eq!(tokens_for_chars(1, 4.0), 1);
+        assert_eq!(tokens_for_chars(9, 3.0), 3);
+        assert_eq!(
+            tokens_for_chars(10, 0.0),
+            3,
+            "a broken ratio falls back to the default"
+        );
+        assert_eq!(estimate_tokens("héllo wörld!"), 3, "characters, not bytes");
+        assert_eq!(chars_within_tokens(1_000, 4.0), 3_000);
+        assert_eq!(chars_within_tokens(1_000, 3.0), 2_250);
     }
 
     #[test]

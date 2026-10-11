@@ -7,7 +7,7 @@ import type { DownloadedModel } from '@/types/downloadedModels';
 
 const models = vi.hoisted(() => ({ current: [] as DownloadedModel[] }));
 
-vi.mock('@/hooks/useDownloadedModels', () => ({
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: models.current }),
 }));
 

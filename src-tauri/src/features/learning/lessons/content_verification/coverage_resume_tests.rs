@@ -3,55 +3,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct DisconnectDuringFidelity {
     inner: Model,
-    pool: sqlx::SqlitePool,
+    saved: crate::features::learning::curriculum_repository::LearningCurriculumRepository,
+    job: String,
+    lesson: String,
     mapping_calls: AtomicUsize,
     fidelity_calls: AtomicUsize,
 }
 
 #[async_trait::async_trait]
 impl LLMPort for DisconnectDuringFidelity {
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        if prompt.starts_with("Audit claim coverage independently.") {
-            self.mapping_calls.fetch_add(1, Ordering::Relaxed);
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            replies.push(self.respond(&prompt).await?);
         }
-        if prompt.starts_with("Audit claim fidelity.")
-            && self.fidelity_calls.fetch_add(1, Ordering::Relaxed) == 1
-        {
-            // Disconnect only after the other concurrent passage has committed
-            // its result. This deterministically exercises an unfinished batch.
-            tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    let saved = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM learning_generation_checkpoints WHERE checkpoint_key LIKE 'coverage-fidelity-v1:%'",
-                    )
-                    .fetch_one(&self.pool)
-                    .await
-                    .unwrap();
-                    if saved > 0 {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .expect("A completed passage must be saved before its batch finishes");
-            return Err(AppError::ServiceNotAvailable("fixture disconnect".into()));
-        }
-        self.inner.generate(prompt, context, images).await
-    }
-
-    async fn generate_streaming(
-        &self,
-        _: &str,
-        _: &[String],
-        _: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        Err(invalid("unused fixture stream"))
+        Ok(fixture_completion(request, replies))
     }
     fn model_name(&self) -> &str {
         self.inner.model_name()
@@ -66,6 +32,40 @@ impl LLMPort for DisconnectDuringFidelity {
         Ok(true)
     }
 }
+impl DisconnectDuringFidelity {
+    async fn respond(&self, prompt: &str) -> Result<String> {
+        if prompt.starts_with("Audit claim coverage independently.") {
+            self.mapping_calls.fetch_add(1, Ordering::Relaxed);
+        }
+        if prompt.starts_with("Audit claim fidelity.")
+            && self.fidelity_calls.fetch_add(1, Ordering::Relaxed) == 1
+        {
+            // Disconnect only after the other concurrent passage has committed
+            // its result. This deterministically exercises an unfinished batch.
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let saved = self
+                        .saved
+                        .lesson_checkpoints_with_prefix(
+                            &self.job,
+                            &self.lesson,
+                            "coverage-fidelity-v1:",
+                        )
+                        .await
+                        .unwrap();
+                    if !saved.is_empty() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("A completed passage must be saved before its batch finishes");
+            return Err(AppError::ServiceNotAvailable("fixture disconnect".into()));
+        }
+        self.inner.respond(prompt).await
+    }
+}
 
 #[tokio::test]
 async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Result<()> {
@@ -73,7 +73,9 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = DisconnectDuringFidelity {
         inner: Model::new(),
-        pool: pool.clone(),
+        saved: repo.clone(),
+        job: job.clone(),
+        lesson: lesson.clone(),
         mapping_calls: AtomicUsize::new(0),
         fidelity_calls: AtomicUsize::new(0),
     };

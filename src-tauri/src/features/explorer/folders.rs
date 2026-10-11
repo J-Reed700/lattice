@@ -95,6 +95,7 @@ pub async fn list(
             space_id: row
                 .space_id
                 .unwrap_or_else(|| repository::GENERAL_SPACE_ID.to_string()),
+            last_thread_id: row.last_thread_id,
         })
         .collect();
     Ok(ExplorerFolderListDto {
@@ -177,6 +178,28 @@ pub async fn bind_thread(
         repository::move_thread_to_space(pool, conversation_id, &space, &stamp(Utc::now())).await?;
     }
     Ok(())
+}
+
+/// Remembers the thread the folder's chat is showing, so the folder reopens
+/// on it. Only a thread bound to the folder can be its thread.
+pub async fn remember_thread(pool: &SqlitePool, root: &str, conversation_id: &str) -> Result<()> {
+    if repository::conversation_root(pool, conversation_id)
+        .await?
+        .as_deref()
+        != Some(root)
+    {
+        return Err(crate::shared::AppError::InvalidInput(format!(
+            "Conversation {conversation_id} is not a thread of {root}"
+        )));
+    }
+    repository::set_folder_last_thread(
+        pool,
+        root,
+        &default_name(Path::new(root)),
+        conversation_id,
+        &stamp(Utc::now()),
+    )
+    .await
 }
 
 pub async fn set_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> Result<()> {

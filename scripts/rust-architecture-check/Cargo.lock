@@ -6,6 +6,7 @@ version = 4
 name = "lattice-architecture-check"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "syn",
 ]
 

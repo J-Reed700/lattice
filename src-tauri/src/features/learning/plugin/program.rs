@@ -201,7 +201,7 @@ pub async fn prepare_learning_lesson(
         .start_lesson_job(&job_request)
         .await
         .map_err(ApiError::from)?;
-    generation_worker(&container).spawn(job.id.clone());
+    container.jobs().submitted(&job.id).await;
     // Acknowledge the durable request immediately. Source refresh, model calls,
     // and publication belong to the worker; the UI observes the saved job.
     LearningRepository::new(container.db_pool().clone())

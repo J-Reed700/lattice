@@ -8,16 +8,7 @@
 import type { IndexStatus } from '../index';
 
 /** One file that failed during the current indexing run. */
-export interface IndexingFailure {
-  /** Absolute path of the file that failed. */
-  path: string;
-  /** File name only, for display. */
-  fileName: string;
-  /** One-line reason, already trimmed by the backend. */
-  reason: string;
-  /** RFC3339 timestamp. */
-  failedAt: string;
-}
+export type IndexingFailure = import('../../lib/bindings').IndexingFailure;
 
 export interface IndexingSnapshot {
   totalFiles: number;

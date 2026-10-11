@@ -317,7 +317,7 @@ impl ConversationServiceTrait for MockConversationService {
         role: crate::domain::conversation::MessageRole,
         content: String,
         tokens: i64,
-        _status: String,
+        status: String,
     ) -> Result<crate::domain::conversation::ConversationMessage> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
@@ -328,7 +328,7 @@ impl ConversationServiceTrait for MockConversationService {
         })?;
 
         let mut new_aggregate = aggregate.clone();
-        new_aggregate.add_message(role, content.clone(), tokens)?;
+        new_aggregate.add_message_with_status(role, content.clone(), tokens, status)?;
 
         let message = new_aggregate.messages().last().unwrap().clone();
         *aggregate = new_aggregate;
@@ -336,7 +336,13 @@ impl ConversationServiceTrait for MockConversationService {
         Ok(message)
     }
 
-    async fn update_message_status(&self, _message_id: &str, _status: String) -> Result<()> {
+    async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
+        let mut conversations = self.conversations.write().unwrap();
+        for conversation in conversations.values_mut() {
+            if conversation.messages().iter().any(|m| m.id == message_id) {
+                conversation.update_message_status(message_id, status.clone())?;
+            }
+        }
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-//! The app's real retrieval path, assembled over an in-memory corpus.
+//! Chat's library search, assembled over an in-memory corpus.
 //!
 //! Everything here is production code from the `lattice` crate; this module only supplies the
 //! storage the services expect. In order:
@@ -11,19 +11,26 @@
 //!    the same sequence `IndexingActor::process_file` runs.
 //! 3. Vectors go into a `USearchVectorIndex` (HNSW, cosine, f32); chunk rows go into SQLite,
 //!    where the production `chunks_fts_insert` trigger mirrors them into both FTS5 tables.
-//! 4. `HybridSearchService` runs both branches — three, with `--sparse on` — and fuses them
-//!    with weighted `ReciprocalRankFusion` (k = 10 by default), then applies the shared cross-encoder
-//!    blend when a reranker is supplied.
+//! 4. `HybridSearchUseCase` — the orchestrator chat, the tool executor and the search page run —
+//!    is composed the way `features::search::di::build` composes it, and searches each query
+//!    exactly as chat's first pass searches one planned query: the vector and BM25 branches (and
+//!    the learned sparse one, with `--sparse on`), weighted reciprocal-rank fusion (k = 10 by
+//!    default) with chat's per-document cap. With a reranker, the fused pool is widened as chat
+//!    widens it and passed through the same cross-encoder stage chat calls, at chat's default
+//!    candidate cap and query budget.
 //! 5. Neighbouring-section evidence expansion mirrors `chat::retrieval::corpus_plan`.
-//! 6. `chat::retrieval::assess_retrieval_sufficiency` judges the fused ranking, so a run row
-//!    carries the verdict the chat pipeline would have acted on.
+//! 6. `chat::retrieval::assess_retrieval_sufficiency` judges the ranking, so a run row carries
+//!    the verdict the chat pipeline would have acted on.
 //!
 //! `--strategy late-chunking` embeds each document in one forward pass and pools each chunk's
 //! token states, mirroring `indexing::use_cases::embedding_input`. `--compression` configures
 //! the USearch index's stored vector layout. `--sparse` adds the learned sparse branch, which
 //! needs a model with a sparse head.
 //!
-//! Two deviations from production, both forced and both narrow:
+//! What a chat turn adds on top of this, and the harness leaves out: the corpus planner's query
+//! rewrites (each query here is searched as written, as one planned query), HyDE text in the
+//! rerank query, document openings and section lookups, the corrective retry, and workspace
+//! scope. Two further deviations, both forced and both narrow:
 //!
 //! - `corpus_plan::expand_evidence` and `ConversationRepository::retrieval_neighbors` are
 //!   `pub(super)` / bound to the conversation repository, so `expand` below re-implements them:
@@ -45,25 +52,19 @@ use lattice::features::indexing::engine::chunker::{
     context_prefix, ChunkerConfig, ContextualizedChunk, SemanticChunker,
 };
 use lattice::features::indexing::engine::metadata_extractor::extract_metadata;
-use lattice::features::search::dto::SearchResultDto;
-use lattice::features::search::engine::bm25::BM25Search;
-use lattice::features::search::engine::hybrid::{
-    HybridSearchResult, HybridSearchService, SearchConfig, SearchMode,
-};
+use lattice::features::search::dto::{SearchModeDto, SearchRequestDto};
 use lattice::features::search::engine::reranker::Reranker;
 use lattice::features::search::engine::sparse_search::{
     SparseSearchService, SqliteSparseTermStore,
 };
+use lattice::features::search::engine::text_search::SqliteTextSearch;
 use lattice::features::search::engine::vector_search::{
     USearchVectorIndex, VectorIndexCompression,
 };
-use lattice::features::search::enrichment_service::SearchEnrichmentService;
-use lattice::features::search::{
-    BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait,
-};
+use lattice::features::search::use_cases::{BranchKind, HybridSearchUseCase, RerankOptions};
+use lattice::features::search::SparseSearchTrait;
 use lattice::features::settings::dto::RetrievalTuningSettingsDto;
-use lattice::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use lattice::shared::constants::MIN_SIMILARITY_SCORE;
+use lattice::infrastructure::persistence::repositories::ChunkRepository;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -73,15 +74,14 @@ use std::sync::Arc;
 
 use crate::Document;
 
-pub const VECTOR_BRANCH: SearchMode = SearchMode::Vector;
-pub const BM25_BRANCH: SearchMode = SearchMode::Keyword;
-
 /// Anchors whose section neighbours are pulled in, matching `corpus_plan::expand_evidence`.
 const EVIDENCE_ANCHORS: usize = 8;
 
 /// The columns the search services actually read, plus the FTS5 table and the insert trigger,
-/// copied from `migrations/20260916000000_init_schema.sql`. The sparse posting table is
-/// created unconditionally and simply stays empty when the branch is off.
+/// copied from `migrations/20260916000000_init_schema.sql`. `owner_conversation_id` is what a
+/// vault-wide search reads to leave chat attachments out; every fixture document is a library
+/// document. The sparse posting table is created unconditionally and simply stays empty when the
+/// branch is off.
 const SCHEMA: &str = "
 CREATE TABLE documents (
     id TEXT PRIMARY KEY,
@@ -91,7 +91,8 @@ CREATE TABLE documents (
     mime_type TEXT,
     size_bytes INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    owner_conversation_id TEXT
 );
 CREATE TABLE text_chunks (
     id TEXT PRIMARY KEY,
@@ -167,19 +168,33 @@ struct SpanGroup {
 
 pub struct ProductionIndex {
     pool: SqlitePool,
-    service: HybridSearchService,
+    search: HybridSearchUseCase,
+    /// Whether a reranker was supplied, which widens the fused pool before the cross-encoder
+    /// stage exactly as chat widens it.
+    reranks: bool,
+    vector_weight: f32,
+    keyword_weight: f32,
+    /// Chat's retrieval tuning defaults: the rerank candidate cap, the rerank query budget and
+    /// the sufficiency thresholds.
+    tuning: RetrievalTuningSettingsDto,
     top_k: usize,
+    /// Document id to its file name, which chat uses as every passage's title. The title is
+    /// part of what the cross-encoder reads and what the sufficiency check reads.
+    document_names: HashMap<String, String>,
     /// Chunk id to its position inside its document, so ranking rows stay attributable
     /// without a database round trip inside the timed region.
     chunk_positions: HashMap<String, usize>,
     /// `document#chunk` locator to the UTF-8 byte range the chunk covers in its document.
     chunk_spans: HashMap<String, (usize, usize)>,
-    /// The sparse branch, kept so it can also be run on its own for the branch diagnostics.
-    /// `None` when the branch is off, which is also what the run row reports.
-    sparse: Option<Arc<SparseSearchService>>,
-    /// Whether `HybridSearchService` applied the cross-encoder blend, which is the only
-    /// condition under which the sufficiency check may read the top score as a relevance.
-    reranked: bool,
+}
+
+/// One query's ranking and the chat pipeline's verdict on it.
+pub struct Ranking {
+    pub chunks: Vec<RankedChunk>,
+    pub sufficiency: RetrievalSufficiency,
+    /// Whether the cross-encoder stage applied its blend, which is the only condition under
+    /// which the sufficiency check may read the top score as a relevance.
+    pub reranked: bool,
 }
 
 /// Index and fusion settings for one production run.
@@ -187,9 +202,9 @@ pub struct ProductionIndex {
 pub struct IndexOptions {
     pub compression: VectorIndexCompression,
     pub sparse_enabled: bool,
-    /// Reciprocal-rank-fusion constant; the application uses 60.
+    /// Reciprocal-rank-fusion constant; the application uses `DEFAULT_RRF_K` (10).
     pub rrf_k: f32,
-    /// Branch weights handed to `SearchConfig`; the application uses 0.7 / 0.3.
+    /// Branch weights of the hybrid request; the application uses 0.7 / 0.3.
     pub vector_weight: f32,
     pub keyword_weight: f32,
 }
@@ -239,8 +254,10 @@ impl ProductionIndex {
         let mut entries = Vec::new();
         let mut chunk_positions = HashMap::new();
         let mut chunk_spans = HashMap::new();
+        let mut document_names = HashMap::new();
         for document in documents {
             let file_name = format!("{}.md", document.id);
+            document_names.insert(document.id.clone(), file_name.clone());
             let title = document.title.clone().unwrap_or_else(|| file_name.clone());
             sqlx::query(
                 "INSERT INTO documents \
@@ -362,95 +379,127 @@ impl ProductionIndex {
         );
         index.publish_embeddings(entries)?;
 
-        // The same wiring `features::search::di::build` uses, minus recency and workspace scope.
-        let config = SearchConfig {
-            mode: SearchMode::Hybrid,
-            vector_weight,
-            keyword_weight,
-            min_score: MIN_SIMILARITY_SCORE,
-            // Direct search leaves reranking off by default; here it follows the CLI argument
-            // so a reranked run exercises HybridSearchService's own blend stage.
-            enable_reranking: reranker.is_some(),
-            max_results: 100,
-            // `HybridSearchService` still skips the branch unless a service is
-            // attached *and* the loaded model has a sparse head, so this flag
-            // only says whether the run asked for it.
-            sparse_enabled,
-        };
-        let reranked = reranker.is_some();
-        let mut service = HybridSearchService::new(
-            Arc::clone(&index) as Arc<dyn SearchServiceTrait>,
-            Arc::new(BM25Search::new(pool.clone())) as Arc<dyn BM25SearchTrait>,
-            pool.clone(),
-            Arc::new(SearchEnrichmentService::new(pool.clone()))
-                as Arc<dyn SearchEnrichmentServiceTrait>,
-            config,
+        // Composed as `features::search::di::build` composes the application's: the same
+        // keyword index and chunk repository over the same schema, the sparse branch behind its
+        // switch, and the shared reranker. Only the embedder differs: the app wraps whichever
+        // model is loaded, the harness hands in this one.
+        let mut search = HybridSearchUseCase::new(
+            Arc::clone(&model) as Arc<dyn EmbeddingPort>,
+            Arc::clone(&index) as Arc<dyn VectorSearchPort>,
+            Arc::new(SqliteTextSearch::new(pool.clone())),
         )
-        .rrf_k(rrf_k);
-        if let Some(reranker) = reranker {
-            service = service.with_reranker(reranker);
+        .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone())))
+        .with_rrf_k(rrf_k);
+        if sparse_enabled {
+            search = search.with_sparse_search(
+                Arc::new(SparseSearchService::new(
+                    pool.clone(),
+                    Arc::clone(&model) as Arc<dyn EmbeddingPort>,
+                )) as Arc<dyn SparseSearchTrait>,
+                true,
+            );
         }
-        let sparse = sparse_enabled.then(|| {
-            Arc::new(SparseSearchService::new(
-                pool.clone(),
-                Arc::clone(&model) as Arc<dyn EmbeddingPort>,
-            ))
-        });
-        if let Some(sparse) = &sparse {
-            service = service.with_sparse_search(Arc::clone(sparse) as Arc<dyn SparseSearchTrait>);
+        let reranks = reranker.is_some();
+        if let Some(reranker) = reranker {
+            search = search.with_reranker(reranker);
         }
 
         Ok(Self {
             pool,
-            service,
+            search,
+            reranks,
+            vector_weight,
+            keyword_weight,
+            tuning: RetrievalTuningSettingsDto::default(),
             top_k,
+            document_names,
             chunk_positions,
             chunk_spans,
-            sparse,
-            reranked,
         })
+    }
+
+    /// The hybrid request chat sends for one planned query, at this run's fusion weights. With
+    /// a reranker the pool is widened as chat widens it, so the cross-encoder can promote a
+    /// passage fusion left just outside the cut.
+    fn request(&self, query_text: &str) -> SearchRequestDto {
+        SearchRequestDto {
+            query: query_text.to_owned(),
+            limit: Some(if self.reranks {
+                RerankOptions::candidate_pool(self.top_k)
+            } else {
+                self.top_k
+            }),
+            threshold: None,
+            mode: SearchModeDto::Hybrid {
+                vector_weight: self.vector_weight,
+                bm25_weight: self.keyword_weight,
+            },
+        }
     }
 
     /// Fused (and optionally reranked) chunk ranking for one query, with the chat
     /// pipeline's own verdict on whether that ranking was good enough to answer from.
     ///
-    /// The verdict is taken before neighbour expansion, which is where the pipeline takes
-    /// it too: neighbours are appended context, not ranking evidence.
-    pub async fn rank(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-    ) -> Result<(Vec<RankedChunk>, RetrievalSufficiency), Box<dyn std::error::Error>> {
-        let results = HybridSearchTrait::search(
-            &self.service,
-            query_text,
-            query_embedding,
-            self.top_k,
-            SearchMode::Hybrid,
-        )
-        .await?;
+    /// The verdict is taken where the pipeline takes it: after the rerank stage, over the
+    /// whole pool, before the cut to `top_k` and before neighbour expansion, which appends
+    /// context rather than ranking evidence.
+    pub async fn rank(&self, query_text: &str) -> Result<Ranking, Box<dyn std::error::Error>> {
+        let mut response = self.search.execute(self.request(query_text)).await?;
+        // Chat titles every passage with its document's file name before reranking.
+        for result in &mut response.results {
+            if let Some(name) = result
+                .document_id
+                .as_ref()
+                .and_then(|id| self.document_names.get(id))
+            {
+                result.title.clone_from(name);
+            }
+        }
+        let mut reranked = false;
+        if self.reranks {
+            let stage = self
+                .search
+                .rerank(
+                    response,
+                    &RerankOptions {
+                        query: query_text.to_owned(),
+                        max_candidates: self.tuning.rerank_max_candidates as usize,
+                        query_max_chars: self.tuning.rerank_query_max_chars as usize,
+                    },
+                )
+                .await;
+            response = stage.response;
+            reranked = stage.applied;
+        }
         let sufficiency = assess_retrieval_sufficiency(
-            &results.iter().map(sufficiency_input).collect::<Vec<_>>(),
+            &response.results,
             &[query_text.to_owned()],
-            &RetrievalTuningSettingsDto::default(),
-            self.reranked,
+            &self.tuning,
+            reranked,
         );
-        let mut ranked = Vec::with_capacity(results.len());
-        for result in results {
+        response.results.truncate(self.top_k);
+        let mut chunks = Vec::with_capacity(response.results.len());
+        for result in response.results {
             let chunk_index = self
                 .chunk_positions
-                .get(&result.chunk_id)
+                .get(&result.id)
                 .copied()
-                .ok_or_else(|| format!("retrieved unknown chunk {}", result.chunk_id))?;
-            ranked.push(RankedChunk {
-                chunk_id: result.chunk_id,
-                document_id: result.document_id,
+                .ok_or_else(|| format!("retrieved unknown chunk {}", result.id))?;
+            chunks.push(RankedChunk {
+                document_id: result
+                    .document_id
+                    .ok_or_else(|| format!("chunk {} has no document", result.id))?,
+                chunk_id: result.id,
                 chunk_index,
                 score: result.score,
                 neighbor: false,
             });
         }
-        Ok((ranked, sufficiency))
+        Ok(Ranking {
+            chunks,
+            sufficiency,
+            reranked,
+        })
     }
 
     /// Byte ranges for the given chunks, keyed by locator, so the scorer can tell whether the
@@ -466,46 +515,44 @@ impl ProductionIndex {
             .collect()
     }
 
-    /// The learned sparse branch on its own, collapsed to its document ranking, or `None`
-    /// when the branch is off. Same role as `branch_documents`: it says whether a fused
-    /// regression came from this branch.
-    pub async fn sparse_documents(
-        &self,
-        query_text: &str,
-    ) -> Result<Option<Vec<String>>, Box<dyn std::error::Error>> {
-        let Some(sparse) = self.sparse.as_ref() else {
-            return Ok(None);
-        };
-        let results =
-            SparseSearchTrait::search_scoped(sparse.as_ref(), query_text, self.top_k, None, None)
-                .await?;
-        let mut seen = HashSet::new();
-        Ok(Some(
-            results
-                .into_iter()
-                .filter(|result| seen.insert(result.doc_id.clone()))
-                .map(|result| result.doc_id)
-                .collect(),
-        ))
-    }
-
-    /// One branch of the hybrid, collapsed to its document ranking, so a regression can be
-    /// blamed on the vector side or the lexical side instead of on "retrieval".
+    /// Each branch the fusion saw for this query, collapsed to its document ranking, so a
+    /// regression can be blamed on the vector side, the lexical side or the sparse side instead
+    /// of on "retrieval". Keyed `vector`, `bm25` and, when that branch ran, `sparse`; a branch
+    /// that failed is absent.
     pub async fn branch_documents(
         &self,
         query_text: &str,
-        query_embedding: &[f32],
-        mode: SearchMode,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let results =
-            HybridSearchTrait::search(&self.service, query_text, query_embedding, self.top_k, mode)
-                .await?;
-        let mut seen = HashSet::new();
-        Ok(results
-            .into_iter()
-            .filter(|result| seen.insert(result.document_id.clone()))
-            .map(|result| result.document_id)
-            .collect())
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let request = self.request(query_text);
+        let query = self
+            .search
+            .search_branches(
+                query_text,
+                None,
+                None,
+                request.limit.unwrap_or(self.top_k),
+                self.vector_weight,
+                self.keyword_weight,
+            )
+            .await;
+        let mut branches = serde_json::Map::new();
+        for branch in query.branches {
+            let key = match branch.kind {
+                BranchKind::Vector => "vector",
+                BranchKind::Lexical => "bm25",
+                BranchKind::Sparse => "sparse",
+                BranchKind::Fused => continue,
+            };
+            let mut seen = HashSet::new();
+            let documents: Vec<String> = branch
+                .results
+                .into_iter()
+                .filter_map(|result| result.document_id)
+                .filter(|id| seen.insert(id.clone()))
+                .collect();
+            branches.insert(key.to_owned(), serde_json::json!(documents));
+        }
+        branches
     }
 
     /// Append neighbouring-section evidence, mirroring `corpus_plan::expand_evidence`.
@@ -624,43 +671,6 @@ async fn embed_spans(
     Ok(vectors)
 }
 
-/// A fused result in the shape the sufficiency check reads.
-///
-/// `assess_retrieval_sufficiency` consumes `score`, `title` and `content`; the title is the
-/// enriched document filename, which is where `SearchResultDto` carries it everywhere else.
-/// The remaining fields are copied rather than invented so the DTO stays truthful.
-fn sufficiency_input(result: &HybridSearchResult) -> SearchResultDto {
-    let metadata: HashMap<String, serde_json::Value> = result
-        .metadata
-        .as_ref()
-        .and_then(serde_json::Value::as_object)
-        .map(|map| map.clone().into_iter().collect())
-        .unwrap_or_default();
-    let text = |key: &str| {
-        metadata
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    };
-    SearchResultDto {
-        id: result.id.clone(),
-        title: text("filename").unwrap_or_default(),
-        content: result.content.clone(),
-        score: result.score,
-        path: text("path"),
-        document_id: Some(result.document_id.clone()),
-        position: metadata
-            .get("chunk_index")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|index| usize::try_from(index).ok()),
-        vector_score: result.vector_score,
-        bm25_score: result.bm25_score,
-        vector_rank: result.vector_rank,
-        bm25_rank: result.bm25_rank,
-        metadata,
-    }
-}
-
 /// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
 /// Chunk-first embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
 /// names a directory. Embedding the corpus is most of a run's wall time, and a
@@ -750,6 +760,7 @@ fn prepare_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice::application::ports::{ChunkRepositoryPort, TextSearchPort};
 
     fn chunk(document_id: &str, chunk_index: usize, score: f32) -> RankedChunk {
         RankedChunk {
@@ -778,8 +789,9 @@ mod tests {
             .expect("in-memory pool");
         sqlx::raw_sql(SCHEMA).execute(&pool).await.expect("schema");
         sqlx::raw_sql(
-            "INSERT INTO documents VALUES \
-             ('d','/eval/d.md','d.md','MD','text/markdown',4,'t','t');
+            "INSERT INTO documents \
+             (id, file_path, file_name, file_type, mime_type, size_bytes, created_at, updated_at) \
+             VALUES ('d','/eval/d.md','d.md','MD','text/markdown',4,'t','t');
              INSERT INTO text_chunks \
              (id, document_id, content, contextualized_content, context_prefix, chunk_index, \
               start_char, end_char, section) \
@@ -797,16 +809,32 @@ mod tests {
                 .expect("trigger populated chunks_fts");
         assert_eq!(indexed, "[Document: d] quota");
 
-        // The exact join BM25Search and SearchEnrichmentService rely on.
-        let hits: Vec<(String, String)> = sqlx::query_as(
-            "SELECT tc.id, d.file_name FROM chunks_fts \
-             JOIN text_chunks tc ON chunks_fts.chunk_id = tc.id \
-             LEFT JOIN documents d ON tc.document_id = d.id \
-             WHERE chunks_fts MATCH 'quota' ORDER BY bm25(chunks_fts)",
+        // What the orchestrator's vault-wide branches read: the keyword search, which leaves
+        // chat attachments out, and the chunk repository's attachment and body lookups.
+        let hits = TextSearchPort::search_scoped(
+            &SqliteTextSearch::new(pool.clone()),
+            "quota",
+            5,
+            None,
+            None,
         )
-        .fetch_all(&pool)
         .await
-        .expect("fts query");
-        assert_eq!(hits, [("d::0".to_owned(), "d.md".to_owned())]);
+        .expect("keyword search");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            (hits[0].chunk_id.as_str(), hits[0].doc_id.as_str()),
+            ("d::0", "d")
+        );
+        let chunks = ChunkRepository::new(pool);
+        assert!(
+            ChunkRepositoryPort::find_conversation_attached_chunk_ids(&chunks)
+                .await
+                .expect("attachment lookup")
+                .is_empty()
+        );
+        let bodies = ChunkRepositoryPort::find_content_by_ids(&chunks, &["d::0".to_owned()])
+            .await
+            .expect("body lookup");
+        assert_eq!(bodies.get("d::0").map(String::as_str), Some("quota"));
     }
 }

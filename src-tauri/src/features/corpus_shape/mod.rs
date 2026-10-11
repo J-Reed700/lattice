@@ -5,8 +5,6 @@
 //! and caches labels across re-runs via a stability fingerprint so small
 //! membership churn doesn't reshuffle the whole label set.
 //!
-//! `cluster_vault_debug` can write a JSON report for tuning and diagnostics.
-//!
 //! ## Public surface
 //!
 //! - `entity` — `Cluster`, `ClusterRun`, `ClusterMember`, `LabelSource`
@@ -15,8 +13,7 @@
 //! - `labeling` — LLM labeling prompt + response parsing
 //! - `repository` — `ClusterRepositoryPort` + `SqliteClusterRepository`
 //! - `use_cases::RunClusteringUseCase` — orchestrates the whole pipeline
-//! - `commands` — Tauri commands (`cluster_vault_debug`, `cluster_vault_run`,
-//!   `list_clusters`)
+//! - `commands` — Tauri commands (`cluster_vault_run`, `list_clusters`)
 //! - `plugin::init()` — Tauri plugin registration
 //!
 //! ## Non-goals

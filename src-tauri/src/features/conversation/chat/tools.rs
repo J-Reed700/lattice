@@ -106,7 +106,7 @@ pub(super) fn build_llm_tool_definitions(
 
     let optional_allowlist = build_optional_tool_allowlist(tool_preferences);
 
-    let registry = container.function_registry();
+    let registry = container.tools();
     let domain_tools = registry.list_tools();
     let mut definitions: Vec<crate::application::ports::ToolDefinition> = domain_tools
         .iter()

@@ -121,7 +121,7 @@ async fn the_list_adopts_indexes_without_a_row_and_says_what_each_holds() {
     let rig = Rig::new();
     let pool = database().await;
     let embedder = FakeEmbedder::new("model-a");
-    let manager = rig.manager(&embedder);
+    let manager = rig.manager(&embedder).await;
 
     // Indexed before the list existed: a directory and no row.
     let old = rig.project(
@@ -203,12 +203,12 @@ async fn the_list_adopts_indexes_without_a_row_and_says_what_each_holds() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_open_folder_lists_live_and_a_stopped_run_as_paused() {
+async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused() {
     let rig = Rig::new();
     let pool = database().await;
     let embedder = FakeEmbedder::new("model-a");
     embedder.delay_ms.store(40, Ordering::SeqCst);
-    let manager = rig.manager(&embedder);
+    let manager = rig.manager(&embedder).await;
     let files: Vec<(String, String)> = (0..40)
         .map(|n| {
             (
@@ -235,7 +235,25 @@ async fn the_open_folder_lists_live_and_a_stopped_run_as_paused() {
     assert_eq!(live[0].index.state, FolderIndexSummaryState::Indexing);
     assert_eq!(live[0].index.passages_total, 40);
 
+    // Closed, its build runs on and is still listed live.
     manager.close().await;
+    for _ in 0..500 {
+        let listed = folders::list(&pool, &manager).await.unwrap().folders;
+        if listed[0].index.state == FolderIndexSummaryState::Indexing {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        folders::list(&pool, &manager).await.unwrap().folders[0]
+            .index
+            .state,
+        FolderIndexSummaryState::Indexing
+    );
+
+    // The app stops; what is on disk is a paused index.
+    manager.jobs.close();
+    manager.jobs.drain().await;
     let paused = folders::list(&pool, &manager)
         .await
         .unwrap()
@@ -255,7 +273,7 @@ async fn removing_a_folder_keeps_its_threads_unless_asked() {
     let pool = container.db_pool().clone();
     let rig = Rig::new();
     let embedder = FakeEmbedder::new("model-a");
-    let manager = rig.manager(&embedder);
+    let manager = rig.manager(&embedder).await;
     let root = rig.project("music", &[("synth.rs", "pub fn voice() {}\n")]);
     open_settled(&manager, &root).await;
     folders::record_open(&pool, &text(&root)).await.unwrap();
@@ -401,4 +419,68 @@ async fn a_folder_cannot_take_a_missing_or_archived_space() {
         folders::set_settings(&pool, "/Users/me/unlisted", "", "space_general").await,
         Err(AppError::NotFound(_))
     ));
+}
+
+async fn last_thread(pool: &SqlitePool, root: &str) -> Option<String> {
+    repository::list_folders(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.root == root)
+        .and_then(|row| row.last_thread_id)
+}
+
+/// A folder reopens on the thread it last showed, kept on its row; a thread
+/// of another folder is refused, and deleting the thread forgets it.
+#[tokio::test]
+async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
+    let pool = database().await;
+    let root = "/Users/me/notes";
+    let first = thread(&pool, Some(Path::new(root)), "First").await;
+    let second = thread(&pool, Some(Path::new(root)), "Second").await;
+    let elsewhere = thread(&pool, Some(Path::new("/Users/me/other")), "Other").await;
+    let chat = thread(&pool, None, "Chat").await;
+
+    // A thread used before the open was recorded lists the folder.
+    folders::remember_thread(&pool, root, &first).await.unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(
+        repository::list_folders(&pool).await.unwrap()[0].name,
+        "notes"
+    );
+
+    // Opening again keeps it; using another thread replaces it.
+    folders::record_open(&pool, root).await.unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(first.as_str())
+    );
+    folders::remember_thread(&pool, root, &second)
+        .await
+        .unwrap();
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(second.as_str())
+    );
+
+    for foreign in [&elsewhere, &chat] {
+        assert!(matches!(
+            folders::remember_thread(&pool, root, foreign).await,
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+    assert_eq!(
+        last_thread(&pool, root).await.as_deref(),
+        Some(second.as_str())
+    );
+
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(last_thread(&pool, root).await, None);
 }

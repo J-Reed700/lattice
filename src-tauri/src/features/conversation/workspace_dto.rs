@@ -82,14 +82,53 @@ pub enum SynthesisStage {
     Writing,
 }
 
-/// Actual synthesis work boundaries, rather than an estimated completion percent.
+/// Where a synthesis job is, as its activity: actual work boundaries, rather
+/// than an estimated completion percent.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SynthesisProgressDto {
+pub struct SynthesisActivityDto {
     pub stage: SynthesisStage,
     pub entry_count: Option<usize>,
     pub chunk_index: Option<usize>,
     pub chunk_count: Option<usize>,
+}
+
+/// Where a finished synthesis is saved. Fixed when the synthesis starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SynthesisDestinationDto {
+    /// A new quick-capture page.
+    Capture,
+    /// The end of an existing journal page.
+    #[serde(rename_all = "camelCase")]
+    Note { note_id: String },
+    /// The week's page, by title, created when it does not exist.
+    Week { title: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StartJournalSynthesisRequestDto {
+    pub request: SynthesizeJournalEntriesRequestDto,
+    pub destination: SynthesisDestinationDto,
+    /// What the progress panel calls it.
+    pub title: String,
+    /// The heading the saved block opens with.
+    pub heading: String,
+}
+
+/// A synthesis job and what it was asked: live, finished and waiting to be
+/// saved, or ended without a result.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalSynthesisDto {
+    pub job: crate::shared::runtime::jobs::JobDto,
+    pub title: String,
+    pub heading: String,
+    pub destination: SynthesisDestinationDto,
+    pub conversation_ids: Vec<String>,
+    /// The job's activity, typed; later changes arrive on `jobs://status`.
+    pub activity: Option<SynthesisActivityDto>,
 }
 
 /// One source a synthesis drew on. `kind` is "conversation", "reference" or

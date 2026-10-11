@@ -9,7 +9,7 @@
 
 import { useLayoutEffect, useSyncExternalStore } from 'react';
 
-import { useSettingsQuery } from './queries/useSettingsQuery';
+import { useSettingsQuery } from '../features/settings/hooks/useSettingsQuery';
 
 type ResolvedTheme = 'light' | 'dark';
 // Also read by public/theme-bootstrap.js before the application bundle loads.

@@ -4,7 +4,6 @@
 //! These tests verify that DTO structures can be created and serialized
 //! without requiring full integration testing with tauri::State.
 
-pub mod backup;
 pub mod cache;
 pub mod conversation;
 pub mod extraction;

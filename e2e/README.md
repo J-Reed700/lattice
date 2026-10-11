@@ -2,6 +2,8 @@
 
 These Playwright tests exercise the production renderer bundle through real routes and controls. A strict, stateful Tauri fixture supplies deterministic backend behavior. Unknown IPC commands fail the test so a new application dependency cannot silently pass through a permissive mock.
 
+Every spec installs the one bridge in `fixtures/tauri.ts` (`installTauriMock`) and answers commands with `mockCommands` (in the page) or `serveCommands` (in Node, so state survives a reload). Handlers are keyed by the generated command names and return the generated DTOs: `npm run type-check:e2e` fails when a fixture names a command or a field the Rust contract no longer has. A fixture may leave out fields its flow never reads.
+
 ## Test layers
 
 | Layer | Command | What it verifies |

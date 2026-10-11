@@ -20,13 +20,15 @@ use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
 use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::executor::FunctionExecutor;
+use crate::features::function_calling::registry::{
+    init_function_registry, register_custom_query_tools,
+};
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::settings::di::ContainerSettingsSideEffects;
+use crate::features::web::services::web::WebService;
 use crate::infrastructure::ml::model_cache::ModelCache;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
-use crate::infrastructure::services::{
-    init_function_registry, register_custom_query_tools, FunctionExecutor, WebService,
-};
 use crate::infrastructure::storage::ContentAddressedStorage;
 use crate::shared::error::Result;
 use sqlx::SqlitePool;
@@ -111,6 +113,16 @@ pub struct Container {
     /// trigger cache invalidation just like the Tauri command path
     /// did manually before.
     pub(crate) settings_side_effects: Arc<dyn SettingsSideEffectsPort>,
+
+    /// Durable background jobs. Features register a handler per kind during
+    /// plugin setup; shutdown closes and drains it before the database closes.
+    pub(crate) jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+
+    /// The Explorer's folder indexes: the open folder and its builds, which
+    /// run as jobs. Built with the app handle, which it loads the embedder
+    /// through; `None` in test fixtures.
+    pub(crate) folder_index:
+        Option<Arc<crate::features::explorer::index::manager::FolderIndexManager>>,
 
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
@@ -252,7 +264,7 @@ impl Container {
             embedding_service,
             search.search_service().clone(),
             search.bm25_search_service().clone(),
-            search.hybrid_search_service().clone(),
+            search.hybrid_search_use_case().clone(),
             search.document_repo().clone(),
             indexing.chunk_repository().clone(),
             library.tag_service().clone(),
@@ -282,6 +294,8 @@ impl Container {
                 vault_writer: vault_writer.clone(),
             });
 
+        let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+
         Ok(Self {
             core,
             system,
@@ -300,6 +314,8 @@ impl Container {
             vault_writer,
             vault_write_suppression,
             settings_side_effects,
+            jobs,
+            folder_index: None,
             app_handle: None,
         })
     }
@@ -316,12 +332,42 @@ impl Container {
             self.vault_write_suppression.clone(),
         );
 
+        let events = handle.clone();
+        self.jobs.observe(move |job| {
+            use tauri::Emitter;
+            if let Err(error) = events.emit(crate::shared::runtime::jobs::STATUS_EVENT, job) {
+                tracing::debug!(%error, "Could not publish a job status to the window");
+            }
+        });
+
+        self.folder_index = Some(
+            crate::features::explorer::index::manager::FolderIndexManager::new(
+                crate::features::explorer::index::manager::ManagerConfig::for_data_dir(
+                    self.core.data_dir(),
+                ),
+                Arc::new(crate::features::explorer::plugin::AppEmbedders::new(
+                    handle.clone(),
+                )),
+                Arc::clone(&self.jobs),
+            ),
+        );
+
         self.app_handle = Some(handle);
         self
     }
 
     pub fn db_pool(&self) -> &SqlitePool {
         self.core.db_pool()
+    }
+
+    pub fn jobs(&self) -> &Arc<crate::shared::runtime::jobs::JobRuntime> {
+        &self.jobs
+    }
+
+    pub fn folder_index(
+        &self,
+    ) -> Option<&Arc<crate::features::explorer::index::manager::FolderIndexManager>> {
+        self.folder_index.as_ref()
     }
 
     pub fn db_conn(

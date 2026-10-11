@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use crate::application::ports::{SettingsRepositoryPort, SettingsSideEffectsPort};
 use crate::features::function_calling::FunctionExecutorTrait;
+use crate::features::settings::repository::SettingsRepository;
 use crate::features::settings::use_cases::{
     ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 use crate::features::vault::writeback::VaultWriterHandle;
-use crate::infrastructure::persistence::repositories::SettingsRepository;
 use crate::interfaces::di::container::{ChatLlmCache, NamedLlmCache};
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;

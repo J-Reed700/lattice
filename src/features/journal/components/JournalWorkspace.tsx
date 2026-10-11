@@ -5,8 +5,6 @@ import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
 import { Combine, FilePlus2, NotebookPen, PanelLeft, Plus } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { NEW_ITEM_EVENT } from '@/components/RootLayout';
-import { GENERAL_SPACE_ID } from '@/features/chat/components/SpacePickerPopover';
 import { createJournal, updateJournal, deleteJournal, journalsQueryOptions, useJournalsQuery } from '@/features/journal/api/queries';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
 import { EntryList } from '@/features/journal/components/EntryList';
@@ -16,14 +14,16 @@ import { useJournalEntries } from '@/features/journal/hooks/useJournalEntries';
 import { useJournalNavigationGuard } from '@/features/journal/hooks/useJournalNavigationGuard';
 import { UNTITLED_PAGE, useJournalNote } from '@/features/journal/hooks/useJournalNote';
 import { useJournalSources } from '@/features/journal/hooks/useJournalSources';
+import { useWeeklySynthesisCandidatesQuery } from '@/features/journal/hooks/useWeeklySynthesisCandidatesQuery';
 import { weekPageTitle } from '@/features/journal/model/synthesisTargets';
 import { runSynthesis } from '@/features/journal/synthesis/runSynthesis';
-import { selectSynthesisRunning, useSynthesisStore } from '@/features/journal/synthesis/synthesisStore';
-import { useWeeklySynthesisCandidatesQuery } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
-import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
+import { useActiveSynthesis } from '@/features/journal/synthesis/synthesisPanel';
+import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
+import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import VaultAPI from '@/lib/api';
-import { useConversationsStore } from '@/stores/conversationsStore';
-import type { PaletteCommand } from '@/stores/paletteCommandsStore';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
@@ -132,7 +132,7 @@ export function JournalWorkspace() {
 
   const { data: weekCandidates } =
     useWeeklySynthesisCandidatesQuery();
-  const isSynthesizing = useSynthesisStore(selectSynthesisRunning);
+  const isSynthesizing = useActiveSynthesis() !== null;
 
   const queryClient = useQueryClient();
   const journalsQuery = useJournalsQuery();
@@ -435,7 +435,6 @@ export function JournalWorkspace() {
       localStorage.removeItem(`journal.noteBySpace.${requestedJournalSpaceId}`);
       localStorage.removeItem(`journal.pinnedBookmarks.${requestedJournalSpaceId}`);
       localStorage.removeItem(`journal.pinnedNoteHighlights.${requestedJournalSpaceId}`);
-      localStorage.removeItem(`journal.pinnedEntries.${requestedJournalSpaceId}`);
       const last = localStorage.getItem(LAST_JOURNAL_SPACE_KEY);
       if (last === requestedJournalSpaceId) {
         localStorage.removeItem(LAST_JOURNAL_SPACE_KEY);

@@ -13,12 +13,13 @@ use sqlx::SqlitePool;
 
 use crate::shared::error::{AppError, Result};
 
-/// Beginning-of-document text read for the document prompt, before the real
-/// tokenizer trims it to [`crate::features::summaries::prompt::DOCUMENT_BODY_TOKENS`].
-/// Four characters per token with headroom.
+/// Beginning-of-document text read for the document summary, before grounded
+/// generation carries as much of it as fits the window and
+/// [`crate::features::summaries::prompt::DOCUMENT_BODY_TOKENS`]. Four
+/// characters per token with headroom.
 const DOCUMENT_BODY_CHARS: usize = 24_000;
 
-/// Per-section text read, before the tokenizer trims it to
+/// Per-section text read, before grounded generation fits it to the window and
 /// [`crate::features::summaries::prompt::SECTION_BODY_TOKENS`].
 const SECTION_BODY_CHARS: usize = 12_000;
 

@@ -66,10 +66,9 @@ it('preserves successful cancellation counts, deletion and job details', async (
 
 it.each([
   ['File was moved; select its new path', 'File was moved; select its new path'],
-  ['', 'Retry failed'], ['   ', 'Retry failed'], [{ reason: 'missing' }, 'Retry failed'], [undefined, 'Retry failed'],
+  ['', 'Retry failed'], ['   ', 'Retry failed'], [null, 'Retry failed'], [undefined, 'Retry failed'],
 ])('selects useful retry details from %j', async (details, message) => {
-  // Native rejections can contain legacy/string details outside the DTO type.
-  vi.mocked(VaultAPI.retryFailedBatchItems).mockResolvedValue({ ok: false, error: 'Retry failed', details: { code: 'IO', message: 'Retry failed', details: details as unknown as Record<string, unknown> } });
+  vi.mocked(VaultAPI.retryFailedBatchItems).mockResolvedValue({ ok: false, error: 'Retry failed', details: { code: 'FILE_SYSTEM_ERROR', message: 'Retry failed', details } });
   await expect(retryFailedItems('job-1')).rejects.toThrow(message);
 });
 

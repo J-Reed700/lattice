@@ -1,13 +1,13 @@
 import { Bookmark } from 'lucide-react';
 
-import { CitationVisibilityToggle } from '@/components/Reading/CitationVisibilityToggle';
-import { SourceCitations } from '@/features/chat/components/SourceCitations';
+import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
+import { SourceCitations } from '@/features/reading/components/SourceCitations';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ReferenceActionRail } from '@/features/references/components/ReferenceActionRail';
 import { ReferenceAnnotationStrip } from '@/features/references/components/ReferenceAnnotationStrip';
 import { ReferenceBody } from '@/features/references/components/ReferenceBody';
 import { ReferenceHeader } from '@/features/references/components/ReferenceHeader';
 import type { CaptureDestination } from '@/features/references/hooks/useReferenceInbox';
-import { useCitationDisplayStore } from '@/stores/citationDisplayStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { ConversationSpaceDto } from '@/types/api/conversation';
 import type { SourceWithMetadata } from '@/types/conversation';

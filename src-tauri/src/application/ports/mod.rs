@@ -71,7 +71,6 @@
 
 pub mod backup_port;
 pub mod backup_scheduler_port;
-pub mod batch_job_repository_port;
 pub mod chunk_repository_port;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
@@ -89,6 +88,7 @@ pub mod favorites_port;
 pub mod file_library;
 pub mod file_storage_port;
 pub mod file_system_port;
+pub mod library_passages;
 pub mod llm_port;
 pub mod loaded_chat_model;
 pub mod loaded_embedding_model;
@@ -97,7 +97,6 @@ pub mod metrics_port;
 pub mod mock_embedding_port;
 pub mod model_catalog;
 pub mod model_storage;
-pub mod notification_port;
 pub mod ocr_port;
 pub mod recent_documents_port;
 pub mod repository_port;
@@ -113,9 +112,6 @@ pub mod vector_search_port;
 
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
-pub use batch_job_repository_port::{
-    BatchItemState, BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
-};
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::{
     is_blob_hash, BlobLease, BlobLeases, BlobReferenceCheck, BlobRemoval,
@@ -138,7 +134,10 @@ pub use embedding_repository_port::EmbeddingRepositoryPort;
 pub use favorites_port::FavoritesRepositoryPort;
 pub use file_storage_port::{FileMetadata, FileStoragePort};
 pub use file_system_port::FileSystemPort;
-pub use llm_port::{LLMPort, StreamChunk, ToolCall, ToolDefinition};
+pub use library_passages::{
+    LibraryChunk, LibraryDocumentText, LibraryPassageHit, LibraryPassagesPort,
+};
+pub use llm_port::{LLMPort, ToolDefinition};
 pub use loaded_chat_model::LoadedChatModelPort;
 pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};
@@ -146,7 +145,6 @@ pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 pub use mock_embedding_port::MockEmbeddingPort;
 pub use model_catalog::{ExternalModelMetadata, MockModelCatalogPort, ModelCatalogPort};
 pub use model_storage::{DownloadedModel, ModelStoragePort};
-pub use notification_port::{events, NotificationPort, SubscriptionHandle};
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use repository_port::{Filter, NoFilter, RepositoryPort};

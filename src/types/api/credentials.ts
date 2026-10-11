@@ -5,6 +5,4 @@
  * These types match the Rust backend structures from hf_settings.rs
  */
 
-export interface HfTokenStatus {
-  isSet: boolean;
-}
+export type HfTokenStatus = import('../../lib/bindings').HfTokenStatus;

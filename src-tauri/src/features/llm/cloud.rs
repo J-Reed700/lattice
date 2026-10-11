@@ -6,7 +6,6 @@ use crate::application::{
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
@@ -22,10 +21,21 @@ pub struct CloudLlm {
     stall_timeout: Duration,
     max_tokens: u32,
     context_window: usize,
-    system_prompt: String,
 }
 
 impl CloudLlm {
+    /// Behind the provider's shared scheduler, so every role on one provider
+    /// queues in one place.
+    pub(crate) fn schedule(self) -> std::sync::Arc<dyn LLMPort> {
+        let scheduler = crate::features::llm::scheduler::cloud_scheduler(self.provider_name());
+        let output_limit = self.max_tokens;
+        std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
+            std::sync::Arc::new(self),
+            scheduler,
+            output_limit,
+        ))
+    }
+
     pub fn new(settings: &LLMSettingsDto, key: String) -> Result<Self> {
         if key.trim().is_empty() || settings.model.trim().is_empty() {
             return Err(AppError::InvalidConfig(
@@ -57,7 +67,6 @@ impl CloudLlm {
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
             context_window: settings.context_window as usize,
-            system_prompt: settings.prompts.system_prompt.clone(),
         })
     }
 
@@ -261,40 +270,10 @@ impl CloudLlm {
             self.provider_name()
         ))
     }
-
-    fn legacy_request(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<CompletionRequest> {
-        if images.is_some_and(|i| !i.is_empty()) {
-            return Err(AppError::InvalidInput(
-                "Cloud image input is not yet supported by this chat interface".into(),
-            ));
-        }
-        // Existing callers pass formatted history/context; preserve it as user data.
-        Ok(CompletionRequest {
-            input: vec![
-                CompletionInput::Message {
-                    role: "system".into(),
-                    content: self.system_prompt.clone(),
-                },
-                CompletionInput::Message {
-                    role: "user".into(),
-                    content: format!("{}\n\n{}", context.join("\n\n"), prompt),
-                },
-            ],
-            ..Default::default()
-        })
-    }
 }
 
 #[async_trait]
 impl LLMPort for CloudLlm {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
     fn supports_tool_calling(&self) -> bool {
         true
     }
@@ -346,129 +325,6 @@ impl LLMPort for CloudLlm {
             .await
             .map_err(|_| self.budget_error())?
     }
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<String> {
-        let response = self
-            .complete(&self.legacy_request(prompt, context, images)?)
-            .await?;
-        if !response.tool_calls.is_empty() {
-            return Err(AppError::InvalidState(
-                "Unexpected tool call in text generation".into(),
-            ));
-        }
-        if matches!(
-            response.finish_reason.as_str(),
-            "incomplete" | "max_tokens" | "failed"
-        ) {
-            return Err(AppError::InvalidState(format!(
-                "Cloud response stopped: {}",
-                response.finish_reason
-            )));
-        }
-        Ok(response.text)
-    }
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        let request = self.legacy_request(prompt, context, images)?;
-        // The streamed body is bounded by stall detection below, but waiting for
-        // the status line is bounded by nothing else.
-        let deadline = request
-            .wall_clock_budget()
-            .map(|budget| Instant::now() + budget);
-        let response = self
-            .send(&self.body(&request, true)?, deadline, false)
-            .await?;
-        let mut bytes = response.bytes_stream();
-        let provider = self.provider;
-        let stall_timeout = self.stall_timeout;
-        let output = async_stream::try_stream! {
-            let mut buffer = Vec::new();
-            let mut completed = false;
-            loop {
-                let next = tokio::time::timeout(stall_timeout, bytes.next()).await
-                    .map_err(|_| AppError::Network(format!("Cloud stream stalled for {}s", stall_timeout.as_secs())))?;
-                let Some(chunk) = next else { break };
-                buffer.extend_from_slice(&chunk.map_err(|e| AppError::Network(format!("Cloud stream interrupted: {e}")))?);
-                if buffer.len() > 4 * 1024 * 1024 { Err(AppError::Network("Cloud event exceeds size limit".into()))?; }
-                // Split complete lines at the byte level; UTF-8 characters may span network packets.
-                while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-                    let line: Vec<u8> = buffer.drain(..=end).collect();
-                    let line = std::str::from_utf8(&line).map_err(|e| AppError::Network(e.to_string()))?;
-                    let Some(data) = line.trim_end().strip_prefix("data:") else { continue; };
-                    let data = data.trim_start();
-                    if data == "[DONE]" { continue; }
-                    let event: Value = serde_json::from_str(data).map_err(|e| AppError::Network(format!("Invalid cloud event: {e}")))?;
-                    let kind = field(&event, "type").as_str().unwrap_or("");
-                    match kind {
-                        "response.output_text.delta" | "response.refusal.delta" => if let Some(text) = field(&event, "delta").as_str() { yield text.to_owned(); },
-                        "content_block_delta" if provider == LLMProvider::Anthropic => if let Some(text) = field(field(&event, "delta"), "text").as_str() { yield text.to_owned(); },
-                        "response.completed" | "message_stop" => completed = true,
-                        "message_delta" if field(field(&event, "delta"), "stop_reason") == "max_tokens" => Err(AppError::InvalidState("Cloud response reached its output limit".into()))?,
-                        "error" | "response.failed" | "response.incomplete" => Err(AppError::Network(format!("Cloud stream failed ({kind})")))?,
-                        _ => {}
-                    }
-                }
-            }
-            if !completed { Err(AppError::Network("Cloud stream ended before completion".into()))?; }
-        };
-        Ok(Box::new(Box::pin(output)))
-    }
-    async fn generate_streaming_with_tools(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-        tools: Option<&[crate::application::ports::ToolDefinition]>,
-    ) -> Result<
-        Box<dyn Stream<Item = Result<crate::application::ports::StreamChunk>> + Send + Unpin + '_>,
-    > {
-        use crate::application::ports::{StreamChunk, ToolCall};
-        if tools.is_none_or(|items| items.is_empty()) {
-            let stream = self.generate_streaming(prompt, context, images).await?;
-            return Ok(Box::new(stream.map(|item| item.map(StreamChunk::Content))));
-        }
-        let mut request = self.legacy_request(prompt, context, images)?;
-        request.tools = tools.unwrap_or(&[]).to_vec();
-        let response = self.complete(&request).await?;
-        if matches!(
-            response.finish_reason.as_str(),
-            "incomplete" | "max_tokens" | "failed"
-        ) {
-            return Err(AppError::InvalidState(format!(
-                "Cloud response stopped: {}",
-                response.finish_reason
-            )));
-        }
-        let calls = response
-            .tool_calls
-            .into_iter()
-            .filter_map(|input| match input {
-                CompletionInput::ToolCall {
-                    id,
-                    name,
-                    arguments,
-                } => Some(ToolCall {
-                    id: Some(id),
-                    name,
-                    arguments,
-                }),
-                _ => None,
-            })
-            .collect();
-        Ok(Box::new(futures::stream::iter(vec![
-            Ok(StreamChunk::Content(response.text)),
-            Ok(StreamChunk::ToolCalls(calls)),
-            Ok(StreamChunk::Done),
-        ])))
-    }
 
     fn model_name(&self) -> &str {
         &self.model
@@ -482,9 +338,6 @@ impl LLMPort for CloudLlm {
     }
     fn max_context_tokens(&self) -> usize {
         self.context_window
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len().div_ceil(4)
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(!self.key.is_empty())
@@ -590,7 +443,19 @@ fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionRes
     if !reasoning_parts.is_empty() {
         response.reasoning = Some(reasoning_parts.join("\n\n"));
     }
-    response.provider_output = field(&value, key).clone();
+    // OpenAI replays its output items one by one; Anthropic replays the
+    // content blocks as the assistant message they were, signed thinking
+    // included.
+    response.replay = match (provider, field(&value, key)) {
+        (LLMProvider::Openai, Value::Array(items)) => items
+            .iter()
+            .cloned()
+            .map(|value| CompletionInput::Native { value })
+            .collect(),
+        (_, blocks) => vec![CompletionInput::Native {
+            value: json!({"role": "assistant", "content": blocks}),
+        }],
+    };
     Ok(response)
 }
 
@@ -689,6 +554,66 @@ mod tests {
             anthropic.body(&request, false).unwrap()["messages"][0]["content"][0]["tool_use_id"],
             "abc"
         );
+    }
+
+    /// A turn is replayed by appending the response's own replay items: the
+    /// next request then answers calls the provider recognises, signed
+    /// thinking included, with no knowledge of which provider it is.
+    #[test]
+    fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
+        let continue_with = |llm: &CloudLlm, response: CompletionResponse| {
+            let mut input = vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "find".into(),
+            }];
+            input.extend(response.replay);
+            input.push(CompletionInput::ToolResult {
+                id: "call_7".into(),
+                output: "found".into(),
+            });
+            llm.body(
+                &CompletionRequest {
+                    input,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+        };
+
+        let mut settings = LLMSettingsDto {
+            provider: LLMProvider::Openai,
+            ..Default::default()
+        };
+        let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+        let reply = parse_completion(
+            LLMProvider::Openai,
+            json!({"status":"completed","output":[
+                {"type":"reasoning","encrypted_content":"opaque","summary":[]},
+                {"type":"function_call","call_id":"call_7","name":"search","arguments":"{}"}
+            ]}),
+        )
+        .unwrap();
+        let body = continue_with(&openai, reply);
+        assert_eq!(body["input"][1]["encrypted_content"], "opaque");
+        assert_eq!(body["input"][2]["call_id"], "call_7");
+        assert_eq!(body["input"][3]["type"], "function_call_output");
+
+        settings.provider = LLMProvider::Anthropic;
+        let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+        let reply = parse_completion(
+            LLMProvider::Anthropic,
+            json!({"stop_reason":"tool_use","content":[
+                {"type":"thinking","thinking":"Search first.","signature":"signed"},
+                {"type":"tool_use","id":"call_7","name":"search","input":{}}
+            ]}),
+        )
+        .unwrap();
+        let body = continue_with(&anthropic, reply);
+        assert_eq!(body["messages"][1]["role"], "assistant");
+        assert_eq!(body["messages"][1]["content"][0]["signature"], "signed");
+        assert_eq!(body["messages"][1]["content"][1]["id"], "call_7");
+        assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_7");
     }
 
     fn anthropic_body(effort: &str) -> Value {
@@ -840,13 +765,24 @@ mod transport_tests {
     #[tokio::test]
     async fn streams_text_and_requires_terminal_event() {
         let server = MockServer::start().await;
+        let completed = json!({"type":"response.completed","response":{"status":"completed","output":[
+            {"type":"message","content":[{"type":"output_text","text":"héllo"}]}
+        ]}});
         Mock::given(method("POST")).and(path("/responses")).and(header("authorization", "Bearer test-secret"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("data: {\"type\":\"response.output_text.delta\",\"delta\":\"héllo\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!("data: {{\"type\":\"response.output_text.delta\",\"delta\":\"héllo\"}}\n\ndata: {completed}\n\n")))
             .mount(&server).await;
         let client = client(&server).await;
-        let mut stream = client.generate_streaming("hello", &[], None).await.unwrap();
-        assert_eq!(stream.next().await.unwrap().unwrap(), "héllo");
-        assert!(stream.next().await.is_none());
+        let shown = std::sync::Mutex::new(Vec::new());
+        let on_text = |text: String| {
+            shown.lock().unwrap().push(text);
+            Ok(())
+        };
+        let response = client
+            .complete_with_progress(&CompletionRequest::default(), &on_text)
+            .await
+            .unwrap();
+        assert_eq!(response.text, "héllo");
+        assert_eq!(*shown.lock().unwrap(), vec!["héllo".to_string()]);
         server.reset().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
@@ -854,9 +790,10 @@ mod transport_tests {
             ))
             .mount(&server)
             .await;
-        let mut stream = client.generate_streaming("hello", &[], None).await.unwrap();
-        assert_eq!(stream.next().await.unwrap().unwrap(), "partial");
-        assert!(stream.next().await.unwrap().is_err());
+        assert!(client
+            .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+            .await
+            .is_err());
     }
     #[tokio::test]
     async fn typed_reasoning_completion_requests_a_stream_and_keeps_its_native_result() {
@@ -893,37 +830,44 @@ mod transport_tests {
             .await
             .unwrap();
         assert_eq!(*reasoning.lock().unwrap(), "Checked evidence.");
-        assert_eq!(response.provider_output, final_response["output"]);
+        assert_eq!(replayed(&response), final_response["output"]);
         assert_eq!(response.text, "Answer");
         let requests = server.received_requests().await.unwrap();
         let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
         assert_eq!(body["stream"], true);
     }
     #[tokio::test]
-    async fn streaming_tool_interface_preserves_native_call_ids() {
+    async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "status":"completed", "output":[{"type":"function_call", "call_id":"call_7", "name":"search", "arguments":"{}"}], "usage":{"input_tokens":4,"output_tokens":2}
             }))).mount(&server).await;
         let client = client(&server).await;
-        let tools = vec![crate::application::ports::ToolDefinition {
-            name: "search".into(),
-            description: "Search documents".into(),
-            parameters: json!({"type":"object","properties":{}}),
-        }];
-        let mut stream = client
-            .generate_streaming_with_tools("find", &[], None, Some(&tools))
-            .await
-            .unwrap();
-        let mut observed = false;
-        while let Some(chunk) = stream.next().await {
-            if let crate::application::ports::StreamChunk::ToolCalls(calls) = chunk.unwrap() {
-                assert_eq!(calls.first().unwrap().id.as_deref(), Some("call_7"));
-                observed = true;
-            }
-        }
-        assert!(observed);
+        let request = CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: "Search first.".into(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: "find".into(),
+                },
+            ],
+            tools: vec![crate::application::ports::ToolDefinition {
+                name: "search".into(),
+                description: "Search documents".into(),
+                parameters: json!({"type":"object","properties":{}}),
+            }],
+            ..Default::default()
+        };
+        let response = client.complete(&request).await.unwrap();
+        assert!(matches!(
+            response.tool_calls.first(),
+            Some(CompletionInput::ToolCall { id, .. }) if id == "call_7"
+        ));
+        assert_eq!(replayed(&response)[0]["call_id"], "call_7");
         let requests = server.received_requests().await.unwrap();
         let body: Value = serde_json::from_slice(&requests.first().unwrap().body).unwrap();
         assert_eq!(
@@ -931,8 +875,8 @@ mod transport_tests {
             Some("system")
         );
         assert_eq!(
-            body.pointer("/input/0/content").and_then(Value::as_str),
-            Some(client.system_prompt.as_str())
+            body.pointer("/tools/0/name").and_then(Value::as_str),
+            Some("search")
         );
     }
 
@@ -945,25 +889,47 @@ mod transport_tests {
             .mount(&server)
             .await;
         let client = client(&server).await;
-        let error = client.generate("hello", &[], None).await.unwrap_err();
+        let error = client
+            .complete(&CompletionRequest::default())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("401"));
         assert!(!error.to_string().contains("sensitive-provider-body"));
     }
     #[tokio::test]
-    async fn cancellation_by_dropping_the_stream_cancels_the_request() {
+    async fn dropping_a_completion_cancels_the_request_without_a_retry() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
                 ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(5))
                     .set_body_string("data: {\"type\":\"response.completed\"}\n\n"),
             )
             .expect(1)
             .mount(&server)
             .await;
         let client = client(&server).await;
-        let stream = client.generate_streaming("hello", &[], None).await.unwrap();
-        drop(stream);
-        // No detached generation or retry task survives a dropped stream.
+        let abandoned = tokio::time::timeout(
+            Duration::from_millis(100),
+            client.complete_with_progress(&CompletionRequest::default(), &|_| Ok(())),
+        )
+        .await;
+        assert!(abandoned.is_err());
+        // No detached generation or retry task survives a dropped completion.
         server.verify().await;
+    }
+
+    /// What the response replays, as the provider's own JSON.
+    fn replayed(response: &CompletionResponse) -> Value {
+        Value::Array(
+            response
+                .replay
+                .iter()
+                .map(|item| match item {
+                    CompletionInput::Native { value } => value.clone(),
+                    other => panic!("cloud replay is native, not {other:?}"),
+                })
+                .collect(),
+        )
     }
 }

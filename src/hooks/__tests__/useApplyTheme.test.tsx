@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useApplyTheme, useEffectiveTheme } from '../useApplyTheme';
 
 const settings = vi.hoisted(() => ({ theme: 'system', loaded: true }));
-vi.mock('../queries/useSettingsQuery', () => ({
+vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: settings.loaded ? { ui: settings } : undefined }),
 }));
 

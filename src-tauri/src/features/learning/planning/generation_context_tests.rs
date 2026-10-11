@@ -10,6 +10,7 @@ use crate::features::learning::{
     lesson_drafts,
     tests::{fixture, pool},
 };
+use crate::shared::runtime::jobs::RecoveryPolicy;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {
@@ -102,7 +103,7 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
     // Reloading the course after studying creates a new UI operation, but must
     // rejoin this lesson's existing queued work rather than enqueue it twice.
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
-    assert!(jobs.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
     lesson_drafts::run(&jobs, &job.id, &target, async {
         assert_eq!(
@@ -112,10 +113,14 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
         lesson_drafts::record_checkpoint("comparison", serde_json::json!("retained")).await
     })
     .await?;
-    jobs.requeue_job(&job.id).await?;
-    jobs.recover_running_jobs().await?;
-    assert!(jobs.begin_job(&job.id).await?);
-    jobs.fail_job(&job.id, "Retryable provider error").await?;
+    JobStore::new(pool.clone()).suspend(&job.id).await?;
+    JobStore::new(pool.clone())
+        .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
+        .await?;
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    JobStore::new(pool.clone())
+        .fail(&job.id, "generation_failed", "Retryable provider error")
+        .await?;
     let mut retry_request = LearningGenerationJobActionRequestDto {
         operation_id: uuid::Uuid::new_v4().to_string(),
         program_id: program.summary.id.clone(),
@@ -125,7 +130,10 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
     let retry = jobs.retry_job(&retry_request).await?;
     retry_request.operation_id = uuid::Uuid::new_v4().to_string();
     assert_eq!(jobs.retry_job(&retry_request).await?.id, retry.id);
-    assert!(jobs.begin_job(&retry.id).await?);
+    assert!(JobStore::new(pool.clone())
+        .claim(&retry.id)
+        .await?
+        .is_some());
     retry_request.operation_id = uuid::Uuid::new_v4().to_string();
     assert_eq!(jobs.retry_job(&retry_request).await?.id, retry.id);
     lesson_drafts::run(&jobs, &retry.id, &target, async {
@@ -181,7 +189,7 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
     let (pool, program, _, target) = setup().await?;
     let jobs = LearningCurriculumRepository::new(pool.clone());
     let job = enqueue(&jobs, &program, &target).await?;
-    assert!(jobs.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     let preview = jobs
         .preview(&PreviewLearningCurriculumRevisionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -213,7 +221,9 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
         )
         .await
         .is_err());
-    jobs.fail_job(&job.id, "Content changed").await?;
+    JobStore::new(pool.clone())
+        .fail(&job.id, "generation_failed", "Content changed")
+        .await?;
     assert!(jobs
         .retry_job(&LearningGenerationJobActionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -240,7 +250,7 @@ async fn changed_prior_teaching_invalidates_a_job_even_without_a_ui_revision_wri
     let (pool, program, earlier, target) = setup().await?;
     let jobs = LearningCurriculumRepository::new(pool.clone());
     let job = enqueue(&jobs, &program, &target).await?;
-    assert!(jobs.begin_job(&job.id).await?);
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     sqlx::query(
         "UPDATE learning_blocks SET body='Different prerequisite teaching' WHERE lesson_id=?",
     )

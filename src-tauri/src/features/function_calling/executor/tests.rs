@@ -17,7 +17,7 @@ use crate::features::function_calling::dto::{
 use crate::features::function_calling::mocks::MockFunctionRegistry;
 use crate::features::function_calling::registry::FunctionRegistry;
 use crate::features::recent::dto::RecentDocumentDto;
-use crate::features::search::mocks::{MockBM25Search, MockHybridSearch, MockSearchService};
+use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSearchService};
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebService;
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
@@ -279,7 +279,7 @@ async fn test_execute_unknown_function() {
     let embedding = Arc::new(MockEmbeddingService::default());
     let search = Arc::new(MockSearchService::new());
     let bm25 = Arc::new(MockBM25Search::new());
-    let hybrid = Arc::new(MockHybridSearch::new());
+    let hybrid = empty_hybrid_search();
     let mock = Arc::new(DddMockDocRepo::new());
     use crate::application::ports::DocumentRepository;
     let doc_repo = mock as Arc<dyn DocumentRepository>;
@@ -295,7 +295,7 @@ async fn test_execute_unknown_function() {
         embedding as Arc<dyn EmbeddingServiceTrait>,
         search as Arc<dyn SearchServiceTrait>,
         bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid as Arc<dyn HybridSearchTrait>,
+        hybrid,
         doc_repo,
         chunk_repo,
         tag_service,
@@ -335,7 +335,7 @@ async fn test_validate_arguments() {
 
     let search = Arc::new(MockSearchService::new());
     let bm25 = Arc::new(MockBM25Search::new());
-    let hybrid = Arc::new(MockHybridSearch::new());
+    let hybrid = empty_hybrid_search();
     let mock = Arc::new(DddMockDocRepo::new());
     use crate::application::ports::DocumentRepository;
     let doc_repo = mock as Arc<dyn DocumentRepository>;
@@ -351,7 +351,7 @@ async fn test_validate_arguments() {
         embedding as Arc<dyn EmbeddingServiceTrait>,
         search as Arc<dyn SearchServiceTrait>,
         bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid as Arc<dyn HybridSearchTrait>,
+        hybrid,
         doc_repo,
         chunk_repo,
         tag_service,
@@ -459,7 +459,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         Arc::new(MockEmbeddingService::default()),
         Arc::new(MockSearchService::new()),
         Arc::new(MockBM25Search::new()),
-        Arc::new(MockHybridSearch::new()),
+        empty_hybrid_search(),
         documents,
         Arc::new(MockChunkRepository::new()),
         Arc::new(MockTagService::new()),
@@ -538,7 +538,7 @@ async fn test_get_document_supports_internal_pagination() {
     let embedding = Arc::new(MockEmbeddingService::default());
     let search = Arc::new(MockSearchService::new());
     let bm25 = Arc::new(MockBM25Search::new());
-    let hybrid = Arc::new(MockHybridSearch::new());
+    let hybrid = empty_hybrid_search();
     let chunk_repo = Arc::new(MockChunkRepository::new()) as Arc<dyn ChunkRepositoryPort>;
     let tag_service = Arc::new(MockTagService::new()) as Arc<dyn TagServiceTrait>;
     let favorites_repository = Arc::new(MockFavoritesRepository::new());
@@ -567,7 +567,7 @@ async fn test_get_document_supports_internal_pagination() {
         embedding as Arc<dyn EmbeddingServiceTrait>,
         search as Arc<dyn SearchServiceTrait>,
         bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid as Arc<dyn HybridSearchTrait>,
+        hybrid,
         doc_repo,
         chunk_repo,
         tag_service,
@@ -606,6 +606,80 @@ async fn test_get_document_supports_internal_pagination() {
     assert_eq!(output.previous_page, Some(1));
     assert_eq!(output.next_page, Some(3));
     assert!(output.content_truncated);
+}
+
+/// The tool executor's hybrid search is chat's: the library search
+/// orchestrator, each hit named after its document.
+#[tokio::test]
+async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_document() {
+    use crate::features::function_calling::dto::SemanticSearchOutput;
+    use crate::features::search::engine::text_search::SqliteTextSearch;
+    use crate::features::search::engine::vector_search::USearchVectorIndex;
+    use crate::features::search::use_cases::HybridSearchUseCase;
+    use crate::infrastructure::persistence::repositories::ChunkRepository;
+    use crate::infrastructure::persistence::repositories::DocumentRepository as SqliteDocuments;
+
+    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let documents = Arc::new(SqliteDocuments::new(pool.clone()));
+    let document = Document::new(
+        crate::shared::types::ValidatedFilePath::new(PathBuf::from("/tmp/quotas.md")).unwrap(),
+        "quotas.md".to_string(),
+        "text/markdown".to_string(),
+        1024,
+        Checksum::new("b".repeat(64)).unwrap(),
+    );
+    documents.save(&document).await.unwrap();
+    sqlx::query(
+        "INSERT INTO text_chunks (id, document_id, content, chunk_index) \
+         VALUES ('quota-chunk', ?, 'the upload quota resets every month', 0)",
+    )
+    .bind(document.id().as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+    // No embedding model: the keyword branch answers alone, as it would in chat.
+    let search = Arc::new(
+        HybridSearchUseCase::new(
+            Arc::new(crate::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(USearchVectorIndex::new(4, None).unwrap()),
+            Arc::new(SqliteTextSearch::new(pool.clone())),
+        )
+        .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
+    );
+    let executor = FunctionExecutor::new(
+        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
+        Arc::new(MockEmbeddingService::default()),
+        Arc::new(MockSearchService::new()),
+        Arc::new(MockBM25Search::new()),
+        search,
+        documents,
+        Arc::new(MockChunkRepository::new()),
+        Arc::new(MockTagService::new()),
+        Arc::new(MockFavoritesRepository::new()),
+        Arc::new(MockRecentDocumentsRepository::new()),
+        Arc::new(MockFileStoragePort),
+        Arc::new(MockWebService::new()),
+    );
+
+    let result = executor
+        .execute(FunctionCall::new(
+            "search",
+            "semantic_search",
+            serde_json::json!({"query": "upload quota", "search_mode": "hybrid"}),
+        ))
+        .await
+        .unwrap();
+
+    assert!(result.success, "{result:?}");
+    let output: SemanticSearchOutput = serde_json::from_value(result.data.unwrap()).unwrap();
+    assert_eq!(output.results.len(), 1);
+    assert_eq!(output.results[0].document_id, document.id().as_str());
+    assert_eq!(output.results[0].filename, "quotas.md");
+    assert_eq!(
+        output.results[0].snippet,
+        "the upload quota resets every month"
+    );
 }
 
 #[test]

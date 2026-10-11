@@ -114,6 +114,18 @@ describe('Learning Studio Assess & evidence', () => {
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: expect.any(Number), formId: 'form-1' })));
   });
 
+  it('backs out of the pause confirmation on Escape without pausing', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Start' }));
+    await user.click(screen.getByRole('button', { name: 'Pause attempt' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Pause this attempt?' })).toBeVisible();
+    expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Keep working' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(mocks.interrupt).not.toHaveBeenCalled();
+  });
+
   it('labels uncertainty and lets learners accept or dismiss deterministic follow-ups', async () => {
     const user = userEvent.setup();
     renderPanel();

@@ -18,18 +18,6 @@ pub async fn list_custom_collections(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn import_legacy_custom_collections(
-    collections: Vec<CustomCollectionDto>,
-    container: State<'_, Container>,
-) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
-        .import_legacy(collections)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn create_custom_collection(
     request: CreateCustomCollectionRequest,
     container: State<'_, Container>,

@@ -68,6 +68,83 @@ async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
         .is_some());
 }
 
+/// A pin belongs to the journal entry: the same chat pinned in one journal is
+/// not pinned in another, nor in the Chat sidebar, and leaving the journal
+/// drops the pin.
+#[tokio::test]
+async fn a_journal_pin_is_kept_per_journal_entry() {
+    let (_directory, repo) = repository().await;
+    let conversation = repo.create("Research", "test-model", None).await.unwrap();
+    let id = conversation.id.to_string();
+    let reading = repo.create_journal(journal("Reading")).await.unwrap();
+    let writing = repo.create_journal(journal("Writing")).await.unwrap();
+    for journal in [&reading, &writing] {
+        repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
+            journal_space_id: journal.id.clone(),
+            conversation_id: id.clone(),
+        })
+        .await
+        .unwrap();
+    }
+    let pin = |journal_space_id: &str, pinned: bool| SetJournalEntryPinnedRequestDto {
+        journal_space_id: journal_space_id.to_string(),
+        conversation_id: id.clone(),
+        pinned,
+    };
+
+    repo.set_journal_entry_pinned(pin(&reading.id, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.list_journal_entry_pins(&reading.id).await.unwrap(),
+        vec![id.clone()]
+    );
+    assert!(repo
+        .list_journal_entry_pins(&writing.id)
+        .await
+        .unwrap()
+        .is_empty());
+    let sidebar_pinned: bool =
+        sqlx::query_scalar("SELECT is_pinned FROM conversations WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert!(!sidebar_pinned);
+
+    repo.set_journal_entry_pinned(pin(&reading.id, false))
+        .await
+        .unwrap();
+    assert!(repo
+        .list_journal_entry_pins(&reading.id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    repo.set_journal_entry_pinned(pin(&writing.id, true))
+        .await
+        .unwrap();
+    repo.remove_conversation_from_journal(RemoveConversationFromJournalRequestDto {
+        journal_space_id: writing.id.clone(),
+        conversation_id: id.clone(),
+    })
+    .await
+    .unwrap();
+    assert!(repo
+        .list_journal_entry_pins(&writing.id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        repo.set_journal_entry_pinned(pin(&writing.id, true)).await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.list_journal_entry_pins("journal_missing").await,
+        Err(AppError::NotFound(_))
+    ));
+}
+
 #[tokio::test]
 async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived() {
     let (_directory, repo) = repository().await;

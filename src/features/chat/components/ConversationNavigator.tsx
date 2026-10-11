@@ -3,7 +3,7 @@ import { useCallback, useEffect, useId, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDownToLine, ChevronDown, ChevronUp, List, PanelRightClose } from 'lucide-react';
 
-import { useChatNavigationStore } from '@/stores/chatNavigationStore';
+import { useChatNavigationStore } from '@/features/chat/stores/chatNavigationStore';
 import type { ConversationMessage, OptimisticMessage } from '@/types/conversation';
 
 import '@/features/chat/components/conversation-navigator.css';

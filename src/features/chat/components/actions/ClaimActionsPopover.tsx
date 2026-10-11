@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router';
 
 import { ACTION_HEADING_CLASS, ACTION_ROW_CLASS, ACTION_SURFACE_CLASS } from '@/features/chat/components/actions/actionSurface';
-import { VaultAPI } from '@/lib/api';
-import { useConversationsStore } from '@/stores/conversationsStore';
+import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
+import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
 import {
@@ -64,6 +64,7 @@ export function ClaimActionsPopover({
   onClose,
 }: ClaimActionsPopoverProps) {
   const navigate = useNavigate();
+  const quickCapture = useQuickCapture();
   const panelRef = useRef<HTMLDivElement>(null);
   const [isSaving, setIsSaving] = useState(false);
   const conversationTitle = useConversationsStore(
@@ -121,7 +122,7 @@ export function ClaimActionsPopover({
   const handleAddToJournal = useCallback(async () => {
     setIsSaving(true);
     try {
-      const result = await VaultAPI.quickCapture(
+      const result = await quickCapture(
         claimToMarkdown(verdict, citationMap, { conversationTitle }),
       );
       if (!result.ok) {
@@ -143,7 +144,7 @@ export function ClaimActionsPopover({
     } finally {
       setIsSaving(false);
     }
-  }, [citationMap, conversationTitle, navigate, onClose, verdict]);
+  }, [citationMap, conversationTitle, navigate, onClose, quickCapture, verdict]);
 
   const handleAskWhy = useCallback(() => {
     // `?quote=` is the composer prefill contract the reading surfaces already

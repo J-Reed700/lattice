@@ -12,6 +12,7 @@
 
 use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use crate::domain::models::metadata::ModelType;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
@@ -21,7 +22,6 @@ use crate::features::model_management::use_cases::{
     ClearActiveChatModelUseCase, ClearActiveEmbeddingModelUseCase,
 };
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::{audit_failure, audit_success};

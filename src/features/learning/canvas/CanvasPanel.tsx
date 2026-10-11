@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3, FileJson2, ImageDown, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Text } from 'lucide-react';
 
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { canvasTextOutline, parseCanvasScene, serializeCanvasScene } from '@/features/learning/canvas/canvasScene';
 import type { CanvasSurfaceHandle } from '@/features/learning/canvas/CanvasSurface';
 import { useCreateLearningCanvas, useCreateLearningCanvasSnapshot, useLearningCanvas, useRestoreLearningCanvasSnapshot, useSaveLearningCanvas } from '@/features/learning/canvas/useLearningCanvas';
@@ -162,16 +163,6 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
     return () => { void drainRef.current().finally(unregister); };
   }, []);
   useEffect(() => {
-    if (!confirmRestore) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    restoreCancelRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { restoreRetry.current = null; setConfirmRestore(null); }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => { document.removeEventListener('keydown', onKeyDown); previous?.focus(); };
-  }, [confirmRestore]);
-  useEffect(() => {
     if (!enabled) return;
     if (!selectedId && canvases.length) setSelectedId(canvases[0].id);
   }, [enabled, canvases, selectedId]);
@@ -297,7 +288,7 @@ export default function CanvasPanel({ programId, lessonId, lessonTitle, theme, e
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-3 text-[10px] text-text-muted"><span>Updated {timestamp(selected.updatedAt)} · Revision {revisionRef.current}</span><span className="text-left sm:text-right">Private to this learning program</span></div>
       </div>}
     </>}
-    {confirmRestore && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { restoreRetry.current = null; setConfirmRestore(null); } }}><section role="alertdialog" aria-modal="true" aria-labelledby="canvas-restore-title" className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"><h3 id="canvas-restore-title" className="font-serif text-xl text-text-primary">Restore “{confirmRestore.name}”?</h3><p className="mt-2 text-sm leading-6 text-text-secondary">This replaces the current canvas. A checkpoint of the current version will be created first so you can return to it.</p><div className="mt-5 flex justify-end gap-2"><button type="button" ref={restoreCancelRef} onClick={() => { restoreRetry.current = null; setConfirmRestore(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-text-secondary">Cancel</button><button type="button" disabled={restore.isPending} onClick={() => void restoreSnapshot()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">{restore.isPending ? 'Restoring…' : 'Restore checkpoint'}</button></div></section></div>}
+    <Dialog open={confirmRestore !== null} onOpenChange={(open) => { if (!open) { restoreRetry.current = null; setConfirmRestore(null); } }}>{confirmRestore && <DialogContent role="alertdialog" hideClose overlayClassName="bg-black/45" className="block max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl" onOpenAutoFocus={(event) => { event.preventDefault(); restoreCancelRef.current?.focus(); }}><DialogTitle asChild><h3 className="font-serif text-xl text-text-primary">Restore “{confirmRestore.name}”?</h3></DialogTitle><DialogDescription asChild><p className="mt-2 text-sm leading-6 text-text-secondary">This replaces the current canvas. A checkpoint of the current version will be created first so you can return to it.</p></DialogDescription><div className="mt-5 flex justify-end gap-2"><button type="button" ref={restoreCancelRef} onClick={() => { restoreRetry.current = null; setConfirmRestore(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-text-secondary">Cancel</button><button type="button" disabled={restore.isPending} onClick={() => void restoreSnapshot()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">{restore.isPending ? 'Restoring…' : 'Restore checkpoint'}</button></div></DialogContent>}</Dialog>
   </section>;
 }
 

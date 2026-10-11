@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { AlertTriangle, Check, Loader2, X } from 'lucide-react';
 
-import type { CompactionRun } from '@/stores/compactionStore';
+import type { CompactionRun } from '@/features/chat/stores/compactionStore';
 
 /** `42s`, `1m 05s`. */
 export function formatElapsed(ms: number): string {

@@ -19,6 +19,9 @@
 //! [`plugins`] registers the feature-owned Tauri plugins. [`shared`] provides
 //! foundational types and utilities used across these modules.
 //!
+//! Features still reference each other directly in places; the checker counts
+//! those edges against a baseline that may only shrink.
+//!
 //! Keep database access behind repositories and dependency direction enforced
 //! by `scripts/check-rust-layer-boundaries.sh`. See `CONTRIBUTING.md` for the
 //! module placement rules and verification commands.
@@ -56,17 +59,13 @@ pub use domain::{
 };
 
 /// Cross-feature contracts, ports, mappers, and orchestration.
-#[cfg(feature = "indexing")]
 pub mod application;
 
-#[cfg(feature = "indexing")]
 pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-#[cfg(feature = "indexing")]
 pub use application::{
     mappers,
     ports::{
-        EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
-        VectorSearchPort,
+        EmbeddingPort, FileStoragePort, LLMPort, RepositoryPort, TextSearchPort, VectorSearchPort,
     },
 };
 

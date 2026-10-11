@@ -1,43 +1,42 @@
-//! Ollama API client implementation.
-//!
-//! Provides async HTTP client for interacting with Ollama's REST API.
-//! Supports both non-streaming and streaming generation requests.
+//! Ollama over its native `/api/chat`: messages, streamed answers, tool calls
+//! and thinking, behind one typed completion.
 //!
 //! # Timeout policy
 //!
 //! Every bound is per request; the shared client deliberately has none.
 //! `ClientBuilder::timeout` is a *total* deadline that includes the response
 //! body, so a client-wide value silently truncates any generation that takes
-//! longer than it — exactly what a long answer does. Probes and non-streaming
-//! generation therefore pass `.timeout(..)` themselves, while streaming
-//! bounds the wait for response headers with `stream_timeout` and then bounds
-//! silence between chunks. Do not reintroduce a client-wide timeout.
+//! longer than it — exactly what a long answer does. Probes pass `.timeout(..)`
+//! themselves; a completion bounds the wait for response headers and the
+//! silence between chunks with `stream_timeout`, and the whole exchange with
+//! the request's time budget. Do not reintroduce a client-wide timeout.
 
+use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{Client, StatusCode};
+use tracing::{debug, warn};
+
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use crate::application::ports::LLMPort;
 use crate::features::llm::engine::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
 };
-use crate::features::llm::engine::traits::{GenerationConfig, LLMClient};
-use crate::features::llm::engine::types::*;
+use crate::features::llm::engine::types::{
+    OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool, OllamaToolCall,
+    OllamaToolCallFunction,
+};
+use crate::features::llm::engine::GenerationConfig;
 use crate::shared::error::{AppError, Result};
 use crate::shared::http::reqwest_client_builder;
-use async_trait::async_trait;
-use once_cell::sync::Lazy;
-use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
-    Client, StatusCode,
-};
-use serde_json;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::timeout;
-use tokio_stream::Stream;
-use tracing::{debug, error, info, warn};
 
 const DEFAULT_OLLAMA_MAX_CONCURRENCY: usize = 3;
 
-fn ollama_max_concurrency() -> usize {
+/// Requests in flight to Ollama at once; its scheduler admits no more.
+pub(crate) fn ollama_max_concurrency() -> usize {
     std::env::var("RECALL_OLLAMA_MAX_CONCURRENCY")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -45,121 +44,128 @@ fn ollama_max_concurrency() -> usize {
         .unwrap_or(DEFAULT_OLLAMA_MAX_CONCURRENCY)
 }
 
-static OLLAMA_REQUEST_SEMAPHORE: Lazy<Arc<Semaphore>> =
-    Lazy::new(|| Arc::new(Semaphore::new(ollama_max_concurrency())));
+/// A whole stream larger than this is not an answer.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-/// Custom error types for Ollama client.
-#[derive(Debug, thiserror::Error)]
-pub enum OllamaClientError {
-    #[error("Connection error: {0}")]
-    Connection(String),
-
-    #[error("API error: {0}")]
-    Api(String),
-
-    #[error("Timeout error: {0}")]
-    Timeout(String),
-
-    #[error("Invalid request: {0}")]
-    InvalidRequest(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-}
-
-impl From<OllamaClientError> for AppError {
-    fn from(err: OllamaClientError) -> Self {
-        AppError::Network(err.to_string())
-    }
-}
-
-impl From<reqwest::Error> for OllamaClientError {
-    fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() {
-            OllamaClientError::Timeout(err.to_string())
-        } else if err.is_connect() {
-            OllamaClientError::Connection(err.to_string())
-        } else {
-            OllamaClientError::Api(err.to_string())
-        }
-    }
-}
-
-impl From<OllamaClientError> for LLMError {
-    fn from(err: OllamaClientError) -> Self {
-        match err {
-            OllamaClientError::Connection(msg) => LLMError::ClientUnavailable(msg),
-            OllamaClientError::Api(msg) => LLMError::GenerationFailed(msg),
-            OllamaClientError::Timeout(_msg) => LLMError::Timeout,
-            OllamaClientError::InvalidRequest(msg) => LLMError::InvalidConfig(msg),
-            OllamaClientError::Serialization(e) => LLMError::Other(e.to_string()),
-        }
-    }
-}
-
-impl From<AppError> for LLMError {
-    fn from(err: AppError) -> Self {
-        match err {
-            AppError::Network(msg) => LLMError::Network(msg),
-            AppError::InvalidInput(msg) => LLMError::InvalidConfig(msg),
-            _ => LLMError::Other(err.to_string()),
-        }
-    }
-}
-
-/// Async HTTP client for Ollama API.
-///
-/// Provides methods for:
-/// - Health checks
-/// - Listing available models
-/// - Non-streaming text generation
-/// - Streaming text generation
-///
-/// # Example
-///
-/// ```no_run
-/// use lattice::features::llm::engine::{OllamaClient, OllamaGenerateRequest};
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let client = OllamaClient::new("http://localhost:11434")?;
-///
-///     // Check health
-///     if client.health_check().await? {
-///         println!("Ollama is running");
-///     }
-///
-///     // Generate text
-///     let request = OllamaGenerateRequest::new("llama2", "Why is the sky blue?");
-///     let response = client.generate(request).await?;
-///     println!("Response: {}", response.response);
-///
-///     Ok(())
-/// }
-/// ```
+/// Async HTTP client for one model on one Ollama server.
 pub struct OllamaClient {
     base_url: String,
     model_name: String,
     client: Client,
+    /// Bound on probes such as the health check.
     timeout: Duration,
+    /// Longest wait for response headers, and for each chunk once streaming.
     stream_timeout: Duration,
     config: GenerationConfig,
     circuit_breaker: CircuitBreaker,
 }
 
 impl OllamaClient {
-    fn typed_chat_request(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::features::llm::engine::types::OllamaChatRequest> {
-        use crate::application::ports::llm_port::CompletionInput;
-        use crate::features::llm::engine::types::{
-            OllamaChatMessage, OllamaChatRequest, OllamaChatResponse, OllamaTool, OllamaToolCall,
-            OllamaToolCallFunction,
-        };
+    /// A client for `model_name` with the default probe and stream timeouts.
+    pub fn with_model(base_url: impl Into<String>, model_name: impl Into<String>) -> Result<Self> {
+        Self::with_model_and_timeouts(
+            base_url,
+            model_name,
+            Duration::from_secs(120),
+            Duration::from_secs(300),
+        )
+    }
 
+    /// `timeout` bounds probes; `stream_timeout` bounds the wait for headers
+    /// and the silence between chunks of an answer.
+    pub fn with_model_and_timeouts(
+        base_url: impl Into<String>,
+        model_name: impl Into<String>,
+        timeout: Duration,
+        stream_timeout: Duration,
+    ) -> Result<Self> {
+        Self::with_model_and_timeouts_and_header(
+            base_url,
+            model_name,
+            timeout,
+            stream_timeout,
+            None,
+        )
+    }
+
+    /// As [`Self::with_model_and_timeouts`], with an optional `(name, value)`
+    /// header sent on every request.
+    pub fn with_model_and_timeouts_and_header(
+        base_url: impl Into<String>,
+        model_name: impl Into<String>,
+        timeout: Duration,
+        stream_timeout: Duration,
+        auth_header: Option<(String, String)>,
+    ) -> Result<Self> {
+        let mut builder = reqwest_client_builder();
+        if let Some((name, value)) = auth_header {
+            let header_name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|e| {
+                AppError::InvalidInput(format!("Invalid Ollama header name: {}", e))
+            })?;
+            let mut header_value = HeaderValue::from_str(value.trim()).map_err(|e| {
+                AppError::InvalidInput(format!("Invalid Ollama header value: {}", e))
+            })?;
+            header_value.set_sensitive(true);
+            let mut headers = HeaderMap::new();
+            headers.insert(header_name, header_value);
+            builder = builder.default_headers(headers);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
+
+        let model_name = model_name.into();
+        if model_name.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "Model name cannot be empty".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            model_name,
+            client,
+            timeout,
+            stream_timeout,
+            config: GenerationConfig::default(),
+            circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
+        })
+    }
+
+    /// The sampling defaults and output ceiling every request starts from.
+    pub fn with_generation_config(mut self, config: GenerationConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Whether an Ollama server answers at this URL.
+    ///
+    /// Probes `/api/tags`, an Ollama-only route, rather than the bare base
+    /// URL: a llama.cpp server answers the base URL with its web UI and would
+    /// otherwise pass as Ollama, only to 404 on the first generation call.
+    pub async fn health_check(&self) -> bool {
+        let url = format!("{}/api/tags", self.base_url);
+        debug!("Performing Ollama health check at {}", url);
+        match self.client.get(&url).timeout(self.timeout).send().await {
+            Ok(response) if response.status() == StatusCode::OK => true,
+            Ok(response) => {
+                warn!(status = %response.status(), "Ollama health check failed");
+                false
+            }
+            Err(error) => {
+                warn!(error = %error, "Ollama health check failed");
+                false
+            }
+        }
+    }
+
+    /// The `/api/chat` body for a typed request.
+    fn chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest> {
         let mut messages = Vec::with_capacity(request.input.len());
-        let mut call_names = std::collections::HashMap::new();
+        // Ollama names the tool a result answers rather than the call's id,
+        // so each id is resolved to the name of the call it answers.
+        let mut call_names = HashMap::new();
         for input in &request.input {
             let message = match input {
                 CompletionInput::Message { role, content } => OllamaChatMessage {
@@ -171,21 +177,17 @@ impl OllamaClient {
                     tool_name: None,
                 },
                 CompletionInput::Native { value } => {
-                    // The tool loop wraps prior Ollama provider output in a
-                    // generic assistant message. Recover the native response
-                    // so tool calls and the original assistant content replay.
-                    let payload = value.get("content").unwrap_or(value);
-                    let response = serde_json::from_value::<OllamaChatResponse>(payload.clone())
-                        .map_err(|_| AppError::InvalidInput(
-                            "Ollama cannot replay provider-native history from another provider".into(),
-                        ))?;
-                    if let Some(calls) = &response.message.tool_calls {
-                        for (index, call) in calls.iter().enumerate() {
-                            call_names
-                                .insert(format!("ollama-call-{index}"), call.function.name.clone());
-                        }
+                    let message = serde_json::from_value::<OllamaChatMessage>(value.clone())
+                        .map_err(|_| {
+                            AppError::InvalidInput(
+                                "Ollama cannot replay provider-native history from another provider"
+                                    .into(),
+                            )
+                        })?;
+                    for (index, call) in message.tool_calls.iter().flatten().enumerate() {
+                        call_names.insert(call_id(index), call.function.name.clone());
                     }
-                    response.message
+                    message
                 }
                 CompletionInput::ToolCall {
                     id,
@@ -234,30 +236,31 @@ impl OllamaClient {
                 .map(|tool| OllamaTool::new(&tool.name, &tool.description, tool.parameters.clone()))
                 .collect()
         });
-        let mut options = std::collections::HashMap::new();
         let sampling = request.sampling.unwrap_or_default();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(sampling.temperature.unwrap_or(self.config.temperature)),
-        );
-        options.insert(
-            "top_p".to_string(),
-            serde_json::json!(sampling.top_p.unwrap_or(self.config.top_p)),
-        );
-        options.insert(
-            "top_k".to_string(),
-            serde_json::json!(sampling.top_k.unwrap_or(self.config.top_k)),
-        );
-        options.insert(
-            "repeat_penalty".to_string(),
-            serde_json::json!(self.config.repeat_penalty),
-        );
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(request.effective_max_output_tokens(
-                u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
-            )),
-        );
+        let options = HashMap::from([
+            (
+                "temperature".to_string(),
+                serde_json::json!(sampling.temperature.unwrap_or(self.config.temperature)),
+            ),
+            (
+                "top_p".to_string(),
+                serde_json::json!(sampling.top_p.unwrap_or(self.config.top_p)),
+            ),
+            (
+                "top_k".to_string(),
+                serde_json::json!(sampling.top_k.unwrap_or(self.config.top_k)),
+            ),
+            (
+                "repeat_penalty".to_string(),
+                serde_json::json!(self.config.repeat_penalty),
+            ),
+            (
+                "num_predict".to_string(),
+                serde_json::json!(request.effective_max_output_tokens(
+                    u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
+                )),
+            ),
+        ]);
 
         let think = match request.reasoning_effort.as_deref() {
             // Capturing a supplied reasoning channel must not force thinking
@@ -278,7 +281,7 @@ impl OllamaClient {
         Ok(OllamaChatRequest {
             model: self.model_name.clone(),
             messages,
-            stream: false,
+            stream: true,
             options: Some(options),
             keep_alive: None,
             tools,
@@ -287,1528 +290,239 @@ impl OllamaClient {
         })
     }
 
-    async fn complete_typed(
+    /// Stream one chat completion, handing answer text and thinking to the
+    /// callbacks as they arrive.
+    async fn chat(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
-        use crate::features::llm::engine::circuit_breaker::CircuitBreakerError;
-        use crate::features::llm::engine::types::OllamaChatResponse;
-
-        let body = self.typed_chat_request(request)?;
-        let budget = request.wall_clock_budget();
-        let call = async {
-            let _permit = self
-                .acquire_request_permit("typed_chat")
-                .await
-                .map_err(|error| OllamaClientError::Api(error.to_string()))?;
-            let http_request = self
-                .client
-                .post(format!("{}/api/chat", self.base_url))
-                .json(&body);
-            let http_request = match budget {
-                Some(budget) => http_request.timeout(budget),
-                None => http_request,
-            };
-            let response = http_request.send().await.map_err(OllamaClientError::from)?;
-            if !response.status().is_success() {
-                return Err(OllamaClientError::Api(format!(
-                    "Ollama chat returned HTTP {}",
-                    response.status()
-                )));
-            }
-            response
-                .json::<OllamaChatResponse>()
-                .await
-                .map_err(OllamaClientError::from)
-        };
-        let response = match request
-            .within_time_budget(self.circuit_breaker.call(call))
-            .await
-        {
-            Err(_) => {
-                return Err(AppError::ServiceNotAvailable(
-                    "Ollama typed completion exceeded its time budget".into(),
-                ))
-            }
-            Ok(Ok(response)) => response,
-            Ok(Err(CircuitBreakerError::Open)) => {
-                return Err(AppError::ServiceNotAvailable(
-                    "Ollama API unavailable (circuit breaker open)".into(),
-                ));
-            }
-            Ok(Err(CircuitBreakerError::CallFailed(error))) => {
-                if matches!(&error, OllamaClientError::Timeout(_)) {
-                    return Err(AppError::ServiceNotAvailable(
-                        "Ollama typed completion exceeded its time budget".into(),
-                    ));
-                }
-                return Err(AppError::Network(error.to_string()));
-            }
-        };
-
-        let tool_calls = response
-            .message
-            .tool_calls
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .map(|(index, call)| CompletionInput::ToolCall {
-                id: format!("ollama-call-{index}"),
-                name: call.function.name.clone(),
-                arguments: call.function.arguments.clone(),
-            })
-            .collect();
-        Ok(CompletionResponse {
-            text: response.message.content.clone(),
-            reasoning: response
-                .message
-                .thinking
-                .clone()
-                .filter(|text| !text.trim().is_empty()),
-            tool_calls,
-            input_tokens: u64::from(response.prompt_eval_count.unwrap_or(0)),
-            output_tokens: u64::from(response.eval_count.unwrap_or(0)),
-            finish_reason: response
-                .done_reason
-                .clone()
-                .unwrap_or_else(|| if response.done { "stop" } else { "" }.into()),
-            provider_output: serde_json::to_value(response).unwrap_or_default(),
-            first_token_logprobs: None,
-        })
-    }
-
-    async fn complete_typed_with_progress(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        let ignore_reasoning = |_text: String| Ok(());
-        self.complete_typed_with_reasoning_progress(request, on_text, &ignore_reasoning)
-            .await
-    }
-
-    async fn complete_typed_with_reasoning_progress(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
+        request: &CompletionRequest,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
-        use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
-        use crate::features::llm::engine::circuit_breaker::CircuitBreakerError;
-        use crate::features::llm::engine::types::{
-            OllamaChatMessage, OllamaChatResponse, OllamaChatStreamResponse, OllamaToolCall,
-        };
-        use futures::StreamExt;
-
-        let mut body = self.typed_chat_request(request)?;
-        body.stream = true;
-        let budget = request.wall_clock_budget();
-        let call = async {
-            let _permit = self.acquire_request_permit("typed_chat_stream").await?;
+    ) -> Result<CompletionResponse> {
+        let body = self.chat_request(request)?;
+        let exchange = async {
             let response = self
                 .circuit_breaker
                 .call(async {
-                    let http_request = self
+                    let send = self
                         .client
                         .post(format!("{}/api/chat", self.base_url))
-                        .json(&body);
-                    let http_request = match budget {
-                        Some(budget) => http_request.timeout(budget),
-                        None => http_request,
-                    };
-                    let response = http_request.send().await.map_err(OllamaClientError::from)?;
-                    if !response.status().is_success() {
-                        return Err(OllamaClientError::Api(format!(
-                            "Ollama chat returned HTTP {}",
-                            response.status()
-                        )));
+                        .json(&body)
+                        .send();
+                    let response = tokio::time::timeout(self.stream_timeout, send)
+                        .await
+                        .map_err(|_| self.silent())?
+                        .map_err(network_error)?;
+                    if response.status().is_success() {
+                        Ok(response)
+                    } else {
+                        Err(status_error(response.status()))
                     }
-                    Ok::<_, OllamaClientError>(response)
                 })
                 .await
                 .map_err(|error| match error {
                     CircuitBreakerError::Open => AppError::ServiceNotAvailable(
                         "Ollama API unavailable (circuit breaker open)".into(),
                     ),
-                    CircuitBreakerError::CallFailed(error) => AppError::from(error),
+                    CircuitBreakerError::CallFailed(error) => error,
                 })?;
 
-            let mut chunks = response.bytes_stream();
+            let mut bytes = response.bytes_stream();
+            let mut answer = Answer::default();
             let mut buffer = Vec::new();
-            let mut content = String::new();
-            let mut reasoning = String::new();
-            let mut model = String::new();
-            let mut created_at = String::new();
-            let mut tool_calls = std::collections::BTreeMap::<usize, OllamaToolCall>::new();
-            let mut done_reason = None;
-            let mut prompt_eval_count = None;
-            let mut eval_count = None;
-            let mut done = false;
-
-            while let Some(chunk) = chunks.next().await {
-                let chunk = chunk.map_err(OllamaClientError::from)?;
+            let mut received = 0usize;
+            while !answer.done {
+                let next = tokio::time::timeout(self.stream_timeout, bytes.next())
+                    .await
+                    .map_err(|_| self.silent())?;
+                let Some(chunk) = next else { break };
+                let chunk = chunk.map_err(network_error)?;
+                received = received.saturating_add(chunk.len());
+                if received > MAX_RESPONSE_BYTES {
+                    return Err(AppError::InvalidState(
+                        "Ollama response exceeds size limit".into(),
+                    ));
+                }
                 buffer.extend_from_slice(&chunk);
+                // Lines are split at the byte level, so a character divided
+                // between two network chunks is decoded whole.
                 while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let mut line: Vec<u8> = buffer.drain(..=newline).collect();
-                    line.pop();
-                    if line.last() == Some(&b'\r') {
-                        line.pop();
-                    }
-                    let line = line.trim_ascii();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    let line = if let Some(data) = line.strip_prefix(b"data:") {
-                        data.trim_ascii()
-                    } else {
-                        line
-                    };
-                    let parsed = match serde_json::from_slice::<OllamaChatStreamResponse>(line) {
-                        Ok(parsed) => parsed,
-                        Err(error) if error.is_eof() => {
-                            let mut incomplete = line.to_vec();
-                            incomplete.extend_from_slice(&buffer);
-                            buffer = incomplete;
-                            break;
-                        }
-                        Err(_) => {
-                            return Err(AppError::InvalidState(
-                                "Ollama returned an invalid typed stream chunk".into(),
-                            ));
-                        }
-                    };
-                    model = parsed.model;
-                    created_at = parsed.created_at;
-                    if !parsed.message.content.is_empty() {
-                        content.push_str(&parsed.message.content);
-                        on_text(parsed.message.content)?;
-                    }
-                    if let Some(thinking) = parsed.message.thinking.filter(|text| !text.is_empty())
-                    {
-                        reasoning.push_str(&thinking);
-                        on_reasoning(thinking)?;
-                    }
-                    if let Some(calls) = parsed.message.tool_calls {
-                        for (position, call) in calls.into_iter().enumerate() {
-                            let index = call.function.index.unwrap_or(position);
-                            tool_calls.insert(index, call);
-                        }
-                    }
-                    if parsed.done {
-                        done = true;
-                        done_reason = parsed.done_reason;
-                        prompt_eval_count = parsed.prompt_eval_count;
-                        eval_count = parsed.eval_count;
-                    }
-                }
-                if done {
-                    break;
+                    let line: Vec<u8> = buffer.drain(..=newline).collect();
+                    answer.push_line(&line, on_text, on_reasoning)?;
                 }
             }
-
-            let remaining = buffer.trim_ascii();
-            if !done && !remaining.is_empty() {
-                let line = remaining
-                    .strip_prefix(b"data:")
-                    .map(<[u8]>::trim_ascii)
-                    .unwrap_or(remaining);
-                let parsed =
-                    serde_json::from_slice::<OllamaChatStreamResponse>(line).map_err(|_| {
-                        AppError::InvalidState(
-                            "Ollama returned an invalid final stream chunk".into(),
-                        )
-                    })?;
-                model = parsed.model;
-                created_at = parsed.created_at;
-                if !parsed.message.content.is_empty() {
-                    content.push_str(&parsed.message.content);
-                    on_text(parsed.message.content)?;
-                }
-                if let Some(thinking) = parsed.message.thinking.filter(|text| !text.is_empty()) {
-                    reasoning.push_str(&thinking);
-                    on_reasoning(thinking)?;
-                }
-                if let Some(calls) = parsed.message.tool_calls {
-                    for (position, call) in calls.into_iter().enumerate() {
-                        let index = call.function.index.unwrap_or(position);
-                        tool_calls.insert(index, call);
-                    }
-                }
-                done = parsed.done;
-                done_reason = parsed.done_reason;
-                prompt_eval_count = parsed.prompt_eval_count;
-                eval_count = parsed.eval_count;
+            if !answer.done {
+                // A last line the server did not terminate.
+                answer.push_line(&buffer, on_text, on_reasoning)?;
             }
-            if !done {
-                return Err(AppError::ServiceNotAvailable(
-                    "Ollama typed stream ended before completion".into(),
-                ));
-            }
-
-            let tool_calls: Vec<_> = tool_calls.into_values().collect();
-            let completion_tool_calls = tool_calls
-                .iter()
-                .enumerate()
-                .map(|(index, call)| CompletionInput::ToolCall {
-                    id: format!("ollama-call-{index}"),
-                    name: call.function.name.clone(),
-                    arguments: call.function.arguments.clone(),
-                })
-                .collect();
-            let provider_output = serde_json::to_value(OllamaChatResponse {
-                model,
-                created_at,
-                message: OllamaChatMessage {
-                    role: "assistant".into(),
-                    content: content.clone(),
-                    thinking: (!reasoning.is_empty()).then(|| reasoning.clone()),
-                    images: None,
-                    tool_calls: if tool_calls.is_empty() {
-                        None
-                    } else {
-                        // Preserve Ollama's native tool-call payload for the
-                        // next round. Completion-level entries carry synthetic ids.
-                        Some(tool_calls)
-                    },
-                    tool_name: None,
-                },
-                done: true,
-                done_reason: done_reason.clone(),
-                total_duration: None,
-                load_duration: None,
-                prompt_eval_count,
-                eval_count,
-            })
-            .unwrap_or_default();
-            Ok(CompletionResponse {
-                text: content,
-                reasoning: (!reasoning.is_empty()).then_some(reasoning),
-                tool_calls: completion_tool_calls,
-                input_tokens: u64::from(prompt_eval_count.unwrap_or(0)),
-                output_tokens: u64::from(eval_count.unwrap_or(0)),
-                finish_reason: done_reason.unwrap_or_else(|| "stop".into()),
-                provider_output,
-                first_token_logprobs: None,
-            })
+            answer.into_response()
         };
-        let result = request.within_time_budget(call).await.map_err(|_| {
+        request.within_time_budget(exchange).await.map_err(|_| {
             AppError::ServiceNotAvailable("Ollama typed completion exceeded its time budget".into())
-        })?;
-        result
+        })?
     }
 
-    async fn acquire_request_permit(&self, operation: &str) -> Result<OwnedSemaphorePermit> {
-        let permit = OLLAMA_REQUEST_SEMAPHORE
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                AppError::ServiceNotAvailable(
-                    "Ollama concurrency gate is shutting down".to_string(),
-                )
-            })?;
-        debug!(
-            operation = operation,
-            available_permits = OLLAMA_REQUEST_SEMAPHORE.available_permits(),
-            "Acquired Ollama request permit"
-        );
-        Ok(permit)
+    fn silent(&self) -> AppError {
+        AppError::ServiceNotAvailable(format!(
+            "Ollama sent nothing for {}s",
+            self.stream_timeout.as_secs()
+        ))
     }
+}
 
-    /// Create a new Ollama client with default timeouts.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_url` - Base URL of the Ollama server (e.g., "http://localhost:11434")
-    ///
-    /// # Errors
-    ///
-    /// Returns error if HTTP client cannot be created.
-    ///
-    /// # Note
-    ///
-    /// This method is for backward compatibility. For trait usage, use `with_model()`.
-    pub fn new(base_url: impl Into<String>) -> Result<Self> {
-        Self::with_model(base_url, "llama3.1:8b")
+/// The synthetic id of the `index`-th call in one reply: Ollama gives calls
+/// no ids of their own.
+fn call_id(index: usize) -> String {
+    format!("ollama-call-{index}")
+}
+
+/// An HTTP failure as an error that is safe to show: the status and what it
+/// usually means, never the body, which can quote the prompt.
+fn status_error(status: StatusCode) -> AppError {
+    let description = format!("Ollama chat returned HTTP {status}");
+    match status.as_u16() {
+        404 => AppError::InvalidConfig(format!(
+            "{description}: the model is not installed in Ollama (pull it first) or this is not an Ollama server"
+        )),
+        408 => AppError::Network(description),
+        429 => AppError::RateLimitExceeded(description),
+        400..=499 => AppError::InvalidState(description),
+        _ => AppError::ServiceNotAvailable(description),
     }
+}
 
-    /// Create a new Ollama client with a specific model.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_url` - Base URL of the Ollama server (e.g., "http://localhost:11434")
-    /// * `model_name` - Model name (e.g., "llama3.1:8b", "mistral")
-    ///
-    /// # Errors
-    ///
-    /// Returns error if HTTP client cannot be created.
-    pub fn with_model(base_url: impl Into<String>, model_name: impl Into<String>) -> Result<Self> {
-        Self::with_model_and_timeouts(
-            base_url,
-            model_name,
-            Duration::from_secs(120),
-            Duration::from_secs(300),
-        )
+fn network_error(error: reqwest::Error) -> AppError {
+    if error.is_connect() {
+        AppError::Network("Ollama is not reachable; check that it is running".into())
+    } else if error.is_timeout() {
+        AppError::ServiceNotAvailable("Ollama request timed out".into())
+    } else {
+        AppError::Network("Ollama request failed; check the server connection".into())
     }
+}
 
-    /// Create a new Ollama client with custom timeouts.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_url` - Base URL of the Ollama server
-    /// * `timeout` - Timeout for non-streaming requests
-    /// * `stream_timeout` - Timeout for streaming requests
-    ///
-    /// # Note
-    ///
-    /// This method is for backward compatibility. For trait usage, use `with_model_and_timeouts()`.
-    pub fn with_timeouts(
-        base_url: impl Into<String>,
-        timeout: Duration,
-        stream_timeout: Duration,
-    ) -> Result<Self> {
-        Self::with_model_and_timeouts(base_url, "llama3.1:8b", timeout, stream_timeout)
-    }
+/// One streamed reply as it accumulates.
+#[derive(Default)]
+struct Answer {
+    content: String,
+    reasoning: String,
+    tool_calls: BTreeMap<usize, OllamaToolCall>,
+    done: bool,
+    done_reason: Option<String>,
+    prompt_eval_count: Option<u32>,
+    eval_count: Option<u32>,
+}
 
-    /// Create a new Ollama client with model and custom timeouts.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_url` - Base URL of the Ollama server
-    /// * `model_name` - Model name (e.g., "llama3.1:8b", "mistral")
-    /// * `timeout` - Timeout for non-streaming requests
-    /// * `stream_timeout` - Timeout for streaming requests
-    pub fn with_model_and_timeouts(
-        base_url: impl Into<String>,
-        model_name: impl Into<String>,
-        timeout: Duration,
-        stream_timeout: Duration,
-    ) -> Result<Self> {
-        Self::with_model_and_timeouts_and_header(
-            base_url,
-            model_name,
-            timeout,
-            stream_timeout,
-            None,
-        )
-    }
-
-    /// Create a new Ollama client with model, custom timeouts, and an optional auth header.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_url` - Base URL of the Ollama server
-    /// * `model_name` - Model name (e.g., "llama3.1:8b", "mistral")
-    /// * `timeout` - Timeout for non-streaming requests
-    /// * `stream_timeout` - Timeout for streaming requests
-    /// * `auth_header` - Optional header (name, value) to include with every request
-    pub fn with_model_and_timeouts_and_header(
-        base_url: impl Into<String>,
-        model_name: impl Into<String>,
-        timeout: Duration,
-        stream_timeout: Duration,
-        auth_header: Option<(String, String)>,
-    ) -> Result<Self> {
-        let mut builder = reqwest_client_builder();
-        if let Some((name, value)) = auth_header {
-            let header_name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|e| {
-                AppError::InvalidInput(format!("Invalid Ollama header name: {}", e))
-            })?;
-            let header_value = HeaderValue::from_str(value.trim()).map_err(|e| {
-                AppError::InvalidInput(format!("Invalid Ollama header value: {}", e))
-            })?;
-            let mut headers = HeaderMap::new();
-            headers.insert(header_name, header_value);
-            builder = builder.default_headers(headers);
+impl Answer {
+    fn push_line(
+        &mut self,
+        line: &[u8],
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<()> {
+        let line = line.trim_ascii();
+        let line = line.strip_prefix(b"data:").map_or(line, <[u8]>::trim_ascii);
+        if line.is_empty() {
+            return Ok(());
         }
-
-        let client = builder
-            .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
-
-        let model_name = model_name.into();
-        if model_name.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Model name cannot be empty".to_string(),
+        let value: serde_json::Value = serde_json::from_slice(line).map_err(|_| {
+            AppError::InvalidState("Ollama returned an invalid typed stream chunk".into())
+        })?;
+        // A failure after the headers arrives as a line of its own. Its text
+        // can quote the prompt, so only the fact of it is reported.
+        if value.get("error").is_some() {
+            return Err(AppError::ServiceNotAvailable(
+                "Ollama reported an error while generating".into(),
             ));
         }
-
-        let mut url = base_url.into();
-        if url.ends_with('/') {
-            url.pop();
+        let chunk = serde_json::from_value::<OllamaChatStreamResponse>(value).map_err(|_| {
+            AppError::InvalidState("Ollama returned an invalid typed stream chunk".into())
+        })?;
+        if !chunk.message.content.is_empty() {
+            self.content.push_str(&chunk.message.content);
+            on_text(chunk.message.content)?;
         }
+        if let Some(thinking) = chunk.message.thinking.filter(|text| !text.is_empty()) {
+            self.reasoning.push_str(&thinking);
+            on_reasoning(thinking)?;
+        }
+        for (position, call) in chunk.message.tool_calls.into_iter().flatten().enumerate() {
+            self.tool_calls
+                .insert(call.function.index.unwrap_or(position), call);
+        }
+        if chunk.done {
+            self.done = true;
+            self.done_reason = chunk.done_reason;
+            self.prompt_eval_count = chunk.prompt_eval_count;
+            self.eval_count = chunk.eval_count;
+        }
+        Ok(())
+    }
 
-        Ok(Self {
-            base_url: url,
-            model_name,
-            client,
-            timeout,
-            stream_timeout,
-            config: GenerationConfig::default(),
-            circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
+    fn into_response(self) -> Result<CompletionResponse> {
+        if !self.done {
+            return Err(AppError::ServiceNotAvailable(
+                "Ollama typed stream ended before completion".into(),
+            ));
+        }
+        let calls: Vec<OllamaToolCall> = self.tool_calls.into_values().collect();
+        let tool_calls = calls
+            .iter()
+            .enumerate()
+            .map(|(index, call)| CompletionInput::ToolCall {
+                id: call_id(index),
+                name: call.function.name.clone(),
+                arguments: call.function.arguments.clone(),
+            })
+            .collect();
+        // Replayed as Ollama's own assistant message, so the calls go back in
+        // its native shape with the thinking that led to them.
+        let assistant = OllamaChatMessage {
+            role: "assistant".into(),
+            content: self.content.clone(),
+            thinking: (!self.reasoning.is_empty()).then(|| self.reasoning.clone()),
+            images: None,
+            tool_calls: (!calls.is_empty()).then_some(calls),
+            tool_name: None,
+        };
+        Ok(CompletionResponse {
+            text: self.content,
+            reasoning: (!self.reasoning.is_empty()).then_some(self.reasoning),
+            tool_calls,
+            input_tokens: u64::from(self.prompt_eval_count.unwrap_or(0)),
+            output_tokens: u64::from(self.eval_count.unwrap_or(0)),
+            finish_reason: self.done_reason.unwrap_or_else(|| "stop".into()),
+            replay: vec![CompletionInput::Native {
+                value: serde_json::to_value(assistant).map_err(|error| {
+                    AppError::InternalError(format!("Ollama reply is not serialisable: {error}"))
+                })?,
+            }],
+            first_token_logprobs: None,
         })
     }
-
-    /// Check if an Ollama server is reachable.
-    ///
-    /// Probes `/api/tags`, an Ollama-only route, rather than the bare base
-    /// URL: a llama.cpp server answers the base URL with its web UI and would
-    /// otherwise pass as Ollama, only to 404 on the first generation call.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(true)` if server responds to health check, `Ok(false)` otherwise.
-    pub async fn health_check_with_result(&self) -> Result<bool> {
-        let url = format!("{}/api/tags", self.base_url);
-        debug!("Performing Ollama health check at {}", url);
-
-        match self.client.get(&url).timeout(self.timeout).send().await {
-            Ok(response) => {
-                let is_healthy = response.status() == StatusCode::OK;
-                if is_healthy {
-                    info!("Ollama health check passed");
-                } else {
-                    warn!(
-                        "Ollama health check failed with status: {}",
-                        response.status()
-                    );
-                }
-                Ok(is_healthy)
-            }
-            Err(e) => {
-                error!("Ollama health check failed: {}", e);
-                Ok(false)
-            }
-        }
-    }
-
-    /// List available models.
-    ///
-    /// # Returns
-    ///
-    /// Returns list of available models with their metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if request fails or response is invalid.
-    pub async fn list_models(&self) -> Result<OllamaListResponse> {
-        debug!("Listing Ollama models");
-
-        let url = format!("{}/api/tags", self.base_url);
-        let response = self
-            .client
-            .get(&url)
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|e| {
-                error!("Failed to list models: {}", e);
-                OllamaClientError::from(e)
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            error!("HTTP error listing models: {} - {}", status, error_text);
-
-            let ollama_error: OllamaError =
-                serde_json::from_str(&error_text).unwrap_or_else(|_| OllamaError {
-                    error: format!("HTTP {}", status),
-                });
-
-            return Err(OllamaClientError::Api(ollama_error.error).into());
-        }
-
-        let list_response = response.json::<OllamaListResponse>().await.map_err(|e| {
-            error!("Failed to parse models list: {}", e);
-            OllamaClientError::from(e)
-        })?;
-
-        info!("Found {} models", list_response.models.len());
-        Ok(list_response)
-    }
-
-    /// Generate text (non-streaming).
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Generation request with model, prompt, and options
-    ///
-    /// # Returns
-    ///
-    /// Returns complete generated response.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Request has `stream` enabled (use `generate_stream_raw` instead)
-    /// - HTTP request fails after all retries
-    /// - Response is invalid
-    /// - Request times out after all retries
-    /// - Circuit breaker is open
-    pub async fn generate_raw(
-        &self,
-        mut request: OllamaGenerateRequest,
-    ) -> Result<OllamaGenerateResponse> {
-        use crate::shared::resilience::{retry_with_backoff, RetryConfig};
-
-        if request.stream {
-            return Err(AppError::InvalidInput(
-                "Use generate_stream() for streaming requests".to_string(),
-            ));
-        }
-
-        request.stream = false;
-        let _permit = self.acquire_request_permit("generate_raw").await?;
-
-        debug!("Generating with model: {}", request.model);
-
-        let base_url = self.base_url.clone();
-        let client = self.client.clone();
-        let timeout = self.timeout;
-
-        // Circuit breaker wraps retry logic (policy protects resilience)
-        let result = self
-            .circuit_breaker
-            .call(async {
-                // Retry wrapper with exponential backoff for transient failures
-                retry_with_backoff(
-                    RetryConfig::aggressive(), // More retries for local LLM calls
-                    || async {
-                        // HTTP request (no circuit breaker here)
-                        let url = format!("{}/api/generate", base_url);
-                        let response = client
-                            .post(&url)
-                            .json(&request)
-                            .timeout(timeout)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                error!("Generation request failed: {}", e);
-                                OllamaClientError::from(e)
-                            })?;
-
-                        if !response.status().is_success() {
-                            let status = response.status();
-                            let error_text = response.text().await.unwrap_or_default();
-                            error!("HTTP error during generation: {} - {}", status, error_text);
-
-                            let ollama_error: OllamaError = serde_json::from_str(&error_text)
-                                .unwrap_or_else(|_| OllamaError {
-                                    error: format!("HTTP {}", status),
-                                });
-
-                            return Err(OllamaClientError::Api(ollama_error.error));
-                        }
-
-                        let gen_response = response
-                            .json::<OllamaGenerateResponse>()
-                            .await
-                            .map_err(|e| {
-                                error!("Failed to parse generation response: {}", e);
-                                OllamaClientError::from(e)
-                            })?;
-
-                        Ok::<OllamaGenerateResponse, OllamaClientError>(gen_response)
-                    },
-                    |e: &OllamaClientError| {
-                        // Retry on transient failures only
-                        match e {
-                            OllamaClientError::Connection(_) => true,
-                            OllamaClientError::Timeout(_) => true,
-                            OllamaClientError::Api(msg) => {
-                                // Retry on server errors (Ollama might be busy)
-                                msg.contains("500")
-                                    || msg.contains("502")
-                                    || msg.contains("503")
-                                    || msg.contains("504")
-                            }
-                            _ => false,
-                        }
-                    },
-                )
-                .await
-            })
-            .await;
-
-        // Map circuit breaker errors to AppError
-        let gen_response = match result {
-            Ok(response) => response,
-            Err(CircuitBreakerError::Open) => {
-                error!("Ollama API circuit breaker is open - service unavailable");
-                return Err(AppError::Network(
-                    "Ollama API unavailable (circuit breaker open)".to_string(),
-                ));
-            }
-            Err(CircuitBreakerError::CallFailed(e)) => {
-                return Err(e.into());
-            }
-        };
-
-        info!(
-            "Generation complete, {} tokens generated",
-            gen_response.eval_count.unwrap_or(0)
-        );
-
-        Ok(gen_response)
-    }
-
-    /// Generate text with streaming.
-    ///
-    /// Yields chunks of generated text as they become available.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Generation request (stream will be enabled automatically)
-    ///
-    /// # Returns
-    ///
-    /// Returns async stream of response chunks.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if HTTP request fails or response is invalid.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use lattice::features::llm::engine::{OllamaClient, OllamaGenerateRequest};
-    /// use futures::StreamExt;
-    ///
-    /// async fn stream_example() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let client = OllamaClient::new("http://localhost:11434")?;
-    ///     let request = OllamaGenerateRequest::new("llama2", "Tell me a story");
-    ///
-    ///     let mut stream = client.generate_stream_raw(request).await?;
-    ///     while let Some(chunk) = stream.next().await {
-    ///         let chunk = chunk?;
-    ///         print!("{}", chunk.response);
-    ///         if chunk.done {
-    ///             break;
-    ///         }
-    ///     }
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn generate_stream_raw(
-        &self,
-        mut request: OllamaGenerateRequest,
-    ) -> Result<impl futures::Stream<Item = Result<OllamaStreamResponse>> + '_> {
-        request.stream = true;
-        let request_permit = self.acquire_request_permit("generate_stream_raw").await?;
-
-        debug!(
-            "Starting streaming generation with model: {}",
-            request.model
-        );
-
-        // Wrap the initial HTTP request in circuit breaker protection
-        let result = self
-            .circuit_breaker
-            .call(async {
-                let url = format!("{}/api/generate", self.base_url);
-                let send = self.client.post(&url).json(&request).send();
-                // No total timeout: it would cut off long answers. Bound the wait for
-                // headers here; the stream below bounds silence between chunks.
-                let response = timeout(self.stream_timeout, send)
-                    .await
-                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
-                    .map_err(|e| {
-                        error!("Streaming request failed: {}", e);
-                        OllamaClientError::from(e)
-                    })?;
-
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_default();
-                    error!("HTTP error during streaming: {} - {}", status, error_text);
-
-                    let ollama_error: OllamaError = serde_json::from_str(&error_text)
-                        .unwrap_or_else(|_| OllamaError {
-                            error: format!("HTTP {}", status),
-                        });
-
-                    return Err(OllamaClientError::Api(ollama_error.error));
-                }
-
-                Ok::<reqwest::Response, OllamaClientError>(response)
-            })
-            .await;
-
-        // Map circuit breaker errors to AppError
-        let response = match result {
-            Ok(resp) => resp,
-            Err(CircuitBreakerError::Open) => {
-                error!("Ollama API circuit breaker is open - service unavailable");
-                return Err(AppError::Network(
-                    "Ollama API unavailable (circuit breaker open)".to_string(),
-                ));
-            }
-            Err(CircuitBreakerError::CallFailed(e)) => {
-                return Err(e.into());
-            }
-        };
-
-        let stream = async_stream::stream! {
-            let _request_permit = request_permit;
-            let mut bytes_stream = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut has_content = false;
-
-            use futures::StreamExt;
-
-            let chunk_timeout = self.stream_timeout;
-            loop {
-                let next_chunk = match timeout(chunk_timeout, bytes_stream.next()).await {
-                    Ok(next_chunk) => next_chunk,
-                    Err(_) => {
-                        error!("Stream idle timeout after {:?}", chunk_timeout);
-                        yield Err(AppError::Other("LLM stream timed out".to_string()));
-                        return;
-                    }
-                };
-
-                let chunk = match next_chunk {
-                    Some(chunk) => chunk,
-                    None => break,
-                };
-
-                match chunk {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&text);
-
-                        while let Some(newline_idx) = buffer.find('\n') {
-                            let mut line = buffer[..newline_idx].trim().to_string();
-                            buffer.drain(..=newline_idx);
-
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            if let Some(stripped) = line.strip_prefix("data:") {
-                                line = stripped.trim().to_string();
-                            }
-
-                            match serde_json::from_str::<OllamaStreamResponse>(&line) {
-                                Ok(chunk) => {
-                                    let done = chunk.done;
-                                    if !chunk.response.is_empty() {
-                                        has_content = true;
-                                    }
-                                    yield Ok(chunk);
-                                    if done {
-                                        if !has_content {
-                                            warn!("Generate stream completed with zero content tokens");
-                                        }
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    if e.is_eof() {
-                                        buffer = format!("{}{}", line, buffer);
-                                        break;
-                                    }
-                                    warn!("Failed to parse stream chunk: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Stream error: {}", e);
-                        yield Err(AppError::Network(format!("Stream error: {}", e)));
-                        return;
-                    }
-                }
-            }
-            let remaining = buffer.trim();
-            if !remaining.is_empty() {
-                let mut line = remaining.to_string();
-                if let Some(stripped) = line.strip_prefix("data:") {
-                    line = stripped.trim().to_string();
-                }
-                match serde_json::from_str::<OllamaStreamResponse>(&line) {
-                    Ok(chunk) => {
-                        if !chunk.response.is_empty() {
-                            has_content = true;
-                        }
-                        yield Ok(chunk);
-                    }
-                    Err(e) => {
-                        if !e.is_eof() {
-                            warn!("Failed to parse stream chunk: {}", e);
-                        }
-                    }
-                }
-            }
-
-            if !has_content {
-                warn!("Generate stream ended without yielding any content");
-            }
-        };
-
-        Ok(stream)
-    }
-
-    /// Generate text using the configured model and generation config.
-    ///
-    /// This is a helper method for trait implementation that uses the client's
-    /// configured model and generation settings.
-    async fn generate_with_config(
-        &self,
-        prompt: &str,
-        system: Option<&str>,
-        images: Option<Vec<String>>,
-    ) -> Result<String, LLMError> {
-        let mut request = OllamaGenerateRequest::new(&self.model_name, prompt);
-
-        if let Some(sys) = system {
-            request = request.with_system(sys);
-        }
-
-        if let Some(imgs) = images {
-            request = request.with_images(imgs);
-        }
-
-        let mut options = std::collections::HashMap::new();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(self.config.temperature),
-        );
-        options.insert("top_p".to_string(), serde_json::json!(self.config.top_p));
-        options.insert("top_k".to_string(), serde_json::json!(self.config.top_k));
-        options.insert(
-            "repeat_penalty".to_string(),
-            serde_json::json!(self.config.repeat_penalty),
-        );
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(self.config.max_tokens),
-        );
-        request.options = Some(options);
-
-        let response = self.generate_raw(request).await.map_err(LLMError::from)?;
-        Ok(response.response)
-    }
-
-    /// Generate streaming text using the configured model and generation config.
-    ///
-    /// This is a helper method for trait implementation that uses the client's
-    /// configured model and generation settings.
-    async fn generate_stream_with_config(
-        &self,
-        prompt: &str,
-        system: Option<&str>,
-        images: Option<Vec<String>>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
-        let mut request = OllamaGenerateRequest::new(&self.model_name, prompt);
-
-        if let Some(sys) = system {
-            request = request.with_system(sys);
-        }
-
-        if let Some(imgs) = images {
-            request = request.with_images(imgs);
-        }
-
-        let mut options = std::collections::HashMap::new();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(self.config.temperature),
-        );
-        options.insert("top_p".to_string(), serde_json::json!(self.config.top_p));
-        options.insert("top_k".to_string(), serde_json::json!(self.config.top_k));
-        options.insert(
-            "repeat_penalty".to_string(),
-            serde_json::json!(self.config.repeat_penalty),
-        );
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(self.config.max_tokens),
-        );
-        request.options = Some(options);
-
-        let stream = self
-            .generate_stream_raw(request)
-            .await
-            .map_err(LLMError::from)?;
-
-        use futures::StreamExt;
-        let text_stream =
-            stream.map(|result| result.map(|chunk| chunk.response).map_err(LLMError::from));
-
-        Ok(Box::pin(text_stream))
-    }
-
-    /// Generate chat response using Ollama Chat API (non-streaming).
-    ///
-    /// # Arguments
-    /// * `messages` - Conversation messages (system, user, assistant)
-    ///
-    /// # Returns
-    /// Generated text response
-    ///
-    /// # Errors
-    /// Returns error if HTTP request fails or response is invalid
-    pub async fn chat(
-        &self,
-        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
-    ) -> Result<String, LLMError> {
-        use crate::features::llm::engine::types::{
-            OllamaChatMessage, OllamaChatRequest, OllamaChatResponse,
-        };
-        use crate::shared::resilience::{retry_with_backoff, RetryConfig};
-
-        debug!("Generating chat with model: {}", self.model_name);
-        let _permit = self
-            .acquire_request_permit("chat")
-            .await
-            .map_err(LLMError::from)?;
-
-        let ollama_messages: Vec<OllamaChatMessage> = messages
-            .into_iter()
-            .map(|m| OllamaChatMessage {
-                role: m.role,
-                content: m.content,
-                thinking: None,
-                images: None,
-                tool_calls: None,
-                tool_name: None,
-            })
-            .collect();
-
-        let mut request = OllamaChatRequest {
-            model: self.model_name.clone(),
-            messages: ollama_messages,
-            stream: false,
-            options: None,
-            keep_alive: None,
-            tools: None,
-            format: None,
-            think: None,
-        };
-
-        let mut options = std::collections::HashMap::new();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(self.config.temperature),
-        );
-        options.insert("top_p".to_string(), serde_json::json!(self.config.top_p));
-        options.insert("top_k".to_string(), serde_json::json!(self.config.top_k));
-        options.insert(
-            "repeat_penalty".to_string(),
-            serde_json::json!(self.config.repeat_penalty),
-        );
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(self.config.max_tokens),
-        );
-        request.options = Some(options);
-
-        let base_url = self.base_url.clone();
-        let client = self.client.clone();
-        let timeout = self.timeout;
-
-        // Circuit breaker wraps retry logic
-        let result = self
-            .circuit_breaker
-            .call(async {
-                retry_with_backoff(
-                    RetryConfig::aggressive(),
-                    || async {
-                        let url = format!("{}/api/chat", base_url);
-                        let response = client
-                            .post(&url)
-                            .json(&request)
-                            .timeout(timeout)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                error!("Chat request failed: {}", e);
-                                OllamaClientError::from(e)
-                            })?;
-
-                        if !response.status().is_success() {
-                            let status = response.status();
-                            let error_text = response.text().await.unwrap_or_default();
-                            error!("HTTP error during chat: {} - {}", status, error_text);
-
-                            let ollama_error: OllamaError = serde_json::from_str(&error_text)
-                                .unwrap_or_else(|_| OllamaError {
-                                    error: format!("HTTP {}", status),
-                                });
-
-                            return Err(OllamaClientError::Api(ollama_error.error));
-                        }
-
-                        let chat_response =
-                            response.json::<OllamaChatResponse>().await.map_err(|e| {
-                                error!("Failed to parse chat response: {}", e);
-                                OllamaClientError::from(e)
-                            })?;
-
-                        Ok::<OllamaChatResponse, OllamaClientError>(chat_response)
-                    },
-                    |e: &OllamaClientError| match e {
-                        OllamaClientError::Connection(_) => true,
-                        OllamaClientError::Timeout(_) => true,
-                        OllamaClientError::Api(msg) => {
-                            msg.contains("500")
-                                || msg.contains("502")
-                                || msg.contains("503")
-                                || msg.contains("504")
-                        }
-                        _ => false,
-                    },
-                )
-                .await
-            })
-            .await;
-
-        let chat_response = match result {
-            Ok(response) => response,
-            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
-                error!("Ollama API circuit breaker is open - service unavailable");
-                return Err(LLMError::Network(
-                    "Ollama API unavailable (circuit breaker open)".to_string(),
-                ));
-            }
-            Err(
-                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
-            ) => {
-                return Err(e.into());
-            }
-        };
-
-        info!(
-            "Chat complete, {} tokens generated",
-            chat_response.eval_count.unwrap_or(0)
-        );
-
-        Ok(chat_response.message.content)
-    }
-
-    /// Generate chat response with streaming using Ollama Chat API.
-    ///
-    /// # Arguments
-    /// * `messages` - Conversation messages (system, user, assistant)
-    ///
-    /// # Returns
-    /// Stream of text chunks
-    ///
-    /// # Errors
-    /// Returns error if HTTP request fails or response is invalid
-    pub async fn chat_stream(
-        &self,
-        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
-        use crate::features::llm::engine::types::{
-            OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse,
-        };
-
-        debug!("Starting streaming chat with model: {}", self.model_name);
-        let request_permit = self
-            .acquire_request_permit("chat_stream")
-            .await
-            .map_err(LLMError::from)?;
-
-        let ollama_messages: Vec<OllamaChatMessage> = messages
-            .into_iter()
-            .map(|m| OllamaChatMessage {
-                role: m.role,
-                content: m.content,
-                thinking: None,
-                images: None,
-                tool_calls: None,
-                tool_name: None,
-            })
-            .collect();
-
-        let mut request = OllamaChatRequest {
-            model: self.model_name.clone(),
-            messages: ollama_messages,
-            stream: true,
-            options: None,
-            keep_alive: None,
-            tools: None,
-            format: None,
-            think: None,
-        };
-
-        let mut options = std::collections::HashMap::new();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(self.config.temperature),
-        );
-        options.insert("top_p".to_string(), serde_json::json!(self.config.top_p));
-        options.insert("top_k".to_string(), serde_json::json!(self.config.top_k));
-        options.insert(
-            "repeat_penalty".to_string(),
-            serde_json::json!(self.config.repeat_penalty),
-        );
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(self.config.max_tokens),
-        );
-        request.options = Some(options);
-
-        // Wrap the initial HTTP request in circuit breaker protection
-        let result = self
-            .circuit_breaker
-            .call(async {
-                let url = format!("{}/api/chat", self.base_url);
-                let send = self.client.post(&url).json(&request).send();
-                // No total timeout: it would cut off long answers. Bound the wait for
-                // headers here; the stream below bounds silence between chunks.
-                let response = timeout(self.stream_timeout, send)
-                    .await
-                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
-                    .map_err(|e| {
-                        error!("Streaming chat request failed: {}", e);
-                        OllamaClientError::from(e)
-                    })?;
-
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_default();
-                    error!(
-                        "HTTP error during streaming chat: {} - {}",
-                        status, error_text
-                    );
-
-                    let ollama_error: OllamaError = serde_json::from_str(&error_text)
-                        .unwrap_or_else(|_| OllamaError {
-                            error: format!("HTTP {}", status),
-                        });
-
-                    return Err(OllamaClientError::Api(ollama_error.error));
-                }
-
-                Ok::<reqwest::Response, OllamaClientError>(response)
-            })
-            .await;
-
-        let response = match result {
-            Ok(resp) => resp,
-            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
-                error!("Ollama API circuit breaker is open - service unavailable");
-                return Err(LLMError::Network(
-                    "Ollama API unavailable (circuit breaker open)".to_string(),
-                ));
-            }
-            Err(
-                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
-            ) => {
-                return Err(e.into());
-            }
-        };
-
-        let stream = async_stream::stream! {
-            let _request_permit = request_permit;
-            let mut bytes_stream = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut has_content = false;
-
-            use futures::StreamExt;
-
-            let chunk_timeout = self.stream_timeout;
-            loop {
-                let next_chunk = match timeout(chunk_timeout, bytes_stream.next()).await {
-                    Ok(next_chunk) => next_chunk,
-                    Err(_) => {
-                        error!("Chat stream idle timeout after {:?}", chunk_timeout);
-                        yield Err(LLMError::Timeout);
-                        return;
-                    }
-                };
-
-                let chunk = match next_chunk {
-                    Some(chunk) => chunk,
-                    None => break,
-                };
-
-                match chunk {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&text);
-
-                        while let Some(newline_idx) = buffer.find('\n') {
-                            let mut line = buffer[..newline_idx].trim().to_string();
-                            buffer.drain(..=newline_idx);
-
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            if let Some(stripped) = line.strip_prefix("data:") {
-                                line = stripped.trim().to_string();
-                            }
-
-                            match serde_json::from_str::<OllamaChatStreamResponse>(&line) {
-                                Ok(chunk) => {
-                                    let done = chunk.done;
-                                    // Filter empty content chunks to prevent empty response accumulation
-                                    if !chunk.message.content.is_empty() {
-                                        has_content = true;
-                                        yield Ok(chunk.message.content);
-                                    }
-                                    if done {
-                                        if !has_content {
-                                            warn!("Chat stream completed with zero content tokens from model");
-                                            yield Err(LLMError::GenerationFailed(
-                                                "Model returned empty response (zero content tokens)".to_string()
-                                            ));
-                                        }
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    if e.is_eof() {
-                                        buffer = format!("{}{}", line, buffer);
-                                        break;
-                                    }
-                                    warn!("Failed to parse chat stream chunk: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Chat stream error: {}", e);
-                        yield Err(LLMError::Network(format!("Stream error: {}", e)));
-                        return;
-                    }
-                }
-            }
-            let remaining = buffer.trim();
-            if !remaining.is_empty() {
-                let mut line = remaining.to_string();
-                if let Some(stripped) = line.strip_prefix("data:") {
-                    line = stripped.trim().to_string();
-                }
-                match serde_json::from_str::<OllamaChatStreamResponse>(&line) {
-                    Ok(chunk) => {
-                        if !chunk.message.content.is_empty() {
-                            has_content = true;
-                            yield Ok(chunk.message.content);
-                        }
-                    }
-                    Err(e) => {
-                        if !e.is_eof() {
-                            warn!("Failed to parse chat stream chunk: {}", e);
-                        }
-                    }
-                }
-            }
-
-            if !has_content {
-                warn!("Chat stream ended without yielding any content");
-                yield Err(LLMError::GenerationFailed(
-                    "Model returned empty response (stream ended without content)".to_string()
-                ));
-            }
-        };
-
-        Ok(Box::pin(stream))
-    }
 }
-
-#[async_trait]
-impl LLMClient for OllamaClient {
-    async fn generate(
-        &self,
-        prompt: &str,
-        system: Option<&str>,
-        images: Option<Vec<String>>,
-    ) -> Result<String, LLMError> {
-        self.generate_with_config(prompt, system, images).await
-    }
-
-    async fn generate_stream(
-        &self,
-        prompt: &str,
-        system: Option<&str>,
-        images: Option<Vec<String>>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
-        self.generate_stream_with_config(prompt, system, images)
-            .await
-    }
-
-    async fn health_check(&self) -> bool {
-        self.health_check_with_result().await.unwrap_or(false)
-    }
-
-    fn model_name(&self) -> &str {
-        &self.model_name
-    }
-
-    fn generation_config(&self) -> &GenerationConfig {
-        &self.config
-    }
-
-    fn generation_config_mut(&mut self) -> &mut GenerationConfig {
-        &mut self.config
-    }
-
-    async fn generate_chat(
-        &self,
-        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
-    ) -> Result<String, LLMError> {
-        self.chat(messages).await
-    }
-
-    async fn generate_chat_stream(
-        &self,
-        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
-        self.chat_stream(messages).await
-    }
-
-    fn supports_chat(&self) -> bool {
-        true
-    }
-}
-
-use crate::application::ports::LLMPort;
 
 #[async_trait]
 impl LLMPort for OllamaClient {
-    fn supports_typed_completions(&self) -> bool {
-        true
-    }
-
-    async fn complete(
-        &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
-        self.complete_typed(request).await
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.chat(request, &|_| Ok(()), &|_| Ok(())).await
     }
 
     async fn complete_with_progress(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
-    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
-        self.complete_typed_with_progress(request, on_text).await
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        self.chat(request, on_text, &|_| Ok(())).await
     }
 
     async fn complete_with_reasoning_progress(
         &self,
-        request: &crate::application::ports::llm_port::CompletionRequest,
-        on_text: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> crate::shared::error::Result<()> + Send + Sync),
-        _on_retry: &(dyn Fn(usize) -> crate::shared::error::Result<()> + Send + Sync),
-    ) -> crate::shared::error::Result<crate::application::ports::llm_port::CompletionResponse> {
-        self.complete_typed_with_reasoning_progress(request, on_text, on_reasoning)
-            .await
-    }
-
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> crate::shared::error::Result<String> {
-        let system = if context.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "Use the following context to answer the question:\n\n{}",
-                context.join("\n\n")
-            ))
-        };
-
-        // Delegate to LLMClient::generate
-        <Self as LLMClient>::generate(self, prompt, system.as_deref(), images)
-            .await
-            .map_err(|e| {
-                crate::shared::error::AppError::Other(format!("LLM generation failed: {}", e))
-            })
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-    ) -> crate::shared::error::Result<
-        Box<dyn Stream<Item = crate::shared::error::Result<String>> + Send + Unpin + '_>,
-    > {
-        fn parse_context_to_chat_message(
-            context_entry: &str,
-        ) -> Option<crate::features::llm::engine::traits::ChatMessage> {
-            let trimmed = context_entry.trim();
-            let prefixes = [
-                ("system:", "system"),
-                ("user:", "user"),
-                ("assistant:", "assistant"),
-            ];
-
-            for (prefix, role) in prefixes {
-                if let (Some(head), Some(tail)) =
-                    (trimmed.get(..prefix.len()), trimmed.get(prefix.len()..))
-                {
-                    if !head.eq_ignore_ascii_case(prefix) {
-                        continue;
-                    }
-
-                    let content = tail.trim();
-                    if !content.is_empty() {
-                        return Some(crate::features::llm::engine::traits::ChatMessage {
-                            role: role.to_string(),
-                            content: content.to_string(),
-                        });
-                    }
-                }
-            }
-
-            None
-        }
-
-        let parsed_messages: Vec<crate::features::llm::engine::traits::ChatMessage> = context
-            .iter()
-            .filter_map(|entry| parse_context_to_chat_message(entry))
-            .collect();
-
-        let stream = if !parsed_messages.is_empty() {
-            let mut messages = parsed_messages;
-            messages.push(crate::features::llm::engine::traits::ChatMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            });
-
-            <Self as LLMClient>::generate_chat_stream(self, messages)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM streaming failed: {}", e))
-                })?
-        } else {
-            // Fallback to flattened context for backward compatibility.
-            let system = if context.is_empty() {
-                None
-            } else {
-                Some(format!(
-                    "Use the following context to answer the question:\n\n{}",
-                    context.join("\n\n")
-                ))
-            };
-
-            <Self as LLMClient>::generate_stream(self, prompt, system.as_deref(), images)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM streaming failed: {}", e))
-                })?
-        };
-
-        use futures::StreamExt;
-        let mapped_stream = stream.map(|result| {
-            result
-                .map_err(|e| crate::shared::error::AppError::Other(format!("Stream error: {}", e)))
-        });
-
-        Ok(Box::new(Box::pin(mapped_stream)))
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        self.chat(request, on_text, on_reasoning).await
     }
 
     fn model_name(&self) -> &str {
@@ -1821,14 +535,8 @@ impl LLMPort for OllamaClient {
         128_000
     }
 
-    fn count_tokens(&self, text: &str) -> usize {
-        // Rough approximation: 1 token ≈ 4 characters
-        // This is a simple heuristic and should be replaced with proper tokenization
-        text.len().div_ceil(4)
-    }
-
-    async fn is_ready(&self) -> crate::shared::error::Result<bool> {
-        self.health_check_with_result().await
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(self.health_check().await)
     }
 
     fn supports_tool_calling(&self) -> bool {
@@ -1838,295 +546,12 @@ impl LLMPort for OllamaClient {
     fn provider_name(&self) -> &str {
         "ollama"
     }
-
-    async fn generate_streaming_with_tools(
-        &self,
-        prompt: &str,
-        context: &[String],
-        images: Option<Vec<String>>,
-        tools: Option<&[crate::application::ports::ToolDefinition]>,
-    ) -> crate::shared::error::Result<
-        Box<
-            dyn Stream<Item = crate::shared::error::Result<crate::application::ports::StreamChunk>>
-                + Send
-                + Unpin
-                + '_,
-        >,
-    > {
-        use crate::application::ports::{StreamChunk, ToolCall};
-        use crate::features::llm::engine::types::{
-            OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool,
-        };
-        let request_permit = self
-            .acquire_request_permit("generate_streaming_with_tools")
-            .await?;
-
-        fn parse_context_to_chat_message(
-            entry: &str,
-        ) -> Option<crate::features::llm::engine::traits::ChatMessage> {
-            let trimmed = entry.trim();
-            for (prefix, role) in [
-                ("system:", "system"),
-                ("user:", "user"),
-                ("assistant:", "assistant"),
-            ] {
-                if let (Some(head), Some(tail)) =
-                    (trimmed.get(..prefix.len()), trimmed.get(prefix.len()..))
-                {
-                    if head.eq_ignore_ascii_case(prefix) {
-                        let content = tail.trim();
-                        if !content.is_empty() {
-                            return Some(crate::features::llm::engine::traits::ChatMessage {
-                                role: role.to_string(),
-                                content: content.to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-            None
-        }
-
-        let mut ollama_messages: Vec<OllamaChatMessage> = context
-            .iter()
-            .filter_map(|entry| parse_context_to_chat_message(entry))
-            .map(|m| OllamaChatMessage {
-                role: m.role,
-                content: m.content,
-                thinking: None,
-                images: None,
-                tool_calls: None,
-                tool_name: None,
-            })
-            .collect();
-
-        ollama_messages.push(OllamaChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-            thinking: None,
-            images: images.clone(),
-            tool_calls: None,
-            tool_name: None,
-        });
-
-        // Convert application-layer tool definitions to Ollama format (consume eagerly
-        // so the `tools` borrow is released before the stream is constructed)
-        let ollama_tools: Option<Vec<OllamaTool>> = tools.map(|defs| {
-            defs.iter()
-                .map(|td| OllamaTool::new(&td.name, &td.description, td.parameters.clone()))
-                .collect()
-        });
-        // Track whether we had tools for the diagnostic at end of stream
-        let had_tools = tools.is_some();
-
-        let mut options = std::collections::HashMap::new();
-        options.insert(
-            "temperature".to_string(),
-            serde_json::json!(self.config.temperature),
-        );
-        options.insert("top_p".to_string(), serde_json::json!(self.config.top_p));
-        options.insert("top_k".to_string(), serde_json::json!(self.config.top_k));
-        options.insert(
-            "num_predict".to_string(),
-            serde_json::json!(self.config.max_tokens),
-        );
-
-        let request = OllamaChatRequest {
-            model: self.model_name.clone(),
-            messages: ollama_messages,
-            stream: true,
-            options: Some(options),
-            keep_alive: None,
-            tools: ollama_tools,
-            format: None,
-            think: None,
-        };
-
-        // Make the HTTP request with circuit breaker
-        let result = self
-            .circuit_breaker
-            .call(async {
-                let url = format!("{}/api/chat", self.base_url);
-                let send = self.client.post(&url).json(&request).send();
-                // No total timeout: it would cut off long answers. Bound the wait for
-                // headers here; the stream below bounds silence between chunks.
-                let response = timeout(self.stream_timeout, send)
-                    .await
-                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
-                    .map_err(|e| {
-                        error!("Tool-enabled chat request failed: {}", e);
-                        OllamaClientError::from(e)
-                    })?;
-
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_default();
-                    error!(
-                        "HTTP error during tool-enabled chat: {} - {}",
-                        status, error_text
-                    );
-                    let ollama_error: OllamaError = serde_json::from_str(&error_text)
-                        .unwrap_or_else(|_| OllamaError {
-                            error: format!("HTTP {}", status),
-                        });
-                    return Err(OllamaClientError::Api(ollama_error.error));
-                }
-
-                Ok::<reqwest::Response, OllamaClientError>(response)
-            })
-            .await;
-
-        let response = match result {
-            Ok(resp) => resp,
-            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
-                return Err(crate::shared::error::AppError::Network(
-                    "Ollama API unavailable (circuit breaker open)".to_string(),
-                ));
-            }
-            Err(
-                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
-            ) => {
-                return Err(e.into());
-            }
-        };
-
-        let chunk_timeout = self.stream_timeout;
-        let stream = async_stream::stream! {
-            let _request_permit = request_permit;
-            let mut bytes_stream = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut has_content = false;
-            let mut accumulated_tool_calls: Vec<ToolCall> = Vec::new();
-
-            use futures::StreamExt;
-
-            loop {
-                let next_chunk = match timeout(chunk_timeout, bytes_stream.next()).await {
-                    Ok(next_chunk) => next_chunk,
-                    Err(_) => {
-                        error!("Tool chat stream idle timeout after {:?}", chunk_timeout);
-                        yield Err(crate::shared::error::AppError::Other(
-                            "LLM stream timed out".to_string(),
-                        ));
-                        return;
-                    }
-                };
-
-                let chunk = match next_chunk {
-                    Some(chunk) => chunk,
-                    None => break,
-                };
-
-                match chunk {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&text);
-
-                        while let Some(newline_idx) = buffer.find('\n') {
-                            let mut line = buffer[..newline_idx].trim().to_string();
-                            buffer.drain(..=newline_idx);
-
-                            if line.is_empty() {
-                                continue;
-                            }
-                            if let Some(stripped) = line.strip_prefix("data:") {
-                                line = stripped.trim().to_string();
-                            }
-
-                            match serde_json::from_str::<OllamaChatStreamResponse>(&line) {
-                                Ok(chunk) => {
-                                    let done = chunk.done;
-
-                                    if let Some(ref tc) = chunk.message.tool_calls {
-                                        for call in tc {
-                                            accumulated_tool_calls.push(ToolCall {
-                                                id: None,
-                                                name: call.function.name.clone(),
-                                                arguments: call.function.arguments.clone(),
-                                            });
-                                        }
-                                    }
-
-                                    // Yield content if non-empty
-                                    if !chunk.message.content.is_empty() {
-                                        has_content = true;
-                                        yield Ok(StreamChunk::Content(chunk.message.content));
-                                    }
-
-                                    if done {
-                                        // If we accumulated tool calls, yield them
-                                        if !accumulated_tool_calls.is_empty() {
-                                            yield Ok(StreamChunk::ToolCalls(
-                                                std::mem::take(&mut accumulated_tool_calls),
-                                            ));
-                                        }
-                                        yield Ok(StreamChunk::Done);
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    if e.is_eof() {
-                                        buffer = format!("{}{}", line, buffer);
-                                        break;
-                                    }
-                                    warn!("Failed to parse tool chat stream chunk: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Tool chat stream error: {}", e);
-                        yield Err(crate::shared::error::AppError::Network(
-                            format!("Stream error: {}", e),
-                        ));
-                        return;
-                    }
-                }
-            }
-
-            let remaining = buffer.trim();
-            if !remaining.is_empty() {
-                let mut line = remaining.to_string();
-                if let Some(stripped) = line.strip_prefix("data:") {
-                    line = stripped.trim().to_string();
-                }
-                if let Ok(chunk) = serde_json::from_str::<OllamaChatStreamResponse>(&line) {
-                    if let Some(ref tc) = chunk.message.tool_calls {
-                        for call in tc {
-                            accumulated_tool_calls.push(ToolCall {
-                                                id: None,
-                                name: call.function.name.clone(),
-                                arguments: call.function.arguments.clone(),
-                            });
-                        }
-                    }
-                    if !chunk.message.content.is_empty() {
-                        has_content = true;
-                        yield Ok(StreamChunk::Content(chunk.message.content));
-                    }
-                }
-            }
-
-            // Yield accumulated tool calls if any
-            if !accumulated_tool_calls.is_empty() {
-                yield Ok(StreamChunk::ToolCalls(accumulated_tool_calls));
-            }
-
-            // Always end with Done
-            yield Ok(StreamChunk::Done);
-
-            if !has_content && !had_tools {
-                warn!("Tool chat stream ended without content or tool calls");
-            }
-        };
-
-        Ok(Box::new(Box::pin(stream)))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
@@ -2151,7 +576,7 @@ mod tests {
                 {"role":"system","content":"Return JSON."},
                 {"role":"user","content":"Check this batch."}
             ],
-            "stream":false,
+            "stream":true,
             "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"num_predict":2048},
             "format":schema
         });
@@ -2198,7 +623,6 @@ mod tests {
             time_budget: Some(Duration::from_secs(2)),
             ..Default::default()
         };
-        assert!(LLMPort::supports_typed_completions(&client));
         let response = LLMPort::complete(&client, &request).await.unwrap();
         assert_eq!(response.text, "{\"ok\":true}");
         assert_eq!(response.input_tokens, 30);
@@ -2294,12 +718,7 @@ mod tests {
         assert_eq!(name, "search_saved_knowledge");
 
         let mut next_request = request;
-        next_request.input.push(CompletionInput::Native {
-            value: serde_json::json!({
-                "role":"assistant",
-                "content":first_response.provider_output
-            }),
-        });
+        next_request.input.extend(first_response.replay.clone());
         next_request.input.push(CompletionInput::ToolResult {
             id,
             output: "The trip is on Friday.".into(),
@@ -2536,66 +955,11 @@ mod tests {
     }
 
     #[test]
-    fn test_client_creation() {
-        let client = OllamaClient::new("http://localhost:11434");
-        assert!(client.is_ok());
-    }
-
-    #[test]
-    fn test_client_url_normalization() {
-        let client = OllamaClient::new("http://localhost:11434/").unwrap();
-        assert!(!client.base_url.ends_with('/'));
-    }
-
-    #[test]
-    fn test_generate_request_validation() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let client = OllamaClient::new("http://localhost:11434").unwrap();
-            let request = OllamaGenerateRequest::new("llama2", "test").with_stream(true);
-
-            let result = client.generate_raw(request).await;
-            assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("streaming"));
-        });
-    }
-
-    #[test]
-    fn test_client_with_model() {
-        let client = OllamaClient::with_model("http://localhost:11434", "mistral").unwrap();
-        use crate::features::llm::engine::traits::LLMClient;
-        assert_eq!(LLMClient::model_name(&client), "mistral");
-    }
-
-    #[test]
-    fn test_generation_config() {
-        let mut client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
-
-        assert_eq!(client.generation_config().temperature, 0.7);
-
-        // Modify config
-        client.generation_config_mut().temperature = 0.5;
-        assert_eq!(client.generation_config().temperature, 0.5);
-    }
-
-    #[tokio::test]
-    #[ignore = "Requires Ollama running"]
-    async fn test_trait_generate() {
-        use crate::features::llm::engine::traits::LLMClient;
-
-        let client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
-        let result = LLMClient::generate(
-            &client,
-            "Say hello",
-            Some("You are a helpful assistant"),
-            None,
-        )
-        .await;
-
-        // This will fail if Ollama is not running
-        if let Ok(text) = result {
-            assert!(!text.is_empty());
-        }
+    fn the_base_url_loses_its_trailing_slash() {
+        let client = OllamaClient::with_model("http://localhost:11434/", "mistral").unwrap();
+        assert_eq!(client.base_url, "http://localhost:11434");
+        assert_eq!(client.model_name(), "mistral");
+        assert!(OllamaClient::with_model("http://localhost:11434", " ").is_err());
     }
 
     #[tokio::test]
@@ -2613,7 +977,7 @@ mod tests {
             .mount(&server)
             .await;
         let client = OllamaClient::with_model(server.uri(), "any-model").unwrap();
-        assert!(!client.health_check_with_result().await.unwrap());
+        assert!(!client.health_check().await);
 
         Mock::given(method("GET"))
             .and(path("/api/tags"))
@@ -2622,66 +986,111 @@ mod tests {
             )
             .mount(&server)
             .await;
-        assert!(client.health_check_with_result().await.unwrap());
+        assert!(client.health_check().await);
     }
 
-    /// A client-wide `timeout` covers the response body, so it would truncate a
-    /// generation that is still producing bytes.
     #[tokio::test]
-    async fn a_streamed_body_outlives_the_non_streaming_timeout() {
-        use futures::StreamExt;
+    async fn a_failed_status_says_what_it_means_without_echoing_the_body() {
+        use crate::application::ports::llm_port::CompletionRequest;
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(
+                serde_json::json!({"error":"model 'private prompt text' not found"}),
+            ))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::with_model(server.uri(), "absent").unwrap();
+        let error = client
+            .complete(&CompletionRequest::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+        assert!(error.to_string().contains("pull it first"), "{error}");
+        assert!(!error.to_string().contains("private prompt text"));
+    }
+
+    /// Scripted chunks written to a raw socket, each after its delay.
+    async fn scripted_server(
+        chunks: Vec<(Duration, Vec<u8>)>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            // Drain the request headers; the body is irrelevant to this test.
-            let mut buffer = [0u8; 4096];
+            // Drain the request headers; the body is irrelevant to these tests.
+            let mut buffer = [0u8; 8192];
             let read = socket.read(&mut buffer).await.unwrap();
             assert!(read > 0, "client sent no request");
-            let chunks = [
-                "{\"model\":\"m\",\"created_at\":\"\",\"response\":\"Slow \",\"done\":false}\n",
-                "{\"model\":\"m\",\"created_at\":\"\",\"response\":\"answer\",\"done\":true}\n",
-            ];
-            let size: usize = chunks.iter().map(|chunk| chunk.len()).sum();
+            let size: usize = chunks.iter().map(|(_, chunk)| chunk.len()).sum();
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {size}\r\n\r\n").as_bytes()).await.unwrap();
-            for chunk in chunks {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                socket.write_all(chunk.as_bytes()).await.unwrap();
+            for (delay, chunk) in chunks {
+                tokio::time::sleep(delay).await;
+                if socket.write_all(&chunk).await.is_err() {
+                    return;
+                }
             }
         });
+        (format!("http://{address}"), server)
+    }
+
+    /// A client-wide `timeout` covers the response body, so it would truncate a
+    /// generation that is still producing bytes. A character split between two
+    /// network chunks must also come out whole.
+    #[tokio::test]
+    async fn a_streamed_body_outlives_the_probe_timeout_and_keeps_split_characters() {
+        let first = "{\"model\":\"m\",\"created_at\":\"\",\"message\":{\"role\":\"assistant\",\"content\":\"Slow 世\"},\"done\":false}\n{\"model\":\"m\",\"created_at\":\"\",\"message\":{\"role\":\"assistant\",\"content\":\"界\"},\"done\":true}\n";
+        let split = first.find('界').unwrap() + 1;
+        let bytes = first.as_bytes();
+        let delay = Duration::from_millis(250);
+        let (url, server) = scripted_server(vec![
+            (delay, bytes[..split].to_vec()),
+            (delay, bytes[split..].to_vec()),
+        ])
+        .await;
 
         let client = OllamaClient::with_model_and_timeouts(
-            format!("http://{address}"),
+            url,
             "any-model",
             Duration::from_millis(150),
             Duration::from_secs(5),
         )
         .unwrap();
-        let mut stream = Box::pin(
-            client
-                .generate_stream_raw(OllamaGenerateRequest::new("any-model", "Question"))
-                .await
-                .unwrap(),
-        );
-        let mut answer = String::new();
-        while let Some(chunk) = stream.next().await {
-            answer.push_str(&chunk.unwrap().response);
-        }
-        assert_eq!(answer, "Slow answer");
+        let response = client
+            .complete(&crate::application::ports::llm_port::CompletionRequest::default())
+            .await
+            .unwrap();
+        assert_eq!(response.text, "Slow 世界");
         server.await.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "Requires Ollama running"]
-    async fn test_trait_health_check() {
-        use crate::features::llm::engine::traits::LLMClient;
-
-        let client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
-        let is_healthy = client.health_check().await;
-
-        // This will be true if Ollama is running
-        println!("Health check result: {}", is_healthy);
+    async fn a_stream_that_goes_silent_is_a_stall_not_a_wait() {
+        let chunk = b"{\"model\":\"m\",\"created_at\":\"\",\"message\":{\"role\":\"assistant\",\"content\":\"Half\"},\"done\":false}\n".to_vec();
+        let (url, server) = scripted_server(vec![
+            (Duration::ZERO, chunk),
+            (Duration::from_secs(5), b"never".to_vec()),
+        ])
+        .await;
+        let client = OllamaClient::with_model_and_timeouts(
+            url,
+            "any-model",
+            Duration::from_secs(5),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        let error = client
+            .complete(&crate::application::ports::llm_port::CompletionRequest::default())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("sent nothing"), "{error}");
+        server.abort();
     }
 }

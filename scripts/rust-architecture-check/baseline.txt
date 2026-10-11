@@ -1,0 +1,125 @@
+# Architecture ratchet baseline, read by scripts/rust-architecture-check.
+#
+# Each line is `<rule> <subject> <target> <count>`: production-code violations
+# that existed when the file was written. CI fails when a count rises or a new
+# line would appear, and also when a count falls or a line disappears, so this
+# file only shrinks. After removing violations, regenerate it (and the Tauri
+# command-orphan baseline) with
+#
+#     bash scripts/check-rust-layer-boundaries.sh --write-baseline
+#
+# and commit the smaller file. Do not add lines to get a change through: fix
+# the dependency, or mark a deliberate detached task with a
+# `// raw-spawn: <reason>` comment directly above the statement or its fn.
+#
+#   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
+#   feature-edge <features::a> <features::b>              references from one feature into another
+#   container-import <file> interfaces::di                the DI Container outside plugin, command,
+#                                                         DI, desktop, setup and interfaces files
+#   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
+
+infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::indexing 1
+infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::transcription 3
+infrastructure-imports-feature infrastructure/adapters/system_info.rs features::llm 2
+infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::embedding 4
+infrastructure-imports-feature infrastructure/persistence/repositories/mocks.rs features::mentions 1
+infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::embedding 1
+infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::model_management 1
+infrastructure-imports-feature infrastructure/persistence/repositories/unit_of_work.rs features::search 1
+infrastructure-imports-feature infrastructure/services/startup_reconciliation.rs features::download 2
+infrastructure-imports-feature infrastructure/services/traits/context.rs features::search 1
+infrastructure-imports-feature infrastructure/setup/app.rs features::download 8
+infrastructure-imports-feature infrastructure/setup/app.rs features::embedding 1
+infrastructure-imports-feature infrastructure/setup/app.rs features::settings 2
+infrastructure-imports-feature infrastructure/setup/app.rs features::summaries 1
+infrastructure-imports-feature infrastructure/setup/degraded_mocks.rs features::web 2
+infrastructure-imports-feature infrastructure/setup/shutdown.rs features::llm 1
+
+feature-edge features::backup features::settings 2
+feature-edge features::backup features::vault 2
+feature-edge features::batch features::indexing 4
+feature-edge features::batch features::web 2
+feature-edge features::cache features::search 2
+feature-edge features::compare features::search 1
+feature-edge features::conversation features::daily_notes 2
+feature-edge features::conversation features::embedding 3
+feature-edge features::conversation features::explorer 9
+feature-edge features::conversation features::function_calling 54
+feature-edge features::conversation features::llm 2
+feature-edge features::conversation features::qa 17
+feature-edge features::conversation features::references 1
+feature-edge features::conversation features::search 30
+feature-edge features::conversation features::settings 17
+feature-edge features::conversation features::summaries 4
+feature-edge features::conversation features::web 2
+feature-edge features::corpus_shape features::embedding 1
+feature-edge features::daily_notes features::conversation 1
+feature-edge features::daily_notes features::qa 6
+feature-edge features::daily_notes features::vault 1
+feature-edge features::download features::embedding 4
+feature-edge features::download features::model_management 1
+feature-edge features::embedding features::download 1
+feature-edge features::embedding features::indexing 6
+feature-edge features::embedding features::search 1
+feature-edge features::explorer features::conversation 1
+feature-edge features::explorer features::function_calling 4
+feature-edge features::explorer features::search 3
+feature-edge features::file features::indexing 8
+feature-edge features::file features::recent 2
+feature-edge features::file features::tags 2
+feature-edge features::file features::web 2
+feature-edge features::function_calling features::embedding 1
+feature-edge features::function_calling features::search 6
+feature-edge features::function_calling features::settings 4
+feature-edge features::function_calling features::tags 1
+feature-edge features::function_calling features::web 1
+feature-edge features::health features::llm 1
+feature-edge features::indexing features::cache 6
+feature-edge features::indexing features::embedding 14
+feature-edge features::indexing features::mentions 1
+feature-edge features::indexing features::search 1
+feature-edge features::indexing features::summaries 2
+feature-edge features::indexing features::transcription 1
+feature-edge features::indexing features::web 2
+feature-edge features::initialization features::download 1
+feature-edge features::learning features::conversation 1
+feature-edge features::learning features::daily_notes 5
+feature-edge features::learning features::function_calling 4
+feature-edge features::learning features::vault 1
+feature-edge features::learning features::web 14
+feature-edge features::llm features::download 9
+feature-edge features::llm features::embedding 3
+feature-edge features::llm features::model_management 22
+feature-edge features::model_management features::download 20
+feature-edge features::model_management features::embedding 8
+feature-edge features::model_management features::llm 2
+feature-edge features::search features::cache 5
+feature-edge features::search features::download 1
+feature-edge features::search features::embedding 13
+feature-edge features::settings features::function_calling 1
+feature-edge features::settings features::llm 2
+feature-edge features::settings features::vault 3
+feature-edge features::stats features::health 1
+feature-edge features::stats features::tags 3
+feature-edge features::summaries features::search 1
+feature-edge features::transcription features::download 2
+feature-edge features::vault features::daily_notes 4
+feature-edge features::vault features::file 2
+feature-edge features::vault features::settings 2
+feature-edge features::web features::embedding 4
+feature-edge features::web features::function_calling 17
+feature-edge features::web features::indexing 8
+
+container-import features/compare/retrieval.rs interfaces::di 1
+container-import features/compare/use_case.rs interfaces::di 1
+container-import features/conversation/branching.rs interfaces::di 1
+container-import features/conversation/compaction.rs interfaces::di 1
+container-import features/conversation/handoff.rs interfaces::di 1
+container-import features/conversation/starters.rs interfaces::di 1
+container-import features/conversation/synthesis.rs interfaces::di 1
+container-import features/explorer/folders.rs interfaces::di 1
+container-import features/learning/portability/pack_repository.rs interfaces::di 4
+container-import features/learning/portability/pack_repository/replacement.rs interfaces::di 1
+container-import features/learning/references/sources.rs interfaces::di 1
+container-import features/search/reranker_setup.rs interfaces::di 1
+container-import features/vault/writeback.rs interfaces::di 1

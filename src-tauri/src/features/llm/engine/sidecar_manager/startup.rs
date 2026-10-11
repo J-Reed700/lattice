@@ -14,7 +14,7 @@ impl SidecarManager {
     /// 4 GB model was resident two or three times over.
     ///
     /// What is *not* shared is per-role generation settings: those travel on
-    /// each request, so the roles keep their own `SidecarLLMClient` (and its
+    /// each request, so the roles keep their own `LlamaCppLlm` (and its
     /// own `GenerationConfig`) over one server.
     ///
     /// Sharing costs much less concurrency than it looks like it should. We
