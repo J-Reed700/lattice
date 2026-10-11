@@ -10,8 +10,8 @@ export async function sampleProcessTree(rootPid) {
   let rows;
   if (process.platform === 'win32') {
     const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize | ConvertTo-Json -Compress'], { timeout: 10000 });
-    rows = JSON.parse(stdout).map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, bytes: Number(row.WorkingSetSize) }));
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,@{n="Created";e={if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { $null }}} | ConvertTo-Json -Compress'], { timeout: 10000 });
+    rows = JSON.parse(stdout).map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, bytes: Number(row.WorkingSetSize), created: row.Created ?? null }));
   } else {
     const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,rss='], { timeout: 10000 });
     rows = stdout.trim().split('\n').map(line => {
@@ -19,11 +19,17 @@ export async function sampleProcessTree(rootPid) {
       return { pid, parent, bytes: kib * 1024 };
     });
   }
+  // Windows reuses a dead parent's PID, so an unrelated orphan (e.g. a
+  // toolchain's vctip.exe) can name the app as its parent. A real child is
+  // never created before its parent.
+  const created = new Map(rows.map(row => [row.pid, row.created ?? null]));
+  const bornAfterParent = row => row.created == null || created.get(row.parent) == null
+    || row.created >= created.get(row.parent);
   const included = new Set([rootPid]);
   for (let changed = true; changed;) {
     changed = false;
     for (const row of rows) {
-      if (!included.has(row.pid) && included.has(row.parent)) {
+      if (!included.has(row.pid) && included.has(row.parent) && bornAfterParent(row)) {
         included.add(row.pid);
         changed = true;
       }

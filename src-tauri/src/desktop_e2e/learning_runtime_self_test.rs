@@ -25,7 +25,7 @@ pub fn run(resource_root: PathBuf) -> Result<(), Box<dyn Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_stack_size(32 * 1024 * 1024)
-        .enable_time()
+        .enable_all()
         .build()?;
     let results = runtime.block_on(async {
         let python_ok = execute_builtin_lab(
