@@ -78,7 +78,7 @@ pub async fn create_workspace_note_impl(
     let note = get_note_by_id(container, &repository, &note_id).await?;
     // Vault writeback: fire-and-forget. Failures log but never block
     // the SQL commit; the database is still the canonical write.
-    writeback::spawn_sync_workspace_note(container);
+    writeback::spawn_sync_workspace_note(container.vault_writer());
     Ok(note)
 }
 
@@ -115,7 +115,7 @@ pub async fn update_workspace_note_impl(
         .await?;
 
     let updated = row_to_dto(saved)?;
-    writeback::spawn_sync_workspace_note(container);
+    writeback::spawn_sync_workspace_note(container.vault_writer());
     Ok(updated)
 }
 
@@ -231,7 +231,7 @@ pub async fn delete_workspace_note_impl(
     // Remove the mirrored markdown too. Without this the file outlives its
     // row, and the next vault rescan sees a file with no matching row, treats
     // it as an external addition, and re-imports the note the user deleted.
-    writeback::spawn_delete_workspace_note(container);
+    writeback::spawn_delete_workspace_note(container.vault_writer());
 
     Ok(())
 }
@@ -293,7 +293,7 @@ pub async fn quick_capture_impl(
             conversation_ids.unwrap_or_default(),
         )
         .await?;
-    writeback::spawn_sync_workspace_note(container);
+    writeback::spawn_sync_workspace_note(container.vault_writer());
     Ok(result)
 }
 
@@ -304,7 +304,7 @@ pub async fn capture_reference_impl(
     let result = DailyNotesRepository::new(container.db_pool().clone())
         .capture_reference(request)
         .await?;
-    writeback::spawn_sync_workspace_note(container);
+    writeback::spawn_sync_workspace_note(container.vault_writer());
     Ok(result)
 }
 
@@ -360,7 +360,7 @@ pub async fn update_daily_note_content_impl(
     // Daily notes share the same `daily_notes_workspace` table as
     // workspace notes — backend-side they're the same entity. Reuse the
     // workspace writeback path so vault export is consistent.
-    writeback::spawn_sync_workspace_note(container);
+    writeback::spawn_sync_workspace_note(container.vault_writer());
     Ok(())
 }
 

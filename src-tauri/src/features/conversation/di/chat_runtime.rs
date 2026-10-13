@@ -4,10 +4,12 @@ use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::features::conversation::chat::ports::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tracing::warn;
 
 #[async_trait]
 impl ChatModels for Container {
@@ -16,6 +18,9 @@ impl ChatModels for Container {
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         Container::get_or_load_router_llm(self).await
+    }
+    async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
+        Container::get_or_load_utility_llm(self).await
     }
     fn utility_llm_loader(&self) -> OptionalLlmLoader {
         Container::utility_llm_loader(self)
@@ -53,6 +58,27 @@ impl ChatStorage for Container {
     }
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
         Arc::new(ConversationRepository::new(self.db_pool().clone()))
+    }
+    fn conversation_memory(
+        &self,
+    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+        Container::conversation_memory(self)
+    }
+    fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
+        Container::compaction_slots(self)
+    }
+    fn handoffs_in_flight(&self) -> Arc<crate::features::conversation::handoff::HandoffsInFlight> {
+        Container::handoffs_in_flight(self)
+    }
+    fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
+        Arc::new(ConversationRepository::new(self.db_pool().clone()))
+    }
+    fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
+        Arc::new(
+            crate::features::conversation::starters::ChatStarterCacheRepository::new(
+                self.db_pool().clone(),
+            ),
+        )
     }
     async fn explorer_turn(
         &self,
@@ -149,13 +175,107 @@ impl ChatPolicy for Container {
         crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
     }
     fn consolidate_after_turn(&self, id: String) {
-        crate::features::conversation::compaction::consolidate_after_turn(self.clone(), id);
+        crate::features::conversation::compaction::consolidate_after_turn(self.share(), id);
     }
+    async fn check_read_rate_limit(&self, name: &str) -> Result<()> {
+        self.security_context()
+            .rate_limiters()
+            .search
+            .check_rate_limit(name)
+            .await
+            .map_err(|e| {
+                crate::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
+            })
+    }
+    async fn check_delete_rate_limit(&self, name: &str) -> Result<()> {
+        self.security_context()
+            .rate_limiters()
+            .llm_question
+            .check_rate_limit(name)
+            .await
+            .map_err(|e| {
+                crate::shared::error::AppError::Other(format!("Rate limit exceeded: {}", e))
+            })
+    }
+    async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()> {
+        // A turn already generating for this conversation should not continue
+        // producing work after the user deletes it. Vector indexing is a
+        // separate detached task; its final write checks the source rows
+        // atomically.
+        self.turn_cancellation()
+            .request_cancel(conversation_id, None);
+
+        // A file attached to a chat exists only for that chat: deleting through
+        // the document use case is what also drops its vectors and releases
+        // its library blob. A failure is logged and does not block the delete
+        // the user asked for: the startup sweep collects whatever is left.
+        delete_conversation_attachments(self, conversation_id).await;
+
+        self.conversation_service()
+            .delete_conversation(conversation_id)
+            .await?;
+
+        let audit_logger = get_audit_logger();
+        let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
+            .with_resource_id(conversation_id)
+            .with_metadata("operation", "delete_conversation");
+        if let Err(e) = audit_logger.log(event).await {
+            warn!("Failed to write audit log: {}", e);
+        }
+
+        Ok(())
+    }
+}
+
+/// Delete every document this conversation owns.
+///
+/// Never fails the caller: a document that resists deletion is worth a log
+/// line, not a conversation the user cannot remove.
+async fn delete_conversation_attachments(container: &Container, conversation_id: &str) {
+    let scope = container.document_scope();
+    let attachments = match scope.documents_owned_by_conversation(conversation_id).await {
+        Ok(ids) => ids,
+        Err(error) => {
+            warn!(%error, conversation_id, "Could not list this conversation's attachments");
+            return;
+        }
+    };
+    if attachments.is_empty() {
+        return;
+    }
+
+    let delete_document = container.delete_document_use_case();
+    let mut deleted = 0usize;
+    for document_id in &attachments {
+        match delete_document.execute(document_id.clone()).await {
+            Ok(_) => deleted += 1,
+            Err(error) => {
+                warn!(%error, conversation_id, document_id, "Could not delete an attachment")
+            }
+        }
+    }
+    tracing::info!(
+        conversation_id,
+        owned = attachments.len(),
+        deleted,
+        "Deleted the conversation's attachments"
+    );
 }
 
 impl ChatJobs for Container {
     fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime> {
         Arc::clone(Container::jobs(self))
+    }
+    fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
+        Arc::clone(&self.research_waiters)
+    }
+}
+
+impl ChatCancellation for Container {
+    fn turn_cancellation(
+        &self,
+    ) -> Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry> {
+        Arc::clone(&self.turn_cancellation)
     }
 }
 

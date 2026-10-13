@@ -25,6 +25,10 @@ use std::sync::Arc;
 pub trait ChatModels: Send + Sync {
     async fn get_or_load_llm(&self) -> Result<Arc<dyn LLMPort>>;
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>>;
+    /// The utility model, or `None` when none is configured. Loaders exist so
+    /// work that outlives the turn can load it later; this is the eager form
+    /// for callers that need the model now.
+    async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>>;
     /// Loads the utility model, or `None` when none is configured. Owned, so
     /// work that outlives the turn can load it later.
     fn utility_llm_loader(&self) -> OptionalLlmLoader;
@@ -125,6 +129,21 @@ pub trait ChatStorage: Send + Sync {
     fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository>;
     fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort>;
     fn chat_records(&self) -> Arc<dyn ChatRecords>;
+    /// The memory ledger: what each conversation has already established.
+    fn conversation_memory(
+        &self,
+    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;
+    /// The per-conversation single-flight slots that keep one conversation
+    /// from compacting twice at once. One per process, by construction.
+    fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots>;
+    /// The conversations a continue-in-new-chat handoff is summarizing.
+    fn handoffs_in_flight(&self) -> Arc<crate::features::conversation::handoff::HandoffsInFlight>;
+    /// Tangents, forks, truncation and the regenerate lift: the writes a
+    /// conversation can branch with.
+    fn conversation_branches(&self) -> Arc<dyn ConversationBranches>;
+    /// The corpus-derived starter workflow: the space's document scope and the
+    /// fingerprint cache with its aggregate reads.
+    fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache>;
     /// The folder an Explorer conversation reads beside the chat, with the
     /// open file the request names checked against it; `None` for every
     /// other conversation.
@@ -133,6 +152,149 @@ pub trait ChatStorage: Send + Sync {
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
     ) -> Option<ExplorerTurn>;
+}
+
+/// The writes a conversation can branch with: side threads (tangents), forks,
+/// truncation, and the regenerate lift.
+#[async_trait]
+pub trait ConversationBranches: Send + Sync {
+    /// Open a side thread off this conversation.
+    async fn create_tangent(
+        &self,
+        request: crate::features::conversation::tangent_dto::CreateTangentRequestDto,
+    ) -> Result<crate::features::conversation::tangent_dto::ConversationTangentDto>;
+    /// The side threads of this conversation.
+    async fn list_tangents(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<crate::features::conversation::tangent_dto::ConversationTangentDto>>;
+    /// Promote a side thread to a full conversation.
+    async fn promote_tangent(&self, conversation_id: &str) -> Result<()>;
+    /// A fresh conversation in the same space whose only message stands in
+    /// for the summarized old thread.
+    async fn create_continuation(
+        &self,
+        conversation_id: &str,
+        new_id: &str,
+        new_title: &str,
+        summary: &str,
+        metadata: &str,
+    ) -> Result<()>;
+    /// A conversation by id, or `None` when it is gone.
+    async fn find_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::domain::conversation::Conversation>>;
+    /// The conversation as the client sees it.
+    async fn project_conversation(
+        &self,
+        conversation: &crate::domain::conversation::Conversation,
+    ) -> Result<crate::features::conversation::dto::ConversationDto>;
+    /// Drop everything after `message_id` (or inclusive of it).
+    async fn truncate_after(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        inclusive: bool,
+    ) -> Result<u64>;
+    /// Every message in the thread, in order.
+    async fn get_messages(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<crate::domain::conversation::ConversationMessage>>;
+    /// A branch of the conversation, up to an optional message.
+    async fn fork(
+        &self,
+        conversation_id: &str,
+        up_to_message_id: Option<&str>,
+        new_id: &str,
+        new_title: &str,
+    ) -> Result<(String, u32)>;
+    /// Lift the last user turn off the thread so a regenerate can answer it
+    /// again.
+    async fn take_last_user_turn(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<(String, i64, Option<String>)>>;
+    /// A message with an explicit status, for the failed-question restore.
+    async fn add_message_with_status(
+        &self,
+        conversation_id: &str,
+        role: crate::domain::conversation::MessageRole,
+        content: &str,
+        tokens: i64,
+        metadata: Option<&str>,
+        status: &str,
+    ) -> Result<crate::domain::conversation::ConversationMessage>;
+}
+
+/// The reads and writes the corpus-derived chat-starter workflow needs: the
+/// space's document scope and the fingerprint cache with its aggregate reads.
+#[async_trait]
+pub trait ChatStarterCache: Send + Sync {
+    /// The documents this space can see — the only ones questions may be about.
+    async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>>;
+    /// The cached `(starters_json, created_at)` for a fingerprint, if any.
+    async fn get(&self, fingerprint: &str) -> Result<Option<(String, String)>>;
+    /// Upsert one fingerprint's starters.
+    async fn put(&self, fingerprint: &str, starters_json: &str, created_at: &str) -> Result<()>;
+    /// Keep only the newest `keep` rows.
+    async fn prune(&self, keep: i64) -> Result<()>;
+    /// `(file_type, count)` over `allowed_ids`, most common first.
+    async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>>;
+    /// The newest document titles in `allowed_ids`.
+    async fn recent_titles(
+        &self,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<String>>;
+    /// Newest `indexed_at` in `allowed_ids`, or an empty string when there is none.
+    async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String>;
+}
+
+/// A journal page exactly as stored, before its archived citations are
+/// recovered. The synthesis chooses pages on `title` and `content` alone; the
+/// row goes back to [`SynthesisEntries::hydrate_note`] unchanged, so a page it
+/// passes over is never parsed or written.
+#[derive(Debug, Clone)]
+pub struct StoredJournalPage {
+    pub revision: i64,
+    pub id: String,
+    pub title: String,
+    pub journal_id: Option<String>,
+    pub content: String,
+    pub linked_document_ids: String,
+    pub linked_conversation_ids: String,
+    pub highlights_json: String,
+    pub sticky_notes_json: String,
+    pub conversation_snapshots_json: String,
+    pub sources_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// The entries a "week" journal synthesis reads beyond conversations: the
+/// saved passages and journal pages it combines, as the app stores them.
+#[async_trait]
+pub trait SynthesisEntries: Send + Sync {
+    /// Passages saved since `cutoff`, newest first.
+    async fn references_created_since(
+        &self,
+        cutoff: &str,
+        limit: i64,
+    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>>;
+    /// Journal pages updated between `start_date` and `end_date`, as stored.
+    async fn notes_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<Vec<StoredJournalPage>>;
+    /// One page the synthesis chose, with its archived citations recovered.
+    /// Recovery persists what it finds, so this may write the page back.
+    async fn hydrate_note(
+        &self,
+        page: StoredJournalPage,
+    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto>;
 }
 
 /// The tools a model may call: what is registered, and running one.
@@ -174,13 +336,42 @@ pub trait ChatPolicy: Send + Sync {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
     fn consolidate_after_turn(&self, id: String);
+    /// The rate limit a conversation read (list/get) spends before it runs.
+    async fn check_read_rate_limit(&self, name: &str) -> Result<()>;
+    /// The rate limit a user-initiated delete spends.
+    async fn check_delete_rate_limit(&self, name: &str) -> Result<()>;
+    /// Remove a conversation and everything it owns — its in-flight turn, its
+    /// attachments, its messages — with an audit line, without spending the
+    /// user delete's rate limit.
+    async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()>;
 }
 
 /// Where work that outlives a request runs: a deep research turn is a job.
 pub trait ChatJobs: Send + Sync {
     fn jobs(&self) -> Arc<crate::shared::runtime::jobs::JobRuntime>;
+    /// The process-wide map of commands waiting on their research turns, so
+    /// the job that runs a turn answers the command that sent it — and a test
+    /// process never answers the app's commands.
+    fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters>;
 }
 
-pub trait ChatRuntime: ChatModels + ChatStorage + ChatRetrieval + ChatPolicy + ChatJobs {
+/// The stop button: the process-wide registry of in-flight turns, so a stop
+/// press reaches the same map the turn it targets registered with — and a test
+/// process never shares armed cancellations with the app.
+pub trait ChatCancellation: Send + Sync {
+    fn turn_cancellation(
+        &self,
+    ) -> Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry>;
+}
+
+pub trait ChatRuntime:
+    ChatModels
+    + ChatStorage
+    + ChatRetrieval
+    + ChatPolicy
+    + ChatJobs
+    + SynthesisEntries
+    + ChatCancellation
+{
     fn share(&self) -> Arc<dyn ChatRuntime>;
 }
