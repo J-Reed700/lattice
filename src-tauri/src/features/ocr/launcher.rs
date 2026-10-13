@@ -277,8 +277,11 @@ mod tests {
     fn the_server_is_loopback_only_single_slot_and_loads_the_projector() {
         let model = OcrModel::in_dir("ocr", Path::new("/m"), "OCR:");
         let args = server_args(&model, 8096, 99).join(" ");
+        // The paths come from `Path::join`, so they carry the platform separator.
+        let weights = model.weights.to_string_lossy();
+        let projector = model.projector.to_string_lossy();
 
-        assert!(args.contains("-m /m/model.gguf --mmproj /m/mmproj.gguf"));
+        assert!(args.contains(&format!("-m {weights} --mmproj {projector}")));
         assert!(args.contains("--host 127.0.0.1 --port 8096"));
         assert!(args.contains("-np 1"));
         assert!(args.contains("--cache-ram 0"));
