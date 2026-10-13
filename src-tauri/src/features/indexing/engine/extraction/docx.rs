@@ -45,6 +45,7 @@ pub async fn extract_docx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 

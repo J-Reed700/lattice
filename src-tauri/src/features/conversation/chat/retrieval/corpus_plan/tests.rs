@@ -19,9 +19,9 @@ async fn section_fixture() -> sqlx::SqlitePool {
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         INSERT INTO documents VALUES ('a','Manual','/manual',NULL),('b','Other edition','/other',NULL),('private','Private','/private',NULL);
-        INSERT INTO text_chunks VALUES
+        INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) VALUES
         ('a-sub','a','First subsection evidence',20,'Chapter 700 > 706.07 Actions > § 706.07(a) First action',2),
         ('a-nested','a','Nested exception',21,'Chapter 700 > 706.07 Actions > § 706.07(a) First action > 706.07(a)(1) Exception',3),
         ('a-other','a','Second subsection evidence',22,'Chapter 700 > Section 706.07(b) Second action',4),
@@ -31,7 +31,8 @@ async fn section_fixture() -> sqlx::SqlitePool {
         .execute(&pool).await.unwrap();
     for index in 0..20 {
         sqlx::query(
-            "INSERT INTO text_chunks VALUES (?, 'a', 'Parent evidence', ?, '706.07 Actions', 1)",
+            "INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) \
+             VALUES (?, 'a', 'Parent evidence', ?, '706.07 Actions', 1)",
         )
         .bind(format!("parent-{index}"))
         .bind(index)
@@ -125,12 +126,12 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
         CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
         CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
         INSERT INTO documents VALUES ('member','Member','/member',NULL),('attached','Attached','/attached',NULL);
-        INSERT INTO text_chunks VALUES ('m1','member','unrelated notes',0,NULL,NULL),
+        INSERT INTO text_chunks(id, document_id, content, chunk_index, section, page_number) VALUES ('m1','member','unrelated notes',0,NULL,NULL),
             ('a1','attached','the quarterly budget forecast',0,NULL,NULL);
         INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
         INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
@@ -196,7 +197,7 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
         .await
         .unwrap();
     sqlx::raw_sql("CREATE TABLE documents(id TEXT, file_name TEXT, file_path TEXT, source_context TEXT);
-        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER);
+        CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER, section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
         INSERT INTO documents(id,file_name,file_path) VALUES ('a','Guide','/guide'), ('b','Private','/private');
         INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
     let repository = ConversationRepository::new(pool);

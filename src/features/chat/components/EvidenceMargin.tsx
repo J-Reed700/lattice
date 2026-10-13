@@ -108,7 +108,9 @@ export function EvidenceMargin({
           {entries.map(([number, source]) => {
             const location =
               resolvedLocations?.get(source.chunkId) ?? formatSourceLocation(source);
-            const meta = [location, provenanceBySource?.get(source.chunkId)].filter(Boolean).join(' · ');
+            const meta = [location, source.fromOcr ? 'OCR text' : null, provenanceBySource?.get(source.chunkId)]
+              .filter(Boolean)
+              .join(' · ');
             const claims = claimLine(number, claimVerdicts);
             const passage = (source.excerpt || source.content || '').trim();
             return (

@@ -298,6 +298,7 @@ fn source_for(pair: &Pair) -> SourceDto {
         section: None,
         chunk_index: None,
         page_number: None,
+        from_ocr: false,
         chunk_excerpts: None,
         citation_id: Some(1),
         web_snapshot: None,

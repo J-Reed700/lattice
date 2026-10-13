@@ -21,6 +21,7 @@ fn vault_source(document_id: &str, chunk_id: &str) -> SourceDto {
         section: None,
         chunk_index: None,
         page_number: None,
+        from_ocr: false,
         chunk_excerpts: None,
         citation_id: None,
         web_snapshot: None,

@@ -757,13 +757,18 @@ pub(super) async fn retrieve(
         .retrieval_locations(&results.iter().map(|r| r.id.clone()).collect::<Vec<_>>())
         .await?;
     for result in &mut results {
-        if let Some((section, page)) = locations.get(&result.id) {
+        if let Some((section, page, from_ocr)) = locations.get(&result.id) {
             result
                 .metadata
                 .insert("section".into(), serde_json::json!(section));
             result
                 .metadata
                 .insert("pageNumber".into(), serde_json::json!(page));
+            if *from_ocr {
+                result
+                    .metadata
+                    .insert("ocr".into(), serde_json::json!(true));
+            }
         }
         if let Some(document) = catalog
             .iter()
@@ -783,6 +788,14 @@ pub(super) fn passage_result(
     p: crate::application::contracts::search::CorpusPassage,
     method: &str,
 ) -> SearchResultDto {
+    let mut metadata = HashMap::from([
+        ("retrievalMethod".into(), serde_json::json!(method)),
+        ("section".into(), serde_json::json!(p.section)),
+        ("pageNumber".into(), serde_json::json!(p.page_number)),
+    ]);
+    if p.from_ocr {
+        metadata.insert("ocr".into(), serde_json::json!(true));
+    }
     SearchResultDto {
         id: p.id,
         title: p.name,
@@ -795,11 +808,7 @@ pub(super) fn passage_result(
         bm25_score: None,
         vector_rank: None,
         bm25_rank: None,
-        metadata: HashMap::from([
-            ("retrievalMethod".into(), serde_json::json!(method)),
-            ("section".into(), serde_json::json!(p.section)),
-            ("pageNumber".into(), serde_json::json!(p.page_number)),
-        ]),
+        metadata,
     }
 }
 

@@ -56,11 +56,11 @@ pub trait ChatRecords: ConversationMemoryPort + ConversationMemoryReadPort {
         identifiers: &[String],
         allowed: &HashSet<String>,
     ) -> Result<Vec<CorpusPassage>>;
-    /// Section and page of each chunk, keyed by chunk id.
+    /// Section, page and OCR flag of each chunk, keyed by chunk id.
     async fn retrieval_locations(
         &self,
         chunk_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>)>>;
+    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>>;
     /// Passages beside `chunk_id` in its section, within `allowed`.
     async fn retrieval_neighbors(
         &self,

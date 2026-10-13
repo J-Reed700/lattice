@@ -56,6 +56,7 @@ pub async fn extract_rtf(path: &Path, max_file_size: u64) -> Result<ExtractedCon
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 

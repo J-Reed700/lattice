@@ -414,6 +414,30 @@ async fn recognized_text_lands_inside_its_own_page_range() {
     assert_eq!(&extracted.text[start..end], "\nRecognized scan of page 2");
 }
 
+/// The scanned page OCR read is marked as OCR text; the text-layer pages on
+/// either side of it are not, and neither is a scan nobody recognized.
+#[tokio::test]
+async fn only_the_pages_ocr_read_are_marked_as_ocr_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "mixed-ocr.pdf",
+        vec![
+            TestPage::text(body_paragraphs(720.0)),
+            TestPage::scan(),
+            TestPage::text(body_paragraphs(720.0)),
+        ],
+    );
+    let ocr: Arc<dyn OcrPort> = Arc::new(StubOcr);
+
+    let read = extract_pdf(&path, NO_SIZE_LIMIT, Some(&ocr)).await.unwrap();
+    let unread = extract_pdf(&path, NO_SIZE_LIMIT, None).await.unwrap();
+
+    assert_eq!(read.ocr_pages, vec![2]);
+    assert_eq!(unread.needs_ocr, vec![2]);
+    assert!(unread.ocr_pages.is_empty(), "{:?}", unread.ocr_pages);
+}
+
 /// Answers each page from a script, counting the questions.
 struct ScriptedOcr {
     answer: fn(u32) -> std::result::Result<String, OcrError>,
@@ -516,6 +540,7 @@ async fn a_failed_page_does_not_stop_the_next_one() {
 
     assert_eq!(ocr.asked(), 2);
     assert_eq!(extracted.needs_ocr, vec![1]);
+    assert_eq!(extracted.ocr_pages, vec![2]);
     assert_ranges_cover(&extracted.text, &extracted.page_ranges);
     let (_, start, end) = extracted
         .page_ranges
@@ -538,11 +563,12 @@ async fn a_text_pdf_never_asks_for_ocr() {
     let ocr = ScriptedOcr::new(|_| Ok("should not be asked".into()));
     let port: Arc<dyn OcrPort> = ocr.clone();
 
-    extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
         .await
         .unwrap();
 
     assert_eq!(ocr.asked(), 0);
+    assert!(extracted.ocr_pages.is_empty());
 }
 
 #[test]
@@ -568,11 +594,13 @@ fn successful_pages_keep_their_citation_ranges() {
             page: 1,
             text: "Patent".into(),
             needs_ocr: false,
+            from_ocr: false,
         },
         PageText {
             page: 2,
             text: "Examination".into(),
             needs_ocr: false,
+            from_ocr: false,
         },
     ];
 
@@ -588,11 +616,13 @@ fn only_an_entirely_textless_document_is_unreadable() {
         page,
         text: String::new(),
         needs_ocr: true,
+        from_ocr: false,
     };
     let readable = PageText {
         page: 1,
         text: "Examination guidance".into(),
         needs_ocr: false,
+        from_ocr: false,
     };
 
     assert!(is_unreadable("", &[scan(1), scan(2)]));

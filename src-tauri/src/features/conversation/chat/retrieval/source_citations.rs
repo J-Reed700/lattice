@@ -308,6 +308,7 @@ pub(super) async fn build_source_citations(
 
         sources.push(SourceDto {
             page_number: chunk_meta.and_then(|c| c.page_number()),
+            from_ocr: chunk_meta.is_some_and(|c| c.from_ocr()),
             document_id: doc_id.to_string(),
             chunk_id: result.id.clone(),
             content: result.content.clone(),
@@ -384,6 +385,7 @@ pub(super) fn build_web_source_citations(
 
         sources.push(SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
             chunk_id: format!("web-result-{}", idx + 1),
             content,
@@ -446,6 +448,7 @@ mod merge_tool_sources_tests {
     fn source(document_id: &str, chunk_id: &str, content: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: document_id.to_string(),
             chunk_id: chunk_id.to_string(),
             content: content.to_string(),
@@ -572,6 +575,7 @@ mod web_context_label_tests {
     fn kb_source(chunk_id: &str) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: "doc-kb".to_string(),
             chunk_id: chunk_id.to_string(),
             content: "passage".to_string(),

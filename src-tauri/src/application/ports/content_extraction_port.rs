@@ -18,6 +18,9 @@ pub struct ExtractedContentData {
     pub page_count: Option<usize>,
     /// One-based physical PDF page and UTF-8 byte offsets into text.
     pub page_ranges: Vec<(usize, usize, usize)>,
+    /// One-based pages whose text OCR read off a scan; empty for every other
+    /// document. Their chunks are marked as OCR text.
+    pub ocr_pages: Vec<u32>,
     /// Word count
     pub word_count: usize,
     /// Character count

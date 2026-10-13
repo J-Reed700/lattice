@@ -490,6 +490,7 @@ pub(super) mod test_support {
     ) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: "doc-1".to_string(),
             chunk_id: "chunk-1".to_string(),
             content: content.to_string(),

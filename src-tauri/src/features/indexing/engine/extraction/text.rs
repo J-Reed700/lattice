@@ -53,6 +53,7 @@ pub async fn extract_text_file(path: &Path, max_file_size: u64) -> Result<Extrac
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
+        ocr_pages: Vec::new(),
     })
 }
 

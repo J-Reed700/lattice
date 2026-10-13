@@ -479,9 +479,13 @@ pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
         .and_then(|v| v.as_str())
         .map(|s| format!("\nSource heading: {s}"))
         .unwrap_or_default();
+    let ocr = match result.metadata.get("ocr").and_then(|v| v.as_bool()) {
+        Some(true) => "\nText: OCR of a scanned page; odd characters may be recognition errors",
+        _ => "",
+    };
     format!(
-        "[{}] Document: {}{}{}{}\nContent: {}",
-        citation, doc_name, doc_id_line, page, section, result.content
+        "[{}] Document: {}{}{}{}{}\nContent: {}",
+        citation, doc_name, doc_id_line, page, section, ocr, result.content
     )
 }
 
@@ -522,6 +526,7 @@ mod citation_numbering_tests {
     fn source(chunk_id: &str, document_id: &str, file_name: &str, citation_id: u32) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: document_id.to_string(),
             chunk_id: chunk_id.to_string(),
             content: String::new(),
@@ -612,6 +617,27 @@ mod citation_numbering_tests {
         crate::features::conversation::chat::retrieval::assign_citation_ids(&mut sources);
         assert_eq!(sources[0].citation_id, Some(1));
         assert_eq!(sources[1].citation_id, Some(2));
+    }
+
+    /// A passage OCR read off a scan says so in its header, so the model can
+    /// take an odd character for a recognition error rather than a fact. A
+    /// passage from a text layer carries no such line.
+    #[test]
+    fn only_a_passage_read_by_ocr_is_labelled_as_ocr_text() {
+        let mut scanned = chunk("c1", "doc-a", "scan.pdf", "Tbe quick brown fox");
+        scanned
+            .metadata
+            .insert("ocr".into(), serde_json::json!(true));
+        let typed = chunk("c2", "doc-b", "typed.pdf", "The quick brown fox");
+
+        let scanned = kb_passage(&scanned, 1);
+        let typed = kb_passage(&typed, 2);
+
+        let label = scanned
+            .find("Text: OCR of a scanned page")
+            .expect("an OCR passage is labelled");
+        assert!(label < scanned.find("\nContent:").unwrap(), "{scanned}");
+        assert!(!typed.contains("OCR"), "{typed}");
     }
 
     #[test]

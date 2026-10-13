@@ -564,6 +564,7 @@ async fn select_week_entries(
             section: record.locator.clone(),
             chunk_index: None,
             page_number: None,
+            from_ocr: false,
             chunk_excerpts: None,
             citation_id: None,
 

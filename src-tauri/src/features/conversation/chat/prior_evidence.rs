@@ -226,6 +226,7 @@ mod tests {
             chunk_excerpts: None,
             citation_id: Some(1),
             page_number: None,
+            from_ocr: false,
             position: None,
 
             web_snapshot: None,

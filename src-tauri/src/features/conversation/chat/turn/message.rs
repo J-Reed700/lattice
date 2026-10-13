@@ -219,6 +219,7 @@ mod tests {
     fn source(citation: Option<u32>) -> SourceDto {
         SourceDto {
             page_number: None,
+            from_ocr: false,
             document_id: "d".into(),
             chunk_id: format!("c{citation:?}"),
             content: String::new(),

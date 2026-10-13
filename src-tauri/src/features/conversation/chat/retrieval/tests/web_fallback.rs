@@ -33,11 +33,12 @@ async fn handbook_records() -> Arc<dyn ChatRecords> {
          CREATE TABLE documents (id TEXT, file_name TEXT, file_path TEXT, source_context TEXT,
              owner_conversation_id TEXT);
          CREATE TABLE text_chunks (id TEXT, document_id TEXT, content TEXT, chunk_index INTEGER,
-             section TEXT, page_number INTEGER);
+             section TEXT, page_number INTEGER, from_ocr BOOLEAN NOT NULL DEFAULT 0);
          CREATE TABLE document_space_memberships (document_id TEXT, space_id TEXT);
          INSERT INTO conversations VALUES ('fallback-chat', 'space_general');
          INSERT INTO documents VALUES ('handbook', 'Handbook.md', '/vault/Handbook.md', NULL, NULL);
-         INSERT INTO text_chunks VALUES ('handbook-0', 'handbook', 'Engineering handbook', 0, NULL, NULL);",
+         INSERT INTO text_chunks (id, document_id, content, chunk_index, section, page_number)
+             VALUES ('handbook-0', 'handbook', 'Engineering handbook', 0, NULL, NULL);",
     )
     .execute(&pool)
     .await

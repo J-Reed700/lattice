@@ -117,6 +117,7 @@ impl ContentExtractionPort for MockContentExtractor {
             mime_type: "text/plain".to_string(),
             page_count: None,
             page_ranges: Vec::new(),
+            ocr_pages: Vec::new(),
             word_count,
             char_count,
         })
