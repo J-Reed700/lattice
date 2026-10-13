@@ -1,0 +1,1074 @@
+{
+ "name": "lattice-desktop-path-v1",
+ "description": "Questions put to the shipped desktop chat path over synthetic-library-v3. Each item is one conversation of one to three turns; each turn carries a rubric (facts it must state, claims it must not make, documents it should cite, whether the honest answer is an abstention) and notes for the rubric judge. Tags say what an item is meant to exercise; the turn record says what actually ran. Scored by scripts/shipped_path_eval.py.",
+ "corpus": "evals/retrieval/synthetic-library-v3.json",
+ "tags": {
+  "multi-hop": "The answer needs facts from two or more documents.",
+  "planner-rewrite": "The question shares little vocabulary with the passage that answers it; the corpus planner's rewrite (or HyDE) is what reaches it.",
+  "corrective-retry": "A first pass is likely to come back thin (paraphrase, damaged scan, deep needle), so the sufficiency check may order the corrective retry.",
+  "opening-or-section": "The answer sits at a named document's opening, under a numbered clause, or deep inside one long document.",
+  "abstain": "The corpus does not contain the answer; a correct reply says so and invents nothing.",
+  "conflict": "Two documents (versions, rings, sessions) give different answers; a correct reply says which applies or that they differ.",
+  "numeric-precision": "A number, amount, date or identifier must come back exactly.",
+  "follow-up-memory": "A later turn only makes sense with the earlier turns of the same conversation.",
+  "table": "The answer is one cell of a Markdown table or CSV block.",
+  "ocr": "The answer is in an OCR-damaged scan.",
+  "multilingual": "The document is not in English.",
+  "entity-collision": "Several unrelated things share the name in the question.",
+  "fragment": "A one-line note beats long notes that only mention the topic."
+ },
+ "items": [
+  {
+   "id": "dp-multihop-garnetline-renewal",
+   "tags": [
+    "multi-hop",
+    "planner-rewrite",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Whoever handles logistics for the Garnetline migration: when does their master agreement next renew, and how much notice stops it?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Calderwick Freight"
+       ],
+       [
+        "2025-10-14"
+       ],
+       [
+        "12 working days",
+        "twelve working days"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "project-brief-00",
+       "contract-00"
+      ],
+      "abstain": false,
+      "notes": "Logistics for the Garnetline migration run through Calderwick Freight; its master services agreement renews on 2025-10-14 (then annually) and renewal is prevented by 12 working days of written notice."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-multihop-dunlark-notice",
+   "tags": [
+    "multi-hop",
+    "planner-rewrite",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "How much notice would we have to give to end the contract of whoever does on-site work for the Dunlark pilot?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Quorvin Metrology"
+       ],
+       [
+        "70 hours",
+        "seventy hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "project-brief-04",
+       "contract-04"
+      ],
+      "abstain": false,
+      "notes": "On-site work for the Dunlark pilot runs through Quorvin Metrology, whose agreement can be stopped from renewing with 70 hours of written notice."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-multihop-part-undertaking",
+   "tags": [
+    "multi-hop",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Which supplier's framework covers the order carrying part QG-920-655, and what is the withdrawal undertaking in it called?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Tessivar Cloud"
+       ],
+       [
+        "Saenthollow"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "purchase-order-01-1",
+       "contract-01"
+      ],
+      "abstain": false,
+      "notes": "Part QG-920-655 is on purchase order PO-71486, raised against the Tessivar Cloud master services agreement; its withdrawal undertaking is the Saenthollow undertaking."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-paraphrase-monitor",
+   "tags": [
+    "planner-rewrite",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "I bought a monitor with my own money and nobody signed off first. How long before I hear whether I get that money back?",
+     "rubric": {
+      "must_mention": [
+       [
+        "48 calendar days",
+        "48 days"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-workstation-encryption-v3"
+      ],
+      "abstain": false,
+      "notes": "Reimbursement for personal equipment bought without a prior purchase order is withheld until the Kreskley committee convenes, which it does every 48 calendar days."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-paraphrase-sick-child",
+   "tags": [
+    "planner-rewrite",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "My kid was sick and I had to stay home. Is there a limit on that kind of time off?",
+     "rubric": {
+      "must_mention": [
+       [
+        "42 working days"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-expense-receipts-v3"
+      ],
+      "abstain": false,
+      "notes": "Absence for a dependant's illness counts against the Moullmere allowance, capped at 42 working days in any rolling year."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-paraphrase-clock",
+   "tags": [
+    "planner-rewrite",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "What does the system do when the machines cannot agree on what time it is?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Reillmere"
+       ],
+       [
+        "64 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-core-04"
+      ],
+      "abstain": false,
+      "notes": "When the clock source disagrees with its peers, the Reillmere arbiter freezes ordering and holds writes for 64 weeks before failing them outright."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-buried-handbook-ticket",
+   "tags": [
+    "opening-or-section",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In the platform operations handbook, unpaginated edition: what reference goes on a ticket raised against this handbook?",
+     "rubric": {
+      "must_mention": [
+       [
+        "SIG-26321"
+       ]
+      ],
+      "must_not_claim": [
+       "SIG-59359"
+      ],
+      "expected_citations": [
+       "handbook-prose-0"
+      ],
+      "abstain": false,
+      "notes": "Tickets against the unpaginated platform operations handbook are filed under the Tedgewick heading with the standing reference SIG-26321 (the structured edition uses a different reference)."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-buried-agreement-meeting",
+   "tags": [
+    "opening-or-section",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Under the Tessivar Cloud framework agreement, is there a meeting the parties have to hold before anyone goes to court, and how soon?",
+     "rubric": {
+      "must_mention": [
+       [
+        "31 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-0"
+      ],
+      "abstain": false,
+      "notes": "Yes: the Reackgate step obliges the parties to hold an escalation meeting within 31 weeks of a notified dispute before either may start proceedings."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-section-after-clause",
+   "tags": [
+    "opening-or-section"
+   ],
+   "turns": [
+    {
+     "ask": "In the Tessivar Cloud framework agreement, what does the paragraph right after clause 24.111 say, before Section 25 begins?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Reackgate"
+       ],
+       [
+        "31 weeks"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-0"
+      ],
+      "abstain": false,
+      "notes": "Right after clause 24.111 comes the Reackgate step: the parties must hold an escalation meeting within 31 weeks of a notified dispute before either may commence proceedings."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-opening-agreement",
+   "tags": [
+    "opening-or-section"
+   ],
+   "turns": [
+    {
+     "ask": "How does the Brackleton Facilities framework agreement open? What is its first section called?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Scope and application"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "agreement-long-2"
+      ],
+      "abstain": false,
+      "notes": "The Brackleton Facilities framework agreement (consolidated text) opens with Section 1, 'Scope and application'."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-transcript-rollback",
+   "tags": [
+    "opening-or-section",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In the quarterly platform review transcript, what do we roll back to when this goes wrong, and is it just the previous build?",
+     "rubric": {
+      "must_mention": [
+       [
+        "v5.7.3",
+        "5.7.3"
+       ]
+      ],
+      "must_not_claim": [
+       "v7.2.3",
+       "v7.2.8"
+      ],
+      "expected_citations": [
+       "transcript-long-0"
+      ],
+      "abstain": false,
+      "notes": "The Geangford rollback target is v5.7.3, explicitly not whatever build is current at the time."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-abstain-error-code",
+   "tags": [
+    "abstain",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Which runbook covers ERR-0001, and who is paged for it?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "No document mentions ERR-0001; a correct answer says the vault has no runbook for it and names nobody."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-abstain-named-clause",
+   "tags": [
+    "abstain"
+   ],
+   "turns": [
+    {
+     "ask": "What does the Marbleau undertaking oblige the supplier to do?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "No document mentions a Marbleau undertaking; a correct answer says so and does not substitute another undertaking."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-abstain-home-address",
+   "tags": [
+    "abstain"
+   ],
+   "turns": [
+    {
+     "ask": "What is Marisol Quenby's home address?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "The vault names Marisol Quenby as a runbook owner but never records her home address; a correct answer says it is not recorded."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-abstain-repair-cost",
+   "tags": [
+    "abstain",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "How much did the boiler repair at 14 Tanmoor Row cost?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "The vault has a note on resetting the boiler but no repair or its cost; a correct answer says the cost is not recorded and gives no figure."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-abstain-order",
+   "tags": [
+    "abstain",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "What was the unit price on purchase order PO-00001?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "There is no purchase order PO-00001 in the vault; a correct answer says so and gives no price."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-conflict-snapshot-versions",
+   "tags": [
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Our notes give different retention periods for workspace snapshots. What does each version say, and which one is in force?",
+     "rubric": {
+      "must_mention": [
+       [
+        "24 working days"
+       ],
+       [
+        "42 hours"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-snapshot-retention-v3",
+       "policy-snapshot-retention-v2"
+      ],
+      "abstain": false,
+      "notes": "Version 3.0 (in force) keeps workspace snapshots for 24 working days; version 2.0 (superseded) said 42 hours and version 1.0 (superseded) said 80 working days. The answer must identify 24 working days as the one in force."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-conflict-ring-threshold",
+   "tags": [
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "How long do we wait before mitigating cold shard promotion?",
+     "rubric": {
+      "must_mention": [
+       [
+        "14 seconds"
+       ],
+       [
+        "38 minutes"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-core-14",
+       "runbook-edge-14"
+      ],
+      "abstain": false,
+      "notes": "It depends on the ring: 14 seconds in the core rings, but 38 minutes in the Wendover Basin edge ring. A correct answer gives both and says which ring each applies to, or asks which ring is meant while giving both."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-conflict-receipt-threshold",
+   "tags": [
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Above what amount does a single expense need a receipt? I've seen two different figures.",
+     "rubric": {
+      "must_mention": [
+       [
+        "4,295.80",
+        "4295.80"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-expense-receipts-v3"
+      ],
+      "abstain": false,
+      "notes": "The current (version 3.0) expense receipt threshold is £4,295.80; the superseded version 2.0 said £4,223.60. A correct answer gives £4,295.80 as current and may explain the older figure."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-table-order-line",
+   "tags": [
+    "table",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "On purchase order PO-71486, what part number is on line one and what is its unit price?",
+     "rubric": {
+      "must_mention": [
+       [
+        "QG-920-655"
+       ],
+       [
+        "2,205.31",
+        "2205.31"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "purchase-order-01-1"
+      ],
+      "abstain": false,
+      "notes": "Line one of PO-71486 is part QG-920-655 (replacement sensor head) at a unit price of £2,205.31."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-table-calibration",
+   "tags": [
+    "table",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In calibration record 03, what tolerance is listed against the Garnetline gauge?",
+     "rubric": {
+      "must_mention": [
+       [
+        "0.0397"
+       ]
+      ],
+      "must_not_claim": [
+       "0.0999 mm against the Garnetline"
+      ],
+      "expected_citations": [
+       "table-calibration-02"
+      ],
+      "abstain": false,
+      "notes": "Quorvin Metrology calibration record 03 lists 0.0397 mm against the Garnetline gauge."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-table-spend-csv",
+   "tags": [
+    "table",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In site spend extract 02, what is the committed maintenance figure for Selkirk North?",
+     "rubric": {
+      "must_mention": [
+       [
+        "4,270.53",
+        "4270.53"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "table-spend-01"
+      ],
+      "abstain": false,
+      "notes": "Site spend extract 02 shows £4,270.53 committed for Selkirk North maintenance."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-series-week-owner",
+   "tags": [
+    "numeric-precision",
+    "conflict"
+   ],
+   "turns": [
+    {
+     "ask": "In week 10 of the merridew platform sync, who owned the drift report action and when was it due?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Dagny Oreskel"
+       ],
+       [
+        "2026-06-17"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "meeting-merridew-sync-w10"
+      ],
+      "abstain": false,
+      "notes": "In week 10 of the Merridew platform sync the drift report action was Dagny Oreskel's, due 2026-06-17. Neighbouring weeks have different owners and dates."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-ocr-stock-reference",
+   "tags": [
+    "ocr",
+    "corrective-retry",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "What reference is quoted when ordering against the local stock arrangement in scanned minutes 05?",
+     "rubric": {
+      "must_mention": [
+       [
+        "SIG-84122"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "scan-04"
+      ],
+      "abstain": false,
+      "notes": "Scanned minutes 05 name the Voackford arrangement and the reference to quote is SIG-84122."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-fragment-stopcock",
+   "tags": [
+    "fragment"
+   ],
+   "turns": [
+    {
+     "ask": "Where is the water shut-off in the house?",
+     "rubric": {
+      "must_mention": [
+       [
+        "under the sink"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "fragment-stopcock"
+      ],
+      "abstain": false,
+      "notes": "The stopcock at 14 Tanmoor Row is under the sink boards, not in the cupboard."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-collision-ostrel-row",
+   "tags": [
+    "entity-collision",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Three different things in here are called Ostrel. Which milestone date belongs to Ostrel Row, the street the Aldersgate Print works stands on?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2031-09-19"
+       ]
+      ],
+      "must_not_claim": [
+       "2030-03-26",
+       "2033-12-19"
+      ],
+      "expected_citations": [
+       "collision-ostrel-third"
+      ],
+      "abstain": false,
+      "notes": "Ostrel Row's milestone (the Foussworth milestone) falls on 2031-09-19; the Ostrel telemetry product and the Ostrel blue cheese have different dates."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-calderwick",
+   "tags": [
+    "follow-up-memory",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "When does the Calderwick Freight master agreement come up for renewal?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2025-10-14"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-00"
+      ],
+      "abstain": false,
+      "notes": "The Calderwick Freight master services agreement renews on 2025-10-14 and annually thereafter."
+     }
+    },
+    {
+     "ask": "And how much notice stops it?",
+     "rubric": {
+      "must_mention": [
+       [
+        "12 working days",
+        "twelve working days"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-00"
+      ],
+      "abstain": false,
+      "notes": "Either party prevents renewal of the Calderwick Freight agreement by giving 12 working days of written notice."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-runbook-ticket",
+   "tags": [
+    "follow-up-memory",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Who owns the runbook for ERR-4070?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Marisol Quenby"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-core-00"
+      ],
+      "abstain": false,
+      "notes": "The ERR-4070 runbook (request quota exhaustion on ingest-fanout, core rings) is owned by Marisol Quenby."
+     }
+    },
+    {
+     "ask": "What is its standing ticket, and if the problem hasn't cleared after the wait, should I open a new ticket?",
+     "rubric": {
+      "must_mention": [
+       [
+        "TCK-1836"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-core-00"
+      ],
+      "abstain": false,
+      "notes": "The standing ticket is TCK-1836. If the band is still broken when the hold expires, page Marisol Quenby and quote TCK-1836; never raise a second ticket."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-garnetline-chain",
+   "tags": [
+    "follow-up-memory",
+    "multi-hop",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Which supplier handles logistics for the Garnetline migration?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Calderwick Freight"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "project-brief-00"
+      ],
+      "abstain": false,
+      "notes": "Logistics and on-site handling for the Garnetline migration run through Calderwick Freight under the Krerkgate workstream."
+     }
+    },
+    {
+     "ask": "When does that supplier's master agreement renew?",
+     "rubric": {
+      "must_mention": [
+       [
+        "2025-10-14"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-00"
+      ],
+      "abstain": false,
+      "notes": "Calderwick Freight's master services agreement renews on 2025-10-14 and annually thereafter."
+     }
+    },
+    {
+     "ask": "And what is the undertaking in that agreement about withdrawing from a site called?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Broskstead",
+        "Floandgate"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "contract-00"
+      ],
+      "abstain": false,
+      "notes": "The Calderwick Freight agreement's withdrawal undertaking is the Broskstead undertaking (serve the site through the notice period and bear interim costs); its standing provision also names a Floandgate undertaking (continue at the site for 83 calendar days after notice). Either name is acceptable."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-encryption-versions",
+   "tags": [
+    "follow-up-memory",
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "What does the workstation encryption standard require today?",
+     "rubric": {
+      "must_mention": [
+       [
+        "45 calendar days",
+        "45 days"
+       ]
+      ],
+      "must_not_claim": [
+       "73 calendar days"
+      ],
+      "expected_citations": [
+       "policy-workstation-encryption-v3"
+      ],
+      "abstain": false,
+      "notes": "Version 3.0 (in force): full-disk encryption on every issued laptop, recovery keys escrowed centrally, and a device without an escrowed key is refused on the network after 45 calendar days."
+     }
+    },
+    {
+     "ask": "What did the version before that say?",
+     "rubric": {
+      "must_mention": [
+       [
+        "73 calendar days",
+        "73 days"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-workstation-encryption-v2"
+      ],
+      "abstain": false,
+      "notes": "Version 2.0 (superseded) had the same rule but refused a device without an escrowed key after 73 calendar days."
+     }
+    },
+    {
+     "ask": "Is there any way round it?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Gidgegate"
+       ],
+       [
+        "outage"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "policy-workstation-encryption-v3"
+      ],
+      "abstain": false,
+      "notes": "Only the Gidgegate exception, which suspends the rule for a site under a declared outage and only while that outage lasts; there is no other way round it."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-ring-thresholds",
+   "tags": [
+    "follow-up-memory",
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "In the core rings, what's the wait before we mitigate tenant bucket contention?",
+     "rubric": {
+      "must_mention": [
+       [
+        "63 seconds"
+       ]
+      ],
+      "must_not_claim": [
+       "21 minutes"
+      ],
+      "expected_citations": [
+       "runbook-core-15"
+      ],
+      "abstain": false,
+      "notes": "In the core rings, hold the mitigation until the quota broker has been above its band for 63 seconds."
+     }
+    },
+    {
+     "ask": "And on the Wendover Basin edge ring?",
+     "rubric": {
+      "must_mention": [
+       [
+        "21 minutes"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-edge-15"
+      ],
+      "abstain": false,
+      "notes": "On the Wendover Basin edge ring the hold is 21 minutes."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-plant-room-key",
+   "tags": [
+    "follow-up-memory",
+    "multilingual"
+   ],
+   "turns": [
+    {
+     "ask": "Where is the spare key for the plant room at the Wendover site kept?",
+     "rubric": {
+      "must_mention": [
+       [
+        "T-2194"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "intl-de-schluessel"
+      ],
+      "abstain": false,
+      "notes": "Per the German key rules for the Wendover site, the spare plant-room key is in safe T-2194 behind reception."
+     }
+    },
+    {
+     "ask": "Is there anything I have to do to take it out?",
+     "rubric": {
+      "must_mention": [
+       [
+        "sign",
+        "Unterschrift",
+        "Schlüsselbuch",
+        "key book"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "intl-de-schluessel"
+      ],
+      "abstain": false,
+      "notes": "It is only handed out against a signature in the key book (Schlüsselbuch)."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-abstain-followup",
+   "tags": [
+    "follow-up-memory",
+    "abstain"
+   ],
+   "turns": [
+    {
+     "ask": "Which runbook owns TCK-4246, and who gets paged when it fires?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Ilse Brantgard"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "runbook-edge-05"
+      ],
+      "abstain": false,
+      "notes": "TCK-4246 is the standing ticket of the ERR-9212 runbook for the Wendover Basin edge ring; Ilse Brantgard owns it and is paged."
+     }
+    },
+    {
+     "ask": "What's her mobile number?",
+     "rubric": {
+      "must_mention": [],
+      "must_not_claim": [],
+      "expected_citations": [],
+      "abstain": true,
+      "notes": "The vault never records Ilse Brantgard's mobile number (pages go to the bench, not a personal phone); a correct answer says it is not recorded and gives no number."
+     }
+    }
+   ]
+  },
+  {
+   "id": "dp-mt-merridew-reversal",
+   "tags": [
+    "follow-up-memory",
+    "conflict",
+    "numeric-precision"
+   ],
+   "turns": [
+    {
+     "ask": "Which proposal did the Merridew platform sync back out of, and in which week?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Grespley"
+       ],
+       [
+        "week 11"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "meeting-merridew-sync-w11"
+      ],
+      "abstain": false,
+      "notes": "In week 11 the Merridew platform sync reversed the Grespley proposal, agreed in an earlier session; it will not proceed."
+     }
+    },
+    {
+     "ask": "Who owned the drift report action in that same week, and when was it due?",
+     "rubric": {
+      "must_mention": [
+       [
+        "Ilse Brantgard"
+       ],
+       [
+        "2031-10-25"
+       ]
+      ],
+      "must_not_claim": [],
+      "expected_citations": [
+       "meeting-merridew-sync-w11"
+      ],
+      "abstain": false,
+      "notes": "In week 11 the drift report action was Ilse Brantgard's, due 2031-10-25."
+     }
+    }
+   ]
+  }
+ ]
+}

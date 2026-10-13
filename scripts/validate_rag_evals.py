@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from rag_eval import validate_dataset
 from eval_integrity import validate_expectations
+from shipped_path_eval import validate_questions
 
 
 def main():
@@ -21,6 +22,15 @@ def main():
             raise ValueError(f'No dataset for {path.name}')
         validate_expectations(datasets[stem], json.loads(path.read_text()))
         print(f'{path.name}: answer labels validated')
+    # Desktop-path question sets name their corpus; every rubric fact must
+    # occur in the documents it expects to be cited.
+    for path in sorted(root.glob('desktop-path-*.json')):
+        questions = json.loads(path.read_text())
+        corpus = json.loads((root.parents[1] / questions['corpus']).read_text())
+        problems = validate_questions(questions, corpus)
+        if problems:
+            raise ValueError(f'{path.name}: ' + '; '.join(problems))
+        print(f'{path.name}: {len(questions["items"])} desktop-path items validated')
 
 
 if __name__ == '__main__':

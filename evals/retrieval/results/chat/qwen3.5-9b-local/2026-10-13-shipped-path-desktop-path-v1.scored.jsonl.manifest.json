@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "dataset_sha256": "46d066125910bd3b23941ba96c5579936731d3c90c14329f5d4f6f10eee4b62a",
+  "expectations_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "retrieval_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "settings": {
+    "harness": "shipped_desktop_path",
+    "model": "Qwen3.5-9B-Q4_K_M.gguf",
+    "model_revision": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+    "recipe_sha256": "7c65c08abbce464fbf9cdbf4e4c4d5f472102579fd718c25862d17ac67350bea",
+    "corpus_sha256": "7b95adfe6baa0ab6924f8cdef88e2052c18ad2e5550090279a5ce4795af85486",
+    "thinking": "off",
+    "commit": "70cc8c928fbb2b83f88518c88da9bb14bf5837e9",
+    "judge": {
+      "model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "messages": null,
+      "stream": false,
+      "temperature": 0,
+      "top_p": 1,
+      "top_k": 1,
+      "seed": 2026,
+      "max_tokens": 300,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "verdict",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "reason"
+            ]
+          }
+        }
+      },
+      "repeats": 3,
+      "rubric": "lattice-shipped-path-judge/1"
+    }
+  },
+  "harness_sha256": "c65854bdf2c205aa4e9e1088cd065d64ee1cb31f9967672266e128db330752a8",
+  "run_id": "22045281b998ba8d7fd901d9454e2d3fff6e25b5de4e02459216f8991af3d8c4"
+}
