@@ -146,7 +146,7 @@ impl JobStore {
         kind: &str,
         subject_id: &str,
     ) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,id")
+        sqlx::query("SELECT * FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC")
             .bind(kind)
             .bind(subject_id)
             .fetch_all(connection)
@@ -159,7 +159,7 @@ impl JobStore {
 
     /// Pending and running jobs of a kind, oldest first.
     pub async fn live(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,id")
+        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,rowid")
             .bind(kind)
             .fetch_all(&self.pool)
             .await
@@ -179,7 +179,7 @@ impl JobStore {
     ) -> Result<Vec<JobRecord>> {
         let kinds =
             serde_json::to_string(kinds).map_err(|e| AppError::Serialization(e.to_string()))?;
-        sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,id LIMIT ? OFFSET ?")
+        sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?")
             .bind(kinds)
             .bind(i64::from(limit))
             .bind(i64::from(offset))
@@ -226,7 +226,7 @@ impl JobStore {
     /// saved before their worker starts, so this also finds work whose process
     /// exited between those steps.
     pub async fn due(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,id")
+        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
             .bind(kind)
             .bind(now())
             .fetch_all(&self.pool)
@@ -358,7 +358,7 @@ impl JobStore {
                 "Only failed, interrupted, or cancelled jobs can be retried.".into(),
             ));
         }
-        if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,id LIMIT 1")
+        if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(id)
             .fetch_optional(&mut *connection)
             .await
@@ -724,7 +724,7 @@ impl JobStore {
     pub async fn recover(&self, kind: &str, policy: RecoveryPolicy) -> Result<Vec<String>> {
         let mut tx = self.immediate().await?;
         let running: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,id",
+            "SELECT id FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
         )
         .bind(kind)
         .fetch_all(&mut *tx)
