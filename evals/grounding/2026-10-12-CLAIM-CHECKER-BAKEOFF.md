@@ -9,6 +9,11 @@ report measures it against MiniCheck, HHEM-2.1-open and LettuceDetect on the
 
 ## Summary
 
+> **Update, 2026-10-13.** The gate change from the recommendation is now
+> built and measured. Balanced accuracy rose from 0.827 to 0.967, and false
+> passes fell from 18 to 1. See
+> [Gate change, 2026-10-13](#gate-change-2026-10-13).
+
 - **Lattice as shipped scores 0.827 balanced accuracy (95% CI 0.76–0.89).**
   MiniCheck-Flan-T5-Large scores **0.913 (0.85–0.96)** and is the only checker
   significantly better on the same pairs (exact McNemar, 18 vs 7 discordant,
@@ -237,6 +242,81 @@ parity test against the Python reference on these pairs.
    product decision. With 12 pairs it is a note, not a finding; re-measure it
    after the change in item 2.
 
+## Gate change, 2026-10-13
+
+This measures item 2 of the recommendation with the same harness, the same
+101 pairs and the same 9B judge. `needs_judge`
+(`src-tauri/src/features/conversation/chat/verification/lexical.rs`, branch
+`fix/grounding`) now settles a cited claim without the judge only when both
+of these hold:
+
+- Every run of four consecutive claim words occurs in one window of the
+  cited passage, so the claim is the passage's own wording, possibly cut
+  short.
+- The passage sentence it copies carries no negation, number, weekday, month
+  or capitalised name that the claim cut.
+
+The claim-side rule (no digit, month or negation) still applies. Every other
+cited claim goes to the judge. The judge, its prompt, the 0.75 floor, the
+budget and the concurrency are unchanged. Notes:
+[`fix-grounding.md`](../../docs/design/2026-10-12-llm-stack-sota-audit-notes/fix-grounding.md).
+
+| Lattice, lexical + 9B judge | 2026-10-12 | 2026-10-13 |
+| --- | ---: | ---: |
+| balanced accuracy (95% CI) | 0.827 (0.76–0.89) | **0.967** (0.93–1.00) |
+| accuracy | 0.802 | 0.970 |
+| precision, supported | 0.679 | 0.974 |
+| recall, supported | 0.950 | 0.950 |
+| recall, unsupported / contradicted | 0.667 / 0.760 | 0.972 / 1.000 |
+| 3-way accuracy | 0.703 | 0.802 |
+| false passes | 18 | **1** (`cp-006`) |
+| pairs never judged | 23 | 1 (`cp-019`) |
+| judge calls | 81 | 106 |
+| unverified (all `low_confidence`) | 12 | 15 |
+| whole pass | 184 s | 315 s |
+| median per pair / per call | 2,063 ms / 2.3 s | 2,926 ms / 2.9 s |
+
+- **All of the gain is from the gate.** The 78 pairs the judge read on
+  2026-10-12 got the same verdicts again, every one. On the 23 pairs the
+  shortcut used to settle, binary accuracy went from 6 to 23.
+- **The 17 former false passes:** none is called supported now.
+  - 10 get their exact gold label.
+  - 3 are unverified under the floor (`cp-012`, `cp-045`, `cp-067`, all
+    gold unsupported, P(supported) ≤ 0.06).
+  - 4 get the wrong negative label: `cp-020`, `cp-037` and `cp-047` come
+    back contradicted where gold says unsupported, and `cp-025` comes back
+    unsupported where gold says contradicted.
+- **The six supported pairs the shortcut used to settle** are still
+  supported. `cp-019`, a verbatim copy, still skips the judge. The judge
+  passed the other five at P(supported) ≥ 0.97.
+- **The 25 extra calls:** the 22 pairs that now reach the judge, plus a
+  second sentence in `cp-009`, `cp-039` and `cp-074` that the old rule
+  settled.
+- **Time:** the machine was busy with other agents' builds (1-minute load
+  average 38 before the run, 70 after), so the median call took 2.9 s,
+  against 2.3 s on 2026-10-12. At the old call time, the 106 calls would come
+  to about 240 s. That estimate was not measured.
+- **Thinking:** no server-wide flag this time. Since PR #43 the client sends
+  `enable_thinking: false` on each judge request. All 106 calls finished with
+  `stop`, none errored, and **none returned reasoning text**. The median
+  prompt was 478 tokens and the median reply 61.
+- **Against the external checkers** (exact McNemar on binary correctness):
+  - MiniCheck-Flan-T5-Large: Lattice alone is right on 7 pairs and
+    MiniCheck alone on 1, p = 0.07.
+  - MiniCheck-RoBERTa-Large: 11 against 1, p = 0.006.
+  - Lattice before against after: 0 against 17, p < 0.0001.
+- **The floor:** it declined 15 pairs, 13 of them gold negatives. The
+  product question in item 4 stands.
+
+The caveats in the next section apply with extra force. The new rule is
+generic (word runs, not a list of cases), but its tests were built from
+these 23 pairs. Treat 0.967 as optimistic until it is measured on pairs
+written after the rule. On real answers, which paraphrase, nearly every
+cited sentence will now reach the judge. That means more calls per turn on
+the shared slot, and more claims can run into the 90 s budget. That cost
+was not measured. A learned pre-filter (item 3) would now buy speed, not
+accuracy.
+
 ## What this does not show
 
 - **Labels.** The pairs are synthetic, fictional and adversarial, with one
@@ -268,3 +348,7 @@ parity test against the Python reference on these pairs.
 - `results/2026-10-12-<checker>.meta.json`: model revision, parameters,
   device, versions.
 - `results/2026-10-12-scores.json`: every metric above, including by tag.
+- `results/2026-10-13-lattice.jsonl`, `results/2026-10-13-lattice-lexical.jsonl`,
+  `results/2026-10-13-lattice.meta.json`, `results/2026-10-13-scores.json`:
+  the gate-change run, in the same formats. The lexical-only rows equal
+  2026-10-12's, because the gate changes only which claims reach the judge.

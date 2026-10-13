@@ -1,0 +1,323 @@
+{
+  "lattice": {
+    "pairs": 101,
+    "accuracy": 0.9702970297029703,
+    "balanced_accuracy": 0.9668032786885246,
+    "precision_supported": 0.9743589743589743,
+    "recall_supported": 0.95,
+    "f1_supported": 0.9620253164556962,
+    "macro_f1": 0.9688175362766286,
+    "balanced_accuracy_95ci": [
+      0.9256379585326954,
+      1.0
+    ],
+    "recall_unsupported": 0.9722222222222222,
+    "recall_contradicted": 1.0,
+    "three_way": true,
+    "three_way_accuracy": 0.801980198019802,
+    "exact_recall_supported": 0.95,
+    "exact_recall_unsupported": 0.5833333333333334,
+    "exact_recall_contradicted": 0.88,
+    "unverified": 15,
+    "confusion": {
+      "supported": {
+        "supported": 38,
+        "unverified": 2
+      },
+      "unsupported": {
+        "supported": 1,
+        "unsupported": 21,
+        "unverified": 11,
+        "contradicted": 3
+      },
+      "contradicted": {
+        "contradicted": 22,
+        "unsupported": 1,
+        "unverified": 2
+      }
+    },
+    "latency_ms": {
+      "median": 2926.458875,
+      "p95": 5038.9255,
+      "mean": 3114.2149538217823,
+      "max": 5847.270167
+    },
+    "reached_judge": 100,
+    "never_reached_judge": 1,
+    "best_threshold": {
+      "threshold": 0.2934202253818512,
+      "accuracy": 0.9900990099009901,
+      "balanced_accuracy": 0.9918032786885246,
+      "precision_supported": 0.975609756097561,
+      "recall_supported": 1.0,
+      "f1_supported": 0.9876543209876543,
+      "macro_f1": 0.9896949290888685
+    },
+    "by_tag": {
+      "arithmetic": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "causal_addition": {
+        "correct": 4,
+        "pairs": 5,
+        "accuracy": 0.8
+      },
+      "cross_lingual": {
+        "correct": 4,
+        "pairs": 4,
+        "accuracy": 1.0
+      },
+      "date_drift": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "distractor_numbers": {
+        "correct": 16,
+        "pairs": 17,
+        "accuracy": 0.9411764705882353
+      },
+      "hedge": {
+        "correct": 2,
+        "pairs": 2,
+        "accuracy": 1.0
+      },
+      "lexical_trap": {
+        "correct": 15,
+        "pairs": 16,
+        "accuracy": 0.9375
+      },
+      "multi_clause": {
+        "correct": 2,
+        "pairs": 2,
+        "accuracy": 1.0
+      },
+      "multi_sentence": {
+        "correct": 6,
+        "pairs": 7,
+        "accuracy": 0.8571428571428571
+      },
+      "negation": {
+        "correct": 10,
+        "pairs": 10,
+        "accuracy": 1.0
+      },
+      "noisy_passage": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "number_drift": {
+        "correct": 8,
+        "pairs": 8,
+        "accuracy": 1.0
+      },
+      "paraphrase": {
+        "correct": 22,
+        "pairs": 24,
+        "accuracy": 0.9166666666666666
+      },
+      "partial": {
+        "correct": 17,
+        "pairs": 17,
+        "accuracy": 1.0
+      },
+      "reversal": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "scope": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "table": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "unit_drift": {
+        "correct": 3,
+        "pairs": 3,
+        "accuracy": 1.0
+      },
+      "verbatim": {
+        "correct": 10,
+        "pairs": 10,
+        "accuracy": 1.0
+      },
+      "world_knowledge": {
+        "correct": 9,
+        "pairs": 9,
+        "accuracy": 1.0
+      },
+      "wrong_entity": {
+        "correct": 5,
+        "pairs": 5,
+        "accuracy": 1.0
+      }
+    }
+  },
+  "lattice-lexical": {
+    "pairs": 101,
+    "accuracy": 0.46534653465346537,
+    "balanced_accuracy": 0.5487704918032786,
+    "precision_supported": 0.4222222222222222,
+    "recall_supported": 0.95,
+    "f1_supported": 0.5846153846153846,
+    "macro_f1": 0.4173076923076923,
+    "balanced_accuracy_95ci": [
+      0.4934152765583845,
+      0.6024955436720143
+    ],
+    "recall_unsupported": 0.19444444444444445,
+    "recall_contradicted": 0.08,
+    "three_way": true,
+    "three_way_accuracy": 0.44554455445544555,
+    "exact_recall_supported": 0.95,
+    "exact_recall_unsupported": 0.19444444444444445,
+    "exact_recall_contradicted": 0.0,
+    "unverified": 0,
+    "confusion": {
+      "supported": {
+        "supported": 38,
+        "unsupported": 2
+      },
+      "unsupported": {
+        "supported": 29,
+        "unsupported": 7
+      },
+      "contradicted": {
+        "supported": 23,
+        "unsupported": 2
+      }
+    },
+    "latency_ms": {
+      "median": 0.749375,
+      "p95": 1.687542,
+      "mean": 0.8538412178217821,
+      "max": 4.554792
+    },
+    "reached_judge": 0,
+    "never_reached_judge": 101,
+    "best_threshold": {
+      "threshold": 1.0,
+      "accuracy": 0.46534653465346537,
+      "balanced_accuracy": 0.5487704918032786,
+      "precision_supported": 0.4222222222222222,
+      "recall_supported": 0.95,
+      "f1_supported": 0.5846153846153846,
+      "macro_f1": 0.4173076923076923
+    },
+    "by_tag": {
+      "arithmetic": {
+        "correct": 1,
+        "pairs": 1,
+        "accuracy": 1.0
+      },
+      "causal_addition": {
+        "correct": 1,
+        "pairs": 5,
+        "accuracy": 0.2
+      },
+      "cross_lingual": {
+        "correct": 2,
+        "pairs": 4,
+        "accuracy": 0.5
+      },
+      "date_drift": {
+        "correct": 0,
+        "pairs": 3,
+        "accuracy": 0.0
+      },
+      "distractor_numbers": {
+        "correct": 12,
+        "pairs": 17,
+        "accuracy": 0.7058823529411765
+      },
+      "hedge": {
+        "correct": 0,
+        "pairs": 2,
+        "accuracy": 0.0
+      },
+      "lexical_trap": {
+        "correct": 1,
+        "pairs": 16,
+        "accuracy": 0.0625
+      },
+      "multi_clause": {
+        "correct": 1,
+        "pairs": 2,
+        "accuracy": 0.5
+      },
+      "multi_sentence": {
+        "correct": 5,
+        "pairs": 7,
+        "accuracy": 0.7142857142857143
+      },
+      "negation": {
+        "correct": 6,
+        "pairs": 10,
+        "accuracy": 0.6
+      },
+      "noisy_passage": {
+        "correct": 1,
+        "pairs": 3,
+        "accuracy": 0.3333333333333333
+      },
+      "number_drift": {
+        "correct": 0,
+        "pairs": 8,
+        "accuracy": 0.0
+      },
+      "paraphrase": {
+        "correct": 23,
+        "pairs": 24,
+        "accuracy": 0.9583333333333334
+      },
+      "partial": {
+        "correct": 1,
+        "pairs": 17,
+        "accuracy": 0.058823529411764705
+      },
+      "reversal": {
+        "correct": 0,
+        "pairs": 3,
+        "accuracy": 0.0
+      },
+      "scope": {
+        "correct": 0,
+        "pairs": 3,
+        "accuracy": 0.0
+      },
+      "table": {
+        "correct": 6,
+        "pairs": 9,
+        "accuracy": 0.6666666666666666
+      },
+      "unit_drift": {
+        "correct": 0,
+        "pairs": 3,
+        "accuracy": 0.0
+      },
+      "verbatim": {
+        "correct": 10,
+        "pairs": 10,
+        "accuracy": 1.0
+      },
+      "world_knowledge": {
+        "correct": 5,
+        "pairs": 9,
+        "accuracy": 0.5555555555555556
+      },
+      "wrong_entity": {
+        "correct": 1,
+        "pairs": 5,
+        "accuracy": 0.2
+      }
+    }
+  }
+}

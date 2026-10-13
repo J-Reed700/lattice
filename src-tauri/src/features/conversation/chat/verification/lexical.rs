@@ -4,8 +4,10 @@
 //! Cheap and deterministic, so it runs first on every turn and decides which
 //! sentences are worth an LLM call. It cannot read meaning: a sentence that
 //! reuses the source's vocabulary while inverting its meaning still scores
-//! high, which is why numbers, dates and negations are escalated to the judge
-//! regardless of overlap.
+//! high. So overlap alone never settles a cited claim. Only a near-verbatim
+//! copy of the passage skips the judge, and only when the claim carries no
+//! number, date or negation and cut none, and no name, from the sentence it
+//! copies.
 
 pub(super) use crate::application::services::evidence_retrieval::{best_windows, ScoredWindow};
 use crate::application::services::evidence_retrieval::{
@@ -13,18 +15,23 @@ use crate::application::services::evidence_retrieval::{
 };
 use crate::features::qa::dto::SourceDto;
 use crate::shared::text::normalize_whitespace;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;
 pub(super) const MIN_CLAIM_TOKENS: usize = 5;
 pub(super) const MIN_OVERLAP_RATIO: f32 = 0.32;
 pub(super) const MIN_MATCHING_TOKENS: usize = 2;
 
-/// Overlap at or above this ratio, with enough matching tokens, is treated as
-/// settled by the lexical pass alone. Well clear of `MIN_OVERLAP_RATIO` so the
-/// judge still sees everything in the ambiguous band just above threshold.
-pub(super) const STRONG_OVERLAP_RATIO: f32 = 0.55;
-pub(super) const STRONG_MATCHING_TOKENS: usize = 4;
+/// A claim settled without the judge must share at least this many content
+/// tokens with its passage. A shorter one copies too little for its wording to
+/// say anything about its meaning.
+pub(super) const MIN_COPIED_TOKENS: usize = 4;
+
+/// Words per run in the near-verbatim test. Long enough that a run rarely
+/// recurs by chance inside one window; short enough that a claim which drops,
+/// swaps or adds one word in the middle of a passage sentence breaks every run
+/// that crosses the change.
+const COPIED_RUN_WORDS: usize = 4;
 
 /// One sentence the lexical pass considered a claim.
 #[derive(Debug, Clone)]
@@ -37,11 +44,20 @@ pub(super) struct LexicalClaim {
     pub(super) citation_ids: Vec<u32>,
     /// Zero-based source indices those citation numbers resolve to.
     pub(super) cited_source_indices: Vec<usize>,
+    /// Kept for tests and debugging. No decision reads it any more: a ratio
+    /// says how many words a claim shares, not what it says with them.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) overlap_ratio: f32,
     pub(super) matching_tokens: usize,
     /// The lexical verdict: enough overlap to call this grounded.
     pub(super) supported: bool,
-    /// Carries a number, date or negation, so vocabulary overlap cannot settle it.
+    /// Every run of four consecutive words in the claim occurs in one window
+    /// of a cited passage: the claim is the passage's own wording, perhaps cut
+    /// short, but not reordered, reworded or added to.
+    pub(super) near_verbatim: bool,
+    /// Overlap cannot settle it. The claim carries a number, date or negation,
+    /// or the passage sentence it copies carries a negation, number, date or
+    /// name that the claim left out.
     pub(super) contradiction_prone: bool,
 }
 
@@ -58,6 +74,8 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
     if source_token_sets.is_empty() {
         return Vec::new();
     }
+    // Built only for sources some claim cites, once each.
+    let mut wording: HashMap<usize, PassageWording> = HashMap::new();
 
     let mut claims = Vec::new();
     for (sentence, citation_ids) in sentences_with_citations(response) {
@@ -99,16 +117,22 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
         };
         let supported =
             matching_tokens >= MIN_MATCHING_TOKENS && overlap_ratio >= MIN_OVERLAP_RATIO;
+        let copying = if citations_valid && !citation_ids.is_empty() {
+            compare_wording(&claim_text, &cited_source_indices, sources, &mut wording)
+        } else {
+            Copying::default()
+        };
 
         claims.push(LexicalClaim {
             sentence: claim_for_note(&sentence),
-            contradiction_prone: is_contradiction_prone(&claim_text),
+            contradiction_prone: is_contradiction_prone(&claim_text) || copying.drops_marker,
             claim_text: claim_for_note(&claim_text),
             citation_ids,
             cited_source_indices,
             overlap_ratio,
             matching_tokens,
             supported,
+            near_verbatim: copying.near_verbatim,
         });
     }
 
@@ -117,9 +141,17 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
 
 /// Whether this claim is worth an LLM call.
 ///
-/// Strong overlap settles a plain sentence. It never settles one carrying a
-/// number, date or negation: those are exactly the claims that echo a source's
-/// wording while stating the opposite of it.
+/// Every cited claim is, except a near-verbatim copy of its passage that
+/// leaves nothing out. Overlap used to settle any plain sentence with more
+/// than half its words in the window. On the 2026-10-12 claim-checker
+/// bake-off that certified 17 false claims no model ever read: a dropped
+/// "not", a swapped owner, a reversal, an extra clause, a widened scope, each
+/// built from the passage's own words. A token count cannot tell those from
+/// a paraphrase, so it no longer decides. A claim skips the judge only when
+/// every run of four of its words is in one window of a cited passage, it has
+/// at least [`MIN_COPIED_TOKENS`] content words, it carries no number, date
+/// or negation, and nothing it cut from the sentence it copies is a negation,
+/// number, date or name.
 ///
 /// A sentence with no citation is never escalated. The judge rules a claim
 /// against the passages it cites, and a sentence that cites nothing has none —
@@ -132,10 +164,11 @@ pub(super) fn needs_judge(claim: &LexicalClaim) -> bool {
     if claim.citation_ids.is_empty() {
         return false;
     }
-    let strongly_supported = claim.supported
-        && claim.overlap_ratio >= STRONG_OVERLAP_RATIO
-        && claim.matching_tokens >= STRONG_MATCHING_TOKENS;
-    !strongly_supported || claim.contradiction_prone
+    let settled = claim.supported
+        && claim.near_verbatim
+        && claim.matching_tokens >= MIN_COPIED_TOKENS
+        && !claim.contradiction_prone;
+    !settled
 }
 
 /// Tokens that flip a sentence's meaning without changing its vocabulary.
@@ -173,15 +206,64 @@ const MONTH_MARKERS: &[&str] = &[
     " december ",
 ];
 
+/// Checked only in the passage sentence a claim copies, never in the claim
+/// itself, so a claim naming the same weekday as its source still counts as a
+/// copy of it.
+const WEEKDAY_MARKERS: &[&str] = &[
+    " monday ",
+    " tuesday ",
+    " wednesday ",
+    " thursday ",
+    " friday ",
+    " saturday ",
+    " sunday ",
+];
+
+/// Checked the same way. "One" is left out on purpose: it is far more often a
+/// pronoun ("a manager cannot grant one") than a count.
+const NUMBER_WORDS: &[&str] = &[
+    " two ",
+    " three ",
+    " four ",
+    " five ",
+    " six ",
+    " seven ",
+    " eight ",
+    " nine ",
+    " ten ",
+    " eleven ",
+    " twelve ",
+    " twenty ",
+    " thirty ",
+    " forty ",
+    " fifty ",
+    " hundred ",
+    " thousand ",
+    " million ",
+    " billion ",
+    " twice ",
+    " half ",
+    " dozen ",
+];
+
 fn is_contradiction_prone(claim: &str) -> bool {
     if claim.chars().any(|ch| ch.is_ascii_digit()) {
         return true;
     }
 
-    // Pad and flatten punctuation so " not " matches "did not." as well.
-    let mut padded = String::with_capacity(claim.len() + 2);
+    let padded = padded_lowercase(claim);
+    NEGATION_MARKERS
+        .iter()
+        .chain(MONTH_MARKERS.iter())
+        .any(|marker| padded.contains(marker))
+}
+
+/// `text` lowercased between single spaces, with punctuation flattened to
+/// spaces so " not " matches "did not." as well.
+fn padded_lowercase(text: &str) -> String {
+    let mut padded = String::with_capacity(text.len() + 2);
     padded.push(' ');
-    for ch in claim.chars() {
+    for ch in text.chars() {
         if ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' {
             padded.extend(ch.to_lowercase());
         } else {
@@ -189,11 +271,155 @@ fn is_contradiction_prone(claim: &str) -> bool {
         }
     }
     padded.push(' ');
+    padded
+}
 
-    NEGATION_MARKERS
+/// A cited passage's wording, for the near-verbatim test.
+struct PassageWording {
+    /// Every run of [`COPIED_RUN_WORDS`] words, per window. These are the
+    /// windows overlap is scored on, so a claim must be found in one stretch
+    /// of a long page, not assembled from runs scattered across it.
+    window_runs: Vec<HashSet<String>>,
+    /// Each sentence with its runs. Split line by line first, so a heading
+    /// never joins the sentence under it and reads as a name inside it.
+    sentences: Vec<(String, HashSet<String>)>,
+}
+
+impl PassageWording {
+    /// The text the judge would read: the page, or its excerpt when the page
+    /// came back empty.
+    fn of(source: &SourceDto) -> Self {
+        let text = if source.content.trim().is_empty() {
+            source.excerpt.as_deref().unwrap_or_default()
+        } else {
+            source.content.as_str()
+        };
+        Self {
+            window_runs: passage_windows(text)
+                .iter()
+                .map(|window| word_runs(&lowercase_words(window)))
+                .collect(),
+            sentences: text
+                .split('\n')
+                .flat_map(|line| split_sentences(&strip_emphasis_markers(line)))
+                .map(|sentence| {
+                    let runs = word_runs(&lowercase_words(&sentence));
+                    (sentence, runs)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// How a claim's wording stands against the passages it cites.
+#[derive(Debug, Default)]
+struct Copying {
+    near_verbatim: bool,
+    /// A sentence the claim copies carries a negation, number, date or name
+    /// that the claim does not.
+    drops_marker: bool,
+}
+
+fn compare_wording(
+    claim: &str,
+    cited_source_indices: &[usize],
+    sources: &[SourceDto],
+    cache: &mut HashMap<usize, PassageWording>,
+) -> Copying {
+    let mut copying = Copying::default();
+    let claim_runs = word_runs(&lowercase_words(claim));
+    if claim_runs.is_empty() {
+        return copying;
+    }
+    for &idx in cited_source_indices {
+        let Some(source) = sources.get(idx) else {
+            continue;
+        };
+        let wording = cache
+            .entry(idx)
+            .or_insert_with(|| PassageWording::of(source));
+        if !wording
+            .window_runs
+            .iter()
+            .any(|runs| claim_runs.is_subset(runs))
+        {
+            continue;
+        }
+        copying.near_verbatim = true;
+        copying.drops_marker |= wording
+            .sentences
+            .iter()
+            .filter(|(_, runs)| !runs.is_disjoint(&claim_runs))
+            .any(|(sentence, _)| drops_a_marker(claim, sentence));
+    }
+    copying
+}
+
+/// Whether `sentence`, which the claim copies, carries something the claim
+/// left out: a negation, a number, a weekday or month, or a capitalised name.
+///
+/// The whole sentence is read, not only the words the claim kept. "Do not
+/// widen the pool on Garnetline" copied as "Widen the pool on Garnetline"
+/// keeps every run of four words and loses the instruction: the "not" is in
+/// the part that was cut.
+fn drops_a_marker(claim: &str, sentence: &str) -> bool {
+    let claim_padded = padded_lowercase(claim);
+    let sentence_padded = padded_lowercase(sentence);
+    if NEGATION_MARKERS
         .iter()
-        .chain(MONTH_MARKERS.iter())
-        .any(|marker| padded.contains(marker))
+        .chain(MONTH_MARKERS)
+        .chain(WEEKDAY_MARKERS)
+        .chain(NUMBER_WORDS)
+        .any(|marker| sentence_padded.contains(marker) && !claim_padded.contains(marker))
+    {
+        return true;
+    }
+
+    let claim_words: HashSet<String> = lowercase_words(claim).into_iter().collect();
+    let dropped_number = lowercase_words(sentence)
+        .into_iter()
+        .any(|word| word.chars().any(|ch| ch.is_ascii_digit()) && !claim_words.contains(&word));
+    dropped_number || capitalised_words(sentence).any(|word| !claim_words.contains(&word))
+}
+
+/// Words after the first that start with a capital letter: names of people,
+/// teams, places and days. The first is skipped because every sentence
+/// starts with one.
+fn capitalised_words(sentence: &str) -> impl Iterator<Item = String> + '_ {
+    sentence
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .skip(1)
+        .filter(|word| {
+            word.chars().count() > 1 && word.chars().next().is_some_and(char::is_uppercase)
+        })
+        .map(str::to_lowercase)
+}
+
+/// The words of `text`, lowercased, in order. Unlike the overlap tokens,
+/// nothing is stemmed or dropped: "not", "only" and "the" all count, because
+/// a copy is a copy of every word.
+fn lowercase_words(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Every run of [`COPIED_RUN_WORDS`] consecutive words, or the whole text as
+/// one run when it is shorter than that.
+fn word_runs(words: &[String]) -> HashSet<String> {
+    if words.len() < COPIED_RUN_WORDS {
+        return if words.is_empty() {
+            HashSet::new()
+        } else {
+            HashSet::from([words.join(" ")])
+        };
+    }
+    words
+        .windows(COPIED_RUN_WORDS)
+        .map(|run| run.join(" "))
+        .collect()
 }
 
 /// A full stop ends a sentence only when the text pauses after it. One inside
@@ -836,29 +1062,46 @@ mod tests {
     }
 
     #[test]
-    fn strong_overlap_skips_the_judge_but_a_number_does_not() {
-        let plain = LexicalClaim {
+    fn a_near_verbatim_copy_skips_the_judge_but_strong_overlap_or_a_number_does_not() {
+        let copy = LexicalClaim {
             sentence: "s".into(),
             claim_text: "s".into(),
             citation_ids: vec![1],
             cited_source_indices: vec![0],
-            overlap_ratio: 0.8,
+            overlap_ratio: 1.0,
             matching_tokens: 6,
             supported: true,
+            near_verbatim: true,
             contradiction_prone: false,
         };
-        assert!(!needs_judge(&plain));
+        assert!(!needs_judge(&copy));
+
+        // Most of the passage's words, but not its wording: this is what
+        // certified a dropped "not" or a swapped owner without a model.
+        let strong_overlap = LexicalClaim {
+            overlap_ratio: 0.8,
+            near_verbatim: false,
+            ..copy.clone()
+        };
+        assert!(needs_judge(&strong_overlap));
 
         let with_number = LexicalClaim {
             contradiction_prone: true,
-            ..plain.clone()
+            ..copy.clone()
         };
         assert!(needs_judge(&with_number));
+
+        let too_short = LexicalClaim {
+            matching_tokens: 3,
+            ..copy.clone()
+        };
+        assert!(needs_judge(&too_short));
 
         let ambiguous = LexicalClaim {
             overlap_ratio: 0.40,
             matching_tokens: 3,
-            ..plain.clone()
+            near_verbatim: false,
+            ..copy.clone()
         };
         assert!(needs_judge(&ambiguous));
 
@@ -866,9 +1109,64 @@ mod tests {
             overlap_ratio: 0.10,
             matching_tokens: 1,
             supported: false,
-            ..plain
+            near_verbatim: false,
+            ..copy
         };
         assert!(needs_judge(&weak));
+    }
+
+    #[test]
+    fn a_copy_is_only_a_copy_when_its_words_keep_their_order() {
+        let passage = "The Sepwick field crew owns the pager for ingest-fanout. \
+                       The Halloway reliability bench owns the underlying storage.";
+        let copied = lexical_pass(
+            "The Sepwick field crew owns the pager for ingest-fanout [1].",
+            &[source(passage)],
+        );
+        assert!(copied[0].near_verbatim);
+        assert!(!needs_judge(&copied[0]));
+
+        // The same words, every one of them in the passage, with the owners
+        // swapped. Overlap is total; the runs of four words are not there.
+        let swapped = lexical_pass(
+            "The Halloway reliability bench owns the pager for ingest-fanout [1].",
+            &[source(passage)],
+        );
+        assert!((swapped[0].overlap_ratio - 1.0).abs() < f32::EPSILON);
+        assert!(!swapped[0].near_verbatim);
+        assert!(needs_judge(&swapped[0]));
+    }
+
+    #[test]
+    fn a_copied_sentence_is_read_for_what_the_claim_left_out() {
+        let kept_everything = "The quota broker holds its state in memory.";
+        assert!(!drops_a_marker(kept_everything, kept_everything));
+        // The first word of a sentence is capitalised whatever it is.
+        assert!(!drops_a_marker(
+            "quota broker holds its state in memory",
+            "Quota broker holds its state in memory."
+        ));
+
+        for (claim, sentence) in [
+            ("Readings are reordered.", "Readings aren't reordered."),
+            (
+                "Readings are reordered.",
+                "Only late readings are reordered.",
+            ),
+            ("The probe failed.", "The probe failed twice."),
+            ("The probe failed.", "The probe failed 3 times."),
+            ("The window opens.", "The window opens on Thursday."),
+            ("The window opens.", "The window opens in March."),
+            (
+                "The pager belongs to the crew.",
+                "The pager belongs to the Sepwick crew.",
+            ),
+        ] {
+            assert!(
+                drops_a_marker(claim, sentence),
+                "{claim:?} dropped nothing from {sentence:?}"
+            );
+        }
     }
 
     /// Explorer answers point at lines in the folder. Those sentences are
