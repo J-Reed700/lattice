@@ -1033,6 +1033,13 @@ impl LLMPort for DelayedOutlineModel {
         request: &crate::application::ports::llm_port::CompletionRequest,
     ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
         use crate::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        // A prose step keeps its reservation rather than taking the window;
+        // the delays and scripted replies belong to the structured answers.
+        if crate::features::learning::lessons::structured_call::is_draft_request(request) {
+            return Ok(CompletionResponse::from_text(
+                crate::features::learning::lessons::structured_call::FIXTURE_DRAFT,
+            ));
+        }
         assert!(
             request.no_time_limit,
             "outline must opt out of provider deadlines"

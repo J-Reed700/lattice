@@ -1,6 +1,7 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
+import { describeFailure } from '@/lib/errorHandling';
 import { type SearchResult } from '@/types';
 
 export interface UseSearchQueryParams {
@@ -29,7 +30,7 @@ export const useSearchQuery = (
         return result.data;
       }
 
-      throw new Error(result.error || 'Search failed');
+      throw new Error(describeFailure(result) || 'Search failed');
     },
     enabled: params.query.trim().length > 0,
     staleTime: 5 * 60 * 1000,

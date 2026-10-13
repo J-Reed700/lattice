@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 // A timed-out blocking parser still owns its memory and CPU until it returns.
 // Keep its permit inside the blocking closure, so retries cannot bypass this
@@ -114,17 +114,17 @@ pub async fn extract_pdf(
     })
     .await?;
 
-    if let Some(ocr) = ocr {
-        recognize_scanned_pages(path, &mut pages, ocr.as_ref()).await;
-    }
+    let ocr_outcome = match ocr {
+        Some(ocr) => recognize_scanned_pages(path, &mut pages, ocr.as_ref()).await,
+        None => OcrOutcome::NotAsked,
+    };
 
     let (text, page_ranges) = assemble(&pages);
 
     if is_unreadable(&text, &pages) {
         return Err(IndexingError::ContentExtraction {
             path: path.display().to_string(),
-            reason: "No selectable text found. This PDF may need OCR before it can be indexed."
-                .into(),
+            reason: unreadable_reason(&ocr_outcome),
         });
     }
 
@@ -192,7 +192,10 @@ fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<Page
                 "Layout-aware PDF extraction fell back to plain text for this page"
             );
         })
-        .map_err(IndexingError::Other)?;
+        .map_err(|e| IndexingError::ContentExtraction {
+            path: path.display().to_string(),
+            reason: format!("Failed to read page {}: {}", page, e),
+        })?;
         retained_layout_bytes = retained_layout_bytes.saturating_add(layout.retained_bytes());
         if retained_layout_bytes > MAX_PDF_LAYOUT_BYTES {
             return Err(IndexingError::Other(
@@ -282,17 +285,60 @@ fn is_unreadable(text: &str, pages: &[PageText]) -> bool {
     text.trim().is_empty() || (!pages.is_empty() && pages.iter().all(|page| page.needs_ocr))
 }
 
+/// What asking the OCR provider came to, for the document as a whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OcrOutcome {
+    /// No provider, or no scanned page to ask about.
+    NotAsked,
+    /// No OCR model is downloaded.
+    NotConfigured,
+    /// OCR could not run for any page; the reason says why.
+    Unavailable(String),
+    /// Every scanned page was attempted (each may still have failed alone).
+    Attempted,
+}
+
+/// Why a PDF with no usable text was refused. Every variant names OCR: the
+/// import screen keys its recovery hint off that word.
+fn unreadable_reason(outcome: &OcrOutcome) -> String {
+    match outcome {
+        OcrOutcome::NotAsked => {
+            "No selectable text found. This PDF may need OCR before it can be indexed.".into()
+        }
+        OcrOutcome::NotConfigured => "No selectable text found: this PDF is scanned. Download \
+             the OCR model (PaddleOCR-VL) in Settings → AI → Models to index it."
+            .into(),
+        OcrOutcome::Unavailable(reason) => {
+            format!("No selectable text found, and OCR could not run: {reason}")
+        }
+        OcrOutcome::Attempted => {
+            "No selectable text found, and OCR recognized no text on its scanned pages.".into()
+        }
+    }
+}
+
 /// Ask the OCR provider for each scanned page, in page order.
 ///
 /// Failures are never fatal: the page keeps its `needs_ocr` flag and the
-/// document is indexed without it. A provider with no model answers
-/// [`OcrError::NotConfigured`] once and is not asked again.
-async fn recognize_scanned_pages(path: &Path, pages: &mut [PageText], ocr: &dyn OcrPort) {
+/// document is indexed without it. A provider with no model, or one that
+/// cannot run at all, answers once and is not asked about the other pages.
+async fn recognize_scanned_pages(
+    path: &Path,
+    pages: &mut [PageText],
+    ocr: &dyn OcrPort,
+) -> OcrOutcome {
+    let scanned = pages.iter().filter(|page| page.needs_ocr).count();
+    if scanned == 0 {
+        return OcrOutcome::NotAsked;
+    }
+    let started = std::time::Instant::now();
+    let mut recognized = 0usize;
     for page in pages.iter_mut().filter(|page| page.needs_ocr) {
         match ocr.recognize_page(path, page.page).await {
-            Ok(recognized) if !recognized.trim().is_empty() => {
-                page.text = splice(&page.text, recognized.trim());
+            Ok(text) if !text.trim().is_empty() => {
+                page.text = splice(&page.text, text.trim());
                 page.needs_ocr = false;
+                recognized += 1;
             }
             Ok(_) => debug!(page = page.page, "OCR recognized no text on this page"),
             Err(OcrError::NotConfigured) => {
@@ -300,7 +346,15 @@ async fn recognize_scanned_pages(path: &Path, pages: &mut [PageText], ocr: &dyn 
                     path = %path.display(),
                     "No OCR model configured; scanned pages stay unindexed"
                 );
-                return;
+                return OcrOutcome::NotConfigured;
+            }
+            Err(OcrError::Unavailable { reason }) => {
+                warn!(
+                    path = %path.display(),
+                    %reason,
+                    "OCR is unavailable; scanned pages stay unindexed"
+                );
+                return OcrOutcome::Unavailable(reason);
             }
             Err(error) => warn!(
                 path = %path.display(),
@@ -310,6 +364,14 @@ async fn recognize_scanned_pages(path: &Path, pages: &mut [PageText], ocr: &dyn 
             ),
         }
     }
+    info!(
+        path = %path.display(),
+        scanned,
+        recognized,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "OCR read the scanned pages of a PDF"
+    );
+    OcrOutcome::Attempted
 }
 
 /// Keep whatever little text the page did have — a folio number is still

@@ -22,11 +22,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use crate::application::contracts::settings::{LLMSettingsDto, SpeculativeDecodingDto};
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
 use crate::application::ports::LLMPort;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
+use crate::features::llm::engine::sidecar_manager::SpeculativeDecoding;
 use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
@@ -56,9 +58,8 @@ pub enum LLMConfig {
         /// only acceptable in test fixtures that don't reach the
         /// sidecar dispatch path.
         app_handle: Option<tauri::AppHandle>,
-        /// The user's explicit context window, if they set one. `None` lets the
-        /// sidecar size it from the model and the GPU.
-        context_window: Option<u32>,
+        /// How the user asked the bundled server to run.
+        server: LocalServerOptions,
     },
     /// Ollama HTTP API
     Ollama {
@@ -71,6 +72,32 @@ pub enum LLMConfig {
         /// Generation configuration (temperature, top-p, etc.)
         generation_config: GenerationConfig,
     },
+}
+
+/// How the user asked a bundled server to run, as opposed to which model it
+/// runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalServerOptions {
+    /// The user's explicit context window, if they set one. `None` lets the
+    /// sidecar size it from the model and the GPU.
+    pub context_window: Option<u32>,
+    /// Speculative decoding the user opted into; it reaches the server only
+    /// for a model that can draft.
+    pub speculative_decoding: SpeculativeDecoding,
+}
+
+impl LocalServerOptions {
+    pub fn from_settings(settings: &LLMSettingsDto) -> Self {
+        Self {
+            context_window: settings.local_context_window,
+            speculative_decoding: match settings.speculative_decoding {
+                SpeculativeDecodingDto::Off => SpeculativeDecoding::Off,
+                SpeculativeDecodingDto::MtpDraft { n_max } => {
+                    SpeculativeDecoding::MtpDraft { n_max }
+                }
+            },
+        }
+    }
 }
 
 /// Create an LLM client from configuration.
@@ -113,7 +140,7 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
             n_gpu_layers,
             generation_config,
             app_handle,
-            context_window,
+            server,
         } => {
             // The Tauri AppHandle is populated through
             // Container::with_app_handle.
@@ -124,14 +151,8 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
                         .to_string(),
                 )
             })?;
-            create_local_llm_sidecar(
-                &app,
-                &model_path,
-                n_gpu_layers,
-                generation_config,
-                context_window,
-            )
-            .await
+            create_local_llm_sidecar(&app, &model_path, n_gpu_layers, generation_config, server)
+                .await
         }
         LLMConfig::Ollama {
             endpoint,
@@ -159,7 +180,7 @@ async fn create_local_llm_sidecar(
     model_path: &Path,
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
-    context_window: Option<u32>,
+    server: LocalServerOptions,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
@@ -198,9 +219,13 @@ async fn create_local_llm_sidecar(
         .map_or(0, |registry| registry.resident_gpu_bytes(model_path));
     let mut config =
         SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities, resident_bytes);
-    if let Some(requested) = context_window {
+    if let Some(requested) = server.context_window {
         config = config.with_context_override(requested, &capabilities, resident_bytes);
     }
+    // Whether this GGUF can draft is the model catalog's to say; the user's
+    // choice only applies to a model that can.
+    config.mtp_capable = crate::domain::models::curated::chat_model_uses_mtp_draft(model_path);
+    config.speculative_decoding = server.speculative_decoding;
 
     if n_gpu_layers >= 0 {
         let override_ngl = u32::try_from(n_gpu_layers).unwrap_or(99);
@@ -238,16 +263,22 @@ async fn create_local_llm_sidecar(
         .and_then(|name| name.to_str())
         .is_some_and(crate::domain::models::curated::chat_model_file_supports_tool_calling);
 
+    let model_thinking =
+        crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);
     let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
         handle,
         model_name,
         generation_config,
         supports_tools,
+        model_thinking,
     )
     .map_err(|e| LLMError::Other(e.to_string()))?;
     info!(
         binary,
-        n_gpu_layers, supports_tools, "Local LLM (sidecar) ready"
+        n_gpu_layers,
+        supports_tools,
+        ?model_thinking,
+        "Local LLM (sidecar) ready"
     );
     Ok(llm.schedule().await)
 }
@@ -747,7 +778,7 @@ mod tests {
             n_gpu_layers: 0,
             generation_config: GenerationConfig::default(),
             app_handle: None,
-            context_window: None,
+            server: LocalServerOptions::default(),
         };
 
         let result = create_llm(config).await;

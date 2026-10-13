@@ -43,7 +43,7 @@
 //! # }
 //! ```
 
-use crate::features::function_calling::dto::CleanArticle;
+use crate::application::contracts::web::CleanArticle;
 use crate::features::web::services::stealth;
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};

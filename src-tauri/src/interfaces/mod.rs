@@ -6,6 +6,8 @@
 //! - **Commands**: Tauri IPC command handlers (thin controllers)
 //! - **Event Handlers**: Domain and file system event processors
 //! - **Dependency Injection**: Container that wires everything together
+//! - **Settings side effects**: the cross-feature reactions the Container
+//!   wires to settings updates
 //!
 //! ## Layer Responsibilities
 //!
@@ -58,6 +60,7 @@
 pub mod commands;
 pub mod di;
 pub mod dto;
+pub mod settings_side_effects;
 
 pub use commands::*;
 pub use di::Container;

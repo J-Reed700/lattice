@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::application::contracts::settings::LLMSettingsDto;
 use crate::application::ports::LLMPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::features::llm::engine::factory::LocalServerOptions;
 use crate::features::llm::engine::types::LLMError;
 use crate::shared::error::{AppError, Result};
 
@@ -129,7 +130,12 @@ impl ModelLoader {
         let config = Self::generation_config_from_settings(settings);
         crate::application::services::model_selection::select_model(
             settings.provider,
-            || self.try_load_active_model(config.clone(), settings.local_context_window),
+            || {
+                self.try_load_active_model(
+                    config.clone(),
+                    LocalServerOptions::from_settings(settings),
+                )
+            },
             || self.try_load_llama_cpp(settings),
             || self.try_load_ollama(settings, config.clone()),
         )
@@ -159,10 +165,8 @@ impl ModelLoader {
         let router_settings = &settings.router;
         let generation_config = crate::features::llm::engine::GenerationConfig {
             temperature: router_settings.temperature,
-            top_p: settings.top_p,
-            top_k: settings.top_k,
             max_tokens: router_settings.max_tokens as usize,
-            repeat_penalty: settings.repeat_penalty,
+            ..crate::features::llm::engine::GenerationConfig::from_settings(settings)
         };
 
         // 1) Try local downloaded model by ID (if present).
@@ -170,7 +174,7 @@ impl ModelLoader {
             .try_load_router_local_model(
                 model_name,
                 generation_config.clone(),
-                settings.local_context_window,
+                LocalServerOptions::from_settings(settings),
             )
             .await?
         {
@@ -237,7 +241,7 @@ impl ModelLoader {
         &self,
         model_id: &str,
         generation_config: crate::features::llm::engine::GenerationConfig,
-        context_window: Option<u32>,
+        server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         use crate::features::llm::engine::factory::{create_llm, LLMConfig};
 
@@ -248,9 +252,7 @@ impl ModelLoader {
             None => return Ok(None),
         };
 
-        if let Err(reason) = model.validate_for_operation(true) {
-            return Err(AppError::InvalidConfig(reason));
-        }
+        model.validate_for_operation(true)?;
 
         let model_path = match model.loadable_path() {
             Some(p) => p.to_path_buf(),
@@ -273,7 +275,7 @@ impl ModelLoader {
             // Populated when the app boots via Container::with_app_handle.
             // None in tests / sidecar-feature-off builds (where it's unused).
             app_handle: self.app_handle.clone(),
-            context_window,
+            server,
         };
 
         match create_llm(llm_config).await {
@@ -292,7 +294,7 @@ impl ModelLoader {
         &self,
         active: &crate::domain::DownloadedModel,
         generation_config: crate::features::llm::engine::GenerationConfig,
-        context_window: Option<u32>,
+        server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         let model_id = active.model_id();
         let model_path = match active.loadable_path() {
@@ -334,7 +336,7 @@ impl ModelLoader {
             n_gpu_layers: -1,
             generation_config,
             app_handle: self.app_handle.clone(),
-            context_window,
+            server,
         };
 
         tracing::info!(
@@ -435,19 +437,13 @@ impl ModelLoader {
     fn generation_config_from_settings(
         settings: &LLMSettingsDto,
     ) -> crate::features::llm::engine::GenerationConfig {
-        crate::features::llm::engine::GenerationConfig {
-            temperature: settings.temperature,
-            top_p: settings.top_p,
-            top_k: settings.top_k,
-            max_tokens: settings.max_tokens as usize,
-            repeat_penalty: settings.repeat_penalty,
-        }
+        crate::features::llm::engine::GenerationConfig::from_settings(settings)
     }
 
     async fn try_load_active_model(
         &self,
         generation_config: crate::features::llm::engine::GenerationConfig,
-        context_window: Option<u32>,
+        server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         use crate::features::llm::engine::factory::{create_llm, LLMConfig};
 
@@ -492,7 +488,7 @@ impl ModelLoader {
             // Populated when the app boots via Container::with_app_handle.
             // None in tests / sidecar-feature-off builds (where it's unused).
             app_handle: self.app_handle.clone(),
-            context_window,
+            server,
         };
 
         match create_llm(llm_config).await {
@@ -640,6 +636,11 @@ mod tests {
         assert_eq!(config.top_k, settings.top_k);
         assert_eq!(config.max_tokens, settings.max_tokens as usize);
         assert_eq!(config.repeat_penalty, settings.repeat_penalty);
+        assert_eq!(config.presence_penalty, settings.presence_penalty);
+        assert_eq!(
+            config.thinking,
+            crate::features::llm::engine::SamplingProfile::from(settings.thinking_sampling)
+        );
     }
 
     #[test]
@@ -690,7 +691,7 @@ mod tests {
                 .load_utility_local(
                     &active,
                     crate::features::llm::engine::GenerationConfig::default(),
-                    None,
+                    LocalServerOptions::default(),
                 )
                 .await;
             assert!(matches!(result, Err(AppError::ModelLoadFailed(message))
@@ -701,7 +702,7 @@ mod tests {
             .load_utility_local(
                 &active,
                 crate::features::llm::engine::GenerationConfig::default(),
-                None,
+                LocalServerOptions::default(),
             )
             .await;
         assert!(matches!(result, Err(AppError::ModelLoadFailed(message))

@@ -34,8 +34,8 @@ use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
     ContentAddressedStoragePort, DocumentRepositoryPort, VectorSearchPort,
 };
+use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::indexing::LibraryGc;
-use crate::features::web::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +81,7 @@ pub struct DeleteDocumentUseCase {
     uow_factory: Arc<dyn UnitOfWorkFactory>,
     library: Arc<dyn ContentAddressedStoragePort>,
     library_gc: Arc<LibraryGc>,
-    web_archive: Arc<dyn WebArchiveServiceTrait>,
+    web_archive: Arc<dyn ArticleArchive>,
 }
 
 impl DeleteDocumentUseCase {
@@ -101,7 +101,7 @@ impl DeleteDocumentUseCase {
         uow_factory: Arc<dyn UnitOfWorkFactory>,
         library: Arc<dyn ContentAddressedStoragePort>,
         library_gc: Arc<LibraryGc>,
-        web_archive: Arc<dyn WebArchiveServiceTrait>,
+        web_archive: Arc<dyn ArticleArchive>,
     ) -> Self {
         Self {
             document_repo,
@@ -217,7 +217,7 @@ impl DeleteDocumentUseCase {
         // The corpus changed, so cached search results are now wrong —
         // without this, a deleted document keeps appearing in repeated
         // searches for up to the cache TTL.
-        crate::features::cache::query_cache::invalidate_query_cache();
+        crate::features::search::query_cache::invalidate_query_cache();
 
         Ok(DeleteDocumentResponseDto {
             status: "deleted".to_string(),
@@ -283,7 +283,7 @@ impl DeleteDocumentUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::function_calling::dto::CleanArticle;
+    use crate::application::contracts::web::CleanArticle;
     use crate::features::search::dto::SearchResultPortDto;
     use crate::features::web::mocks::MockWebArchiveService;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -396,7 +396,7 @@ mod tests {
                 Arc::new(SqliteUnitOfWorkFactory::new(self.pool.clone())),
                 Arc::clone(&library),
                 Arc::new(LibraryGc::new(library, documents)),
-                Arc::clone(&self.archive) as Arc<dyn WebArchiveServiceTrait>,
+                Arc::clone(&self.archive) as Arc<dyn ArticleArchive>,
             )
         }
 

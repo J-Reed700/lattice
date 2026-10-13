@@ -3,12 +3,17 @@
 //! entry shrinks without the baseline being regenerated, so the list only
 //! ever gets shorter.
 //!
+//! Feature cycles are derived from the feature edges rather than found in
+//! source: every edge inside a strongly connected component is an entry,
+//! counted by the component's size, so a new cycle or a cycle that pulls in
+//! another feature fails exactly like a new reference does.
+//!
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
 //! never read.
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -24,11 +29,13 @@ pub const REGENERATE: &str = "bash scripts/check-rust-layer-boundaries.sh --writ
 
 pub const INFRASTRUCTURE_IMPORTS_FEATURE: &str = "infrastructure-imports-feature";
 pub const FEATURE_EDGE: &str = "feature-edge";
+pub const FEATURE_CYCLE: &str = "feature-cycle";
 pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
-const RULES: [&str; 4] = [
+const RULES: [&str; 5] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
+    FEATURE_CYCLE,
     CONTAINER_IMPORT,
     RAW_SPAWN,
 ];
@@ -60,6 +67,8 @@ const HEADER: &str = "\
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
+#   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
+#                                                         its strongly connected component
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
 #                                                         DI, desktop, setup and interfaces files
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
@@ -742,6 +751,90 @@ pub fn counts(findings: &[Finding]) -> Counts {
     counts
 }
 
+/// The feature-edge graph: each feature and the features it references.
+fn feature_graph(counts: &Counts) -> BTreeMap<&str, BTreeSet<&str>> {
+    let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for key in counts.keys().filter(|key| key.rule == FEATURE_EDGE) {
+        graph
+            .entry(key.subject.as_str())
+            .or_default()
+            .insert(key.target.as_str());
+    }
+    graph
+}
+
+/// Every feature `from` reaches through one or more edges. `from` itself is
+/// included only when a cycle leads back to it.
+fn reachable<'a>(graph: &BTreeMap<&'a str, BTreeSet<&'a str>>, from: &'a str) -> BTreeSet<&'a str> {
+    let mut seen = BTreeSet::new();
+    let mut queue = vec![from];
+    while let Some(node) = queue.pop() {
+        for &next in graph.get(node).into_iter().flatten() {
+            if seen.insert(next) {
+                queue.push(next);
+            }
+        }
+    }
+    seen
+}
+
+/// `feature-cycle` entries for the feature edges in `counts`: one per edge
+/// whose target reaches back to its subject, counted by how many features
+/// share the subject's strongly connected component.
+pub fn cycle_counts(counts: &Counts) -> Counts {
+    let graph = feature_graph(counts);
+    let reach: BTreeMap<&str, BTreeSet<&str>> = graph
+        .keys()
+        .map(|&node| (node, reachable(&graph, node)))
+        .collect();
+    let reaches = |from: &str, to: &str| reach.get(from).is_some_and(|nodes| nodes.contains(to));
+    let mut cycles = Counts::new();
+    for (&from, targets) in &graph {
+        for &to in targets {
+            if !reaches(to, from) {
+                continue;
+            }
+            let component = reach
+                .get(from)
+                .into_iter()
+                .flatten()
+                .filter(|&&node| reaches(node, from))
+                .count();
+            cycles.insert(Key::new(FEATURE_CYCLE, from, to), component);
+        }
+    }
+    cycles
+}
+
+/// The shortest route the edge `from -> to` takes back to `from`, written out
+/// as `from -> to -> ... -> from`, or `None` when the edge closes no cycle.
+pub fn cycle_route(counts: &Counts, from: &str, to: &str) -> Option<String> {
+    let graph = feature_graph(counts);
+    let mut parent: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([to]);
+    let mut seen = BTreeSet::from([to]);
+    while let Some(node) = queue.pop_front() {
+        if node == from {
+            let mut route = vec![from];
+            let mut step = from;
+            while step != to {
+                step = parent.get(step)?;
+                route.push(step);
+            }
+            route.push(from);
+            route.reverse();
+            return Some(route.join(" -> "));
+        }
+        for &next in graph.get(node).into_iter().flatten() {
+            if seen.insert(next) {
+                parent.insert(next, node);
+                queue.push_back(next);
+            }
+        }
+    }
+    None
+}
+
 pub fn parse_baseline(text: &str) -> Result<Counts, String> {
     let mut counts = Counts::new();
     for (index, line) in text.lines().enumerate() {
@@ -826,7 +919,11 @@ fn summary(counts: &Counts) -> String {
                 .fold((0, 0), |(entries, total), (_, count)| {
                     (entries + 1, total + count)
                 });
-            format!("{rule} {total} in {entries} entries")
+            if *rule == FEATURE_CYCLE {
+                format!("{rule} {entries} edges")
+            } else {
+                format!("{rule} {total} in {entries} entries")
+            }
         })
         .collect::<Vec<_>>()
         .join("; ")
@@ -839,7 +936,8 @@ pub fn check(
     failures: &mut usize,
 ) -> Result<(), Error> {
     let found = findings(root)?;
-    let current = counts(&found);
+    let mut current = counts(&found);
+    current.extend(cycle_counts(&current));
     if write {
         fs::write(baseline_path, render_baseline(&current))?;
         println!("Wrote {} ({}).", baseline_path.display(), summary(&current));
@@ -856,7 +954,18 @@ pub fn check(
     let mut shrank = 0;
     for (key, change) in compare(&baseline, &current) {
         *failures += 1;
+        let cycle = key.rule == FEATURE_CYCLE;
         match change {
+            Change::New { now } if cycle => {
+                eprintln!(
+                    "VIOLATION: {key}: closes a cycle through {now} features, not in the baseline"
+                );
+            }
+            Change::Rose { was, now } if cycle => {
+                eprintln!(
+                    "VIOLATION: {key}: its cycle now spans {now} features, baseline allows {was}"
+                );
+            }
             Change::New { now } => {
                 eprintln!("VIOLATION: {key}: {now} new reference(s), not in the baseline");
             }
@@ -869,7 +978,16 @@ pub fn check(
                 continue;
             }
         }
-        for finding in found.iter().filter(|finding| finding.key == key) {
+        // A cycle entry points at the references behind its edge.
+        let site = if cycle {
+            if let Some(route) = cycle_route(&current, &key.subject, &key.target) {
+                eprintln!("    cycle {route}");
+            }
+            Key::new(FEATURE_EDGE, key.subject.clone(), key.target.clone())
+        } else {
+            key
+        };
+        for finding in found.iter().filter(|finding| finding.key == site) {
             eprintln!("    at {}", finding.location);
         }
     }
@@ -1288,6 +1406,155 @@ mod tests { fn run() { tokio::spawn(async {}); } }
         assert!(compare(&current, &current).is_empty());
     }
 
+    fn edges(pairs: &[(&str, &str)]) -> Counts {
+        pairs
+            .iter()
+            .map(|(from, to)| {
+                (
+                    key(
+                        FEATURE_EDGE,
+                        &format!("features::{from}"),
+                        &format!("features::{to}"),
+                    ),
+                    1,
+                )
+            })
+            .collect()
+    }
+
+    fn cycle(from: &str, to: &str) -> Key {
+        key(
+            FEATURE_CYCLE,
+            &format!("features::{from}"),
+            &format!("features::{to}"),
+        )
+    }
+
+    #[test]
+    fn feature_cycles_are_the_edges_inside_each_strongly_connected_component() {
+        let mut counts = edges(&[
+            ("a", "b"),
+            ("b", "c"),
+            ("c", "a"),
+            ("c", "d"),
+            ("d", "e"),
+            ("e", "d"),
+            ("f", "a"),
+        ]);
+        counts.insert(key(RAW_SPAWN, "features/a/x.rs", "tokio::spawn"), 1);
+        assert_eq!(
+            cycle_counts(&counts),
+            Counts::from([
+                (cycle("a", "b"), 3),
+                (cycle("b", "c"), 3),
+                (cycle("c", "a"), 3),
+                (cycle("d", "e"), 2),
+                (cycle("e", "d"), 2),
+            ])
+        );
+        assert!(cycle_counts(&edges(&[("a", "b"), ("b", "c"), ("a", "c")])).is_empty());
+    }
+
+    #[test]
+    fn ratchet_fails_a_new_or_growing_cycle_and_reports_a_broken_one_as_stale() {
+        let compare_cycles =
+            |baseline: &[(&str, &str)], current: &[(&str, &str)]| -> Vec<(Key, Change)> {
+                compare(
+                    &cycle_counts(&edges(baseline)),
+                    &cycle_counts(&edges(current)),
+                )
+            };
+        assert_eq!(
+            compare_cycles(&[("a", "b")], &[("a", "b"), ("b", "a")]),
+            vec![
+                (cycle("a", "b"), Change::New { now: 2 }),
+                (cycle("b", "a"), Change::New { now: 2 }),
+            ]
+        );
+        assert_eq!(
+            compare_cycles(
+                &[("a", "b"), ("b", "a"), ("b", "c")],
+                &[("a", "b"), ("b", "a"), ("b", "c"), ("c", "a")]
+            ),
+            vec![
+                (cycle("a", "b"), Change::Rose { was: 2, now: 3 }),
+                (cycle("b", "a"), Change::Rose { was: 2, now: 3 }),
+                (cycle("b", "c"), Change::New { now: 3 }),
+                (cycle("c", "a"), Change::New { now: 3 }),
+            ]
+        );
+        assert_eq!(
+            compare_cycles(&[("a", "b"), ("b", "a")], &[("a", "b")]),
+            vec![
+                (cycle("a", "b"), Change::Shrank { was: 2, now: 0 }),
+                (cycle("b", "a"), Change::Shrank { was: 2, now: 0 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cycle_violation_names_the_shortest_route_back() {
+        let counts = edges(&[("a", "b"), ("b", "c"), ("c", "a"), ("b", "a"), ("c", "d")]);
+        assert_eq!(
+            cycle_route(&counts, "features::b", "features::c").as_deref(),
+            Some("features::b -> features::c -> features::a -> features::b")
+        );
+        assert_eq!(
+            cycle_route(&counts, "features::a", "features::b").as_deref(),
+            Some("features::a -> features::b -> features::a")
+        );
+        assert_eq!(cycle_route(&counts, "features::c", "features::d"), None);
+    }
+
+    #[test]
+    fn check_writes_feature_cycles_and_fails_a_cycle_missing_from_the_baseline() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "lattice-ratchet-cycle-{}-{unique}",
+            std::process::id()
+        ));
+        for feature in ["a", "b"] {
+            fs::create_dir_all(root.join("features").join(feature)).unwrap();
+        }
+        fs::write(root.join("lib.rs"), "pub mod features;").unwrap();
+        fs::write(root.join("features/mod.rs"), "pub mod a; pub mod b;").unwrap();
+        fs::write(
+            root.join("features/a/mod.rs"),
+            "pub fn run() { crate::features::b::run(); }",
+        )
+        .unwrap();
+        fs::write(
+            root.join("features/b/mod.rs"),
+            "pub fn run() { crate::features::a::run(); }",
+        )
+        .unwrap();
+        let baseline = root.join("baseline.txt");
+
+        let mut failures = 0;
+        check(&root, &baseline, true, &mut failures).unwrap();
+        let written = fs::read_to_string(&baseline).unwrap();
+        check(&root, &baseline, false, &mut failures).unwrap();
+        let clean = failures;
+
+        // A baseline that records the edges but not the cycle they form.
+        let without_cycles: String = written
+            .lines()
+            .filter(|line| !line.starts_with(FEATURE_CYCLE))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        fs::write(&baseline, without_cycles).unwrap();
+        check(&root, &baseline, false, &mut failures).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(written.contains("feature-cycle features::a features::b 2\n"));
+        assert!(written.contains("feature-cycle features::b features::a 2\n"));
+        assert_eq!(clean, 0);
+        assert_eq!(failures, 2);
+    }
+
     #[test]
     fn baseline_round_trips_and_rejects_malformed_lines() {
         let counts = Counts::from([
@@ -1308,5 +1575,9 @@ mod tests { fn run() { tokio::spawn(async {}); } }
         assert!(parse_baseline("raw-spawn features/a.rs tokio::spawn 0").is_err());
         assert!(parse_baseline("raw-spawns features/a.rs tokio::spawn 1").is_err());
         assert!(parse_baseline("raw-spawn a b 1\nraw-spawn a b 2").is_err());
+        assert_eq!(
+            parse_baseline("feature-cycle features::a features::b 2").unwrap(),
+            Counts::from([(key(FEATURE_CYCLE, "features::a", "features::b"), 2)])
+        );
     }
 }

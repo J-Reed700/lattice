@@ -1,3 +1,4 @@
+use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::features::indexing::engine::metadata_extractor::DocumentMetadata;
 use serde::{Deserialize, Serialize};
@@ -305,17 +306,6 @@ pub struct ChunkWithMetadata {
     pub chunk: TextChunk,
     pub has_overlap_before: bool,
     pub has_overlap_after: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextualizedChunk {
-    pub original_content: String,
-    pub contextualized_content: String,
-    pub context_prefix: String,
-    pub chunk_index: usize,
-    pub token_count: usize,
-    pub start_idx: usize,
-    pub end_idx: usize,
 }
 
 #[cfg(test)]

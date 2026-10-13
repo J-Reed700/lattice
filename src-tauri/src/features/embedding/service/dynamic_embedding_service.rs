@@ -54,7 +54,7 @@ impl EmbeddingServiceTrait for DynamicEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
+        chunks: &[crate::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         let texts: Vec<String> = chunks
             .iter()

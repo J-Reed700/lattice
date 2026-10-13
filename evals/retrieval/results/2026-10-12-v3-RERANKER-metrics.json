@@ -1,0 +1,286 @@
+{
+ "date": "2026-10-12",
+ "fixture": "synthetic-library-v3.json",
+ "embedding": "Qwen3-Embedding-0.6B, Metal, M3 Max 36 GB",
+ "harness": "retrieval_eval --mode production --top-k 10 --compression none --sparse off --fts-header column --fts-header-weight 2 --rerank-depth N RERANKER_DIR (evalopt profile)",
+ "checkpoints": {
+  "Qwen/Qwen3-Reranker-0.6B": {
+   "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+   "model.safetensors_sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b",
+   "dtype_loaded": "F32 on Metal"
+  },
+  "cross-encoder/ms-marco-MiniLM-L-6-v2": {
+   "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+   "model.safetensors_sha256": "821d1aa69520101d6e0737f78a042ae25b19e5cb9160701909d10434f4aeb0ae"
+  }
+ },
+ "runs": {
+  "none": {
+   "recall@5": 0.7784200385356455,
+   "ndcg@5": 0.6899796839991295,
+   "mrr@5": 0.6971098265895953,
+   "passage_recall@5": 0.7630057803468208,
+   "p50_ms": 22.8139375,
+   "p95_ms": 24.605874999999997,
+   "peak_memory_footprint_bytes": 2077590440
+  },
+  "minilm-d48": {
+   "recall@5": 0.7784200385356455,
+   "ndcg@5": 0.6909397293502307,
+   "mrr@5": 0.6978805394990366,
+   "passage_recall@5": 0.7630057803468208,
+   "p50_ms": 1908.2856659999998,
+   "p95_ms": 4195.618958,
+   "peak_memory_footprint_bytes": 4428055632
+  },
+  "qwen-d48": {
+   "recall@5": 0.7938342967244701,
+   "ndcg@5": 0.7379085595465149,
+   "mrr@5": 0.7346820809248554,
+   "passage_recall@5": 0.815028901734104,
+   "p50_ms": 5573.590771,
+   "p95_ms": 6363.454459,
+   "peak_memory_footprint_bytes": 5894620216
+  },
+  "qwen-d64": {
+   "recall@5": 0.7938342967244701,
+   "ndcg@5": 0.7409467362775056,
+   "mrr@5": 0.7393063583815029,
+   "passage_recall@5": 0.815028901734104,
+   "p50_ms": 7423.1914375,
+   "p95_ms": 20482.186792,
+   "peak_memory_footprint_bytes": 5890262072
+  },
+  "qwen-d100": {
+   "recall@5": 0.7996146435452794,
+   "ndcg@5": 0.7465717628104347,
+   "mrr@5": 0.7450867052023121,
+   "passage_recall@5": 0.8208092485549133,
+   "p50_ms": 26098.3753955,
+   "p95_ms": 42956.510541999996,
+   "peak_memory_footprint_bytes": 5883708424
+  }
+ },
+ "latency_caveats": "Another agent ran llama-server on the same GPU during qwen-d64 (p95), qwen-d100 and minilm-d48; an uncontended 5-query smoke at depth 100 took about 12 s per query. qwen-d100 is 109 queries from one process plus 85 from a second (same binary and flags).",
+ "bootstrap_vs_none": {
+  "qwen-d48": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7938342967244701,
+    "delta": 0.015414258188824663,
+    "paired_delta_95ci": [
+     -0.026974951830443163,
+     0.05876685934489402
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6899796839991295,
+    "candidate": 0.7379085595465149,
+    "delta": 0.04792887554738536,
+    "paired_delta_95ci": [
+     0.0023612968582588647,
+     0.09088692379776404
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6971098265895953,
+    "candidate": 0.7346820809248554,
+    "delta": 0.03757225433526012,
+    "paired_delta_95ci": [
+     -0.014643545279383427,
+     0.08458574181117534
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 24.605874999999997,
+    "candidate": 6363.454459
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  },
+  "qwen-d64": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7938342967244701,
+    "delta": 0.015414258188824663,
+    "paired_delta_95ci": [
+     -0.030828516377649325,
+     0.0626204238921002
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6899796839991295,
+    "candidate": 0.7409467362775056,
+    "delta": 0.05096705227837616,
+    "paired_delta_95ci": [
+     0.002631477768154941,
+     0.0967664441481885
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6971098265895953,
+    "candidate": 0.7393063583815029,
+    "delta": 0.04219653179190752,
+    "paired_delta_95ci": [
+     -0.011560693641618497,
+     0.09152215799614644
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 24.605874999999997,
+    "candidate": 20482.186792
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  },
+  "qwen-d100": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7996146435452794,
+    "delta": 0.02119460500963391,
+    "paired_delta_95ci": [
+     -0.027938342967244706,
+     0.07225433526011561
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6899796839991295,
+    "candidate": 0.7465717628104347,
+    "delta": 0.0565920788113051,
+    "paired_delta_95ci": [
+     0.007289632793705469,
+     0.1055219994435659
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6971098265895953,
+    "candidate": 0.7450867052023121,
+    "delta": 0.04797687861271677,
+    "paired_delta_95ci": [
+     -0.006840077071290943,
+     0.101252408477842
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 24.605874999999997,
+    "candidate": 42956.510541999996
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  },
+  "minilm-d48": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7784200385356455,
+    "delta": 0.0,
+    "paired_delta_95ci": [
+     0.0,
+     0.0
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6899796839991295,
+    "candidate": 0.6909397293502307,
+    "delta": 0.0009600453511011667,
+    "paired_delta_95ci": [
+     -0.009644130272757715,
+     0.010621243448897413
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6971098265895953,
+    "candidate": 0.6978805394990366,
+    "delta": 0.0007707129094412333,
+    "paired_delta_95ci": [
+     -0.013680154142581889,
+     0.014258188824662813
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 24.605874999999997,
+    "candidate": 4195.618958
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  }
+ },
+ "bootstrap_other": {
+  "qwen_d48_vs_minilm_d48": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7938342967244701,
+    "delta": 0.015414258188824663,
+    "paired_delta_95ci": [
+     -0.026974951830443163,
+     0.05876685934489402
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6909397293502307,
+    "candidate": 0.7379085595465149,
+    "delta": 0.04696883019628421,
+    "paired_delta_95ci": [
+     0.0041561904503206225,
+     0.08979794301620149
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6978805394990366,
+    "candidate": 0.7346820809248554,
+    "delta": 0.03680154142581889,
+    "paired_delta_95ci": [
+     -0.011657032755298651,
+     0.08265895953757225
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 4195.618958,
+    "candidate": 6363.454459
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  },
+  "qwen_d100_vs_qwen_d48": {
+   "recall_at_k": {
+    "baseline": 0.7938342967244701,
+    "candidate": 0.7996146435452794,
+    "delta": 0.005780346820809248,
+    "paired_delta_95ci": [
+     -0.017341040462427744,
+     0.031791907514450865
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.7379085595465149,
+    "candidate": 0.7465717628104347,
+    "delta": 0.008663203263919728,
+    "paired_delta_95ci": [
+     -0.005858005768336148,
+     0.029260765758157194
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.7346820809248554,
+    "candidate": 0.7450867052023121,
+    "delta": 0.010404624277456647,
+    "paired_delta_95ci": [
+     -0.0023121387283236996,
+     0.030057803468208095
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 6363.454459,
+    "candidate": 42956.510541999996
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  }
+ },
+ "decision": "download Qwen3-Reranker-0.6B instead of MiniLM; enable_reranking stays false (recall@5 and MRR@5 CIs include 0 at every depth; 5.6-12 s/query and +3.8 GB); rerank_max_candidates stays 48"
+}

@@ -157,12 +157,25 @@ mod scope_tests {
 /// sync with text_chunks by triggers (see the schema migration).
 pub struct SqliteTextSearch {
     pool: SqlitePool,
+    header_weight: f64,
 }
 
 impl SqliteTextSearch {
     /// Create a new SQLite text search instance
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            header_weight: fts_query::HEADER_BM25_WEIGHT,
+        }
+    }
+
+    /// Weigh the header column by `weight` instead of
+    /// [`fts_query::HEADER_BM25_WEIGHT`]. The retrieval evaluation sweeps it;
+    /// the application never calls this.
+    #[must_use]
+    pub fn with_header_weight(mut self, weight: f64) -> Self {
+        self.header_weight = weight;
+        self
     }
 }
 
@@ -192,6 +205,7 @@ impl TextSearchPort for SqliteTextSearch {
         }
         let rows = Self::execute_fts_query_scoped(
             &self.pool,
+            self.header_weight,
             &normalized,
             top_k,
             space_id,
@@ -248,6 +262,7 @@ impl TextSearchPort for SqliteTextSearch {
 impl SqliteTextSearch {
     async fn execute_fts_query_scoped(
         pool: &SqlitePool,
+        header_weight: f64,
         query: &FtsQuery,
         top_k: usize,
         space_id: Option<&str>,
@@ -257,22 +272,31 @@ impl SqliteTextSearch {
         // global hits afterwards can hide every hit from a selected chapter.
         //
         // The table name is chosen from a closed set, never from user input.
+        // The weights follow the column order: `chunk_id` (unindexed),
+        // `content`, `header`.
         let mut sql = match query.index {
             FtsIndex::Words => sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-                "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_fts) as score \
-                 FROM chunks_fts JOIN text_chunks c ON chunks_fts.chunk_id = c.id \
-                 WHERE chunks_fts MATCH ",
+                "SELECT c.id as chunk_id, c.document_id, c.content, \
+                 bm25(chunks_fts, 0.0, 1.0, ",
             ),
             FtsIndex::Trigram => sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-                "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_trigram) as score \
-                 FROM chunks_trigram JOIN text_chunks c ON chunks_trigram.chunk_id = c.id \
-                 WHERE chunks_trigram MATCH ",
+                "SELECT c.id as chunk_id, c.document_id, c.content, \
+                 bm25(chunks_trigram, 0.0, 1.0, ",
             ),
         };
-        let order = match query.index {
-            FtsIndex::Words => " ORDER BY bm25(chunks_fts), c.id LIMIT ",
-            FtsIndex::Trigram => " ORDER BY bm25(chunks_trigram), c.id LIMIT ",
-        };
+        sql.push_bind(header_weight);
+        sql.push(match query.index {
+            FtsIndex::Words => {
+                ") as score FROM chunks_fts JOIN text_chunks c ON chunks_fts.chunk_id = c.id \
+                 WHERE chunks_fts MATCH "
+            }
+            FtsIndex::Trigram => {
+                ") as score FROM chunks_trigram \
+                 JOIN text_chunks c ON chunks_trigram.chunk_id = c.id \
+                 WHERE chunks_trigram MATCH "
+            }
+        });
+        let order = " ORDER BY score, c.id LIMIT ";
         sql.push_bind(query.match_expression.clone());
         if space_id.is_none() && allowed_document_ids.is_none() {
             // An unscoped search is a vault-wide one, and a file attached to a
@@ -421,6 +445,52 @@ mod tests {
                 .await
                 .as_deref(),
             Some("doc-a")
+        );
+    }
+
+    /// The header column is weighed on its own: the same word counts for more
+    /// in a chunk's context prefix than in its body at the shipped weight, and
+    /// the weight applies to `header`, not to `content`.
+    #[tokio::test]
+    async fn the_header_column_carries_its_own_weight() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+             CREATE TABLE documents(id TEXT, owner_conversation_id TEXT);
+             CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                chunk_id UNINDEXED, content, header,
+                tokenize='porter unicode61 remove_diacritics 2');
+             INSERT INTO text_chunks VALUES
+                ('titled','doc-titled','quarterly figures for the region'),
+                ('body','doc-body','retention quarterly figures for the region');
+             INSERT INTO chunks_fts VALUES
+                ('titled','quarterly figures for the region','Retention handbook'),
+                ('body','retention quarterly figures for the region','Regional notes');
+             INSERT INTO text_chunks VALUES ('other','doc-other','unrelated words');
+             INSERT INTO chunks_fts VALUES ('other','unrelated words','Misc');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = |search: SqliteTextSearch| async move {
+            search
+                .search_scoped("retention", 5, None, None)
+                .await
+                .unwrap()[0]
+                .doc_id
+                .clone()
+        };
+        assert_eq!(
+            first(SqliteTextSearch::new(pool.clone())).await,
+            "doc-titled"
+        );
+        assert_eq!(
+            first(SqliteTextSearch::new(pool.clone()).with_header_weight(0.25)).await,
+            "doc-body"
         );
     }
 

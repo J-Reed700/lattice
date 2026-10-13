@@ -1,0 +1,18 @@
+{
+  "checker": "minicheck-flan-t5-large",
+  "family": "MiniCheck",
+  "repo": "lytang/MiniCheck-Flan-T5-Large",
+  "revision": "96eafd01cee2d16cf81aaa2fb226b14f422a37b3",
+  "architecture": "Flan-T5-large encoder-decoder, first decoded token",
+  "parameters": 783150080,
+  "device": "cpu",
+  "threads": 4,
+  "load_seconds": 5.037258708034642,
+  "pairs": 101,
+  "median_latency_ms": 180.00074999872595,
+  "torch": "2.14.1",
+  "transformers": "5.19.0",
+  "python": "3.11.15",
+  "machine": "arm64",
+  "decision_rule": "P(supported) > 0.5 (package pred_label)"
+}

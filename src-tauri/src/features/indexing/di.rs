@@ -8,8 +8,9 @@ use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
     ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentRepository,
     DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
-    FileSystemPort, TranscriptionPort, VectorSearchPort,
+    FileSystemPort, OcrPort, TranscriptionPort, VectorSearchPort,
 };
+use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::use_cases::{
@@ -17,7 +18,6 @@ use crate::features::indexing::use_cases::{
     RenameDocumentUseCase,
 };
 use crate::features::indexing::LibraryGc;
-use crate::features::web::WebArchiveServiceTrait;
 use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -58,7 +58,8 @@ pub fn build(
     db_pool: SqlitePool,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
-    web_archive: Arc<dyn WebArchiveServiceTrait>,
+    web_archive: Arc<dyn ArticleArchive>,
+    ocr: Arc<dyn OcrPort>,
 ) -> Result<IndexingDi> {
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
@@ -81,9 +82,10 @@ pub fn build(
     // Build the transcription port once and share the same Arc with the
     // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
     let transcription = crate::features::transcription::di::build(db_pool).port;
-    let content_extractor = Arc::new(ContentExtractionAdapter::with_transcription(
-        transcription.clone(),
-    )) as Arc<dyn ContentExtractionPort>;
+    // Import and re-index share this adapter, so both read scanned pages.
+    let content_extractor =
+        Arc::new(ContentExtractionAdapter::with_transcription(transcription.clone()).with_ocr(ocr))
+            as Arc<dyn ContentExtractionPort>;
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
 
     let indexing_embedding =

@@ -1,0 +1,269 @@
+{
+  "commit": "70cc8c928fbb2b83f88518c88da9bb14bf5837e9",
+  "corpus_sha256": "2dd0ae530cee3f1a7c004c96f0a53042dd7b5ac99d3dd9d64222307a5b607209",
+  "dirty_files": 29,
+  "embedding": {
+    "activation_ms": 4979,
+    "dimension": 1024,
+    "model_id": "qwen3-embedding-0.6b",
+    "model_identity": "sha256:9a4938b79326de6bffad17a93f3877f2c3a7ddcbb004c2e5de95db449b335c1f"
+  },
+  "failed": [
+    {
+      "error": "Invalid input: The system policy, tools and current message need 12226 tokens, above the 11468 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "old-mileage-rate"
+    }
+  ],
+  "finished_at": "2026-10-13T10:27:18.868314+00:00",
+  "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "harness_sha256": {
+    "src-tauri/examples/shipped_path_eval/app.rs": "2b3c1c53a110cc52c10a29b489e997696af88d1608592f95011c4600a5cd082d",
+    "src-tauri/examples/shipped_path_eval/main.rs": "81fa79a5710dd1d3b3531036f0e6236240c8e76e2394e49754d9f4792c3e2977",
+    "src-tauri/examples/shipped_path_eval/proxy.rs": "93b28d741ad28c458f0b17a54d1afbcd647ca8b440411c90b1681954c6efc521",
+    "src-tauri/examples/shipped_path_eval/recipe.rs": "8a30f3ae1ba884a90bddccfcc4493ed183ec47c4f9cfea0e2aa6a8cb5ce2d64b",
+    "src-tauri/examples/shipped_path_eval/record.rs": "b89e6d3f158b4659dc9897c93dc14317bae3fcba3b22a8db625cb095402019d9",
+    "src-tauri/src/features/conversation/chat/headless.rs": "49331d4da3ae618a31970f43903cb0f153cb7c02fc8b67f7b4a3c45f0aaff0f3"
+  },
+  "index": {
+    "chunk_tokens": 800,
+    "chunks": 42,
+    "documents": 42,
+    "duplicates": [],
+    "index_ms": 1425,
+    "lattice_documents": 42
+  },
+  "items": 38,
+  "name": "shipped-path-qwen3.5-9b-local-v1-set",
+  "only": null,
+  "questions_path": "evals/retrieval/synthetic-library-v1.json",
+  "questions_sha256": "2dd0ae530cee3f1a7c004c96f0a53042dd7b5ac99d3dd9d64222307a5b607209",
+  "recipe": {
+    "corpus": "evals/retrieval/synthetic-library-v1.json",
+    "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+    "embedding_model_id": "qwen3-embedding-0.6b",
+    "index": {
+      "chunk_tokens": 800
+    },
+    "name": "shipped-path-qwen3.5-9b-local-v1-set",
+    "questions": "evals/retrieval/synthetic-library-v1.json",
+    "server": {
+      "expected_ctx": 16384,
+      "expected_slots": 1,
+      "gguf": "~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      "launch": "src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 -np 1 --jinja",
+      "model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "thinking": "off",
+      "url": "http://127.0.0.1:8089"
+    },
+    "settings": {
+      "llm": {
+        "contextWindow": 16384
+      }
+    },
+    "utility_role": {
+      "model_id": "qwen3.5-9b-q4_k_m",
+      "served_as": "Qwen3.5-9B-Q4_K_M.gguf"
+    },
+    "wait": {
+      "quiet_cap_secs": 600,
+      "quiet_ms": 3000,
+      "verification_secs": 300
+    }
+  },
+  "recipe_path": "evals/retrieval/shipped-path-recipe-9b-local-v1-set.json",
+  "recipe_sha256": "0f4f0db6e77c74d1babdc430a8c149169e6a935189e4b9e236dca18c983e89cf",
+  "run_ms": 1391641,
+  "schema": "lattice-shipped-path-answers/1",
+  "server": {
+    "build_info": "b11429-d81235049",
+    "modalities": {
+      "audio": false,
+      "video": false,
+      "vision": false
+    },
+    "model_path": "/Users/josh/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+    "n_ctx": 16384,
+    "total_slots": 1
+  },
+  "server_launch": "src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 16384 -np 1 --jinja",
+  "settings": {
+    "backup": {
+      "autoBackupEnabled": false,
+      "backupFrequency": "daily",
+      "backupPath": "",
+      "backupRetentionDays": 30,
+      "compressBackups": true
+    },
+    "indexing": {
+      "autoIndexNewFiles": true,
+      "batchSize": 100,
+      "chunkOverlap": 120,
+      "chunkSize": 800,
+      "excludePatterns": [
+        "*.tmp",
+        "*.log",
+        "node_modules",
+        ".git"
+      ],
+      "fileTypes": [
+        "txt",
+        "md",
+        "pdf",
+        "docx"
+      ],
+      "indexedPaths": []
+    },
+    "llm": {
+      "boundedConversationMemory": true,
+      "contextWindow": 16384,
+      "customTools": [],
+      "externalModelDirectories": [],
+      "llamaCpp": {
+        "authHeaderName": "",
+        "authHeaderValue": "",
+        "model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "url": "http://127.0.0.1:57015"
+      },
+      "localContextWindow": null,
+      "maxTokens": 131072,
+      "model": "llama3.2:latest",
+      "ollamaAuthHeaderName": "",
+      "ollamaAuthHeaderValue": "",
+      "ollamaConfigured": false,
+      "ollamaUrl": "http://localhost:11434",
+      "ollamaUtilityModel": "Qwen3.5-9B-Q4_K_M.gguf",
+      "prompts": {
+        "greetingPromptTemplate": "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.",
+        "noContextPromptTemplate": "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.",
+        "ragPromptTemplate": "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
+        "systemPrompt": "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs."
+      },
+      "provider": "llamacpp",
+      "repeatPenalty": 1.100000023841858,
+      "router": {
+        "ambiguityThreshold": 0.6200000047683716,
+        "clarifyPromptTemplate": "Are you asking about the recent document ({recent_document_title}), or should I search for something else?",
+        "enabled": false,
+        "maxTokens": 120,
+        "model": "phi-3.5-mini-instruct-q4_k_m",
+        "preferLastDocument": true,
+        "promptTemplate": "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:",
+        "temperature": 0.10000000149011612,
+        "timeoutMs": 350
+      },
+      "streamResponses": true,
+      "temperature": 0.699999988079071,
+      "timeoutSeconds": 30,
+      "toolOutput": {
+        "excerptChars": 4000,
+        "highlightTermsMax": 8,
+        "maxChars": 50000,
+        "maxResults": 12,
+        "templates": {
+          "defaultTemplate": "Tool output:\n{json}",
+          "getDocumentTemplate": "Document ID: {document_id}\nTitle: {title}\nChunks: {chunk_count}\nExcerpt: {excerpt}{truncated}",
+          "semanticSearchTemplate": "Search results (showing {shown} of {total_found}):\n{results}"
+        }
+      },
+      "topK": 40,
+      "topP": 0.8999999761581421,
+      "verification": {
+        "enabled": true,
+        "temperature": 0.0,
+        "topK": 1,
+        "topP": 1.0
+      }
+    },
+    "onboarding": {
+      "firstRunDismissed": false
+    },
+    "privacy": {
+      "crashReporting": false,
+      "telemetryEnabled": false
+    },
+    "search": {
+      "embeddingStrategy": "chunk_first",
+      "enableReranking": false,
+      "hybridSearchAlpha": 0.5,
+      "maxResults": 10,
+      "retrievalTuning": {
+        "deepResearchBranchQueries": 3,
+        "deepResearchDepth": 3,
+        "docShortlistCandidateMax": 192,
+        "docShortlistCandidateMin": 48,
+        "docShortlistDocMax": 32,
+        "docShortlistDocMin": 10,
+        "docSupportMultiHitRatioFactor": 0.3499999940395355,
+        "docSupportMultiHitRatioMax": 0.4000000059604645,
+        "docSupportMultiHitRatioMin": 0.18000000715255737,
+        "docSupportSingleHitRatioFactor": 0.6499999761581421,
+        "docSupportSingleHitRatioMax": 0.550000011920929,
+        "docSupportSingleHitRatioMin": 0.30000001192092896,
+        "externalSearchMaxWebTerms": 10,
+        "externalSearchMaxWikiTerms": 8,
+        "externalSearchQueryMaxChars": 1200,
+        "kbSearchMaxLimit": 48,
+        "kbSearchMinLimit": 16,
+        "overlapMinHitsForMultiTerm": 2,
+        "rerankMaxCandidates": 48,
+        "rerankQueryMaxChars": 6000,
+        "shortlistGateMinCandidates": 8,
+        "shortlistGateMinDocs": 4,
+        "sufficiencyMinTermCoverage": 0.4000000059604645,
+        "sufficiencyMinTopScore": 0.3499999940395355,
+        "sufficiencyRetryEnabled": true,
+        "webFetchPageCount": 3,
+        "webPageFetchTimeoutSecs": 12,
+        "webPageMaxChars": 50000,
+        "webSearchMaxResults": 5,
+        "webSnippetMaxChars": 1200,
+        "wikiContextLimit": 3,
+        "wikiSearchMaxResults": 5,
+        "wikiSnippetMaxChars": 1200
+      },
+      "similarityThreshold": 0.699999988079071,
+      "summaryIndexEnabled": false,
+      "vectorIndexCompression": {
+        "dims": 256,
+        "mode": "truncated",
+        "quantization": "i8"
+      }
+    },
+    "sync": {
+      "autoSync": false,
+      "syncEnabled": false,
+      "syncIntervalMinutes": 30,
+      "syncOnStartup": false,
+      "syncUrl": ""
+    },
+    "ui": {
+      "enableAnimations": true,
+      "fontSize": 14,
+      "resultsPerPage": 10,
+      "showPreview": true,
+      "theme": "system"
+    },
+    "vault": {
+      "enabled": false,
+      "vaultPath": "",
+      "watchExternalChanges": false
+    }
+  },
+  "started_at": "2026-10-13T10:04:07.247550+00:00",
+  "thinking": "off",
+  "tool_preferences": {
+    "deepResearchMode": false,
+    "enabledTools": [],
+    "explorerFocus": null,
+    "focusDocumentIds": null,
+    "followupMode": false,
+    "knowledgeBase": false,
+    "turnMode": "auto",
+    "webSearch": false
+  },
+  "utility_role": {
+    "model_id": "qwen3.5-9b-q4_k_m",
+    "served_as": "Qwen3.5-9B-Q4_K_M.gguf"
+  }
+}

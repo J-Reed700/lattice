@@ -1,9 +1,7 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps.
 use super::*;
-use crate::features::{
-    function_calling::dto::{WebSearchInput, WebSearchResult},
-    web::WebServiceTrait,
-};
+use crate::application::contracts::web::{WebSearchInput, WebSearchResult};
+use crate::features::web::WebServiceTrait;
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]

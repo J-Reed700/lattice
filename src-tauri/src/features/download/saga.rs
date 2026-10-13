@@ -282,7 +282,7 @@ impl DownloadSaga {
                 model.architecture.clone(),
                 model.metadata.clone(),
                 |identifier| {
-                    crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
+                    crate::domain::models::catalog_cache::ModelCatalogCache::instance()
                         .lookup(identifier)
                 },
             )
@@ -311,11 +311,10 @@ impl DownloadSaga {
                         // The completion write above has committed; hashing the
                         // artifacts happens off the runtime thread, outside it.
                         let activation = async {
-                            let identity =
-                                crate::features::embedding::artifact_identity::establish(
-                                    &downloaded_model,
-                                )
-                                .await?;
+                            let identity = crate::features::download::artifact_identity::establish(
+                                &downloaded_model,
+                            )
+                            .await?;
                             self.downloaded_model_repo
                                 .set_active_embedding_model(&event.model_id, identity.as_ref())
                                 .await
@@ -596,9 +595,9 @@ mod tests {
 
     #[tokio::test]
     async fn first_embedding_download_is_activated_with_its_identity() {
+        use crate::features::download::artifact_identity;
         use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
         use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
-        use crate::features::embedding::artifact_identity;
         use crate::infrastructure::events::event_bus::EventBus;
         use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
         use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;

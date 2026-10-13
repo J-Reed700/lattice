@@ -19,28 +19,27 @@ use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result as AppResult};
 use crate::shared::ipc::{ApiResult, ErrorCode};
 use std::sync::Arc;
-use tauri::State;
 
 /// The readiness gate every indexing path applies before it embeds anything:
 /// the active embedding model must load and report ready. Takes the load
 /// result so the command path (the container) and the vault note sink (a
 /// composition-root adapter) apply one check with one set of messages.
 ///
-/// `ModelLoadFailed` displays its message verbatim, so commands that report
-/// `e.to_string()` keep exactly the text they always showed.
+/// Every refusal is `ServiceNotAvailable`, so the command and the sink
+/// report the same text for the same cause.
 pub(crate) async fn require_embedding_ready(
     loaded: AppResult<Arc<dyn EmbeddingPort>>,
 ) -> AppResult<()> {
     let embedding_service = loaded.map_err(|e| {
-        AppError::ModelLoadFailed(format!("Could not load the active embedding model: {}", e))
+        AppError::ServiceNotAvailable(format!("Could not load the active embedding model: {}", e))
     })?;
 
     let is_ready = embedding_service.is_ready().await.map_err(|e| {
-        AppError::ModelLoadFailed(format!("Failed to verify embedding model readiness: {}", e))
+        AppError::ServiceNotAvailable(format!("Failed to verify embedding model readiness: {}", e))
     })?;
 
     if !is_ready {
-        return Err(AppError::ModelLoadFailed(
+        return Err(AppError::ServiceNotAvailable(
             "AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
                 .to_string(),
         ));
@@ -74,27 +73,6 @@ pub(crate) fn chunk_tokens_for(chunk_size: u32) -> usize {
     (chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS)
 }
 
-async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
-    match container.get_settings_use_case().execute().await {
-        Ok(settings) => {
-            let chunk_tokens = chunk_tokens_for(settings.indexing.chunk_size);
-            let include_extensions = if settings.indexing.file_types.is_empty() {
-                None
-            } else {
-                Some(settings.indexing.file_types)
-            };
-            (chunk_tokens, include_extensions)
-        }
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "Failed to load indexing settings; falling back to default chunk settings"
-            );
-            (DEFAULT_CHUNK_TOKENS, None)
-        }
-    }
-}
-
 fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
     space_id
         .map(str::trim)
@@ -102,13 +80,13 @@ fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-async fn ensure_space_exists(scope: &dyn DocumentScopePort, space_id: &str) -> Result<(), String> {
+async fn ensure_space_exists(scope: &dyn DocumentScopePort, space_id: &str) -> AppResult<()> {
     let exists = scope
         .space_exists(space_id)
         .await
-        .map_err(|e| format!("Failed to verify target space '{}': {}", space_id, e))?;
+        .map_err(|e| e.with_context(&format!("Failed to verify target space '{}'", space_id)))?;
     if !exists {
-        return Err(format!("Space not found: {}", space_id));
+        return Err(AppError::NotFound(format!("Space not found: {}", space_id)));
     }
     Ok(())
 }
@@ -117,11 +95,16 @@ async fn assign_document_memberships(
     scope: &dyn DocumentScopePort,
     document_ids: &[String],
     space_id: &str,
-) -> Result<(), String> {
+) -> AppResult<()> {
     scope
         .assign_documents(document_ids, space_id)
         .await
-        .map_err(|e| format!("Failed to assign documents to space '{}': {}", space_id, e))
+        .map_err(|e| {
+            e.with_context(&format!(
+                "Failed to assign documents to space '{}'",
+                space_id
+            ))
+        })
 }
 
 /// Core implementation - Indexes a single file (DDD use case)
@@ -246,7 +229,7 @@ pub(crate) async fn index_single_file(
                 .await
                 {
                     state.file_failed();
-                    state.error(e.clone());
+                    state.error(e.to_string());
                     tracing::error!(error = %e, space_id = %space.id, document_id = %response.document_id, "Command: index_file - SPACE_ASSIGNMENT_ERROR");
                     return Err(IndexFileFailure::new(ErrorCode::ProcessingError, e));
                 }
@@ -317,7 +300,7 @@ pub async fn index_directory_impl(
     let document_scope = container.document_scope();
     if let Some(space_id) = requested_space_id.as_deref() {
         if let Err(e) = ensure_space_exists(document_scope.as_ref(), space_id).await {
-            return ApiResult::error(ErrorCode::InvalidInput, e);
+            return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
         }
     }
 
@@ -334,7 +317,7 @@ pub async fn index_directory_impl(
                 .await
                 {
                     tracing::error!(error = %e, space_id = %space_id, "Command: index_directory - SPACE_ASSIGNMENT_ERROR");
-                    return ApiResult::error(ErrorCode::ProcessingError, e);
+                    return ApiResult::error(ErrorCode::ProcessingError, e.to_string());
                 }
             }
 
@@ -448,26 +431,6 @@ pub(crate) async fn delete_indexed_document(
     }
 }
 
-/// Get indexing statistics.
-///
-/// Returns the count of indexed documents and total chunks in the database.
-///
-/// # Arguments
-///
-/// * `container` - Service container with document repository
-///
-/// # Returns
-///
-/// * `Result<Value, String>` - Statistics in JSON format for Tauri
-pub async fn get_indexing_stats(
-    container: State<'_, Container>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = get_indexing_stats_impl(&container).await;
-    result.to_tauri_result()
-}
-
 /// Core implementation - Get indexing statistics
 ///
 /// # Arguments
@@ -496,20 +459,6 @@ pub async fn get_indexing_stats_impl(container: &Container) -> ApiResult<Indexin
         indexed_documents,
         total_chunks,
     })
-}
-
-/// Renames a document's display name (DDD use case)
-///
-/// Updates only the document name metadata in the database.
-pub async fn rename_document(
-    container: State<'_, Container>,
-    document_id: String,
-    new_name: String,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = rename_document_impl(&container, document_id, new_name).await;
-    result.to_tauri_result()
 }
 
 /// Core implementation - Renames a document's display name
@@ -551,63 +500,6 @@ pub async fn rename_document_impl(
         }
         Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
     }
-}
-
-/// Simplified DDD wrapper for index_file (used by plugin)
-///
-/// This is a simplified wrapper command for the frontend to call with minimal parameters.
-/// Delegates to the full `index_file` command with default options.
-pub async fn index_file_ddd(
-    container: State<'_, Container>,
-    path: String,
-    space_id: Option<String>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let (chunk_tokens, _) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexFileRequestDto {
-        path,
-        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        tags: None,
-        metadata: None,
-        space_id,
-    };
-
-    // Delegate to full implementation
-    let result = index_file_impl(&container, request).await;
-    result.to_tauri_result()
-}
-
-/// Simplified DDD wrapper for index_directory (used by plugin)
-///
-/// This is a simplified wrapper command for the frontend to call with minimal parameters.
-/// Delegates to the full `index_directory` command with default options.
-pub async fn index_directory_ddd(
-    container: State<'_, Container>,
-    path: String,
-    recursive: bool,
-    space_id: Option<String>,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let (chunk_tokens, include_extensions) = resolve_indexing_defaults(&container).await;
-
-    let request = IndexDirectoryRequestDto {
-        path,
-        recursive,
-        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
-            max_tokens: chunk_tokens,
-        },
-        include_extensions,
-        space_id,
-    };
-
-    // Delegate to full implementation
-    let result = index_directory_impl(&container, request).await;
-    result.to_tauri_result()
 }
 
 /// IndexProgress structure for progress reporting

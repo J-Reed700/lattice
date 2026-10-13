@@ -698,7 +698,6 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
     for required in [
         "requirements, goals, decisions, facts, preferences",
         "mandatory kind for a hard requirement",
-        "Return only JSON",
         "never paraphrase",
         "zero-based match index",
         "quoted third-party material",
@@ -731,6 +730,23 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
             super::prompts::VERIFIER_SYSTEM.contains(required),
             "verifier prompt no longer says: {required}"
         );
+    }
+    // Both calls send their schema, so the server holds the shape. Asking for
+    // the format in the prompt as well is what costs a small model accuracy.
+    for system in [
+        super::prompts::EXTRACTOR_SYSTEM,
+        super::prompts::VERIFIER_SYSTEM,
+    ] {
+        for demand in [
+            "Return only JSON",
+            "matching the requested schema",
+            "markdown",
+        ] {
+            assert!(
+                !system.contains(demand),
+                "prompt still demands a format: {demand}"
+            );
+        }
     }
     for required in [
         "attempts that failed",
@@ -766,45 +782,18 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
 /// the model then answered with invented fields and every compaction failed.
 #[test]
 fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
-    fn largest_bound(value: &serde_json::Value, path: &str, worst: &mut (usize, String)) {
-        match value {
-            serde_json::Value::Object(map) => {
-                for (key, child) in map {
-                    if matches!(
-                        key.as_str(),
-                        "maxLength" | "maxItems" | "minLength" | "minItems"
-                    ) {
-                        let bound = child
-                            .as_u64()
-                            .and_then(|bound| usize::try_from(bound).ok())
-                            .unwrap_or(0);
-                        if bound > worst.0 {
-                            *worst = (bound, format!("{path}/{key}"));
-                        }
-                    }
-                    largest_bound(child, &format!("{path}/{key}"), worst);
-                }
-            }
-            serde_json::Value::Array(items) => {
-                for (index, child) in items.iter().enumerate() {
-                    largest_bound(child, &format!("{path}/{index}"), worst);
-                }
-            }
-            _ => {}
-        }
-    }
-
     for (name, schema) in [
         ("patch", super::prompts::patch_schema()),
         ("verdict", super::prompts::verdict_schema()),
+        (
+            "turn intent",
+            crate::features::conversation::chat::intent::intent_schema(),
+        ),
     ] {
-        let mut worst = (0, String::new());
-        largest_bound(&schema, "", &mut worst);
+        let (bound, path) = super::prompts::largest_repetition_bound(&schema);
         assert!(
-            worst.0 <= super::prompts::GRAMMAR_REPETITION_LIMIT,
-            "{name} schema bound {} at {} exceeds llama.cpp's grammar limit of {}",
-            worst.0,
-            worst.1,
+            bound <= super::prompts::GRAMMAR_REPETITION_LIMIT as u64,
+            "{name} schema bound {bound} at {path} exceeds llama.cpp's grammar limit of {}",
             super::prompts::GRAMMAR_REPETITION_LIMIT
         );
     }

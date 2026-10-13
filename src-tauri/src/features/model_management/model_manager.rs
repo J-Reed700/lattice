@@ -31,6 +31,7 @@
 // Until then, keep it simple with hardcoded constants.
 
 use crate::infrastructure::services::traits::ModelManagerTrait;
+use crate::shared::constants::RERANKER_MODEL_DIR;
 use crate::shared::error::{AppError, Result, ResultExt};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -51,12 +52,14 @@ const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tok
 const VOCAB_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/vocab.txt";
 const CONFIG_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json";
 
-const RERANKER_MODEL_URL: &str =
-    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/model.safetensors";
-const RERANKER_TOKENIZER_URL: &str =
-    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/tokenizer.json";
-const RERANKER_CONFIG_URL: &str =
-    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/config.json";
+// Qwen3-Reranker-0.6B at a pinned commit, so the files cannot change under the
+// app: the repository has been edited since release, and
+// `evals/retrieval/2026-10-12-RERANKER-FTS-HEADER-FUSION.md` measured exactly
+// these (model.safetensors sha256 27cd75a4…c5e65b). No checksum is passed:
+// `verify_checksum` reads the whole file into memory, 1.2 GB here.
+const RERANKER_MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/model.safetensors";
+const RERANKER_TOKENIZER_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/tokenizer.json";
+const RERANKER_CONFIG_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/config.json";
 
 // NOTE: Update this checksum after downloading the actual model
 // To calculate: sha256sum model.onnx or certUtil -hashfile model.onnx SHA256
@@ -550,7 +553,7 @@ impl ModelManager {
     }
 
     pub async fn ensure_reranker_available(&self) -> Result<PathBuf> {
-        let reranker_dir = self.model_dir.join("reranker");
+        let reranker_dir = self.model_dir.join(RERANKER_MODEL_DIR);
         let model_path = reranker_dir.join("model.safetensors");
         let tokenizer_path = reranker_dir.join("tokenizer.json");
         let config_path = reranker_dir.join("config.json");
@@ -576,15 +579,13 @@ impl ModelManager {
     }
 
     async fn download_reranker_models(&self) -> Result<()> {
-        let reranker_dir = self.model_dir.join("reranker");
+        let reranker_dir = self.model_dir.join(RERANKER_MODEL_DIR);
         fs::create_dir_all(&reranker_dir)
             .await
             .context("Failed to create reranker directory")?;
 
-        // Candle's BertModel needs config.json at load time.
-        // (drives hidden_size, num_attention_heads, etc.). The old ORT
-        // path embedded those in the .onnx graph, so we didn't need a
-        // separate config download. Now we do.
+        // `load_reranker` picks the implementation from config.json, and the
+        // Qwen3 runtime sizes itself from it, so it comes with the weights.
         let files = vec![
             ("model.safetensors", RERANKER_MODEL_URL, None),
             ("tokenizer.json", RERANKER_TOKENIZER_URL, None),
@@ -608,29 +609,25 @@ impl ModelManager {
             }
         }
 
-        let legacy_onnx = reranker_dir.join("model.onnx");
-        if legacy_onnx.exists() {
-            tracing::info!("Pruning legacy reranker model.onnx after migration");
-            if let Err(err) = fs::remove_file(&legacy_onnx).await {
-                tracing::warn!("Failed to prune legacy model.onnx: {err}");
-            }
-        }
-
         Ok(())
     }
 
     pub fn get_reranker_path(&self) -> PathBuf {
-        self.model_dir.join("reranker/model.safetensors")
+        self.model_dir
+            .join(RERANKER_MODEL_DIR)
+            .join("model.safetensors")
     }
 
     pub fn get_reranker_tokenizer_path(&self) -> PathBuf {
-        self.model_dir.join("reranker/tokenizer.json")
+        self.model_dir
+            .join(RERANKER_MODEL_DIR)
+            .join("tokenizer.json")
     }
 
     pub async fn is_reranker_ready(&self) -> bool {
         let model_path = self.get_reranker_path();
         let tokenizer_path = self.get_reranker_tokenizer_path();
-        let config_path = self.model_dir.join("reranker/config.json");
+        let config_path = self.model_dir.join(RERANKER_MODEL_DIR).join("config.json");
 
         tokio::fs::metadata(&model_path).await.is_ok()
             && tokio::fs::metadata(&tokenizer_path).await.is_ok()

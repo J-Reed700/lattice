@@ -40,6 +40,7 @@ use tracing::{debug, info, warn};
 use url::{Host, Url};
 
 use super::web::is_blocked_ip;
+use crate::shared::error::{AppError, Result};
 use std::net::IpAddr;
 
 /// The reserved address the page reports back through. `.invalid` can never
@@ -103,19 +104,18 @@ struct Report {
 /// Fails when no app is installed, the URL is not a public web address, the
 /// page never gets past its check within `timeout`, or the window cannot be
 /// created. The caller decides what a failure means; nothing is cached here.
-pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
-    let app = APP
-        .get()
-        .ok_or_else(|| "no browser is available to read pages".to_string())?;
-    let target = Url::parse(url).map_err(|e| format!("not a URL: {e}"))?;
+pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage> {
+    let app = APP.get().ok_or_else(|| {
+        AppError::ServiceNotAvailable("no browser is available to read pages".to_string())
+    })?;
+    let target = Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("not a URL: {e}")))?;
     if !navigation_allowed(&target) {
-        return Err("not a public web address".to_string());
+        return Err(AppError::Security("not a public web address".to_string()));
     }
 
-    let _slot = SLOTS
-        .acquire()
-        .await
-        .map_err(|_| "the page reader is shutting down".to_string())?;
+    let _slot = SLOTS.acquire().await.map_err(|_| {
+        AppError::ServiceNotAvailable("the page reader is shutting down".to_string())
+    })?;
 
     let label = format!(
         "{LABEL_PREFIX}{}",
@@ -151,7 +151,7 @@ pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
         })
         .on_download(|_, _| false)
         .build()
-        .map_err(|e| format!("could not open a browser window: {e}"))?;
+        .map_err(|e| AppError::InternalError(format!("could not open a browser window: {e}")))?;
 
     // The check is driven from here, not from timers inside the page: a
     // challenge page replaces its document mid-check, and anything injected
@@ -185,12 +185,16 @@ pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
 
     let report = match outcome {
         Ok(Ok(report)) => report,
-        Ok(Err(_)) => return Err("the browser window closed before the page settled".into()),
+        Ok(Err(_)) => {
+            return Err(AppError::InternalError(
+                "the browser window closed before the page settled".to_string(),
+            ))
+        }
         Err(_) => {
-            return Err(format!(
+            return Err(AppError::Network(format!(
                 "the page did not get past its check within {}s",
                 timeout.as_secs()
-            ))
+            )))
         }
     };
     let page = page_from_report(report, landed)?;
@@ -206,14 +210,19 @@ pub async fn read(url: &str, timeout: Duration) -> Result<BrowserPage, String> {
 /// The page read, located at `landed`, the webview's own URL. No page is
 /// returned when the browser cannot say where it is or it is somewhere the
 /// reader may not go.
-fn page_from_report(report: Report, landed: Option<Url>) -> Result<BrowserPage, String> {
+fn page_from_report(report: Report, landed: Option<Url>) -> Result<BrowserPage> {
     if report.blocked {
-        return Err("the page is behind a check that asks a person to click".into());
+        return Err(AppError::Network(
+            "the page is behind a check that asks a person to click".to_string(),
+        ));
     }
-    let landed =
-        landed.ok_or_else(|| "the browser could not say where the page ended up".to_string())?;
+    let landed = landed.ok_or_else(|| {
+        AppError::InternalError("the browser could not say where the page ended up".to_string())
+    })?;
     if !matches!(landed.scheme(), "http" | "https") || !navigation_allowed(&landed) {
-        return Err(format!("the page ended up somewhere not allowed: {landed}"));
+        return Err(AppError::Security(format!(
+            "the page ended up somewhere not allowed: {landed}"
+        )));
     }
     Ok(BrowserPage {
         final_url: landed.to_string(),
@@ -441,6 +450,7 @@ mod tests {
         let error = read("https://example.com/", Duration::from_secs(1))
             .await
             .unwrap_err();
-        assert!(error.contains("no browser"));
+        assert!(matches!(error, AppError::ServiceNotAvailable(_)));
+        assert!(error.to_string().contains("no browser"));
     }
 }

@@ -147,6 +147,32 @@ describe('computeModelFit', () => {
   });
 });
 
+describe('computeModelFit on the curated chat catalog', () => {
+  // Working sets from src-tauri/src/domain/models/curated.rs (weights + KV
+  // cache at 8K + 1 GB runtime). Apple Silicon machines of each common size.
+  const verdict = (minimumRamGb: number, totalRamGb: number) =>
+    computeModelFit(model(minimumRamGb), caps({ total_ram_gb: totalRamGb }))?.verdict;
+
+  it('fits each first-run pick on the machines it is picked for', () => {
+    expect(verdict(4.1, 8)).toBe('fits'); // Qwen 3.5 4B
+    expect(verdict(7.0, 16)).toBe('fits'); // Qwen 3.5 9B
+    expect(verdict(7.0, 64)).toBe('fits');
+  });
+
+  it('calls the 27B and the Gemma MoE tight at 32 GB and fitting at 36 GB', () => {
+    for (const minimum of [18.1, 18.5]) {
+      expect(verdict(minimum, 32)).toBe('tight');
+      expect(verdict(minimum, 36)).toBe('fits');
+    }
+  });
+
+  it('keeps the 35B A3B off 32 GB machines', () => {
+    expect(verdict(23.6, 32)).toBe('too-large');
+    expect(verdict(23.6, 36)).toBe('tight');
+    expect(verdict(23.6, 64)).toBe('fits');
+  });
+});
+
 describe('FIT_LABEL', () => {
   it('is one word per verdict', () => {
     expect(FIT_LABEL.fits).toBe('Fits');

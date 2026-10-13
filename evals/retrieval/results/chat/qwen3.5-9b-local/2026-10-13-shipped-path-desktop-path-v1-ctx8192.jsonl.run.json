@@ -1,0 +1,381 @@
+{
+  "commit": "70cc8c928fbb2b83f88518c88da9bb14bf5837e9",
+  "corpus_sha256": "7b95adfe6baa0ab6924f8cdef88e2052c18ad2e5550090279a5ce4795af85486",
+  "dirty_files": 11,
+  "embedding": {
+    "activation_ms": 10446,
+    "dimension": 1024,
+    "model_id": "qwen3-embedding-0.6b",
+    "model_identity": "sha256:9a4938b79326de6bffad17a93f3877f2c3a7ddcbb004c2e5de95db449b335c1f"
+  },
+  "failed": [
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8691 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-multihop-garnetline-renewal"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 7602 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-multihop-dunlark-notice"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 5894 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-multihop-part-undertaking"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8614 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-paraphrase-monitor"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 7046 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-paraphrase-sick-child"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8427 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-paraphrase-clock"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8326 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-buried-handbook-ticket"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6733 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-buried-agreement-meeting"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6926 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-section-after-clause"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6287 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-opening-agreement"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8546 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-transcript-rollback"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6429 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-abstain-named-clause"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6267 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-abstain-home-address"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6092 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-abstain-repair-cost"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6208 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-abstain-order"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6768 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-conflict-ring-threshold"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6751 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-conflict-receipt-threshold"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6219 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-table-order-line"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6464 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-table-calibration"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 5847 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-table-spend-csv"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8430 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-ocr-stock-reference"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8165 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-fragment-stopcock"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6623 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-collision-ostrel-row"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6500 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-calderwick"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 7670 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-runbook-ticket"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 8211 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-garnetline-chain"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6321 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-encryption-versions"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6065 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-ring-thresholds"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6970 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-plant-room-key"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6164 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-abstain-followup"
+    },
+    {
+      "error": "Invalid input: The system policy, tools and current message need 6537 tokens, above the 5734 this request may occupy. Shorten the message or choose a larger-context model.. Please check your input and try again.",
+      "query_id": "dp-mt-merridew-reversal"
+    }
+  ],
+  "finished_at": "2026-10-13T08:20:39.786605+00:00",
+  "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "harness_sha256": {
+    "src-tauri/examples/shipped_path_eval/app.rs": "bb8b7c34b3ef3f975c63ce6f00451e9ad0943688bc6dfc52bd6fba4dc530ab23",
+    "src-tauri/examples/shipped_path_eval/main.rs": "c75d0d28fa32afd92ef555edf8657429beb63071dd651583a89d6a3b092e8799",
+    "src-tauri/examples/shipped_path_eval/proxy.rs": "93b28d741ad28c458f0b17a54d1afbcd647ca8b440411c90b1681954c6efc521",
+    "src-tauri/examples/shipped_path_eval/recipe.rs": "f18a383d3ebe669372712290240cd971fe155dd5255d289fd048eeca6b6ac30c",
+    "src-tauri/examples/shipped_path_eval/record.rs": "b89e6d3f158b4659dc9897c93dc14317bae3fcba3b22a8db625cb095402019d9",
+    "src-tauri/src/features/conversation/chat/headless.rs": "49331d4da3ae618a31970f43903cb0f153cb7c02fc8b67f7b4a3c45f0aaff0f3"
+  },
+  "index": {
+    "chunk_tokens": 800,
+    "chunks": 2264,
+    "documents": 379,
+    "duplicates": [],
+    "index_ms": 318275,
+    "lattice_documents": 379
+  },
+  "items": 34,
+  "name": "shipped-path-qwen3.5-9b-local",
+  "only": null,
+  "questions_path": "evals/retrieval/desktop-path-v1.json",
+  "questions_sha256": "3e72d6d1a4a244731fd26bf8e5f858701ee42d147a19a5ab31e99572f458f70b",
+  "recipe": {
+    "corpus": "evals/retrieval/synthetic-library-v3.json",
+    "embedding_model_dir": "~/.cache/lattice/models/qwen3-embedding-0.6b",
+    "embedding_model_id": "qwen3-embedding-0.6b",
+    "index": {
+      "chunk_tokens": 800
+    },
+    "name": "shipped-path-qwen3.5-9b-local",
+    "questions": "evals/retrieval/desktop-path-v1.json",
+    "server": {
+      "expected_ctx": 8192,
+      "expected_slots": 1,
+      "gguf": "~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+      "gguf_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      "launch": "src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 8192 -np 1 --jinja",
+      "model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "thinking": "off",
+      "url": "http://127.0.0.1:8089"
+    },
+    "settings": {
+      "llm": {
+        "contextWindow": 8192
+      }
+    },
+    "wait": {
+      "quiet_cap_secs": 600,
+      "quiet_ms": 3000,
+      "verification_secs": 300
+    }
+  },
+  "recipe_path": "evals/retrieval/shipped-path-recipe-9b-local.json",
+  "recipe_sha256": "0c3b5063a5250b913585bead92ad52b9491c6e27c59ea41d634a9e15e17c3663",
+  "run_ms": 604798,
+  "schema": "lattice-shipped-path-answers/1",
+  "server": {
+    "build_info": "b11429-d81235049",
+    "modalities": {
+      "audio": false,
+      "video": false,
+      "vision": false
+    },
+    "model_path": "/Users/josh/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf",
+    "n_ctx": 8192,
+    "total_slots": 1
+  },
+  "server_launch": "src-tauri/binaries/llama-server-aarch64-apple-darwin -m ~/.cache/lattice-evals/models/Qwen3.5-9B-Q4_K_M.gguf --port 8089 --host 127.0.0.1 --no-webui -ngl 99 --ctx-size 8192 -np 1 --jinja",
+  "settings": {
+    "backup": {
+      "autoBackupEnabled": false,
+      "backupFrequency": "daily",
+      "backupPath": "",
+      "backupRetentionDays": 30,
+      "compressBackups": true
+    },
+    "indexing": {
+      "autoIndexNewFiles": true,
+      "batchSize": 100,
+      "chunkOverlap": 120,
+      "chunkSize": 800,
+      "excludePatterns": [
+        "*.tmp",
+        "*.log",
+        "node_modules",
+        ".git"
+      ],
+      "fileTypes": [
+        "txt",
+        "md",
+        "pdf",
+        "docx"
+      ],
+      "indexedPaths": []
+    },
+    "llm": {
+      "boundedConversationMemory": true,
+      "contextWindow": 8192,
+      "customTools": [],
+      "externalModelDirectories": [],
+      "llamaCpp": {
+        "authHeaderName": "",
+        "authHeaderValue": "",
+        "model": "Qwen3.5-9B-Q4_K_M.gguf",
+        "url": "http://127.0.0.1:54605"
+      },
+      "localContextWindow": null,
+      "maxTokens": 131072,
+      "model": "llama3.2:latest",
+      "ollamaAuthHeaderName": "",
+      "ollamaAuthHeaderValue": "",
+      "ollamaConfigured": false,
+      "ollamaUrl": "http://localhost:11434",
+      "ollamaUtilityModel": "",
+      "prompts": {
+        "greetingPromptTemplate": "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.",
+        "noContextPromptTemplate": "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.",
+        "ragPromptTemplate": "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
+        "systemPrompt": "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs."
+      },
+      "provider": "llamacpp",
+      "repeatPenalty": 1.100000023841858,
+      "router": {
+        "ambiguityThreshold": 0.6200000047683716,
+        "clarifyPromptTemplate": "Are you asking about the recent document ({recent_document_title}), or should I search for something else?",
+        "enabled": false,
+        "maxTokens": 120,
+        "model": "phi-3.5-mini-instruct-q4_k_m",
+        "preferLastDocument": true,
+        "promptTemplate": "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:",
+        "temperature": 0.10000000149011612,
+        "timeoutMs": 350
+      },
+      "streamResponses": true,
+      "temperature": 0.699999988079071,
+      "timeoutSeconds": 30,
+      "toolOutput": {
+        "excerptChars": 4000,
+        "highlightTermsMax": 8,
+        "maxChars": 50000,
+        "maxResults": 12,
+        "templates": {
+          "defaultTemplate": "Tool output:\n{json}",
+          "getDocumentTemplate": "Document ID: {document_id}\nTitle: {title}\nChunks: {chunk_count}\nExcerpt: {excerpt}{truncated}",
+          "semanticSearchTemplate": "Search results (showing {shown} of {total_found}):\n{results}"
+        }
+      },
+      "topK": 40,
+      "topP": 0.8999999761581421,
+      "verification": {
+        "enabled": true,
+        "temperature": 0.0,
+        "topK": 1,
+        "topP": 1.0
+      }
+    },
+    "onboarding": {
+      "firstRunDismissed": false
+    },
+    "privacy": {
+      "crashReporting": false,
+      "telemetryEnabled": false
+    },
+    "search": {
+      "embeddingStrategy": "chunk_first",
+      "enableReranking": false,
+      "hybridSearchAlpha": 0.5,
+      "maxResults": 10,
+      "retrievalTuning": {
+        "deepResearchBranchQueries": 3,
+        "deepResearchDepth": 3,
+        "docShortlistCandidateMax": 192,
+        "docShortlistCandidateMin": 48,
+        "docShortlistDocMax": 32,
+        "docShortlistDocMin": 10,
+        "docSupportMultiHitRatioFactor": 0.3499999940395355,
+        "docSupportMultiHitRatioMax": 0.4000000059604645,
+        "docSupportMultiHitRatioMin": 0.18000000715255737,
+        "docSupportSingleHitRatioFactor": 0.6499999761581421,
+        "docSupportSingleHitRatioMax": 0.550000011920929,
+        "docSupportSingleHitRatioMin": 0.30000001192092896,
+        "externalSearchMaxWebTerms": 10,
+        "externalSearchMaxWikiTerms": 8,
+        "externalSearchQueryMaxChars": 1200,
+        "kbSearchMaxLimit": 48,
+        "kbSearchMinLimit": 16,
+        "overlapMinHitsForMultiTerm": 2,
+        "rerankMaxCandidates": 48,
+        "rerankQueryMaxChars": 6000,
+        "shortlistGateMinCandidates": 8,
+        "shortlistGateMinDocs": 4,
+        "sufficiencyMinTermCoverage": 0.4000000059604645,
+        "sufficiencyMinTopScore": 0.3499999940395355,
+        "sufficiencyRetryEnabled": true,
+        "webFetchPageCount": 3,
+        "webPageFetchTimeoutSecs": 12,
+        "webPageMaxChars": 50000,
+        "webSearchMaxResults": 5,
+        "webSnippetMaxChars": 1200,
+        "wikiContextLimit": 3,
+        "wikiSearchMaxResults": 5,
+        "wikiSnippetMaxChars": 1200
+      },
+      "similarityThreshold": 0.699999988079071,
+      "summaryIndexEnabled": false,
+      "vectorIndexCompression": {
+        "dims": 256,
+        "mode": "truncated",
+        "quantization": "i8"
+      }
+    },
+    "sync": {
+      "autoSync": false,
+      "syncEnabled": false,
+      "syncIntervalMinutes": 30,
+      "syncOnStartup": false,
+      "syncUrl": ""
+    },
+    "ui": {
+      "enableAnimations": true,
+      "fontSize": 14,
+      "resultsPerPage": 10,
+      "showPreview": true,
+      "theme": "system"
+    },
+    "vault": {
+      "enabled": false,
+      "vaultPath": "",
+      "watchExternalChanges": false
+    }
+  },
+  "started_at": "2026-10-13T08:10:34.991324+00:00",
+  "thinking": "off",
+  "tool_preferences": {
+    "deepResearchMode": false,
+    "enabledTools": [],
+    "explorerFocus": null,
+    "focusDocumentIds": null,
+    "followupMode": false,
+    "knowledgeBase": false,
+    "turnMode": "auto",
+    "webSearch": false
+  }
+}

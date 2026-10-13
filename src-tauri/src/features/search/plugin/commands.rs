@@ -8,8 +8,6 @@ pub use crate::features::search::commands::{
     semantic_search,
 };
 
-pub use crate::features::cache::commands::clear_search_cache;
-
 // Compatibility aliases for older frontend call sites.
 pub use find_similar as search_by_tags;
 pub use search_fast as keyword_search;

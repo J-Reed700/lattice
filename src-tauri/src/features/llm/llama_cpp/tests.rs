@@ -1305,20 +1305,6 @@ async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
 }
 
 #[test]
-fn internal_requests_do_not_disable_model_reasoning() {
-    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
-    for effort in [None, Some("none")] {
-        let request = CompletionRequest {
-            reasoning_effort: effort.map(str::to_owned),
-            ..Default::default()
-        };
-        let body = client.body(&request).unwrap();
-        assert!(body.get("reasoning_effort").is_none());
-        assert!(body.get("chat_template_kwargs").is_none());
-    }
-}
-
-#[test]
 fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
     let probability = |word: &str| json!({"content":[{"token":word,"logprob":-0.1,"top_logprobs":[{"token":word,"logprob":-0.1}]}]});
     let mut decoder = streaming::Decoder::for_completion();
@@ -1391,16 +1377,11 @@ fn server_config(prefill_guard: bool) -> ServerConfig {
     let settings = settings("http://localhost:8080".into());
     ServerConfig {
         model: "test-model".into(),
-        generation: GenerationConfig {
-            temperature: settings.temperature,
-            top_p: settings.top_p,
-            top_k: settings.top_k,
-            max_tokens: settings.max_tokens as usize,
-            repeat_penalty: settings.repeat_penalty,
-        },
+        generation: GenerationConfig::from_settings(&settings),
         context_window: settings.context_window as usize,
         stall_timeout: Duration::from_secs(30),
         supports_tools: true,
+        model_thinking: ThinkingPolicy::PerRequest,
         prefill_guard,
     }
 }
@@ -1472,10 +1453,13 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
     let sidecar_body = sent(sidecar_server.received_requests().await.unwrap());
     assert_eq!(remote_body, sidecar_body);
     assert_eq!(remote_body["id_slot"], 2);
+    // An effort level is not a switch: the tool round still goes out with
+    // thinking explicitly off.
     assert_eq!(
-        remote_body["chat_template_kwargs"]["reasoning_effort"],
-        "low"
+        remote_body["chat_template_kwargs"]["enable_thinking"],
+        false
     );
+    assert!(remote_body.get("reasoning_effort").is_none());
     assert_eq!(remote_body["max_tokens"], 512);
 }
 
@@ -1553,6 +1537,7 @@ async fn read(
         &mut false,
     )
     .await
+    .map(|(response, _)| response)
 }
 
 /// Ninety seconds of prompt processing, reported every 45, then the answer.

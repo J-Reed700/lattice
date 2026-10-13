@@ -1,7 +1,7 @@
 //! Chunking of extracted article text ahead of embedding and storage.
 
 use super::WebIngestionService;
-use crate::features::indexing::engine::chunker::ContextualizedChunk;
+use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::indexing::use_cases::embedding_input::SpanEmbeddingGroup;
 use crate::shared::error::Result;
 

@@ -1,6 +1,7 @@
-use crate::application::ports::llm_port::InferencePriority;
+use crate::application::ports::llm_port::{CompletionRequest, InferencePriority};
 use crate::application::ports::LLMPort;
-use crate::application::services::completion_input::{complete_text, TextCall};
+use crate::application::services::completion_input::from_context;
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -17,10 +18,27 @@ Also give a confidence between 0 and 1.
 Recent conversation:
 {context}
 
-User message: {message}
+User message: {message}";
 
-Respond with strict JSON only, no other text:
-{\"needsKnowledgeBase\":bool,\"needsWeb\":bool,\"isFollowup\":bool,\"confidence\":number}";
+/// The answer's shape, sent as the request's schema rather than spelled out in
+/// the prompt: a format demand in the prompt is what costs a small model its
+/// accuracy, while the grammar holds the shape. No bound here comes near
+/// llama.cpp's grammar repetition limit, past which it would drop the grammar.
+pub(crate) fn intent_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "needsKnowledgeBase": { "type": "boolean" },
+            "needsWeb": { "type": "boolean" },
+            "isFollowup": { "type": "boolean" },
+            // Range left to the clamp in `classify`: not every provider's
+            // structured output accepts numeric bounds.
+            "confidence": { "type": "number" }
+        },
+        "required": ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"]
+    })
+}
 
 pub const DEFAULT_INTENT_CONFIDENCE_THRESHOLD: f32 = 0.5;
 const DEFAULT_INTENT_TIMEOUT_MS: u64 = 15_000;
@@ -101,20 +119,7 @@ impl IntentClassifier {
         let timeout_ms = self.timeout_ms.max(1);
 
         // Part of the turn the user is waiting on.
-        let result = timeout(
-            Duration::from_millis(timeout_ms),
-            complete_text(
-                self.llm.as_ref(),
-                &prompt,
-                &[],
-                TextCall {
-                    priority: InferencePriority::Interactive,
-                    cancel: self.cancel.clone(),
-                    cache_key: None,
-                },
-            ),
-        )
-        .await;
+        let result = timeout(Duration::from_millis(timeout_ms), self.complete(prompt)).await;
 
         match result {
             Ok(Ok(text)) => {
@@ -152,6 +157,30 @@ impl IntentClassifier {
                 TurnIntent::fallback()
             }
         }
+    }
+}
+
+impl IntentClassifier {
+    /// One schema-constrained request. A provider that cannot hold the answer
+    /// to the schema still gets the prompt, and the lenient parser reads what
+    /// comes back.
+    async fn complete(&self, prompt: String) -> Result<String> {
+        let response = self
+            .llm
+            .complete(&CompletionRequest {
+                input: from_context("", &[], &prompt),
+                json_schema: Some(intent_schema()),
+                priority: InferencePriority::Interactive,
+                cancel: self.cancel.clone(),
+                ..Default::default()
+            })
+            .await?;
+        if !response.tool_calls.is_empty() {
+            return Err(AppError::InvalidState(
+                "Unexpected tool call in intent classification".into(),
+            ));
+        }
+        Ok(response.text)
     }
 }
 
@@ -278,6 +307,76 @@ mod tests {
 
         assert!(intent.needs_web);
         assert!(!intent.needs_knowledge_base);
+    }
+
+    #[derive(Default)]
+    struct RecordingLLM {
+        sent: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    #[async_trait]
+    impl LLMPort for RecordingLLM {
+        async fn complete(
+            &self,
+            request: &CompletionRequest,
+        ) -> crate::shared::error::Result<CompletionResponse> {
+            self.sent.lock().unwrap().push(request.clone());
+            Ok(CompletionResponse::from_text(
+                r#"{"confidence":0.9,"isFollowup":false,"needsKnowledgeBase":true,"needsWeb":false}"#,
+            ))
+        }
+        fn model_name(&self) -> &str {
+            "recording-llm"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+        async fn is_ready(&self) -> crate::shared::error::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn the_schema_travels_with_the_request_and_the_prompt_demands_no_format() {
+        let llm = Arc::new(RecordingLLM::default());
+        let intent = IntentClassifier::new(llm.clone()).classify(&input()).await;
+
+        assert!(intent.needs_knowledge_base);
+        let sent = llm.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let request = sent.first().unwrap();
+        assert_eq!(request.json_schema, Some(intent_schema()));
+        let prompt = request.user_text();
+        for demand in ["JSON", "strict", "Respond with", "no other text", "bool"] {
+            assert!(!prompt.contains(demand), "prompt still asks for: {demand}");
+        }
+        for field in ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"] {
+            assert!(prompt.contains(field), "prompt no longer explains {field}");
+        }
+    }
+
+    #[test]
+    fn the_schema_requires_every_field_the_parser_reads() {
+        let schema = intent_schema();
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        let parsed: TurnIntent = serde_json::from_value(serde_json::json!({
+            "needsKnowledgeBase": true, "needsWeb": false, "isFollowup": false, "confidence": 0.5
+        }))
+        .unwrap();
+        assert!(parsed.needs_knowledge_base);
+        assert_eq!(
+            required,
+            ["needsKnowledgeBase", "needsWeb", "isFollowup", "confidence"]
+        );
+        assert_eq!(schema["additionalProperties"], false);
     }
 
     #[tokio::test]

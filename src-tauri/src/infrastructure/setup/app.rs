@@ -2,6 +2,7 @@ use crate::application::ports::SettingsRepositoryPort;
 use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
 use crate::infrastructure::events::event_bus::EventBus;
+use crate::shared::error::AppError;
 use crate::shared::runtime::supervised_task::supervise_cancellable;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
@@ -16,17 +17,17 @@ struct StartupFailure {
 }
 
 impl StartupFailure {
-    fn setup(message: String) -> Self {
+    fn setup(error: AppError) -> Self {
         Self {
             title: "Application Setup Failed",
-            message,
+            message: error.to_string(),
         }
     }
 
-    fn initialization(message: String) -> Self {
+    fn initialization(error: AppError) -> Self {
         Self {
             title: "Application Initialization Failed",
-            message,
+            message: error.to_string(),
         }
     }
 }
@@ -41,10 +42,10 @@ impl StartupFailure {
 /// * `db_path` - Path to the SQLite database file
 ///
 /// # Returns
-/// * `Result<DatabaseConnection, String>` - Database connection or error
+/// * `Result<DatabaseConnection, AppError>` - Database connection or error
 async fn initialize_database_layer(
     db_path: PathBuf,
-) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, String> {
+) -> Result<crate::infrastructure::persistence::database::DatabaseConnection, AppError> {
     tracing::info!("Initializing database...");
     match super::setup_database(db_path).await {
         Ok(conn) => {
@@ -82,7 +83,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// * `config` - Application configuration
 ///
 /// # Returns
-/// * `Result<Container, String>` - Container (always succeeds, AI features optional)
+/// * `Result<Container, AppError>` - Container (always succeeds, AI features optional)
 async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
@@ -92,7 +93,7 @@ async fn create_container(
     ollama_endpoint: String,
     ollama_model: String,
     app_handle: tauri::AppHandle,
-) -> Result<crate::interfaces::di::Container, String> {
+) -> Result<crate::interfaces::di::Container, AppError> {
     use crate::interfaces::di::Container;
 
     tracing::info!("Creating DI Container (pure DDD architecture)");
@@ -120,7 +121,7 @@ async fn create_container(
     )
     .await
     .map(|c| c.with_app_handle(app_handle))
-    .map_err(|e| format!("Failed to create container: {}", e))
+    .map_err(|e| e.with_context("Failed to create container"))
 }
 
 /// Orchestrates the sequential initialization of all application layers.
@@ -204,7 +205,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             conn.pool().clone(),
         )
         .await
-        .map_err(|error| format!("Failed to initialize local audit persistence: {error}"))?;
+        .map_err(|error| error.with_context("Failed to initialize local audit persistence"))?;
         let security_context = initialize_security_layer();
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
@@ -219,11 +220,11 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         let bootstrap_settings_repo =
             crate::features::settings::repository::SettingsRepository::new(app_dir.clone())
                 .await
-                .map_err(|e| format!("Failed to read settings during startup: {e}"))?;
+                .map_err(|e| e.with_context("Failed to read settings during startup"))?;
         let bootstrap_settings = bootstrap_settings_repo
             .get_all()
             .await
-            .map_err(|e| format!("Failed to load settings during startup: {e}"))?;
+            .map_err(|e| e.with_context("Failed to load settings during startup"))?;
         let ollama_endpoint = bootstrap_settings.llm.ollama_url.clone();
         let ollama_model = bootstrap_settings.llm.model.clone();
 
@@ -248,7 +249,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             tracing::warn!(error = %e, "failed to compute file-access allowed roots");
         }
 
-        Ok::<crate::interfaces::di::Container, String>(container)
+        Ok::<crate::interfaces::di::Container, AppError>(container)
     }
     .await
     .map_err(StartupFailure::initialization)?;
@@ -296,7 +297,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // IMPORTANT: Use the same DownloadManager instance the container/use-cases use.
     // This keeps model downloads and download drawer events in sync.
     let download_manager = container.download_manager().map_err(|e| {
-        StartupFailure::initialization(format!("Failed to get shared download manager: {}", e))
+        StartupFailure::initialization(e.with_context("Failed to get shared download manager"))
     })?;
 
     // Background tasks use tokio::spawn - async state is on heap, not stack

@@ -4,6 +4,7 @@ use super::{IndexPersistence, USearchVectorIndex, VectorIndexCompression};
 use crate::application::contracts::search::SearchResultRecord;
 use crate::application::ports::vector_search_port::VectorIndexEntry;
 use crate::application::ports::{EmbeddingPort, VectorSearchPort};
+use crate::features::embedding::loading::EmbeddingIndexBinding;
 use crate::features::search::{engine::service::SearchResult, SearchServiceTrait};
 use crate::shared::error::{AppError, Result};
 use std::{
@@ -143,6 +144,18 @@ impl RuntimeVectorIndex {
             crate::shared::runtime::background::spawn(persistence.run());
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingIndexBinding for RuntimeVectorIndex {
+    async fn bind_first(
+        &self,
+        pool: &sqlx::SqlitePool,
+        model: &dyn EmbeddingPort,
+        late_chunking: bool,
+    ) -> Result<()> {
+        RuntimeVectorIndex::bind_first(self, pool, model, late_chunking).await
     }
 }
 

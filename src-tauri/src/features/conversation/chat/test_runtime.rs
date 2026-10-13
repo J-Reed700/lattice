@@ -28,6 +28,8 @@ pub(super) struct FakeRuntime {
     /// One map per test, so a research job answers the command of its own
     /// test — and never another test's.
     pub(super) research_waiters: Arc<crate::features::conversation::chat::ResearchWaiters>,
+    /// The `answer_thinking` setting the turn reads.
+    pub(super) answer_thinking: bool,
 }
 
 impl Default for FakeRuntime {
@@ -41,6 +43,7 @@ impl Default for FakeRuntime {
                 crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
             ),
             research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
+            answer_thinking: false,
         }
     }
 }
@@ -161,6 +164,7 @@ impl ChatPolicy for FakeRuntime {
     async fn settings(&self) -> Result<crate::features::settings::dto::SettingsDto> {
         let mut settings = crate::features::settings::dto::SettingsDto::default();
         settings.llm.verification.enabled = false;
+        settings.llm.answer_thinking = self.answer_thinking;
         Ok(settings)
     }
     async fn validate_message(&self, message: &str) -> Result<String> {

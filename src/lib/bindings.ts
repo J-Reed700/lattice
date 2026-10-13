@@ -964,7 +964,7 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
 /**
  * Download a model by ID
  *
- * Thin wrapper that delegates to the existing download_model implementation in llm.rs.
+ * Thin wrapper over `download_model_impl`, the shared model-setup command.
  * Maps the response from DownloadModelResponseDto to DownloadModelResponse.
  */
 async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, ApiError>> {
@@ -1349,7 +1349,7 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * # Returns
  *
  * * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
- * * `Err(AppError)` - If rate limited, validation fails, or search execution fails
+ * * `Err(ApiError)` - If rate limited, validation fails, or search execution fails
  *
  * # Errors
  *
@@ -1417,7 +1417,7 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * 9. Track document access asynchronously
  * 10. Log audit event with query and result count
  */
-async searchDocuments(options: SearchOptions) : Promise<Result<JsonValue, string>> {
+async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_documents", { options }) };
 } catch (e) {
@@ -1440,30 +1440,23 @@ async searchDocuments(options: SearchOptions) : Promise<Result<JsonValue, string
  *
  * # Returns
  *
- * * JSON response with structure:
- * - Success: `{ "ok": true, "data": [[chunk_id, score], ...] }`
- * - Error: `{ "ok": false, "error": { "code": "...", "message": "..." } }`
+ * * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
+ * * `Err(ApiError)` - If rate limited, validation fails, or search fails
  *
  * # Example
  *
  * ```typescript
  * import { invoke } from '@tauri-apps/api/core';
  *
- * // Fast search without metadata
- * const response = await invoke<{
- * ok: boolean;
- * data?: [string, number][];
- * error?: { code: string; message: string; }
- * }>('search_fast', {
+ * // Fast search without metadata; a failure rejects with an ApiError
+ * const hits = await invoke<[string, number][]>('search_fast', {
  * query: 'neural networks',
  * limit: 10
  * });
  *
- * if (response.ok) {
- * response.data.forEach(([chunkId, score]) => {
+ * hits.forEach(([chunkId, score]) => {
  * console.log(`${chunkId}: ${score}`);
  * });
- * }
  * ```
  *
  * # Security
@@ -1486,7 +1479,7 @@ async searchDocuments(options: SearchOptions) : Promise<Result<JsonValue, string
  * - Pre-filtering before enriched search
  * - Real-time search-as-you-type
  */
-async searchFast(query: string, limit: number) : Promise<Result<JsonValue, string>> {
+async searchFast(query: string, limit: number) : Promise<Result<([string, number])[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|search_fast", { query, limit }) };
 } catch (e) {
@@ -1494,7 +1487,7 @@ async searchFast(query: string, limit: number) : Promise<Result<JsonValue, strin
     else return { status: "error", error: e  as any };
 }
 },
-async semanticSearch(request: SearchRequestDto) : Promise<Result<JsonValue, string>> {
+async semanticSearch(request: SearchRequestDto) : Promise<Result<SearchResponseDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|semantic_search", { request }) };
 } catch (e) {
@@ -1502,7 +1495,7 @@ async semanticSearch(request: SearchRequestDto) : Promise<Result<JsonValue, stri
     else return { status: "error", error: e  as any };
 }
 },
-async hybridSearch(args: HybridSearchArgs) : Promise<Result<JsonValue, string>> {
+async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|hybrid_search", { args }) };
 } catch (e) {
@@ -3494,7 +3487,7 @@ async updateDailyNoteContent(request: UpdateDailyNoteContentRequestDto) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async startModelDownload(request: StartDownloadRequest) : Promise<Result<string, string>> {
+async startModelDownload(request: StartDownloadRequest) : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|start_model_download", { request }) };
 } catch (e) {
@@ -3502,7 +3495,7 @@ async startModelDownload(request: StartDownloadRequest) : Promise<Result<string,
     else return { status: "error", error: e  as any };
 }
 },
-async pauseDownload(id: string) : Promise<Result<null, string>> {
+async pauseDownload(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|pause_download", { id }) };
 } catch (e) {
@@ -3510,7 +3503,7 @@ async pauseDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async resumeDownload(id: string) : Promise<Result<null, string>> {
+async resumeDownload(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|resume_download", { id }) };
 } catch (e) {
@@ -3518,7 +3511,7 @@ async resumeDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async cancelDownload(id: string) : Promise<Result<null, string>> {
+async cancelDownload(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|cancel_download", { id }) };
 } catch (e) {
@@ -3526,7 +3519,7 @@ async cancelDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async retryDownload(id: string) : Promise<Result<null, string>> {
+async retryDownload(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|retry_download", { id }) };
 } catch (e) {
@@ -3534,7 +3527,7 @@ async retryDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async removeDownload(id: string) : Promise<Result<null, string>> {
+async removeDownload(id: string) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|remove_download", { id }) };
 } catch (e) {
@@ -3542,7 +3535,7 @@ async removeDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async clearCompletedDownloads() : Promise<Result<number, string>> {
+async clearCompletedDownloads() : Promise<Result<number, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|clear_completed_downloads") };
 } catch (e) {
@@ -3550,7 +3543,7 @@ async clearCompletedDownloads() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getDownloadStatus(id: string) : Promise<Result<DownloadStatusResponse | null, string>> {
+async getDownloadStatus(id: string) : Promise<Result<DownloadStatusResponse | null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|get_download_status", { id }) };
 } catch (e) {
@@ -3558,7 +3551,7 @@ async getDownloadStatus(id: string) : Promise<Result<DownloadStatusResponse | nu
     else return { status: "error", error: e  as any };
 }
 },
-async listDownloads() : Promise<Result<DownloadStatusResponse[], string>> {
+async listDownloads() : Promise<Result<DownloadStatusResponse[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:download|list_downloads") };
 } catch (e) {
@@ -4500,6 +4493,10 @@ createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
 export type CacheMetrics = { hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
 /**
+ * The query cache's statistics, reported with each search response.
+ */
+export type CacheStatsDto = { size: number; capacity: number; hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
+/**
  * Request to cancel a batch job.
  */
 export type CancelBatchJobRequestDto = {
@@ -5353,6 +5350,28 @@ export type EmbeddingStrategySettingDto =
  * states, so every chunk is conditioned on the rest of its span.
  */
 "late_chunking"
+/**
+ * Enhanced search response with caching metadata.
+ *
+ * Includes cache statistics and execution metrics.
+ */
+export type EnhancedSearchResponse = {
+/**
+ * Search results
+ */
+results: SearchResultDto[];
+/**
+ * Whether results came from cache
+ */
+fromCache: boolean;
+/**
+ * Query execution time in milliseconds
+ */
+executionTimeMs: number;
+/**
+ * Optional cache statistics
+ */
+cacheStats: CacheStatsDto | null }
 export type EnsureLearningLessonNoteRequestDto = { programId: string; lessonId: string }
 /**
  * Comprehensive error code enumeration for API responses.
@@ -6170,6 +6189,29 @@ topK: number;
  */
 repeatPenalty: number;
 /**
+ * Flat penalty on any token already in the recent window. The Qwen 3.5
+ * cards recommend 1.5 in both modes to stop loops, and warn it can
+ * occasionally mix languages, so it stays the user's to lower. Zero is off.
+ */
+presencePenalty: number;
+/**
+ * Let the model think before an answer that offers it no tools. Rounds
+ * that can call tools never think: Qwen 3.5 9B writes its calls inside
+ * the thinking block, where llama.cpp's tool grammar ends generation.
+ */
+answerThinking: boolean;
+/**
+ * Pin thinking on or off for every request, overriding the rule above
+ * and the model's own (Laguna always thinks: with thinking off it
+ * repeats one special token). `Auto` keeps both rules.
+ */
+thinkingOverride: ThinkingOverrideDto;
+/**
+ * Sampling for requests that think before answering. The fields above
+ * are the profile for answering directly.
+ */
+thinkingSampling: SamplingProfileDto;
+/**
  * Maximum tokens to generate
  */
 maxTokens: number;
@@ -6188,6 +6230,12 @@ contextWindow: number;
  * shrunk. `context_window` above governs remote providers, not this.
  */
 localContextWindow: number | null;
+/**
+ * Speculative decoding for the bundled local server. Experimental, and
+ * applied only to a model that carries a multi-token-prediction head;
+ * every other model starts as it always has.
+ */
+speculativeDecoding: SpeculativeDecodingDto;
 /**
  * Ollama server URL
  */
@@ -7277,6 +7325,18 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
+/**
+ * The sampling a model runs with in one mode.
+ */
+export type SamplingProfileDto = { temperature: number; topP: number; topK: number;
+/**
+ * Flat penalty on any token already in the recent window. Zero is off.
+ */
+presencePenalty: number;
+/**
+ * Multiplicative penalty on repeated tokens. One is off.
+ */
+repeatPenalty: number }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
@@ -7374,6 +7434,24 @@ threshold: number | null;
  * Search algorithm mode
  */
 mode: SearchModeDto }
+/**
+ * Search response to the frontend.
+ *
+ * Contains results and metadata about the search operation.
+ */
+export type SearchResponseDto = {
+/**
+ * Search results
+ */
+results: SearchResultDto[];
+/**
+ * Total number of results (before limit)
+ */
+total: number;
+/**
+ * Query execution time in milliseconds
+ */
+query_time_ms: number }
 /**
  * Individual search result.
  *
@@ -7667,6 +7745,15 @@ export type SourceGroup = { id: string; title: string; edition: string | null; d
  */
 export type SpaceDocumentDto = { documentId: string; fileName: string; category: string | null; modifiedAt: string | null }
 /**
+ * Speculative decoding for the bundled llama-server.
+ */
+export type SpeculativeDecodingDto = { mode: "off" } |
+/**
+ * Draft with the model's own multi-token-prediction head. Only GGUFs
+ * that carry one can use it; the server then runs a single slot.
+ */
+{ mode: "mtpDraft"; nMax: number }
+/**
  * Request to start a batch file import job.
  *
  * Accepts 1-100 file paths for batch processing.
@@ -7883,6 +7970,23 @@ export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxR
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
+/**
+ * Whether the model thinks, overriding the rule for its model.
+ */
+export type ThinkingOverrideDto =
+/**
+ * Answers think when the user asked and no tool can be called; a model
+ * that breaks with thinking off (Laguna) always thinks.
+ */
+"auto" |
+/**
+ * Every request thinks, tool rounds included.
+ */
+"on" |
+/**
+ * No request thinks, whatever the model.
+ */
+"off"
 /**
  * Tool (function) definition for LLM function calling
  *

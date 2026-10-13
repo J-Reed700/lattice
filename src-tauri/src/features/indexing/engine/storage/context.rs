@@ -1,8 +1,8 @@
 //! Contextualized chunk storage operations.
 
 use super::checksum::calculate_checksum;
+use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::embedding::service::MODEL_NAME;
-use crate::features::indexing::engine::chunker::ContextualizedChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::shared::fs::path::path_to_string;
 use chrono::Utc;

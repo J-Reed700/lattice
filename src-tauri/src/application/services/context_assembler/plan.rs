@@ -99,8 +99,10 @@ impl ContextAccounting {
 /// rendered roles and text instead.
 #[derive(Debug, Clone)]
 pub struct ContextPlan {
-    /// Typed messages, in the §10.4 rendering order. Built as typed entries end
-    /// to end: memory is never promoted into system instructions by string
+    /// Typed messages: system policy, the summary when older turns are out of
+    /// the window, the verbatim recent turns, then one user message holding
+    /// this turn's sections and the request. Built as typed entries end to
+    /// end: memory is never promoted into system instructions by string
     /// parsing, and raw user bytes are never trimmed.
     pub messages: Vec<CompletionInput>,
     /// Memory revision this plan was built from. Carried through every tool

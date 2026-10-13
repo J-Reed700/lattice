@@ -445,7 +445,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
+            "Service not available: AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
         );
         assert_eq!(f.index.last_path(), None, "use case must not run");
     }
@@ -461,7 +461,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "Could not load the active embedding model: weights are corrupt"
+            "Service not available: Could not load the active embedding model: weights are corrupt"
         );
     }
 

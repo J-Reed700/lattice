@@ -11,6 +11,7 @@
 pub mod artifact_identity;
 pub mod checksum;
 pub mod chunking_strategy;
+pub mod contextualized_chunk;
 pub mod file_metadata;
 pub mod indexing_outcome;
 pub mod metadata;
@@ -24,6 +25,7 @@ pub mod sparse_embedding;
 pub use artifact_identity::{ArtifactIdentity, ArtifactIdentityError};
 pub use checksum::Checksum;
 pub use chunking_strategy::ChunkingStrategy;
+pub use contextualized_chunk::ContextualizedChunk;
 pub use file_metadata::FileMetadata;
 pub use indexing_outcome::IndexingOutcome;
 pub use metadata::ValidatedMetadata;

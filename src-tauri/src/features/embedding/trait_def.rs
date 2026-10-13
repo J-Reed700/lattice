@@ -82,7 +82,7 @@ pub trait EmbeddingServiceTrait: Send + Sync {
     /// Vector of embeddings in the same order as input chunks
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
+        chunks: &[crate::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>>;
 
     /// True when this service can also produce learned sparse term weights.
@@ -146,7 +146,7 @@ pub trait EmbeddingServiceTrait: Send + Sync {
         span_text: &str,
         chunk_ranges: &[std::ops::Range<usize>],
     ) -> Result<Vec<Vec<f32>>> {
-        use crate::features::indexing::engine::chunker::ContextualizedChunk;
+        use crate::domain::value_objects::ContextualizedChunk;
         let texts =
             crate::application::ports::embedding_port::span_chunk_texts(span_text, chunk_ranges)?;
         let prefix = chunk_ranges

@@ -3,7 +3,7 @@
 //! Provides deterministic, thread-safe mock implementation of WebCaptureServiceTrait.
 
 #[cfg(test)]
-use crate::features::function_calling::dto::UrlPreview;
+use crate::application::contracts::web::UrlPreview;
 #[cfg(test)]
 use crate::features::web::WebCaptureServiceTrait;
 #[cfg(test)]

@@ -13,6 +13,8 @@ use std::sync::OnceLock;
 use objc::runtime::{class_addMethod, Class, Imp, Object, Sel, NO, YES};
 use objc::Message;
 
+use crate::shared::error::AppError;
+
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 static PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -64,9 +66,10 @@ pub(super) fn reply(app: &tauri::AppHandle, saved: bool) {
 }
 
 /// Called from Tauri's setup hook on the AppKit main thread.
-pub(super) fn install(app: &tauri::AppHandle) -> Result<(), String> {
-    APP.set(app.clone())
-        .map_err(|_| "Native quit handler was already installed".to_string())?;
+pub(super) fn install(app: &tauri::AppHandle) -> Result<(), AppError> {
+    APP.set(app.clone()).map_err(|_| {
+        AppError::InvalidState("Native quit handler was already installed".to_string())
+    })?;
 
     // SAFETY: setup runs on the main thread after NSApplication and Tao's
     // delegate exist. Both objects are runtime-owned for the application's
@@ -74,27 +77,34 @@ pub(super) fn install(app: &tauri::AppHandle) -> Result<(), String> {
     // encoding are NSUInteger (self: id, selector: SEL, sender: NSApplication*).
     #[allow(unsafe_code)]
     unsafe {
-        let application_class = Class::get("NSApplication")
-            .ok_or("NSApplication is unavailable; cannot install safe quit")?;
+        let application_class = Class::get("NSApplication").ok_or_else(|| {
+            AppError::InternalError(
+                "NSApplication is unavailable; cannot install safe quit".to_string(),
+            )
+        })?;
         let application: *mut Object = application_class
             .send_message(Sel::register("sharedApplication"), ())
-            .map_err(|error| error.to_string())?;
-        let application = application
-            .as_ref()
-            .ok_or("NSApplication is not initialized; cannot install safe quit")?;
+            .map_err(|error| AppError::InternalError(error.to_string()))?;
+        let application = application.as_ref().ok_or_else(|| {
+            AppError::InternalError(
+                "NSApplication is not initialized; cannot install safe quit".to_string(),
+            )
+        })?;
         let delegate: *mut Object = application
             .send_message(Sel::register("delegate"), ())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AppError::InternalError(error.to_string()))?;
         let Some(delegate) = delegate.as_ref() else {
-            return Err("AppKit delegate is unavailable; cannot install safe quit".into());
+            return Err(AppError::InternalError(
+                "AppKit delegate is unavailable; cannot install safe quit".to_string(),
+            ));
         };
         let class = delegate.class();
         let selector = Sel::register("applicationShouldTerminate:");
         if class.instance_method(selector).is_some() {
-            return Err(
+            return Err(AppError::InvalidState(
                 "AppKit delegate already handles termination; review the native save integration"
-                    .into(),
-            );
+                    .to_string(),
+            ));
         }
         let implementation = std::mem::transmute::<
             extern "C" fn(&Object, Sel, *mut Object) -> usize,
@@ -107,7 +117,9 @@ pub(super) fn install(app: &tauri::AppHandle) -> Result<(), String> {
             c"Q@:@".as_ptr(),
         ) == NO
         {
-            return Err("Could not install the native quit save handler".into());
+            return Err(AppError::InternalError(
+                "Could not install the native quit save handler".to_string(),
+            ));
         }
     }
     Ok(())

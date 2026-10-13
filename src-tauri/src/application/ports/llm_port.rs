@@ -263,6 +263,11 @@ pub struct SamplingOverride {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub top_k: Option<i32>,
+    /// A flat penalty on every token already in the recent window. Greedy
+    /// decoding still takes the argmax of the penalised logits, so a verdict
+    /// whose label word the prompt just listed would be pushed off it.
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
 }
 
 impl SamplingOverride {
@@ -272,12 +277,89 @@ impl SamplingOverride {
             temperature: Some(0.0),
             top_p: Some(1.0),
             top_k: Some(1),
+            presence_penalty: Some(0.0),
         }
     }
 
     /// Whether this override asks for anything at all.
     pub fn is_empty(&self) -> bool {
-        self.temperature.is_none() && self.top_p.is_none() && self.top_k.is_none()
+        self.temperature.is_none()
+            && self.top_p.is_none()
+            && self.top_k.is_none()
+            && self.presence_penalty.is_none()
+    }
+}
+
+/// Whether a model with a switchable thinking phase thinks before it answers.
+///
+/// Local chat templates disagree on their own default (the official Qwen 3.5
+/// 9B template thinks unless told not to, the 2B does not, Laguna does not),
+/// so a request always says which it wants rather than inheriting whichever
+/// default the GGUF happens to carry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingMode {
+    /// Answer directly. Every request that can call tools stays here: Qwen
+    /// 3.5 9B writes its tool calls inside the thinking block, where the
+    /// tool-call grammar ends generation (llama.cpp #20837). A provider that
+    /// grades reasoning still applies an explicit `reasoning_effort` level.
+    #[default]
+    Off,
+    /// Think first. Only for requests that offer no callable tools.
+    On,
+}
+
+/// Who decides whether a model thinks: each request, or the model itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingPolicy {
+    /// Each request's [`ThinkingMode`], held off while tools can be called.
+    #[default]
+    PerRequest,
+    /// Every request thinks, tool rounds and utility calls included. For a
+    /// model whose output breaks with thinking off: Laguna XS 2.1 repeats one
+    /// special token until the output limit.
+    AlwaysOn,
+    /// No request thinks.
+    AlwaysOff,
+}
+
+impl ThinkingPolicy {
+    /// This policy, unless it leaves the choice to each request; then `fallback`.
+    pub fn or(self, fallback: Self) -> Self {
+        match self {
+            Self::PerRequest => fallback,
+            pinned => pinned,
+        }
+    }
+
+    /// The mode `request` is sent with. Per request, a round that can still
+    /// call tools never thinks: Qwen 3.5 9B writes its calls inside the
+    /// thinking block, where the tool-call grammar ends generation
+    /// (llama.cpp #20837).
+    pub fn mode_for(self, request: &CompletionRequest) -> ThinkingMode {
+        match self {
+            Self::AlwaysOn => ThinkingMode::On,
+            Self::AlwaysOff => ThinkingMode::Off,
+            Self::PerRequest
+                if request.thinking == ThinkingMode::On && !request.may_call_tools() =>
+            {
+                ThinkingMode::On
+            }
+            Self::PerRequest => ThinkingMode::Off,
+        }
+    }
+}
+
+impl ThinkingMode {
+    /// The mode for one answering round: thinking only when the user asked
+    /// for it and nothing in `request` can be called this round.
+    pub fn for_answer(answer_thinking: bool, request: &CompletionRequest) -> Self {
+        if answer_thinking && !request.may_call_tools() {
+            Self::On
+        } else {
+            Self::Off
+        }
     }
 }
 
@@ -287,6 +369,10 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// How the model may use the offered tools. `None` leaves the provider's
+    /// default (auto). `Some(ToolChoice::None)` keeps the tools in the prompt,
+    /// so the cached prefix stays valid, while forbidding calls this round.
+    pub tool_choice: Option<ToolChoice>,
     /// Ask providers that support it for displayable reasoning. This controls
     /// summaries or explicit thinking text only; opaque provider state used for
     /// replay remains separate in `CompletionResponse::replay`.
@@ -295,6 +381,10 @@ pub struct CompletionRequest {
     /// Sampling for this request. `None` keeps the provider's configuration.
     #[serde(default)]
     pub sampling: Option<SamplingOverride>,
+    /// Whether the model thinks before answering. Off unless the caller asks:
+    /// see [`ThinkingMode`] for why tool rounds never think.
+    #[serde(default)]
+    pub thinking: ThinkingMode,
     /// Caps generated tokens for this request, overriding the provider's own
     /// configured ceiling when it is lower.
     ///
@@ -336,6 +426,14 @@ pub struct CompletionRequest {
     pub assigned_slot: Option<u32>,
 }
 
+/// Tool-use policy for one request, mirroring the OpenAI `tool_choice` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolChoice {
+    Auto,
+    None,
+    Required,
+}
+
 impl CompletionRequest {
     pub fn effective_time_budget(&self) -> Duration {
         self.time_budget.unwrap_or(DEFAULT_COMPLETION_TIME_BUDGET)
@@ -364,6 +462,50 @@ impl CompletionRequest {
         match self.max_output_tokens {
             Some(requested) if requested > 0 => requested.min(provider_limit),
             _ => provider_limit,
+        }
+    }
+
+    /// Whether the model could answer this request with a tool call: tools
+    /// are offered and the round does not forbid calling them.
+    pub fn may_call_tools(&self) -> bool {
+        !self.tools.is_empty() && self.tool_choice != Some(ToolChoice::None)
+    }
+}
+
+impl ToolChoice {
+    /// The OpenAI wire value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::None => "none",
+            Self::Required => "required",
+        }
+    }
+}
+
+// Written by hand rather than derived so the enum's declaration stays the one
+// shared with the other tracks that add it; requests serialize with it.
+impl Serialize for ToolChoice {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolChoice {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        match String::deserialize(deserializer)?.as_str() {
+            "auto" => Ok(Self::Auto),
+            "none" => Ok(Self::None),
+            "required" => Ok(Self::Required),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["auto", "none", "required"],
+            )),
         }
     }
 }
@@ -541,6 +683,46 @@ mod tests {
         assert_eq!(estimate_tokens("héllo wörld!"), 3, "characters, not bytes");
         assert_eq!(chars_within_tokens(1_000, 4.0), 3_000);
         assert_eq!(chars_within_tokens(1_000, 3.0), 2_250);
+    }
+
+    #[test]
+    fn a_pinned_policy_overrides_the_request_and_per_request_holds_tool_rounds_off() {
+        let tool = ToolDefinition {
+            name: "search".into(),
+            description: "Search".into(),
+            parameters: serde_json::json!({"type":"object"}),
+        };
+        let plain = CompletionRequest::default();
+        let thinking = CompletionRequest {
+            thinking: ThinkingMode::On,
+            ..Default::default()
+        };
+        let tool_round = CompletionRequest {
+            tools: vec![tool],
+            ..thinking.clone()
+        };
+        let per_request = ThinkingPolicy::PerRequest;
+        assert_eq!(per_request.mode_for(&plain), ThinkingMode::Off);
+        assert_eq!(per_request.mode_for(&thinking), ThinkingMode::On);
+        assert_eq!(per_request.mode_for(&tool_round), ThinkingMode::Off);
+        assert_eq!(ThinkingPolicy::AlwaysOn.mode_for(&plain), ThinkingMode::On);
+        assert_eq!(
+            ThinkingPolicy::AlwaysOn.mode_for(&tool_round),
+            ThinkingMode::On
+        );
+        assert_eq!(
+            ThinkingPolicy::AlwaysOff.mode_for(&thinking),
+            ThinkingMode::Off
+        );
+        assert_eq!(
+            ThinkingPolicy::PerRequest.or(ThinkingPolicy::AlwaysOn),
+            ThinkingPolicy::AlwaysOn
+        );
+        assert_eq!(
+            ThinkingPolicy::AlwaysOff.or(ThinkingPolicy::AlwaysOn),
+            ThinkingPolicy::AlwaysOff,
+            "the user's pin beats the model's"
+        );
     }
 
     #[test]

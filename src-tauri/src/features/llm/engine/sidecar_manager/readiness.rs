@@ -46,8 +46,20 @@ pub(super) fn reserve_free_port() -> std::io::Result<PortReservation> {
     ))
 }
 
+/// Prompt-cache checkpoints kept per slot: llama-server's default, pinned so a
+/// change upstream cannot quietly change how far a slot can roll back.
+const CTX_CHECKPOINTS: u32 = 32;
+
+/// Tokens between two checkpoints. A hybrid model (Qwen 3.5's Gated DeltaNet
+/// layers) cannot trim its recurrent state, so a prompt that differs from the
+/// cached one rolls back to the last checkpoint before the difference; at the
+/// server's 8192 default, a change anywhere in the first 8k tokens threw the
+/// whole prefix away. Pure-attention models trim the KV cache directly and
+/// never consult these checkpoints, so the flag costs them nothing.
+const CHECKPOINT_MIN_STEP: u32 = 1024;
+
 pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
         "--port".to_string(),
@@ -69,7 +81,24 @@ pub(super) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         // tool-call format; without it llama-server cannot render `tools` or
         // parse `tool_calls` back out, and the tool loop gets plain text.
         "--jinja".to_string(),
-    ]
+        "--ctx-checkpoints".to_string(),
+        CTX_CHECKPOINTS.to_string(),
+        "--checkpoint-min-step".to_string(),
+        CHECKPOINT_MIN_STEP.to_string(),
+    ];
+    if let Some(n_max) = config.mtp_draft() {
+        // MTP drafting supports one slot only, so the server gives up its
+        // parallel slots for it; the scheduler sizes itself from `/props`.
+        args.extend([
+            "-np".to_string(),
+            "1".to_string(),
+            "--spec-type".to_string(),
+            "draft-mtp".to_string(),
+            "--spec-draft-n-max".to_string(),
+            n_max.to_string(),
+        ]);
+    }
+    args
 }
 
 /// Mint a bearer token for one sidecar process.

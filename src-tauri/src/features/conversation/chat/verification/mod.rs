@@ -166,7 +166,7 @@ fn fit_sentences(sentences: &[String], max: usize) -> Vec<String> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct GroundingReport {
+pub struct GroundingReport {
     pub(super) claims_evaluated: usize,
     pub(super) supported_claims: usize,
     pub(super) supported_claim_notes: Vec<String>,
@@ -257,7 +257,7 @@ impl GroundingReport {
     /// The metadata blob persisted with the assistant message.
     ///
     /// Additive: every key the UI already reads keeps its name and meaning.
-    pub(super) fn metadata_json(&self) -> serde_json::Value {
+    pub fn metadata_json(&self) -> serde_json::Value {
         let verdicts: Vec<serde_json::Value> = self
             .claims
             .iter()
@@ -313,14 +313,14 @@ impl GroundingReport {
 }
 
 /// Runs the grounding passes for one turn.
-pub(super) struct GroundingVerifier {
+pub struct GroundingVerifier {
     judge: Option<ClaimJudge>,
 }
 
 impl GroundingVerifier {
     /// The judge is on whenever a handle exists; without one the turn is
     /// verified lexically and says so in the log.
-    pub(super) fn new(llm: Option<Arc<dyn LLMPort>>) -> Self {
+    pub fn new(llm: Option<Arc<dyn LLMPort>>) -> Self {
         match llm {
             Some(llm) => {
                 let judge = ClaimJudge::new(llm);
@@ -373,7 +373,7 @@ impl GroundingVerifier {
         self
     }
 
-    pub(super) async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
+    pub async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
         let claims = lexical::lexical_pass(response, sources);
         if claims.is_empty() {
             return GroundingReport::default();

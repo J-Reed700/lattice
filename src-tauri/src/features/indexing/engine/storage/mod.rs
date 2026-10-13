@@ -35,7 +35,8 @@ mod types;
 
 pub use types::DocumentRecord;
 
-use crate::features::indexing::engine::chunker::{ContextualizedChunk, TextChunk};
+use crate::domain::value_objects::ContextualizedChunk;
+use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;

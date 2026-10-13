@@ -5,10 +5,10 @@
     clippy::panic
 )]
 use super::*;
+use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult};
 use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::features::learning::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::features::{
-    function_calling::dto::{FetchUrlContentOutput, WebSearchOutput, WebSearchResult},
     learning::{lessons::course_generation_tests::ScriptedModel, repository::LearningRepository},
     web::mocks::MockWebService,
 };

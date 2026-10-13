@@ -10,7 +10,12 @@ import { VaultAPI } from '@/lib/api';
 import type { DownloadStatus } from '@/types/downloads';
 import type { TauriEvents } from '@/types/events';
 
-import { applyDownloadSnapshot, fileNameWithinModel, useDownloadsListener } from './useDownloads';
+import {
+  applyDownloadSnapshot,
+  fileNameWithinModel,
+  useDownloadActions,
+  useDownloadsListener,
+} from './useDownloads';
 
 const queuedDownload = (id: string, filename: string): DownloadStatus => ({
   id,
@@ -101,6 +106,40 @@ describe('useDownloadsListener', () => {
     const events = vi.mocked(listen).mock.calls.map(([name]) => name);
     expect(events).toEqual(expect.arrayContaining(['download:progress']));
     expect(events).toHaveLength(2);
+  });
+});
+
+describe('useDownloadActions', () => {
+  const renderActions = () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    return renderHook(() => useDownloadActions(), { wrapper }).result;
+  };
+
+  it('treats a session the backend no longer has as a stale row, not a failure', async () => {
+    const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    api.pauseDownload = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Not found: Download session not found: d1',
+      details: { code: 'NOT_FOUND', message: 'Not found: Download session not found: d1' },
+    });
+    api.listDownloads = vi.fn().mockResolvedValue({ ok: true, data: [] });
+
+    await expect(renderActions().current.pauseDownload('d1')).resolves.toBeUndefined();
+    expect(api.listDownloads).toHaveBeenCalled();
+  });
+
+  it('names the backend reason when an action fails', async () => {
+    const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    api.resumeDownload = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Network error',
+      details: { code: 'NETWORK_ERROR', message: 'Network error', details: 'connection reset' },
+    });
+
+    await expect(renderActions().current.resumeDownload('d1'))
+      .rejects.toThrow('Failed to resume download: Network error: connection reset');
   });
 });
 

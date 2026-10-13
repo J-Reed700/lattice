@@ -1,166 +1,45 @@
 import { useCallback } from 'react';
 
-
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
-import { saveBookmark, removeBookmark } from '@/features/references/api/queries';
 import { settingsQueryOptions } from '@/features/settings/hooks/useSettingsQuery';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { VaultAPI } from '@/lib/api';
 import type { ConversationTangentDto } from '@/lib/bindings';
-import { conversationKeys, type ConversationListParams } from '@/shared/conversations/conversationKeys';
-import type { CompactionResult, ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/shared/conversations/conversationsStore.types';
-import type {
-  ConversationLinkedDocumentDto, ConversationWebSourceDto,
-} from '@/types';
-import type { Conversation, ConversationMessage } from '@/types/conversation';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
+import type { CompactionResult } from '@/shared/conversations/conversationsStore.types';
+import type { Conversation } from '@/types/conversation';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 
-import { fetchBookmarks, fetchConversationDetail, fetchConversationList, fetchLinkedDocuments, fetchMemberships, fetchMessages, fetchWebSources, toConversationMessage } from '../api/conversationQueryData';
-
-import type { ConversationLifecycleRegistry } from './lifecycleRegistry';
-import type { QueryClient } from '@tanstack/react-query';
+import {
+  forgetRequestedConversation,
+  restoreMissingItem,
+  setUiError,
+  type ConversationActionsDependencies,
+} from './conversationActionHelpers';
+import { useConversationMessageActions } from './useConversationMessageActions';
+import { useConversationNavigationActions } from './useConversationNavigationActions';
+import { useConversationSourceActions } from './useConversationSourceActions';
+import { fetchConversationDetail } from '../api/conversationQueryData';
 
 export const MAX_OBSERVED_CONVERSATIONS = 20;
 export const MAX_OBSERVED_MEMBERSHIPS = 100;
 
-const setUiError = (error: unknown): void => {
-  conversationUiStore.setState({ error: error instanceof Error ? error.message : String(error) });
-};
-
-function restoreMissingItem<T extends { id: string }>(current: T[] | undefined, previous: T[], id: string): T[] | undefined {
-  const targetIndex = previous.findIndex(item => item.id === id);
-  const target = previous[targetIndex];
-  if (!target || current?.some(item => item.id === id)) return current;
-
-  const restored = [...(current ?? [])];
-  let insertionIndex = -1;
-  // Use surviving history as anchors so concurrent deletions do not move the
-  // restored item past messages that followed it in the original sequence.
-  for (let index = targetIndex + 1; index < previous.length; index += 1) {
-    const successorIndex = restored.findIndex(item => item.id === previous[index].id);
-    if (successorIndex >= 0) {
-      insertionIndex = successorIndex;
-      break;
-    }
-  }
-  if (insertionIndex < 0) {
-    for (let index = targetIndex - 1; index >= 0; index -= 1) {
-      const predecessorIndex = restored.findIndex(item => item.id === previous[index].id);
-      if (predecessorIndex >= 0) {
-        insertionIndex = predecessorIndex + 1;
-        break;
-      }
-    }
-  }
-  if (insertionIndex < 0) insertionIndex = Math.min(targetIndex, restored.length);
-  restored.splice(insertionIndex, 0, target);
-  return restored;
-}
-
-const forgetRequestedConversation = (id: string): void => {
-  conversationUiStore.setState(state => {
-    const linked = new Set(state.requestedLinkedConversationIds);
-    const web = new Set(state.requestedWebSourceConversationIds);
-    linked.delete(id);
-    web.delete(id);
-    const optimisticMessages = new Map([...state.optimisticMessages].filter(([, message]) => message.conversationId !== id));
-    const inFlightGenerations = new Map(state.inFlightGenerations);
-    const liveRetrieval = new Map(state.liveRetrieval);
-    const liveSteps = new Map(state.liveSteps);
-    inFlightGenerations.delete(id);
-    liveRetrieval.delete(id);
-    liveSteps.delete(id);
-    return { requestedLinkedConversationIds: linked, requestedWebSourceConversationIds: web, optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps };
-  });
-};
-
-interface ConversationActionsDependencies {
-  queryClient: QueryClient;
-  addRequestedId: (
-    field: 'requestedLinkedConversationIds' | 'requestedWebSourceConversationIds' | 'requestedMembershipDocumentIds',
-    id: string
-  ) => void;
-  lifecycle: ConversationLifecycleRegistry;
-}
-
 export function useConversationActions({ queryClient, addRequestedId, lifecycle }: ConversationActionsDependencies) {
-  const invalidateLists = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
-  }, [queryClient]);
+  const {
+    invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,
+    loadConversations, loadMessageBookmarks, selectConversation,
+  } = useConversationNavigationActions({ queryClient, addRequestedId });
+  const {
+    loadConversationLinkedDocuments, loadConversationWebSources,
+    addConversationWebSource, removeConversationWebSource, removeConversationLinkedDocument,
+    loadDocumentSpaceMemberships, setDocumentSpaceMembership,
+  } = useConversationSourceActions({ queryClient, addRequestedId });
+  const {
+    bookmarkMessage, unbookmarkMessage, truncateAfter, deleteMessage,
+    dismissFailedMessage, setComposerDraft, clearError,
+  } = useConversationMessageActions({ queryClient, lifecycle, invalidateLists });
 
-  const loadSpaces = useCallback(async () => {
-    try {
-      await queryClient.fetchQuery({ ...spacesQueryOptions(), staleTime: 0 });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [queryClient]);
-
-  // Switching to another space leaves the open chat behind: it belongs to the
-  // space it was filed in, so keeping it on screen would show a conversation
-  // the sidebar no longer lists. "All spaces" lists every chat and keeps it.
-  const activeChatAfterSpaceChange = useCallback((spaceId: string | null): string | null => {
-    const activeId = conversationUiStore.getState().activeConversationId;
-    if (!activeId || !spaceId) return activeId;
-    const detail = queryClient.getQueryData<Conversation | null>(conversationKeys.detail(activeId));
-    return (detail?.spaceId ?? GENERAL_SPACE_ID) === spaceId ? activeId : null;
-  }, [queryClient]);
-
-  const setSelectedSpace = useCallback((spaceId: string | null) => {
-    conversationUiStore.setState({
-      selectedSpaceId: spaceId,
-      activeConversationId: activeChatAfterSpaceChange(spaceId),
-    });
-  }, [activeChatAfterSpaceChange]);
-  const setFilterMode = useCallback((filterMode: ConversationsState['filterMode']) => {
-    conversationUiStore.setState({ filterMode });
-  }, []);
-  const setSearchQuery = useCallback((searchQuery: string) => {
-    conversationUiStore.setState({ searchQuery });
-  }, []);
-
-  const loadConversations = useCallback(async (overrides?: LoadConversationsOverrides) => {
-    const current = conversationUiStore.getState();
-    const params: ConversationListParams = {
-      spaceId: overrides?.spaceId !== undefined ? overrides.spaceId : current.selectedSpaceId,
-      filterMode: overrides?.filterMode ?? current.filterMode,
-      searchQuery: overrides?.searchQuery ?? current.searchQuery,
-    };
-    conversationUiStore.setState({
-      selectedSpaceId: params.spaceId,
-      filterMode: params.filterMode,
-      searchQuery: params.searchQuery,
-      error: null,
-      ...(params.spaceId !== current.selectedSpaceId
-        ? { activeConversationId: activeChatAfterSpaceChange(params.spaceId) }
-        : {}),
-    });
-    try {
-      await queryClient.fetchQuery({
-        queryKey: conversationKeys.list(params),
-        queryFn: () => fetchConversationList(params),
-        staleTime: 0,
-      });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [queryClient, activeChatAfterSpaceChange]);
-
-  const loadMessageBookmarks = useCallback(async (overrides?: LoadMessageBookmarksOverrides) => {
-    const id = overrides?.conversationId ?? conversationUiStore.getState().activeConversationId;
-    if (!id) return;
-    const query = overrides?.query?.trim() ?? '';
-    try {
-      await queryClient.fetchQuery({
-        queryKey: conversationKeys.bookmarks(id, query),
-        queryFn: () => fetchBookmarks(id, query),
-        staleTime: 0,
-      });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [queryClient]);
 
   const createConversation = useCallback(async (title: string, spaceId?: string | null): Promise<string> => {
     // The sidebar's selection is where a chat the user starts belongs. A chat
@@ -279,31 +158,6 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     return true;
   }, [queryClient]);
 
-  const bookmarkMessage = useCallback(async (
-    conversationId: string,
-    messageId: string,
-    title?: string | null,
-    note?: string | null
-  ) => {
-    try {
-      await saveBookmark(queryClient, { conversationId, messageId, title, note });
-      return true;
-    } catch (error) {
-      setUiError(error);
-      return false;
-    }
-  }, [queryClient]);
-
-  const unbookmarkMessage = useCallback(async (conversationId: string, messageId: string) => {
-    try {
-      await removeBookmark(queryClient, { conversationId, messageId });
-      return true;
-    } catch (error) {
-      setUiError(error);
-      return false;
-    }
-  }, [queryClient]);
-
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {
     const result = await VaultAPI.moveConversationToSpace({ conversationId: id, spaceId });
     if (!result.ok) {
@@ -314,164 +168,6 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       current ? { ...current, spaceId } : current);
     await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
   }, [invalidateLists, queryClient]);
-
-  const loadConversationLinkedDocuments = useCallback(async (conversationId: string) => {
-    addRequestedId('requestedLinkedConversationIds', conversationId);
-    try {
-      await queryClient.fetchQuery({
-        queryKey: conversationKeys.linkedDocuments(conversationId),
-        queryFn: () => fetchLinkedDocuments(conversationId),
-        staleTime: 0,
-      });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [addRequestedId, queryClient]);
-
-  const loadConversationWebSources = useCallback(async (conversationId: string) => {
-    addRequestedId('requestedWebSourceConversationIds', conversationId);
-    try {
-      await queryClient.fetchQuery({
-        queryKey: conversationKeys.webSources(conversationId),
-        queryFn: () => fetchWebSources(conversationId),
-        staleTime: 0,
-      });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [addRequestedId, queryClient]);
-
-  const addConversationWebSource = useCallback(async (
-    conversationId: string,
-    url: string,
-    options?: { title?: string; excerpt?: string; relevanceScore?: number }
-  ): Promise<boolean> => {
-    const result = await VaultAPI.addConversationWebSource(conversationId, url, options);
-    if (!result.ok) {
-      setUiError(result.error);
-      return false;
-    }
-    await loadConversationWebSources(conversationId);
-    return true;
-  }, [loadConversationWebSources]);
-
-  const removeConversationWebSource = useCallback(async (
-    conversationId: string,
-    sourceId: string
-  ): Promise<boolean> => {
-    const result = await VaultAPI.removeConversationWebSource(conversationId, sourceId);
-    if (!result.ok) {
-      setUiError(result.error);
-      return false;
-    }
-    queryClient.setQueryData<ConversationWebSourceDto[]>(
-      conversationKeys.webSources(conversationId),
-      current => current?.filter(source => source.id !== sourceId)
-    );
-    return true;
-  }, [queryClient]);
-
-  const removeConversationLinkedDocument = useCallback(async (
-    conversationId: string,
-    documentId: string
-  ) => {
-    const result = await VaultAPI.removeConversationLinkedDocument(conversationId, documentId);
-    if (!result.ok) {
-      setUiError(result.error);
-      return;
-    }
-    queryClient.setQueryData<ConversationLinkedDocumentDto[]>(
-      conversationKeys.linkedDocuments(conversationId),
-      current => current?.filter(document => document.documentId !== documentId)
-    );
-    queryClient.removeQueries({ queryKey: conversationKeys.memberships(documentId), exact: true });
-  }, [queryClient]);
-
-  const loadDocumentSpaceMemberships = useCallback(async (documentId: string) => {
-    addRequestedId('requestedMembershipDocumentIds', documentId);
-    try {
-      await queryClient.fetchQuery({
-        queryKey: conversationKeys.memberships(documentId),
-        queryFn: () => fetchMemberships(documentId),
-        staleTime: 0,
-      });
-    } catch (error) {
-      setUiError(error);
-    }
-  }, [addRequestedId, queryClient]);
-
-  const setDocumentSpaceMembership = useCallback(async (
-    documentId: string,
-    spaceId: string,
-    assigned: boolean
-  ) => {
-    const result = await VaultAPI.setDocumentSpaceMembership(documentId, spaceId, assigned);
-    if (!result.ok) setUiError(result.error);
-    else await loadDocumentSpaceMemberships(documentId);
-  }, [loadDocumentSpaceMemberships]);
-
-  const selectConversation = useCallback(async function selectConversation(id: string): Promise<void> {
-    conversationUiStore.setState({ activeConversationId: id, error: null });
-    addRequestedId('requestedLinkedConversationIds', id);
-    addRequestedId('requestedWebSourceConversationIds', id);
-    try {
-      const [, detail] = await Promise.all([
-        queryClient.fetchQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.linkedDocuments(id), queryFn: () => fetchLinkedDocuments(id), staleTime: 0 }),
-        queryClient.fetchQuery({ queryKey: conversationKeys.webSources(id), queryFn: () => fetchWebSources(id), staleTime: 0 }),
-      ]);
-      // The chat decides the space, not the other way round: a conversation
-      // opened from "All spaces", the spotlight or a link searches its own
-      // space's library, and a sidebar still showing another space would say
-      // otherwise. Skipped if the reader has already moved on to another chat.
-      const current = conversationUiStore.getState();
-      if (detail?.tangentParentId && current.activeConversationId === id) {
-        // References and deep links open a tangent beside its parent, never
-        // as an extra entry in the main conversation list.
-        conversationUiStore.setState({ requestedTangent: { parentId: detail.tangentParentId, tangentId: id } });
-        await selectConversation(detail.tangentParentId);
-        return;
-      }
-      const spaceId = detail?.spaceId;
-      if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
-        await loadConversations({ spaceId });
-      }
-    } catch (error) {
-      // A slower read for the previous selection must not replace the error
-      // state of the conversation the reader has since opened.
-      if (conversationUiStore.getState().activeConversationId === id) setUiError(error);
-    }
-  }, [addRequestedId, queryClient, loadConversations]);
-
-  /** Truncate persisted history after a message and refresh the conversation list. */
-  const truncateAfter = useCallback(async (
-    conversationId: string,
-    messageId: string,
-    inclusive = false
-  ): Promise<boolean> => {
-    let cancelled = false;
-    const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
-    try {
-      const result = await VaultAPI.truncateConversationAfter(conversationId, messageId, inclusive);
-      // A truncate request can outlive a concurrent conversation deletion.
-      // Never recreate its just-removed messages cache with a late response.
-      if (cancelled) return false;
-      if (!result.ok) {
-        setUiError(result.error);
-        return false;
-      }
-      queryClient.setQueryData(
-        conversationKeys.messages(conversationId),
-        result.data.messages.map(toConversationMessage)
-      );
-      await invalidateLists();
-      return true;
-    } finally {
-      unregisterLifecycle();
-    }
-  }, [invalidateLists, lifecycle, queryClient]);
 
   /** Branch the conversation, select the branch, and return its id. */
   const forkConversation = useCallback(async (
@@ -523,34 +219,6 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     return { ok: true, record: result.data.compaction };
   }, [invalidateLists, queryClient]);
 
-  const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {
-    const key = conversationKeys.messages(conversationId);
-    const previous = queryClient.getQueryData<ConversationMessage[]>(key);
-    if (!previous?.some(message => message.id === messageId)) {
-      setUiError('Message not found in the selected conversation.');
-      return;
-    }
-    let cancelled = false;
-    const unregisterLifecycle = lifecycle.register(conversationId, () => { cancelled = true; });
-    queryClient.setQueryData(key, previous.filter(message => message.id !== messageId));
-    try {
-      const result = await VaultAPI.deleteConversationMessage({ conversationId, messageId });
-      if (cancelled) return;
-      if (!result.ok) {
-        queryClient.setQueryData<ConversationMessage[]>(key, current =>
-          restoreMissingItem(current, previous, messageId));
-        setUiError(result.error);
-        return;
-      }
-      await Promise.all([
-        invalidateLists(),
-        queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks }),
-      ]);
-    } finally {
-      unregisterLifecycle();
-    }
-  }, [invalidateLists, lifecycle, queryClient]);
-
   const deleteConversation = useCallback(async (id: string) => {
     // No list pre-check: the open conversation can be one the current filter
     // or search hides, and the backend is the authority on whether it exists.
@@ -590,23 +258,6 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
     return true;
   }, [invalidateLists, lifecycle, queryClient]);
-
-  const dismissFailedMessage = useCallback((tempId: string) => {
-    conversationUiStore.setState(current => {
-      if (current.optimisticMessages.get(tempId)?.status !== 'failed') return current;
-      const optimisticMessages = new Map(current.optimisticMessages);
-      optimisticMessages.delete(tempId);
-      return { optimisticMessages };
-    });
-  }, []);
-
-  /** Pure UI state: the text the composer should adopt on its next render. */
-  const setComposerDraft = useCallback(
-    (draft: string | null) => conversationUiStore.setState({ composerDraft: draft }),
-    []
-  );
-
-  const clearError = useCallback(() => conversationUiStore.setState({ error: null }), []);
 
   return {
     invalidateLists, loadSpaces, setSelectedSpace, setFilterMode, setSearchQuery,

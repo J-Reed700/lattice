@@ -1,20 +1,20 @@
 ---
 source: tests/indexing_output_test.rs
-assertion_line: 305
+assertion_line: 226
 expression: chunk_with_metadata
 ---
 {
   "chunk": {
-    "end_idx": 17,
-    "start_idx": 0,
     "text": "Sample text chunk",
+    "start_idx": 0,
+    "end_idx": 17,
     "token_count": 4
   },
   "metadata": {
-    "created_at": "[timestamp]",
     "document_title": "Research Paper",
-    "language": "en",
+    "section": "Introduction",
     "page": 1,
-    "section": "Introduction"
+    "created_at": "[timestamp]",
+    "language": "en"
   }
 }

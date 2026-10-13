@@ -5,3 +5,4 @@ pub mod file_library;
 pub mod recent_documents;
 pub mod search;
 pub mod settings;
+pub mod web;

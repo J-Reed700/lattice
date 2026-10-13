@@ -29,10 +29,15 @@ mod generation_config_tests {
         let config = GenerationConfig::default();
 
         assert_eq!(config.temperature, 0.7);
-        assert_eq!(config.top_p, 0.9);
-        assert_eq!(config.top_k, 40);
+        assert_eq!(config.top_p, 0.8);
+        assert_eq!(config.top_k, 20);
         assert_eq!(config.max_tokens, 131_072);
-        assert_eq!(config.repeat_penalty, 1.1);
+        assert_eq!(config.repeat_penalty, 1.0);
+        assert_eq!(config.presence_penalty, 1.5);
+        assert_eq!(
+            config.thinking,
+            lattice::features::llm::engine::SamplingProfile::thinking()
+        );
     }
 
     #[test]
@@ -44,7 +49,7 @@ mod generation_config_tests {
 
         assert_eq!(config.max_tokens, 1024);
         assert_eq!(config.temperature, 0.7);
-        assert_eq!(config.top_p, 0.9);
+        assert_eq!(config.top_p, 0.8);
     }
 
     #[test]
@@ -65,6 +70,9 @@ mod generation_config_tests {
             top_k: 50,
             max_tokens: 512,
             repeat_penalty: 1.2,
+            presence_penalty: 0.5,
+            thinking: lattice::features::llm::engine::SamplingProfile::thinking(),
+            thinking_override: Default::default(),
         };
 
         assert_eq!(config.temperature, 0.8);

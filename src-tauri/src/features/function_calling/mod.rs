@@ -8,7 +8,8 @@
 //!
 //! - `crate::features::function_calling::domain` — FunctionCall, FunctionResult, etc.
 //! - `crate::features::function_calling::dto` — function-calling DTOs
-//!   (CleanArticle, UrlPreview, WebSearchOutput, etc.)
+//!   (SemanticSearchInput, GetDocumentOutput, etc.); the web tools' records
+//!   live in `crate::application::contracts::web`
 //! - `crate::features::function_calling::use_cases` — function-calling use cases
 //! - `crate::features::function_calling::executor` — FunctionExecutor
 //! - `crate::features::function_calling::registry` — FunctionRegistry
