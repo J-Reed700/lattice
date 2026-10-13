@@ -209,9 +209,10 @@ where
 /// # Examples
 ///
 /// ```rust
+/// use lattice::shared::error::Result;
 /// use lattice::shared::resilience::retry::retry_async;
 ///
-/// async fn example() -> Result<String, String> {
+/// async fn example() -> Result<String> {
 ///     retry_async(|| async {
 ///         // Your operation here
 ///         Ok("success".to_string())

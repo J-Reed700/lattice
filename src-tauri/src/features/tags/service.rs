@@ -98,7 +98,7 @@ impl TagService {
     pub async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, String> {
+    ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
         let lock = self.get_document_lock(document_id);
 
         // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
@@ -108,10 +108,12 @@ impl TagService {
                 let lock_guard = DocumentLockGuard::new(guard);
                 Ok(lock_guard)
             }
-            Err(_) => Err(
-                "Tag operation timed out - another operation is in progress for this document"
-                    .to_string(),
-            ),
+            Err(_) => Err(crate::shared::error::AppError::ConcurrentModification {
+                resource: format!("document {}", document_id),
+                details:
+                    "Tag operation timed out - another operation is in progress for this document"
+                        .to_string(),
+            }),
         }
     }
 
@@ -369,18 +371,14 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
     ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
-        TagService::acquire_lock_with_timeout(self, document_id)
-            .await
-            .map_err(crate::shared::error::AppError::Other)
+        TagService::acquire_lock_with_timeout(self, document_id).await
     }
 
     async fn acquire_lock(
         &self,
         document_id: &str,
     ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
-        TagService::acquire_lock_with_timeout(self, document_id)
-            .await
-            .map_err(crate::shared::error::AppError::Other)
+        TagService::acquire_lock_with_timeout(self, document_id).await
     }
 
     async fn get_or_create(

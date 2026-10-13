@@ -248,9 +248,7 @@ impl ModelLoader {
             None => return Ok(None),
         };
 
-        if let Err(reason) = model.validate_for_operation(true) {
-            return Err(AppError::InvalidConfig(reason));
-        }
+        model.validate_for_operation(true)?;
 
         let model_path = match model.loadable_path() {
             Some(p) => p.to_path_buf(),

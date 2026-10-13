@@ -10,6 +10,7 @@ use crate::application::ports::{
     DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
     FileSystemPort, TranscriptionPort, VectorSearchPort,
 };
+use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::use_cases::{
@@ -17,7 +18,6 @@ use crate::features::indexing::use_cases::{
     RenameDocumentUseCase,
 };
 use crate::features::indexing::LibraryGc;
-use crate::features::web::WebArchiveServiceTrait;
 use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -58,7 +58,7 @@ pub fn build(
     db_pool: SqlitePool,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
-    web_archive: Arc<dyn WebArchiveServiceTrait>,
+    web_archive: Arc<dyn ArticleArchive>,
 ) -> Result<IndexingDi> {
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;

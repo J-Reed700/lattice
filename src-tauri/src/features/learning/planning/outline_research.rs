@@ -8,7 +8,7 @@ use crate::features::learning::{
     sources::{preview, InitialReference},
 };
 use crate::{
-    features::{function_calling::dto::WebSearchInput, web::traits::WebServiceTrait},
+    application::contracts::web::WebSearchInput, features::web::traits::WebServiceTrait,
     shared::error::Result,
 };
 use std::collections::HashSet;

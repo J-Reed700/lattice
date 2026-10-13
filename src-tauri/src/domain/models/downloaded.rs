@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::models::classifier::ModelTypeClassifier;
 use crate::domain::models::metadata::ModelType;
 use crate::domain::value_objects::ArtifactIdentity;
+use crate::shared::error::{AppError, Result};
 
 ///
 /// This is orthogonal to role flags (chat/utility/embedding) and to the
@@ -66,23 +67,20 @@ impl ModelLocation {
     }
 
     /// Reconstruct from the `(storage_kind, storage_path)` columns.
-    pub fn from_db(kind: &str, path: Option<String>) -> Result<Self, String> {
+    pub fn from_db(kind: &str, path: Option<String>) -> Result<Self> {
+        let missing_path = || AppError::InvalidData(format!("{} row missing storage_path", kind));
         match kind {
             "local_file" => Ok(ModelLocation::LocalFile {
-                path: PathBuf::from(
-                    path.ok_or_else(|| "local_file row missing storage_path".to_string())?,
-                ),
+                path: PathBuf::from(path.ok_or_else(missing_path)?),
             }),
             "local_dir" => Ok(ModelLocation::LocalDirectory {
-                path: PathBuf::from(
-                    path.ok_or_else(|| "local_dir row missing storage_path".to_string())?,
-                ),
+                path: PathBuf::from(path.ok_or_else(missing_path)?),
             }),
             "remote_ollama" => Ok(ModelLocation::RemoteOllama),
-            other => Err(format!(
+            other => Err(AppError::InvalidData(format!(
                 "Invalid storage_kind '{}': expected 'local_file', 'local_dir', or 'remote_ollama'",
                 other
-            )),
+            ))),
         }
     }
 
@@ -225,7 +223,7 @@ impl DownloadedModel {
         file_size_bytes: i64,
         architecture: String,
         metadata: Option<JsonValue>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         Self::new_with_catalog(
             id,
             model_name,
@@ -250,23 +248,31 @@ impl DownloadedModel {
         architecture: String,
         metadata: Option<JsonValue>,
         catalog_lookup: impl FnOnce(&str) -> Option<ModelType>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         // Validate inputs
         if model_id.trim().is_empty() {
-            return Err("model_id cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "model_id cannot be empty".to_string(),
+            ));
         }
 
         if model_name.trim().is_empty() {
-            return Err("model_name cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "model_name cannot be empty".to_string(),
+            ));
         }
 
         if architecture.trim().is_empty() {
-            return Err("architecture cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "architecture cannot be empty".to_string(),
+            ));
         }
 
         // Local artifacts must have a real size; remote (Ollama) rows carry 0.
         if location.is_local() && file_size_bytes <= 0 {
-            return Err("file_size_bytes must be greater than 0".to_string());
+            return Err(AppError::InvalidInput(
+                "file_size_bytes must be greater than 0".to_string(),
+            ));
         }
 
         // Classify model type using multi-strategy classifier. The
@@ -405,11 +411,9 @@ impl DownloadedModel {
     /// # Errors
     ///
     /// Returns error if JSON is invalid
-    pub fn metadata_from_json(json: Option<&str>) -> Result<Option<JsonValue>, String> {
+    pub fn metadata_from_json(json: Option<&str>) -> Result<Option<JsonValue>> {
         match json {
-            Some(s) if !s.trim().is_empty() => {
-                serde_json::from_str(s).map(Some).map_err(|e| e.to_string())
-            }
+            Some(s) if !s.trim().is_empty() => Ok(Some(serde_json::from_str(s)?)),
             _ => Ok(None),
         }
     }
@@ -431,19 +435,19 @@ impl DownloadedModel {
     /// assert!(chat_model.validate_for_operation(true).is_ok());
     /// assert!(chat_model.validate_for_operation(false).is_err());
     /// ```
-    pub fn validate_for_operation(&self, for_chat: bool) -> Result<(), String> {
+    pub fn validate_for_operation(&self, for_chat: bool) -> Result<()> {
         if for_chat {
             if !self.model_type.is_chat_compatible() {
-                return Err(format!(
+                return Err(AppError::InvalidInput(format!(
                     "Cannot use embedding model '{}' for chat. Please download a chat model (.gguf format).",
                     self.model_name
-                ));
+                )));
             }
         } else if !self.model_type.is_embedding_compatible() {
-            return Err(format!(
+            return Err(AppError::InvalidInput(format!(
                 "Cannot use chat model '{}' for embeddings. Please download an embedding model (.onnx format).",
                 self.model_name
-            ));
+            )));
         }
         Ok(())
     }

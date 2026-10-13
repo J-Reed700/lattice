@@ -67,7 +67,8 @@ use tokio::fs;
 use url::Url;
 use uuid::Uuid;
 
-use crate::features::function_calling::dto::CleanArticle;
+use crate::application::contracts::web::CleanArticle;
+use crate::domain::ports::article_archive::ArticleArchive;
 use crate::features::web::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 
@@ -630,6 +631,54 @@ impl WebArchiveService {
 }
 
 #[async_trait]
+impl ArticleArchive for WebArchiveService {
+    async fn delete_article(&self, path: &Path) -> Result<()> {
+        // Determine what to delete based on path type
+        let path_to_delete = if path.is_dir() {
+            // Directory path: remove entire directory (legacy)
+            path.to_path_buf()
+        } else if path.file_name() == Some(std::ffi::OsStr::new("article.md")) {
+            // article.md path: remove parent directory (new format)
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            // Single file: remove just the file (legacy)
+            match fs::remove_file(path).await {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => {
+                    return Err(AppError::Io {
+                        message: format!("Failed to delete article file: {}", e),
+                        kind: format!("{:?}", e.kind()),
+                    })
+                }
+            }
+        };
+
+        match fs::remove_dir_all(&path_to_delete).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::Io {
+                message: format!("Failed to delete article directory: {}", e),
+                kind: format!("{:?}", e.kind()),
+            }),
+        }
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        // Component-wise, and never through a `..` that climbs back out.
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        path.starts_with(&self.base_dir)
+    }
+}
+
+#[async_trait]
 impl WebArchiveServiceTrait for WebArchiveService {
     async fn archive_article(&self, article: CleanArticle, url: &str) -> Result<PathBuf> {
         // Ensure archive is initialized
@@ -735,51 +784,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
         })?;
 
         Self::markdown_to_article(&content).await
-    }
-
-    async fn delete_article(&self, path: &Path) -> Result<()> {
-        // Determine what to delete based on path type
-        let path_to_delete = if path.is_dir() {
-            // Directory path: remove entire directory (legacy)
-            path.to_path_buf()
-        } else if path.file_name() == Some(std::ffi::OsStr::new("article.md")) {
-            // article.md path: remove parent directory (new format)
-            path.parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            // Single file: remove just the file (legacy)
-            match fs::remove_file(path).await {
-                Ok(()) => return Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(e) => {
-                    return Err(AppError::Io {
-                        message: format!("Failed to delete article file: {}", e),
-                        kind: format!("{:?}", e.kind()),
-                    })
-                }
-            }
-        };
-
-        match fs::remove_dir_all(&path_to_delete).await {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(AppError::Io {
-                message: format!("Failed to delete article directory: {}", e),
-                kind: format!("{:?}", e.kind()),
-            }),
-        }
-    }
-
-    fn owns(&self, path: &Path) -> bool {
-        // Component-wise, and never through a `..` that climbs back out.
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return false;
-        }
-        path.starts_with(&self.base_dir)
     }
 
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {

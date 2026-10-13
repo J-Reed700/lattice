@@ -209,6 +209,18 @@ impl<T> ApiResult<T> {
     pub fn is_err(&self) -> bool {
         matches!(self, Self::Error { .. })
     }
+
+    /// The command-shaped result: the data, or the error as the IPC `Err`.
+    ///
+    /// Tauri commands return `Result<T, ApiError>`; this is how an `_impl`
+    /// that builds an `ApiResult` reaches that shape without the envelope
+    /// riding inside a successful reply.
+    pub fn into_result(self) -> Result<T, ApiError> {
+        match self {
+            Self::Success { data, .. } => Ok(data),
+            Self::Error { error, .. } => Err(error),
+        }
+    }
 }
 
 /// Structured error information for API responses.

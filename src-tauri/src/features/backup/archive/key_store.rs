@@ -17,6 +17,7 @@ use zeroize::Zeroize;
 
 use super::crypto::MasterKey;
 use super::format::ArchiveError;
+use crate::shared::error::AppError;
 
 /// Keyring service name. Distinct from the credentials adapter's service so
 /// "forget my API keys" can never take the backup key with it.
@@ -80,7 +81,7 @@ impl MasterKeyStore {
             match self.load_from_keyring() {
                 Ok(Some(key)) => return Ok(Some(key)),
                 Ok(None) => {}
-                Err(e) => warn_fallback_once(&e),
+                Err(e) => warn_fallback_once(&e.to_string()),
             }
         }
         self.load_from_file()
@@ -93,7 +94,7 @@ impl MasterKeyStore {
             match self.store_in_keyring(&encoded) {
                 Ok(()) => Ok(()),
                 Err(e) => {
-                    warn_fallback_once(&e);
+                    warn_fallback_once(&e.to_string());
                     self.store_in_file(&encoded)
                 }
             }
@@ -121,18 +122,21 @@ impl MasterKeyStore {
         }
     }
 
-    fn load_from_keyring(&self) -> Result<Option<MasterKey>, String> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(|e| e.to_string())?;
+    /// Any error here sends `load` to the file fallback; it is only logged.
+    fn load_from_keyring(&self) -> Result<Option<MasterKey>, AppError> {
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER)?;
         match entry.get_password() {
-            Ok(encoded) => decode_key(&encoded).map(Some).map_err(|e| e.to_string()),
+            Ok(encoded) => decode_key(&encoded)
+                .map(Some)
+                .map_err(|e| AppError::InvalidData(e.to_string())),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.into()),
         }
     }
 
-    fn store_in_keyring(&self, encoded: &str) -> Result<(), String> {
-        let entry = keyring::Entry::new(&self.service, KEYRING_USER).map_err(|e| e.to_string())?;
-        entry.set_password(encoded).map_err(|e| e.to_string())
+    fn store_in_keyring(&self, encoded: &str) -> Result<(), AppError> {
+        let entry = keyring::Entry::new(&self.service, KEYRING_USER)?;
+        Ok(entry.set_password(encoded)?)
     }
 
     fn load_from_file(&self) -> Result<Option<MasterKey>, ArchiveError> {

@@ -390,7 +390,7 @@ impl ReindexDocumentUseCase {
         })
         .await
         .map_err(|e| AppError::Other(format!("Search indexing task failed: {e}")))?;
-        crate::features::cache::query_cache::invalidate_query_cache();
+        crate::features::search::query_cache::invalidate_query_cache();
         publication.map_err(|e| {
             AppError::Other(format!(
                 "Document saved, but search indexing failed: {e}. Retry reindexing this document."
@@ -398,7 +398,7 @@ impl ReindexDocumentUseCase {
         })?;
 
         // The corpus changed; cached search results are stale.
-        crate::features::cache::query_cache::invalidate_query_cache();
+        crate::features::search::query_cache::invalidate_query_cache();
 
         // 8. Build response
         let file_path_str = document

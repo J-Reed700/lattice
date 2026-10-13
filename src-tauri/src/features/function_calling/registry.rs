@@ -461,8 +461,7 @@ pub fn register_custom_query_tools(
                 },
                 "required": ["query"]
             }),
-        )
-        .map_err(AppError::InvalidData)?;
+        )?;
 
         registry.register(definition)?;
     }

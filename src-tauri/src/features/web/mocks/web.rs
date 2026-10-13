@@ -3,7 +3,7 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::features::function_calling::dto::{
+use crate::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
 #[cfg(test)]

@@ -582,8 +582,7 @@ pub async fn search_model_catalog(
         request.max_size_gb,
         request.required_capabilities,
         Some(request.query.clone()),
-    )
-    .map_err(AppError::InvalidInput)?;
+    )?;
 
     let discovered_models = fetch_downloadable_hf_models(
         container.inner(),
@@ -651,12 +650,7 @@ pub async fn get_model_variants(
         .get_model_variants(&repo_id)
         .await?
         .into_iter()
-        .map(|metadata| {
-            metadata
-                .to_domain_model()
-                .map(Into::into)
-                .map_err(AppError::InvalidInput)
-        })
+        .map(|metadata| metadata.to_domain_model().map(Into::into))
         .collect()
 }
 

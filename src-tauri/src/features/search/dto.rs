@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
-pub use crate::features::cache::dto::CacheStatsDto;
 
 /// Search request from the frontend.
 ///
@@ -180,7 +179,17 @@ pub struct EnhancedSearchResponse {
     pub cache_stats: Option<CacheStatsDto>,
 }
 
-// CacheStatsDto is defined in cache_dto.rs and re-exported from dtos/mod.rs
+/// The query cache's statistics, reported with each search response.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStatsDto {
+    pub size: usize,
+    pub capacity: usize,
+    pub hits: u64,
+    pub misses: u64,
+    pub total_time_saved_ms: u64,
+    pub hit_rate: f64,
+}
 
 // ============================================================================
 // Tests

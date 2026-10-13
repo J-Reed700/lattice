@@ -2,6 +2,7 @@ use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, Downlo
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use crate::infrastructure::security::RateLimiter;
+use crate::shared::error::{AppError, Result};
 use crate::shared::fs::confinement::confine_to_root;
 use crate::shared::ValidatedFilePath;
 use serde::{Deserialize, Serialize};
@@ -105,33 +106,35 @@ fn is_allowed_download_host(host: &str) -> bool {
         .any(|allowed| host == *allowed || host.ends_with(&format!(".{}", allowed)))
 }
 
-fn validate_url(url: &str) -> Result<(), String> {
+fn validate_url(url: &str) -> Result<()> {
     if url.trim().is_empty() {
-        return Err("URL cannot be empty".to_string());
+        return Err(AppError::InvalidUrl("URL cannot be empty".to_string()));
     }
 
     if url.len() > 2048 {
-        return Err("URL exceeds maximum length of 2048 characters".to_string());
+        return Err(AppError::InvalidUrl(
+            "URL exceeds maximum length of 2048 characters".to_string(),
+        ));
     }
 
-    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+    let parsed = url::Url::parse(url).map_err(|e| AppError::InvalidUrl(e.to_string()))?;
 
     // Plaintext HTTP is not acceptable for content we execute as model
     // weights, and it also permits transparent interception.
     if parsed.scheme() != "https" {
-        return Err("URL must use https".to_string());
+        return Err(AppError::InvalidUrl("URL must use https".to_string()));
     }
 
     let host = parsed
         .host_str()
-        .ok_or_else(|| "URL must include a host".to_string())?;
+        .ok_or_else(|| AppError::InvalidUrl("URL must include a host".to_string()))?;
 
     if !is_allowed_download_host(host) {
-        return Err(format!(
+        return Err(AppError::InvalidUrl(format!(
             "Downloads are only permitted from {}; got '{}'",
             ALLOWED_DOWNLOAD_HOSTS.join(", "),
             host
-        ));
+        )));
     }
 
     Ok(())
@@ -144,37 +147,39 @@ fn validate_url(url: &str) -> Result<(), String> {
 /// any absolute path, so a compromised renderer could previously write the
 /// fetched bytes to e.g. `~/Library/LaunchAgents/com.evil.plist` and obtain
 /// code execution at next login.
-fn validate_destination(path: &str) -> Result<PathBuf, String> {
+fn validate_destination(path: &str) -> Result<PathBuf> {
     if path.trim().is_empty() {
-        return Err("Destination path cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Destination path cannot be empty".to_string(),
+        ));
     }
 
     let validated = ValidatedFilePath::new(PathBuf::from(path))
-        .map_err(|e| format!("Invalid destination path: {}", e))?;
+        .map_err(|e| AppError::InvalidInput(format!("Invalid destination path: {}", e)))?;
 
-    let models_root =
-        ModelPaths::models_root().map_err(|e| format!("Cannot resolve models directory: {}", e))?;
+    let models_root = ModelPaths::models_root()
+        .map_err(|e| AppError::FileSystem(format!("Cannot resolve models directory: {}", e)))?;
 
     confine_to_root(&models_root, validated.as_path())
-        .map_err(|e| format!("Invalid destination path: {}", e))
+        .map_err(|e| AppError::InvalidInput(format!("Invalid destination path: {}", e)))
 }
 
-fn parse_checksum(req: Option<ChecksumRequest>) -> Result<Option<Checksum>, String> {
+fn parse_checksum(req: Option<ChecksumRequest>) -> Result<Option<Checksum>> {
     if let Some(checksum_req) = req {
         let algorithm = match checksum_req.algorithm.to_lowercase().as_str() {
             "sha256" => ChecksumAlgorithm::Sha256,
             "md5" => ChecksumAlgorithm::Md5,
             _ => {
-                return Err(format!(
+                return Err(AppError::InvalidInput(format!(
                     "Unsupported checksum algorithm: {}",
                     checksum_req.algorithm
-                ))
+                )))
             }
         };
 
         Checksum::new(algorithm, checksum_req.value)
             .map(Some)
-            .map_err(|e| format!("Invalid checksum: {}", e))
+            .map_err(|e| AppError::InvalidInput(format!("Invalid checksum: {}", e)))
     } else {
         Ok(None)
     }
@@ -183,14 +188,14 @@ fn parse_checksum(req: Option<ChecksumRequest>) -> Result<Option<Checksum>, Stri
 async fn start_model_download_impl(
     state: &DownloadCommandState,
     request: StartDownloadRequest,
-) -> Result<String, String> {
+) -> Result<String> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .start_rate_limiter
         .check_rate_limit("start_download")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     validate_url(&request.url)?;
     let validated_path = validate_destination(&request.destination)?;
@@ -235,7 +240,7 @@ async fn start_model_download_impl(
             .await
             .ok();
 
-            Err(format!("Failed to start download: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
@@ -243,21 +248,23 @@ async fn start_model_download_impl(
 pub async fn start_model_download(
     state: State<'_, DownloadCommandState>,
     request: StartDownloadRequest,
-) -> Result<String, String> {
+) -> Result<String> {
     start_model_download_impl(&state, request).await
 }
 
-async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result<(), String> {
+async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.pause_download(&id).await {
@@ -288,29 +295,28 @@ async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result
             .await
             .ok();
 
-            Err(format!("Failed to pause download: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
 
-pub async fn pause_download(
-    state: State<'_, DownloadCommandState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn pause_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
     pause_download_impl(&state, id).await
 }
 
-async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Result<(), String> {
+async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.resume_download(&id).await {
@@ -341,29 +347,28 @@ async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Resul
             .await
             .ok();
 
-            Err(format!("Failed to resume download: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
 
-pub async fn resume_download(
-    state: State<'_, DownloadCommandState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn resume_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
     resume_download_impl(&state, id).await
 }
 
-async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Result<(), String> {
+async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.cancel_download(&id).await {
@@ -394,32 +399,31 @@ async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Resul
             .await
             .ok();
 
-            Err(format!("Failed to cancel download: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
 
-pub async fn cancel_download(
-    state: State<'_, DownloadCommandState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn cancel_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
     cancel_download_impl(&state, id).await
 }
 
 pub async fn get_download_status(
     state: State<'_, DownloadCommandState>,
     id: String,
-) -> Result<Option<DownloadStatusResponse>, String> {
+) -> Result<Option<DownloadStatusResponse>> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.get_download_status(&id).await {
@@ -436,31 +440,28 @@ pub async fn get_download_status(
             .await
             .ok();
 
-            Err(format!("Failed to get download status: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
 
 pub async fn list_downloads(
     state: State<'_, DownloadCommandState>,
-) -> Result<Vec<DownloadStatusResponse>, String> {
+) -> Result<Vec<DownloadStatusResponse>> {
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     match state.manager.list_downloads().await {
         Ok(sessions) => Ok(sessions.into_iter().map(|s| s.into()).collect()),
-        Err(e) => Err(format!("Failed to list downloads: {}", e)),
+        Err(e) => Err(AppError::from(e)),
     }
 }
 
 /// Retry a failed download
-pub async fn retry_download(
-    state: State<'_, DownloadCommandState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     // Rate limiting
@@ -468,11 +469,13 @@ pub async fn retry_download(
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     // Input validation
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.retry_download(&id).await {
@@ -490,55 +493,46 @@ pub async fn retry_download(
 
             Ok(())
         }
-        Err(DownloadError::MaxRetriesExceeded) => {
-            let msg = "Cannot retry: maximum retry attempts (3) exceeded".to_string();
-            error!(id = %id, error = %msg);
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadRetried,
-                "download",
-                msg.clone(),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
-            Err(msg)
-        }
         Err(e) => {
-            error!(id = %id, error = %e, "Failed to retry download");
+            // `From<DownloadError>` makes an exhausted retry a generic error;
+            // a retry the user asked for should say why it was refused.
+            let error = match e {
+                DownloadError::MaxRetriesExceeded => AppError::InvalidState(
+                    "Cannot retry: maximum retry attempts (3) exceeded".to_string(),
+                ),
+                other => AppError::from(other),
+            };
+            error!(id = %id, error = %error, "Failed to retry download");
 
             crate::audit_failure!(
                 logger,
                 crate::audit::AuditAction::DownloadRetried,
                 "download",
-                format!("Failed to retry download: {}", e),
+                format!("Failed to retry download: {}", error),
                 "id" => id.as_str()
             )
             .await
             .ok();
 
-            Err(format!("Failed to retry download: {}", e))
+            Err(error)
         }
     }
 }
 
 /// Remove a download (works for any state)
-pub async fn remove_download(
-    state: State<'_, DownloadCommandState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     if id.trim().is_empty() {
-        return Err("Download ID cannot be empty".to_string());
+        return Err(AppError::InvalidInput(
+            "Download ID cannot be empty".to_string(),
+        ));
     }
 
     match state.manager.delete_download(&id).await {
@@ -569,22 +563,20 @@ pub async fn remove_download(
             .await
             .ok();
 
-            Err(format!("Failed to remove download: {}", e))
+            Err(AppError::from(e))
         }
     }
 }
 
 /// Clear all completed downloads
-pub async fn clear_completed_downloads(
-    state: State<'_, DownloadCommandState>,
-) -> Result<usize, String> {
+pub async fn clear_completed_downloads(state: State<'_, DownloadCommandState>) -> Result<usize> {
     let logger = crate::audit::get_audit_logger();
 
     state
         .query_rate_limiter
         .check_rate_limit("query")
         .await
-        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     match state.manager.clear_completed_downloads().await {
         Ok(count) => {
@@ -613,7 +605,7 @@ pub async fn clear_completed_downloads(
             .await
             .ok();
 
-            Err(format!("Failed to clear completed downloads: {}", e))
+            Err(AppError::from(e))
         }
     }
 }

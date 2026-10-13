@@ -332,7 +332,7 @@ impl DownloadModelUseCase {
                 self.catalog.get_model_by_id(&repo_id).await?
             };
             let mut resolved = match metadata {
-                Some(meta) => meta.to_domain_model().map_err(AppError::InvalidInput)?,
+                Some(meta) => meta.to_domain_model()?,
                 None => crate::features::model_management::domain::ModelMetadata {
                     id: model_id.to_string(),
                     name: Self::infer_model_name_from_repo(&repo_id),
@@ -395,7 +395,7 @@ impl DownloadModelUseCase {
                 // it would fall through to a bare single-file download with
                 // no tokenizer or config beside it.
                 if filename.ends_with(".safetensors")
-                    || filename == crate::features::embedding::candle_service::WEIGHTS_PYTORCH_BIN
+                    || filename == crate::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN
                 {
                     resolved.files = Self::build_safetensors_embedding_file_list(
                         &repo_id,

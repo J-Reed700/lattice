@@ -30,7 +30,7 @@
 //! - **Reading Mode**: Extract clean article content for display
 //! - **Batch Import**: Bulk ingestion of web resources
 
-use crate::features::function_calling::dto::{CleanArticle, UrlPreview};
+use crate::application::contracts::web::{CleanArticle, UrlPreview};
 use crate::features::web::dto::{GetUrlPreviewRequestDto, IngestWebUrlRequestDto};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;

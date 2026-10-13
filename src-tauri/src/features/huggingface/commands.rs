@@ -5,6 +5,7 @@
 
 use crate::audit::AuditAction;
 use crate::infrastructure::security::keyring_storage::SecureStorage;
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -26,7 +27,7 @@ pub struct HfTokenStatus {
 ///
 /// Validates token format and stores in OS keyring.
 /// Token must start with "hf_" and be at least 35 characters.
-pub async fn set_huggingface_token(token: String) -> Result<(), String> {
+pub async fn set_huggingface_token(token: String) -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     if !has_valid_token_format(&token) {
@@ -42,17 +43,18 @@ pub async fn set_huggingface_token(token: String) -> Result<(), String> {
         .await
         .ok();
 
-        return Err(
+        return Err(AppError::InvalidInput(
             "Invalid HuggingFace token format. Must start with 'hf_' and be at least 35 characters"
                 .to_string(),
-        );
+        ));
     }
 
     let storage = SecureStorage::new();
-    storage.store_api_key(HF_TOKEN_KEY, &token).map_err(|e| {
-        error!(error = %e, "Failed to store HuggingFace token");
-        e.to_string()
-    })?;
+    storage
+        .store_api_key(HF_TOKEN_KEY, &token)
+        .inspect_err(|e| {
+            error!(error = %e, "Failed to store HuggingFace token");
+        })?;
 
     // Audit log
     crate::audit_success!(
@@ -72,11 +74,9 @@ pub async fn set_huggingface_token(token: String) -> Result<(), String> {
 ///
 /// Returns status indicating if a token is configured.
 /// Does not return the actual token value.
-pub async fn get_huggingface_token_status() -> Result<HfTokenStatus, String> {
+pub async fn get_huggingface_token_status() -> Result<HfTokenStatus> {
     let storage = SecureStorage::new();
-    let is_set = storage
-        .has_api_key(HF_TOKEN_KEY)
-        .map_err(|e| e.to_string())?;
+    let is_set = storage.has_api_key(HF_TOKEN_KEY)?;
 
     Ok(HfTokenStatus { is_set })
 }
@@ -84,13 +84,12 @@ pub async fn get_huggingface_token_status() -> Result<HfTokenStatus, String> {
 /// Delete the stored HuggingFace token
 ///
 /// Removes the token from OS keyring and logs the deletion.
-pub async fn delete_huggingface_token() -> Result<(), String> {
+pub async fn delete_huggingface_token() -> Result<()> {
     let logger = crate::audit::get_audit_logger();
 
     let storage = SecureStorage::new();
-    storage.delete_api_key(HF_TOKEN_KEY).map_err(|e| {
+    storage.delete_api_key(HF_TOKEN_KEY).inspect_err(|e| {
         error!(error = %e, "Failed to delete HuggingFace token");
-        e.to_string()
     })?;
 
     // Audit log
@@ -111,13 +110,11 @@ pub async fn delete_huggingface_token() -> Result<(), String> {
 ///
 /// Returns the token if set, None if not configured.
 /// This should only be used internally for download authentication.
-pub async fn get_huggingface_token() -> Result<Option<String>, String> {
+pub async fn get_huggingface_token() -> Result<Option<String>> {
     let logger = crate::audit::get_audit_logger();
 
     let storage = SecureStorage::new();
-    let token = storage
-        .get_api_key(HF_TOKEN_KEY)
-        .map_err(|e| e.to_string())?;
+    let token = storage.get_api_key(HF_TOKEN_KEY)?;
 
     if token.is_some() {
         crate::audit_success!(

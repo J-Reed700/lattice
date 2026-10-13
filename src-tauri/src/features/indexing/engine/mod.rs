@@ -162,7 +162,7 @@ pub mod storage;
 #[cfg(test)]
 mod indexer_tests;
 
-pub use chunker::{ChunkerConfig, ContextualizedChunk, SemanticChunker, TextChunk};
+pub use chunker::{ChunkerConfig, SemanticChunker, TextChunk};
 pub use error::{IndexingError, Result};
 pub use extraction::{ContentExtractor, ExtractedContent};
 pub use metadata_extractor::{extract_metadata, DocumentMetadata};

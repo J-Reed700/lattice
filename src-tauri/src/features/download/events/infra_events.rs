@@ -1,4 +1,5 @@
 use crate::domain::download::snapshot::{BatchSnapshot, DownloadStateSnapshot, SingleFileSnapshot};
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -55,23 +56,23 @@ impl DownloadEventEmitter {
         Self { app_handle }
     }
 
-    pub async fn emit(&self, event: DownloadEvent) -> Result<(), String> {
+    pub async fn emit(&self, event: DownloadEvent) -> Result<()> {
         self.app_handle
             .emit("download:progress", event)
-            .map_err(|e| format!("Failed to emit event: {}", e))
+            .map_err(|e| AppError::InternalError(format!("Failed to emit event: {}", e)))
     }
 
-    pub async fn emit_batch(&self, events: Vec<DownloadEvent>) -> Result<(), String> {
+    pub async fn emit_batch(&self, events: Vec<DownloadEvent>) -> Result<()> {
         for event in events {
             self.emit(event).await?;
         }
         Ok(())
     }
 
-    pub async fn emit_failed(&self, event: DownloadFailedEvent) -> Result<(), String> {
+    pub async fn emit_failed(&self, event: DownloadFailedEvent) -> Result<()> {
         self.app_handle
             .emit("download:failed", event)
-            .map_err(|e| format!("Failed to emit failed event: {}", e))
+            .map_err(|e| AppError::InternalError(format!("Failed to emit failed event: {}", e)))
     }
 }
 
@@ -361,7 +362,7 @@ impl DownloadEventBridge {
     async fn publish_domain_event(
         &self,
         manager_event: &crate::features::download::manager::DownloadEvent,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         use crate::features::download::events::model_download_events::{
             FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadStartedEvent,
             ModelDownloadEvent,
@@ -391,11 +392,12 @@ impl DownloadEventBridge {
             ME::Progress { .. } | ME::Paused { .. } | ME::Resumed { .. } => return Ok(()),
         };
 
-        let Some(session) = self
-            .repository
-            .get(session_id)
-            .await
-            .map_err(|e| format!("Failed to load download session {}: {}", session_id, e))?
+        let Some(session) = self.repository.get(session_id).await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to load download session {}: {}",
+                session_id, e
+            ))
+        })?
         else {
             return Ok(());
         };
@@ -498,13 +500,13 @@ impl DownloadEventBridge {
 
     /// Check if a download session is part of a multi-file batch
     /// Returns Some(model_id) if session belongs to a batch with >1 files
-    async fn is_batch_download(&self, session_id: &str) -> Result<Option<String>, String> {
+    async fn is_batch_download(&self, session_id: &str) -> Result<Option<String>> {
         let session = self
             .repository
             .get(session_id)
             .await
-            .map_err(|e| format!("Failed to fetch session: {}", e))?
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
+            .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+            .ok_or_else(|| AppError::NotFound(format!("Session {} not found", session_id)))?;
 
         if let Some(model_id) = session.model_id() {
             // Query repository for all sessions with this model_id
@@ -512,7 +514,7 @@ impl DownloadEventBridge {
                 .repository
                 .list()
                 .await
-                .map_err(|e| format!("Failed to list sessions: {}", e))?;
+                .map_err(|e| AppError::Database(format!("Failed to list sessions: {}", e)))?;
 
             let model_sessions: Vec<_> = all_sessions
                 .iter()
@@ -532,7 +534,7 @@ impl DownloadEventBridge {
     async fn create_batch_snapshot(
         &self,
         model_id: &str,
-    ) -> Result<crate::domain::download::snapshot::BatchSnapshot, String> {
+    ) -> Result<crate::domain::download::snapshot::BatchSnapshot> {
         use crate::domain::download::snapshot::{
             BatchSnapshot, DownloadStatus, FileSnapshot, FileStatus,
         };
@@ -541,7 +543,7 @@ impl DownloadEventBridge {
             .repository
             .list()
             .await
-            .map_err(|e| format!("Failed to list sessions: {}", e))?;
+            .map_err(|e| AppError::Database(format!("Failed to list sessions: {}", e)))?;
 
         let model_sessions: Vec<_> = all_sessions
             .into_iter()
@@ -549,7 +551,10 @@ impl DownloadEventBridge {
             .collect();
 
         if model_sessions.is_empty() {
-            return Err(format!("No sessions found for model {}", model_id));
+            return Err(AppError::NotFound(format!(
+                "No sessions found for model {}",
+                model_id
+            )));
         }
 
         let model_name = model_sessions
@@ -650,7 +655,7 @@ impl DownloadEventBridge {
     async fn convert_event(
         &self,
         event: crate::features::download::manager::DownloadEvent,
-    ) -> Result<DownloadEvent, String> {
+    ) -> Result<DownloadEvent> {
         use crate::domain::download::snapshot::{DownloadStatus, SingleFileSnapshot};
         use crate::features::download::manager::DownloadEvent as ME;
 
@@ -660,8 +665,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -693,8 +698,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -739,8 +744,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -780,8 +785,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -821,8 +826,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -857,8 +862,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
@@ -898,8 +903,8 @@ impl DownloadEventBridge {
                     .repository
                     .get(&id)
                     .await
-                    .map_err(|e| format!("Failed to fetch session: {}", e))?
-                    .ok_or_else(|| format!("Session {} not found", id))?;
+                    .map_err(|e| AppError::Database(format!("Failed to fetch session: {}", e)))?
+                    .ok_or_else(|| AppError::NotFound(format!("Session {} not found", id)))?;
 
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;

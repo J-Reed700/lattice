@@ -2,10 +2,10 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
+use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use crate::domain::models::metadata::ModelType;
 use crate::domain::value_objects::ArtifactIdentity;
-use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{Row, SqlitePool};
@@ -113,7 +113,7 @@ fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf> {
         // under a `model.safetensors` path that does not exist, and the
         // synthesized manifest row would report a zero size.
         ModelLocation::LocalDirectory { path } => Some(
-            crate::features::embedding::candle_service::weights_path(path)
+            crate::domain::models::checkpoint::weights_path(path)
                 .unwrap_or_else(|| path.join(WEIGHTS_SAFETENSORS)),
         ),
         ModelLocation::RemoteOllama => None,
@@ -125,8 +125,7 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
     type Error = AppError;
 
     fn try_from(record: DownloadedModelRecord) -> Result<Self, Self::Error> {
-        let model_type_enum = ModelType::from_db_string(&record.model_type)
-            .map_err(|e| AppError::InvalidData(format!("Invalid model type: {}", e)))?;
+        let model_type_enum = ModelType::from_db_string(&record.model_type)?;
 
         let downloaded_at_dt =
             parse_optional_db_timestamp(record.downloaded_at.as_deref())?.unwrap_or_else(Utc::now);

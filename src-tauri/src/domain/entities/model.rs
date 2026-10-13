@@ -1,6 +1,7 @@
 use super::model_file::ModelFile;
 use crate::domain::models::metadata::ModelType;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
+use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -34,22 +35,32 @@ impl Model {
         file_path: std::path::PathBuf,
         file_size_bytes: i64,
         metadata: Option<serde_json::Value>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         if file_size_bytes <= 0 {
-            return Err("file_size_bytes must be > 0".to_string());
+            return Err(AppError::InvalidInput(
+                "file_size_bytes must be > 0".to_string(),
+            ));
         }
         if model_id.is_empty() {
-            return Err("model_id cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "model_id cannot be empty".to_string(),
+            ));
         }
         if model_name.is_empty() {
-            return Err("model_name cannot be empty".to_string());
+            return Err(AppError::InvalidInput(
+                "model_name cannot be empty".to_string(),
+            ));
         }
 
         let base_path_str = file_path
             .parent()
-            .ok_or_else(|| "file_path must have a parent directory".to_string())?
+            .ok_or_else(|| {
+                AppError::InvalidInput("file_path must have a parent directory".to_string())
+            })?
             .to_str()
-            .ok_or_else(|| "file_path parent directory is not valid UTF-8".to_string())?
+            .ok_or_else(|| {
+                AppError::InvalidInput("file_path parent directory is not valid UTF-8".to_string())
+            })?
             .to_string();
 
         let now = Utc::now();
@@ -100,20 +111,20 @@ impl Model {
         std::path::PathBuf::from(&self.base_path)
     }
 
-    pub fn validate_for_operation(&self, is_chat: bool) -> Result<(), String> {
+    pub fn validate_for_operation(&self, is_chat: bool) -> Result<()> {
         let model_type = ModelType::from_db_string(&self.model_type)?;
         if is_chat {
             if !model_type.is_chat_compatible() {
-                return Err(format!(
+                return Err(AppError::InvalidInput(format!(
                     "Cannot use embedding model '{}' for chat. Please download a chat model (.gguf format).",
                     self.name
-                ));
+                )));
             }
         } else if !model_type.is_embedding_compatible() {
-            return Err(format!(
+            return Err(AppError::InvalidInput(format!(
                 "Cannot use chat model '{}' for embeddings. Please download an embedding model (.onnx format).",
                 self.name
-            ));
+            )));
         }
         Ok(())
     }

@@ -147,7 +147,7 @@ impl ExternalModelMetadata {
     }
 
     /// Base64URL decode without padding.
-    fn decode_base64_url(input: &str) -> Result<String, String> {
+    fn decode_base64_url(input: &str) -> Result<String, AppError> {
         fn decode_char(c: u8) -> Option<u8> {
             match c {
                 b'A'..=b'Z' => Some(c - b'A'),
@@ -164,7 +164,8 @@ impl ExternalModelMetadata {
         let mut out = Vec::with_capacity((input.len() * 3) / 4);
 
         for c in input.bytes() {
-            let value = decode_char(c).ok_or_else(|| format!("Invalid base64url char: {}", c))?;
+            let value = decode_char(c)
+                .ok_or_else(|| AppError::Parsing(format!("Invalid base64url char: {}", c)))?;
             buffer = (buffer << 6) | (value as u32);
             bits += 6;
 
@@ -177,11 +178,14 @@ impl ExternalModelMetadata {
         if bits > 0 {
             let mask = (1u32 << bits) - 1;
             if (buffer & mask) != 0 {
-                return Err("Invalid trailing bits in base64url payload".into());
+                return Err(AppError::Parsing(
+                    "Invalid trailing bits in base64url payload".to_string(),
+                ));
             }
         }
 
-        String::from_utf8(out).map_err(|e| format!("Invalid UTF-8 payload: {}", e))
+        String::from_utf8(out)
+            .map_err(|e| AppError::Parsing(format!("Invalid UTF-8 payload: {}", e)))
     }
 
     /// Sanitize arbitrary model identifiers into safe path/DB IDs.
@@ -218,7 +222,7 @@ impl ExternalModelMetadata {
     ///
     /// # Returns
     /// Domain ModelMetadata or error if mapping fails.
-    pub fn to_domain_model(&self) -> Result<ModelMetadata, String> {
+    pub fn to_domain_model(&self) -> Result<ModelMetadata, AppError> {
         // Infer category from tags
         let category = self.infer_category()?;
 
@@ -310,7 +314,7 @@ impl ExternalModelMetadata {
     }
 
     /// Infer model category from tags.
-    fn infer_category(&self) -> Result<ModelCategory, String> {
+    fn infer_category(&self) -> Result<ModelCategory, AppError> {
         let tags_lower: Vec<String> = self.tags.iter().map(|t| t.to_lowercase()).collect();
 
         // Embedding indicators take precedence. Decoder-backed embedders such

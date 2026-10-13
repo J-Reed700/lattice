@@ -1,6 +1,8 @@
 //! Model catalogs, selection rules, artifact metadata, and validation.
 
 pub mod catalog;
+pub mod catalog_cache;
+pub mod checkpoint;
 pub mod classifier;
 pub mod curated;
 pub mod downloaded;

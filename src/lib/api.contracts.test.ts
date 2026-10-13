@@ -65,6 +65,19 @@ describe('generated IPC contracts and UI adapters', () => {
     });
   });
 
+  it('reads the response semantic search returns directly and its rejection as an ApiError', async () => {
+    const hit = { id: 'chunk-1', title: 'manual.pdf', content: 'Torque specs', score: 0.9 };
+    ipc.mockResolvedValueOnce({ results: [hit], total: 1, query_time_ms: 4 });
+    expect(await VaultAPI.searchSemantic('manual')).toMatchObject({ ok: true, data: [hit] });
+
+    ipc.mockRejectedValueOnce({ code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded', details: 'Try again in 5 seconds' });
+    expect(await VaultAPI.searchSemantic('manual')).toMatchObject({
+      ok: false,
+      error: 'Rate limit exceeded',
+      details: { code: 'RATE_LIMIT_EXCEEDED', details: 'Try again in 5 seconds' },
+    });
+  });
+
   it.each([{ unexpectedResults: [] }, [{ document: 'stale schema' }]])('rejects malformed search responses instead of claiming no matches: %j', async response => {
     ipc.mockResolvedValueOnce(response);
     expect(await VaultAPI.searchSemantic('manual')).toEqual({ ok: false, error: 'Semantic search failed: invalid search response' });

@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::timestamps::parse_db_timestamp;
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
@@ -223,7 +224,7 @@ async fn run_watcher(
             )
             .await
             {
-                emit_watcher_error(&app_handle, &error);
+                emit_watcher_error(&app_handle, &error.to_string());
             }
         }
         for path in paths {
@@ -471,7 +472,7 @@ pub async fn rescan_vault(
     vault_root: PathBuf,
     suppression: WriteSuppressionRegistry,
     app_handle: tauri::AppHandle,
-) -> Result<RescanSummary, String> {
+) -> Result<RescanSummary> {
     let notes_dir = vault_root.join("notes");
     // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
     if !notes_dir.exists() {
@@ -487,7 +488,7 @@ pub async fn rescan_vault(
     let _rescan_lock = RESCAN_LOCK.get_or_init(|| Mutex::new(())).lock().await;
     let (run_id, total_rows) = super::repository::begin_rescan(&db_pool)
         .await
-        .map_err(|e| format!("focus-rescan: repository setup failed: {e}"))?;
+        .map_err(|e| e.with_context("focus-rescan: repository setup failed"))?;
     let mut membership_guard = RescanMembershipGuard {
         pool: db_pool.clone(),
         run_id: run_id.clone(),
@@ -497,7 +498,12 @@ pub async fn rescan_vault(
     // repository-barrier-allow: rescan enumerates the configured vault resource.
     let mut entries = match tokio::fs::read_dir(&notes_dir).await {
         Ok(e) => e,
-        Err(e) => return Err(format!("focus-rescan: read_dir failed: {}", e)),
+        Err(e) => {
+            return Err(AppError::FileSystem(format!(
+                "focus-rescan: read_dir failed: {}",
+                e
+            )))
+        }
     };
 
     let mut scanned = 0usize;
@@ -535,7 +541,7 @@ pub async fn rescan_vault(
         if let Some(id) = stem {
             super::repository::mark_rescan_seen(&db_pool, &run_id, id)
                 .await
-                .map_err(|e| format!("focus-rescan: could not mark note as seen: {e}"))?;
+                .map_err(|e| e.with_context("focus-rescan: could not mark note as seen"))?;
             if super::repository::has_pending(&db_pool, id)
                 .await
                 .unwrap_or(true)
@@ -556,7 +562,7 @@ pub async fn rescan_vault(
         let sql_row = repository
             .get_timestamp(id)
             .await
-            .map_err(|e| format!("focus-rescan: timestamp lookup failed: {e}"))?;
+            .map_err(|e| e.with_context("focus-rescan: timestamp lookup failed"))?;
         let needs_import = match sql_row {
             None => true,
             Some(row) => is_disk_newer_than_sql(&entry, &row.updated_at).await,
@@ -567,7 +573,7 @@ pub async fn rescan_vault(
                 super::repository::mark_rescan_seen(&db_pool, &run_id, &imported_id)
                     .await
                     .map_err(|e| {
-                        format!("focus-rescan: could not mark imported note as seen: {e}")
+                        e.with_context("focus-rescan: could not mark imported note as seen")
                     })?;
             }
             imported += 1;
@@ -593,7 +599,7 @@ pub async fn rescan_vault(
         let rows =
             super::repository::rescan_note_page(&db_pool, &run_id, cursor.as_deref(), DB_PAGE)
                 .await
-                .map_err(|e| format!("focus-rescan: ghost candidate page failed: {e}"))?;
+                .map_err(|e| e.with_context("focus-rescan: ghost candidate page failed"))?;
         if rows.is_empty() {
             break;
         }
@@ -641,7 +647,7 @@ pub async fn rescan_vault(
         let rows =
             super::repository::rescan_note_page(&db_pool, &run_id, cursor.as_deref(), DB_PAGE)
                 .await
-                .map_err(|e| format!("focus-rescan: ghost deletion page failed: {e}"))?;
+                .map_err(|e| e.with_context("focus-rescan: ghost deletion page failed"))?;
         if rows.is_empty() {
             break;
         }
@@ -680,7 +686,7 @@ pub async fn rescan_vault(
 
     super::repository::finish_rescan(&db_pool, &run_id)
         .await
-        .map_err(|e| format!("focus-rescan: membership cleanup failed: {e}"))?;
+        .map_err(|e| e.with_context("focus-rescan: membership cleanup failed"))?;
     membership_guard.active = false;
 
     if imported > 0 || deleted > 0 {

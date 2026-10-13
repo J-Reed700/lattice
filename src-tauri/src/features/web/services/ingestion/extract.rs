@@ -2,7 +2,7 @@
 //! building articles from video metadata.
 
 use super::WebIngestionService;
-use crate::features::function_calling::dto::CleanArticle;
+use crate::application::contracts::web::CleanArticle;
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;

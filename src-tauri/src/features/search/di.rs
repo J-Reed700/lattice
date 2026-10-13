@@ -10,9 +10,10 @@ use sqlx::SqlitePool;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
+use crate::domain::models::checkpoint::has_loadable_weights;
 use crate::domain::models::downloaded::DownloadedModel;
 use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
-use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
+use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::{vector_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
@@ -476,10 +477,10 @@ mod reembed_marker_tests {
 #[cfg(test)]
 mod index_identity_tests {
     use super::index_identity;
+    use crate::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
     use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use crate::domain::models::metadata::ModelType;
     use crate::domain::value_objects::ArtifactIdentity;
-    use crate::features::embedding::candle_service::WEIGHTS_SAFETENSORS;
     use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
     use std::path::Path;
 

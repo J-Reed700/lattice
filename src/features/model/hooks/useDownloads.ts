@@ -4,6 +4,9 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import VaultAPI from '@/lib/api';
+import { describeFailure } from '@/lib/errorHandling';
+import { ErrorCode } from '@/types/api/errorCodes';
+import type { ApiFailure } from '@/types/api/result';
 import type { DownloadStatus, DownloadState } from '@/types/downloads';
 import { TauriEventNames, EventSchemas, TauriEvents, listenValidated } from '@/types/events';
 
@@ -58,7 +61,7 @@ const findByBackendId = (
 
 export async function fetchDownloadMap(): Promise<Map<string, DownloadStatus>> {
   const result = await VaultAPI.listDownloads();
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new Error(describeFailure(result));
   return new Map(result.data.map((download) => [
     cacheKeyFor(download),
     { ...download, state: toDownloadState(download.state) },
@@ -265,10 +268,9 @@ export function useDownloadsListener(): void {
   }, [queryClient, setListenerError]);
 }
 
-const isStaleSessionError = (message: string): boolean => {
-  const normalized = message.toLowerCase();
-  return normalized.includes('not found') || normalized.includes('already removed');
-};
+/** The session is already gone, so the row was stale rather than the action failing. */
+const isStaleSessionError = (failure: ApiFailure): boolean =>
+  failure.details?.code === ErrorCode.NOT_FOUND;
 
 export function useDownloadActions() {
   const queryClient = useQueryClient();
@@ -286,8 +288,8 @@ export function useDownloadActions() {
     label: string
   ) => {
     const result = await action(resolveBackendId(id));
-    if (!result.ok && !isStaleSessionError(result.error)) {
-      throw new Error(`Failed to ${label} download: ${result.error}`);
+    if (!result.ok && !isStaleSessionError(result)) {
+      throw new Error(`Failed to ${label} download: ${describeFailure(result)}`);
     }
     await resyncFromBackend();
   }, [resolveBackendId, resyncFromBackend]);
@@ -302,14 +304,14 @@ export function useDownloadActions() {
     runAction(id, VaultAPI.retryDownload, 'retry'), [runAction]);
   const removeDownload = useCallback(async (id: string) => {
     const result = await VaultAPI.removeDownload(resolveBackendId(id));
-    if (!result.ok && !isStaleSessionError(result.error)) {
-      throw new Error(`Failed to remove download: ${result.error}`);
+    if (!result.ok && !isStaleSessionError(result)) {
+      throw new Error(`Failed to remove download: ${describeFailure(result)}`);
     }
     await resyncFromBackend();
   }, [resolveBackendId, resyncFromBackend]);
   const clearCompletedDownloads = useCallback(async (): Promise<number> => {
     const result = await VaultAPI.clearCompletedDownloads();
-    if (!result.ok) throw new Error(`Failed to clear completed downloads: ${result.error}`);
+    if (!result.ok) throw new Error(`Failed to clear completed downloads: ${describeFailure(result)}`);
     await resyncFromBackend();
     return result.data;
   }, [resyncFromBackend]);

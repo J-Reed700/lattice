@@ -258,7 +258,7 @@ impl IndexStorageTrait for MockIndexStorage {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String> {
         let doc_id = uuid::Uuid::new_v4().to_string();
@@ -310,7 +310,7 @@ impl IndexStorageTrait for MockIndexStorage {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::domain::value_objects::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> crate::features::indexing::engine::error::Result<String> {
         let path_str = path.to_string_lossy().to_string();

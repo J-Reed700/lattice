@@ -50,6 +50,5 @@ impl Container {
             app_handle,
         )
         .await
-        .map_err(AppError::Other)
     }
 }

@@ -43,13 +43,14 @@ use lattice::application::ports::vector_search_port::VectorIndexEntry;
 use lattice::application::ports::{
     ChunkSparseTerms, EmbeddingPort, SparseTermStorePort, VectorSearchPort,
 };
+use lattice::domain::value_objects::ContextualizedChunk;
 use lattice::features::conversation::chat::retrieval::{
     assess_retrieval_sufficiency, RetrievalSufficiency,
 };
 use lattice::features::embedding::candle_service::CandleEmbeddingService;
 use lattice::features::embedding::input_policy::load_tokenizer;
 use lattice::features::indexing::engine::chunker::{
-    context_prefix, ChunkerConfig, ContextualizedChunk, SemanticChunker,
+    context_prefix, ChunkerConfig, SemanticChunker,
 };
 use lattice::features::indexing::engine::metadata_extractor::extract_metadata;
 use lattice::features::search::dto::{SearchModeDto, SearchRequestDto};

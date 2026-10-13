@@ -3,9 +3,10 @@
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::fetch::TempDirectoryGuard;
 use super::WebIngestionService;
+use crate::application::contracts::web::CleanArticle;
+use crate::domain::ports::article_archive::ArticleArchive;
+use crate::domain::value_objects::ContextualizedChunk;
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::function_calling::dto::CleanArticle;
-use crate::features::indexing::engine::chunker::ContextualizedChunk;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::traits::MockArticleExtractorService;
 use crate::features::web::{WebArchiveServiceTrait, WebIngestionServiceTrait};
@@ -17,6 +18,17 @@ use std::sync::Arc;
 use tokenizers::Tokenizer;
 
 struct MockWebArchiveService;
+
+#[async_trait]
+impl ArticleArchive for MockWebArchiveService {
+    async fn delete_article(&self, _path: &Path) -> Result<()> {
+        unimplemented!("Not needed for ingestion tests")
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        path.starts_with("/mock/web-archive")
+    }
+}
 
 #[async_trait]
 impl WebArchiveServiceTrait for MockWebArchiveService {
@@ -35,16 +47,8 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
         unimplemented!("Not needed for ingestion tests")
     }
 
-    async fn delete_article(&self, _path: &Path) -> Result<()> {
-        unimplemented!("Not needed for ingestion tests")
-    }
-
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {
         unimplemented!("Not needed for ingestion tests")
-    }
-
-    fn owns(&self, path: &Path) -> bool {
-        path.starts_with("/mock/web-archive")
     }
 }
 

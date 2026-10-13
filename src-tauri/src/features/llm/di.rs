@@ -403,6 +403,10 @@ impl Container {
         }
     }
 
+    pub fn get_system_capabilities_use_case(&self) -> Arc<GetSystemCapabilitiesUseCase> {
+        Arc::clone(self.ai.get_system_capabilities_use_case())
+    }
+
     pub fn get_available_models_use_case(&self) -> Arc<GetAvailableModelsUseCase> {
         Arc::clone(self.ai.get_available_models_use_case())
     }

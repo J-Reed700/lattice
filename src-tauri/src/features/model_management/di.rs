@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::application::ports::{ModelCatalogPort, SystemInfoPort};
-use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
 use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
@@ -30,10 +29,6 @@ impl Container {
     ) -> Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>
     {
         Arc::clone(self.ai.downloaded_model_repo())
-    }
-
-    pub fn get_system_capabilities_use_case(&self) -> Arc<GetSystemCapabilitiesUseCase> {
-        Arc::clone(self.ai.get_system_capabilities_use_case())
     }
 
     /// Get download manager service
