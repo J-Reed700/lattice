@@ -248,6 +248,7 @@ pub async fn start_learning_practical_run(
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     crate::features::learning::practical_runs::start_run(
         &practical_repo(&container),
+        &container.practical_run_registry(),
         &request,
         &hash,
     )
@@ -264,6 +265,7 @@ pub async fn cancel_learning_practical_run(
     let hash = source_request_hash(&request).map_err(ApiError::from)?;
     crate::features::learning::practical_runs::cancel_run(
         &practical_repo(&container),
+        &container.practical_run_registry(),
         &request,
         &hash,
     )

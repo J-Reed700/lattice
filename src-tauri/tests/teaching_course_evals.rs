@@ -234,6 +234,7 @@ async fn live_complete_python_course() -> Result<()> {
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = lattice::features::learning::outline_draft::DraftRunRegistry::new();
     let mut program = if std::env::var("LATTICE_TEACHING_RESUME").as_deref() == Ok("1")
         && model.directory.join("outline.json").exists()
     {
@@ -243,10 +244,11 @@ async fn live_complete_python_course() -> Result<()> {
         .expect("Retained outline");
         repo.get(&draft.summary.id).await?
     } else {
-        let draft=service::generate(&repo,&model,GenerateLearningProgramRequestDto { goal:"Build a small Python expense summarizer from supplied CSV text using the standard library. Use a single analyzer.py file and a provided three-line runner. Practice dictionaries to total amounts by category, validate empty category names, and write assert checks. Limit the CSV to category and integer cents; quoted fields use csv.DictReader. No file I/O, CLI argument parsing, classes, or external packages.".into(), prior_knowledge:"I can write small functions, iterate lists with for loops, use conditionals, and do basic arithmetic. I need practice using dictionaries, reading CSV text with the standard library, and writing assert checks.".into(),minutes_per_session:30,course_depth:Some(LearningCourseDepth::Focused),document_ids:vec![],source_urls:vec![] },vec![]).await?;
+        let draft=service::generate(&repo,&drafts,&model,GenerateLearningProgramRequestDto { goal:"Build a small Python expense summarizer from supplied CSV text using the standard library. Use a single analyzer.py file and a provided three-line runner. Practice dictionaries to total amounts by category, validate empty category names, and write assert checks. Limit the CSV to category and integer cents; quoted fields use csv.DictReader. No file I/O, CLI argument parsing, classes, or external packages.".into(), prior_knowledge:"I can write small functions, iterate lists with for loops, use conditionals, and do basic arithmetic. I need practice using dictionaries, reading CSV text with the standard library, and writing assert checks.".into(),minutes_per_session:30,course_depth:Some(LearningCourseDepth::Focused),document_ids:vec![],source_urls:vec![] },vec![]).await?;
         model.save("outline.json", &draft);
         service::accept(
             &repo,
+            &drafts,
             AcceptLearningProgramRequestDto {
                 program_id: draft.summary.id.clone(),
                 expected_revision: draft.summary.revision,

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -152,30 +152,46 @@ impl OutlineDraft {
     }
 }
 
-// Guard concurrent manual repair/acceptance while keeping restart recovery free
-// of stale locks. Database revisions also protect every checkpoint and acceptance.
-static ACTIVE: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-pub(in crate::features::learning) struct DraftRun(String);
-impl DraftRun {
-    pub fn acquire(id: &str) -> Result<Self> {
-        if !ACTIVE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id.to_owned())
-        {
+/// The one registry of outline drafts being reviewed, repaired or accepted in
+/// this process. Built by the composition root and handed to the commands
+/// that touch a draft, so concurrent manual repair/acceptance of the same draft
+/// is rejected against the same set — and a test never sees a draft another
+/// test holds. Held in memory only, so restart recovery stays free of stale
+/// locks; database revisions also protect every checkpoint and acceptance.
+#[derive(Clone, Default)]
+pub struct DraftRunRegistry {
+    active: Arc<Mutex<HashSet<String>>>,
+}
+
+impl DraftRunRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.active.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(in crate::features::learning) fn acquire(&self, id: &str) -> Result<DraftRun> {
+        if !self.lock().insert(id.to_owned()) {
             return Err(AppError::InvalidInput(
                 "This draft is already being reviewed or repaired.".into(),
             ));
         }
-        Ok(Self(id.into()))
+        Ok(DraftRun {
+            id: id.into(),
+            registry: self.clone(),
+        })
     }
+}
+
+pub(in crate::features::learning) struct DraftRun {
+    id: String,
+    registry: DraftRunRegistry,
 }
 impl Drop for DraftRun {
     fn drop(&mut self) {
-        ACTIVE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.0);
+        self.registry.lock().remove(&self.id);
     }
 }
 
@@ -279,12 +295,13 @@ pub(in crate::features::learning) async fn finish(
 
 pub(in crate::features::learning) async fn repair_saved(
     repo: &LearningRepository,
+    drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,
     request: &RepairLearningOutlineRequestDto,
     progress: &OutlineProgress,
     web: Option<&dyn crate::features::web::traits::WebServiceTrait>,
 ) -> Result<LearningProgramDto> {
-    let _run = DraftRun::acquire(&request.program_id)?;
+    let _run = drafts.acquire(&request.program_id)?;
     let program = repo.get(&request.program_id).await?;
     if program.summary.status != LearningProgramStatus::Draft
         || program.summary.revision != request.expected_revision
@@ -313,4 +330,21 @@ pub(in crate::features::learning) async fn repair_saved(
         .collect::<Result<Vec<_>>>()?;
     progress.saved(&program.summary.id);
     finish(repo, llm, program, draft, sources, progress, web).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_held_draft_rejects_a_second_run_until_released() {
+        let drafts = DraftRunRegistry::new();
+        let id = uuid::Uuid::new_v4().to_string();
+        let held = drafts.acquire(&id).unwrap();
+        assert!(drafts.acquire(&id).is_err());
+        // A separate registry is a separate process-worth of state.
+        assert!(DraftRunRegistry::new().acquire(&id).is_ok());
+        drop(held);
+        assert!(drafts.acquire(&id).is_ok());
+    }
 }

@@ -98,7 +98,7 @@ pub async fn ensure_learning_lesson_note(
         .await
         .map_err(ApiError::from)?;
     if created {
-        crate::features::vault::writeback::spawn_sync_workspace_note(&container);
+        crate::features::vault::writeback::spawn_sync_workspace_note(container.vault_writer());
     }
     let _ = note_id;
     learning_memory(&container, &request.program_id)

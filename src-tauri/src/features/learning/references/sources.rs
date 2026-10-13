@@ -6,14 +6,32 @@ use crate::features::learning::dto::{
     LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
 use crate::features::web::traits::WebServiceTrait;
-use crate::interfaces::di::Container;
+use crate::infrastructure::security::RateLimiter;
 use crate::shared::error::{AppError, Result};
+use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 // Keep this in sync with the repository's 2,400-character document excerpt
 // and generation's source snapshot limit.
 const MAX_EXCERPT_CHARS: usize = 2400;
 const MAX_TITLE_CHARS: usize = 180;
+
+/// Everything source acquisition needs, bound as one small named bundle.
+///
+/// The command layer assembles this from the container; the acquisition
+/// code never sees the container itself.
+#[derive(Clone)]
+pub struct SourceDeps {
+    /// Library document text for indexed-document references.
+    pub library: Arc<dyn LibraryPassagesPort>,
+    /// The host's safe web service for URL references.
+    pub web: Arc<dyn WebServiceTrait>,
+    /// Shared web-ingest budget for reference fetches.
+    pub web_ingest: RateLimiter,
+    /// Source-library rows: before-use refreshes persist here.
+    pub pool: SqlitePool,
+}
 
 pub struct InitialReference {
     pub source_id: String,
@@ -102,7 +120,7 @@ pub(in crate::features::learning) async fn capture_document(
 /// resolver and redirect checks. Any acquisition failure is returned to the
 /// caller; a partial result is never presented as a complete source set.
 pub async fn acquire(
-    container: &Container,
+    deps: &SourceDeps,
     request: &GenerateLearningProgramRequestDto,
 ) -> Result<AcquiredSources> {
     let mut unique_documents = HashSet::new();
@@ -126,7 +144,7 @@ pub async fn acquire(
         ));
     }
 
-    let library = container.library_passages();
+    let library = deps.library.clone();
     let mut sources = Vec::new();
     let mut references = Vec::new();
     for document_id in &request.document_ids {
@@ -139,13 +157,10 @@ pub async fn acquire(
             captured,
         });
     }
-    let safe_web = container.web_service();
+    let safe_web = &deps.web;
     for supplied_url in &request.source_urls {
         let url = supplied_url.trim();
-        container
-            .security_context()
-            .rate_limiters()
-            .web_ingest
+        deps.web_ingest
             .check_rate_limit("learning_source_fetch")
             .await
             .map_err(|error| AppError::RateLimitExceeded(error.to_string()))?;
@@ -190,11 +205,11 @@ pub async fn acquire(
 }
 
 pub(in crate::features::learning) async fn ensure_before_use_sources(
-    container: &Container,
+    deps: &SourceDeps,
     program_id: &str,
 ) -> crate::shared::error::Result<()> {
     let repo = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-        container.db_pool().clone(),
+        deps.pool.clone(),
     );
     let workspace = repo.workspace(program_id).await?;
     for source in workspace.sources.iter().filter(|s| {
@@ -211,18 +226,15 @@ pub(in crate::features::learning) async fn ensure_before_use_sources(
             expected_revision: source.revision,
         };
         let refreshed = async {
-            container
-                .security_context()
-                .rate_limiters()
-                .web_ingest
+            deps.web_ingest
                 .check_rate_limit("learning_source_before_use")
                 .await
                 .map_err(|e| crate::shared::error::AppError::RateLimitExceeded(e.to_string()))?;
             let url = source.requested_url.as_deref().ok_or_else(|| {
                 crate::shared::error::AppError::Database("Web source has no requested URL".into())
             })?;
-            let article = container
-                .web_service()
+            let article = deps
+                .web
                 .fetch_reference_content(url)
                 .await
                 .map_err(|e| crate::shared::error::AppError::Network(e.to_string()))?;

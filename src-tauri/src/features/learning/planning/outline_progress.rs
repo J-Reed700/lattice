@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     future::Future,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -205,19 +205,33 @@ impl OutlineProgress {
     }
 }
 
-static ACTIVE: LazyLock<Mutex<HashMap<String, Arc<OutlineProgress>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// The one registry of in-flight outline runs for this process. Built by the
+/// composition root and handed to the commands that start or stop a run, so a
+/// duplicate request id is rejected against the same map the stop button
+/// consults — and a test never sees a run another test registered.
+#[derive(Clone, Default)]
+pub struct OutlineRunRegistry {
+    active: Arc<Mutex<HashMap<String, Arc<OutlineProgress>>>>,
+}
 
-pub struct OutlineRun(pub Arc<OutlineProgress>);
-impl OutlineRun {
+impl OutlineRunRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<OutlineProgress>>> {
+        self.active.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn register(
+        &self,
         id: Option<String>,
         publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
-    ) -> Result<Self> {
+    ) -> Result<OutlineRun> {
         let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         uuid::Uuid::parse_str(&id)
             .map_err(|_| AppError::InvalidInput("Invalid outline request ID".into()))?;
-        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut active = self.lock();
         if active.contains_key(&id) {
             return Err(AppError::InvalidInput(
                 "This outline request is already running.".into(),
@@ -229,31 +243,41 @@ impl OutlineRun {
             ..Default::default()
         });
         active.insert(id, progress.clone());
-        Ok(Self(progress))
+        Ok(OutlineRun {
+            progress,
+            registry: self.clone(),
+        })
     }
-}
-impl Drop for OutlineRun {
-    fn drop(&mut self) {
-        ACTIVE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.0.id);
+
+    pub fn cancel(&self, id: &str) -> bool {
+        if let Some(progress) = self.lock().get(id) {
+            if progress.snapshot().stage != OutlineStage::Saving {
+                progress.cancellation.cancel();
+                return true;
+            }
+        }
+        false
     }
 }
 
-pub fn cancel(id: &str) -> bool {
-    if let Some(progress) = ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
-        if progress.snapshot().stage != OutlineStage::Saving {
-            progress.cancellation.cancel();
-            return true;
-        }
+pub struct OutlineRun {
+    pub progress: Arc<OutlineProgress>,
+    registry: OutlineRunRegistry,
+}
+
+impl Drop for OutlineRun {
+    fn drop(&mut self) {
+        self.registry.lock().remove(&self.progress.id);
     }
-    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn registry() -> OutlineRunRegistry {
+        OutlineRunRegistry::new()
+    }
 
     #[tokio::test(start_paused = true)]
     async fn long_running_work_has_no_overall_deadline() {
@@ -301,20 +325,21 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_drops_work_and_registration_is_cleaned_up() {
+        let registry = registry();
         let id = uuid::Uuid::new_v4().to_string();
-        let run = OutlineRun::register(Some(id.clone()), |_| {}).unwrap();
-        assert!(OutlineRun::register(Some(id.clone()), |_| {}).is_err());
-        assert!(cancel(&id));
+        let run = registry.register(Some(id.clone()), |_| {}).unwrap();
+        assert!(registry.register(Some(id.clone()), |_| {}).is_err());
+        assert!(registry.cancel(&id));
         assert!(run
-            .0
+            .progress
             .run(std::future::pending::<Result<()>>())
             .await
             .unwrap_err()
             .to_string()
             .contains("cancelled"));
-        assert_eq!(run.0.snapshot().stage, OutlineStage::Cancelled);
+        assert_eq!(run.progress.snapshot().stage, OutlineStage::Cancelled);
         drop(run);
-        assert!(!cancel(&id));
+        assert!(!registry.cancel(&id));
     }
 
     #[tokio::test]

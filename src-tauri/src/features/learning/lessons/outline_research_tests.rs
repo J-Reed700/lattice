@@ -5,7 +5,7 @@ use crate::features::{
     },
     learning::{
         outline_draft::LearningOutlineReviewStatus,
-        outline_progress::{OutlineProgress, OutlineRun, OutlineStage},
+        outline_progress::{OutlineProgress, OutlineRunRegistry, OutlineStage},
     },
     web::{mocks::MockWebService, traits::WebServiceTrait},
 };
@@ -156,8 +156,10 @@ async fn generate_online(
     sources: Vec<LearningSourceDto>,
 ) -> Result<LearningProgramDto> {
     let captured = references(&sources);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     service::generate_with_references_and_progress(
         repo,
+        &drafts,
         model,
         request(LearningCourseDepth::Course),
         sources,
@@ -184,20 +186,22 @@ async fn initial_generation_researches_review_gaps_before_repair_without_opt_in(
     let web = ResearchWeb::new(&[ADDITIONAL]);
     let stages = Arc::new(Mutex::new(vec![]));
     let observed = stages.clone();
-    let run = OutlineRun::register(None, move |update| {
+    let run = OutlineRunRegistry::new().register(None, move |update| {
         observed.lock().unwrap().push(update.stage)
     })?;
     let sources = vec![original_source()];
     let captured = references(&sources);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = run
-        .0
+        .progress
         .run(service::generate_with_references_and_progress(
             &repo,
+            &drafts,
             &llm,
             request(LearningCourseDepth::Course),
             sources,
             &captured,
-            &run.0,
+            &run.progress,
             Some(&web),
         ))
         .await?;
@@ -363,8 +367,10 @@ async fn resumed_repair_researches_saved_findings_before_repeating_model_review(
     ]);
     let sources = vec![original_source()];
     let captured = references(&sources);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let saved = service::generate_with_references_and_progress(
         &repo,
+        &drafts,
         &llm,
         request(LearningCourseDepth::Course),
         sources,
@@ -387,6 +393,7 @@ async fn resumed_repair_researches_saved_findings_before_repeating_model_review(
     let web = ResearchWeb::new(&[ADDITIONAL]);
     let program = repair_saved(
         &repo,
+        &drafts,
         &llm,
         &RepairLearningOutlineRequestDto {
             program_id: saved.summary.id.clone(),
@@ -463,8 +470,10 @@ async fn resumed_typography_repair_is_checkpointed_and_still_requires_semantic_r
     repo.checkpoint_outline(&mut program, &mut saved, &[], &[])
         .await?;
     let checker = model(vec![issue(0), json!({"module":initial["modules"][0]})]);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let result = crate::features::learning::outline_draft::repair_saved(
         &repo,
+        &drafts,
         &checker,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: program.summary.id.clone(),
@@ -491,6 +500,7 @@ async fn resumed_typography_repair_is_checkpointed_and_still_requires_semantic_r
     );
     assert!(service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: program.summary.id,
             expected_revision: result.summary.revision,
@@ -524,8 +534,10 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
         json!({"issues":[]}),
     ]);
     let sources = vec![source];
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
+        &drafts,
         &llm,
         request(LearningCourseDepth::Course),
         sources.clone(),
@@ -661,8 +673,10 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
         json!({"module":fixed}),
         json!({"invalid":"unfinished review"}),
     ]);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let saved = service::generate_with_references(
         &repo,
+        &drafts,
         &llm,
         request(LearningCourseDepth::Course),
         sources.clone(),
@@ -675,6 +689,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     );
     assert!(service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: saved.summary.id.clone(),
             expected_revision: saved.summary.revision,
@@ -687,6 +702,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     let llm = model(vec![json!({"issues":[]})]);
     let result = crate::features::learning::outline_draft::repair_saved(
         &reopened,
+        &drafts,
         &llm,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: saved.summary.id,
@@ -731,8 +747,10 @@ async fn incremental_review_can_flag_an_unchanged_dependent_module() -> Result<(
             "reason":"The changed earlier project no longer supplies the randomized comparison needed by the final project. Correct that dependency."
         }]}),
     ]);
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
+        &drafts,
         &llm,
         request(LearningCourseDepth::Course),
         sources.clone(),
