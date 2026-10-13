@@ -12,9 +12,13 @@
 //! Now they all call [`ContextAssembler::assemble`], and the order in which
 //! things are given up is written down once, in [`ContextAssembler::assemble`]'s
 //! eviction loop. The short version: optional material goes first, in rank
-//! order. The current input and active constraints are retained; any omission
-//! of unprocessed original messages marks the plan as requiring compaction
-//! before generation.
+//! order. Evidence is optional even when the caller rendered it into the
+//! current message ([`InlineEvidence`]): only the policy, the tool schemas and
+//! the bare message are charged as fixed, so a window too small for all of a
+//! turn's evidence carries the best of it rather than refusing the turn. The
+//! current input and active constraints are retained; any omission of
+//! unprocessed original messages marks the plan as requiring compaction before
+//! generation.
 //!
 //! The rendered order is chosen for the server's prompt cache as much as for
 //! the model: the system policy, then the summary when older turns are out of
@@ -55,13 +59,34 @@ pub struct RankedEvidence {
     pub rank: f32,
 }
 
+/// Evidence the caller renders into the current message itself.
+///
+/// The chat turn numbers its passages and wraps them in its own template, so
+/// they reach the assembler inside the message rather than as
+/// [`RankedEvidence`]. They are optional all the same. The request's
+/// `current_input` is the message without them, and that is what the budget
+/// charges as fixed; the evidence is charged after the history, and when the
+/// request will not fit, the lowest-ranked items are given up first.
+#[derive(Clone, Copy)]
+pub struct InlineEvidence<'a> {
+    /// How many items the message can carry, best first.
+    pub items: usize,
+    /// The message carrying the best `keep` items, for `keep` in
+    /// `1..=items`. It is not called with zero: that message is
+    /// `current_input`.
+    pub render: &'a (dyn Fn(usize) -> String + Send + Sync),
+}
+
 /// Everything the assembler needs for one turn.
 pub struct ContextRequest<'a> {
     pub conversation_id: &'a str,
     /// The real application/space/conversation policy. Budgeted as policy.
     pub system_policy: &'a str,
-    /// The user's message for this turn, exactly as submitted.
+    /// The user's message for this turn, exactly as submitted. With
+    /// `inline_evidence`, the message as it reads with none of that evidence.
     pub current_input: &'a str,
+    /// Evidence rendered into the current message, when the caller has any.
+    pub inline_evidence: Option<InlineEvidence<'a>>,
     /// Cost of the tool schemas actually being sent.
     pub tool_schema_tokens: usize,
     /// One consistent memory read. `None` when memory is unavailable or
@@ -107,6 +132,27 @@ impl ContextAssembler {
         (self.count_tokens)(text)
     }
 
+    /// The fixed parts of a request, priced as [`Self::assemble`] prices
+    /// them: the policy with the memory rules appended, the tool schemas, and
+    /// the current message under its date line, with nothing a plan may cut.
+    ///
+    /// A caller that sizes evidence before the request exists plans with
+    /// this, so the room it hands out is the room assembly will find.
+    pub fn fixed_parts(
+        &self,
+        system_policy: &str,
+        current_input: &str,
+        tool_schema_tokens: usize,
+        today: chrono::NaiveDate,
+    ) -> BudgetRequest {
+        let (policy, last) = fixed_messages(system_policy, current_input, today);
+        BudgetRequest::new(
+            self.count_input(&policy),
+            tool_schema_tokens,
+            self.count_input(&last.tail_message()),
+        )
+    }
+
     fn count_input(&self, input: &CompletionInput) -> usize {
         match input {
             CompletionInput::Message { role, content } => {
@@ -135,6 +181,8 @@ impl ContextAssembler {
     /// - [`AppError::InvalidInput`] when the policy, tools and current message
     ///   alone exceed the input budget — including the case where a single
     ///   pasted message is larger than the window. It is never clipped.
+    ///   Evidence rendered into the message is not part of that check: it is
+    ///   cut before anything is refused.
     /// - [`AppError::InvalidState`] carrying [`ActiveMemoryBudgetExceeded`] when
     ///   the genuinely active requirements do not fit even after borrowing.
     pub fn assemble(&self, request: &ContextRequest<'_>) -> Result<ContextPlan> {
@@ -147,22 +195,11 @@ impl ContextAssembler {
         prepared: Option<&crate::application::ports::conversation_memory::PreparedMemory>,
     ) -> Result<ContextPlan> {
         // --- 1. fixed costs -------------------------------------------------
-        let policy = if request.system_policy.trim().is_empty() {
-            render::MEMORY_USE_POLICY.to_string()
-        } else {
-            format!(
-                "{}\n\n{}",
-                request.system_policy.trim(),
-                render::MEMORY_USE_POLICY
-            )
-        };
-        let policy_message = CompletionInput::Message {
-            role: "system".into(),
-            content: policy,
-        };
         // The date line and the request are the part of the final message no
-        // eviction removes, so both are charged as fixed.
-        let mut last = render::FinalUserMessage::new(request.current_input, request.today);
+        // eviction removes, so both are charged as fixed. Evidence rendered
+        // into the request is not: it is added at step 8.
+        let (policy_message, mut last) =
+            fixed_messages(request.system_policy, request.current_input, request.today);
 
         let policy_tokens = self.count_input(&policy_message);
         let current_tokens = self.count_input(&last.tail_message());
@@ -353,6 +390,20 @@ impl ContextAssembler {
         }
 
         // --- 8. document and web evidence ----------------------------------
+        // Evidence the caller rendered into the current message is carried
+        // whole while the request fits, and has the first claim on what the
+        // history left: it is what this turn answers from, and the saved
+        // memory below is optional context. Being charged here rather than as
+        // part of the message is what lets it give way, lowest-ranked first,
+        // instead of refusing the turn.
+        let inline = request.inline_evidence.filter(|inline| inline.items > 0);
+        let mut inline_tokens = 0usize;
+        if let Some(inline) = inline {
+            last.set_input((inline.render)(inline.items));
+            inline_tokens = self
+                .count_input(&last.tail_message())
+                .saturating_sub(current_tokens);
+        }
         let optional: Vec<RankedEvidence> = prepared
             .into_iter()
             .flat_map(|p| &p.optional)
@@ -373,7 +424,9 @@ impl ContextAssembler {
         });
         let mut evidence_blocks = Vec::new();
         let mut evidence_tokens = 0usize;
-        let evidence_pool = allocation.evidence.min(remaining);
+        let evidence_pool = allocation
+            .evidence
+            .min(remaining.saturating_sub(inline_tokens));
         for item in evidence {
             let block = format!("- {}\n{}", item.label, item.content);
             let cost = self.count(&block) + MESSAGE_FRAMING_TOKENS;
@@ -392,6 +445,8 @@ impl ContextAssembler {
         if let Some(section) = &evidence_section {
             accounting.document_evidence = self.section_cost(section);
         }
+        accounting.document_evidence += inline_tokens;
+        accounting.inline_evidence_kept = inline.map_or(0, |inline| inline.items);
 
         // --- 9. render, query-dependent material last ----------------------
         last.recalled = recalled_section;
@@ -402,6 +457,11 @@ impl ContextAssembler {
             summary: summary_message,
             recent: recent_messages,
             last,
+            inline: inline.map(|inline| InlineCut {
+                evidence: inline,
+                kept: inline.items,
+                bare: request.current_input,
+            }),
         };
         accounting.total_input = self.measure(&layout, request.tool_schema_tokens);
 
@@ -492,21 +552,58 @@ impl ContextAssembler {
 
     /// Drop optional material, lowest value first, until the request fits.
     ///
-    /// The order is fixed and deliberate: document evidence, then recalled
-    /// passages, then the summary, then the oldest recent messages. Returned
-    /// source sequences let the caller flag any unprocessed originals removed
-    /// here. The system policy, active memory, the newest turn and the current
-    /// input are preserved.
+    /// The order is fixed and deliberate: document evidence, then the
+    /// evidence rendered into the current message, lowest-ranked item first,
+    /// then recalled passages, then the summary, then the oldest recent
+    /// messages. Returned source sequences let the caller flag any unprocessed
+    /// originals removed here. The system policy, active memory, the newest
+    /// turn and the current input are preserved.
     fn evict_until_fits(
         &self,
         layout: &mut Layout,
         accounting: &mut ContextAccounting,
         tool_schema_tokens: usize,
     ) -> Vec<i64> {
-        if !accounting.fits() && layout.last.evidence.take().is_some() {
-            accounting.document_evidence = 0;
-            accounting.evicted.push("overflow:evidence".into());
-            accounting.total_input = self.measure(layout, tool_schema_tokens);
+        if !accounting.fits() {
+            if let Some(section) = layout.last.evidence.take() {
+                accounting.document_evidence = accounting
+                    .document_evidence
+                    .saturating_sub(self.section_cost(&section));
+                accounting.evicted.push("overflow:evidence".into());
+                accounting.total_input = self.measure(layout, tool_schema_tokens);
+            }
+        }
+        // One item at a time, so a window that holds most of the turn's
+        // evidence still carries most of it. Only the final message changes,
+        // so only it is counted again.
+        if let Some(cut) = layout.inline.as_mut() {
+            let carried = cut.kept;
+            let mut last_tokens = self.count_input(&layout.last.render());
+            while !accounting.fits() && cut.kept > 0 {
+                cut.kept -= 1;
+                layout.last.set_input(if cut.kept == 0 {
+                    cut.bare.to_owned()
+                } else {
+                    (cut.evidence.render)(cut.kept)
+                });
+                let tokens = self.count_input(&layout.last.render());
+                accounting.total_input = accounting
+                    .total_input
+                    .saturating_sub(last_tokens)
+                    .saturating_add(tokens);
+                accounting.document_evidence = accounting
+                    .document_evidence
+                    .saturating_sub(last_tokens.saturating_sub(tokens));
+                last_tokens = tokens;
+            }
+            if cut.kept < carried {
+                accounting.evicted.push(format!(
+                    "overflow:turn-evidence:{} of {}",
+                    carried - cut.kept,
+                    cut.evidence.items
+                ));
+            }
+            accounting.inline_evidence_kept = cut.kept;
         }
         if !accounting.fits() && layout.last.recalled.take().is_some() {
             accounting.recall = 0;
@@ -538,15 +635,48 @@ impl ContextAssembler {
 /// A plan's messages before they are flattened, kept in parts so overflow
 /// eviction removes material by what it is rather than by matching text a
 /// user could also have typed.
-struct Layout {
+struct Layout<'a> {
     policy: CompletionInput,
     summary: Option<CompletionInput>,
     /// Verbatim turns, oldest first, beside their source sequence.
     recent: Vec<(i64, CompletionInput)>,
     last: render::FinalUserMessage,
+    /// Evidence rendered into the current message, when there is any.
+    inline: Option<InlineCut<'a>>,
 }
 
-impl Layout {
+/// The current message's own evidence, and how much of it the request still
+/// carries.
+struct InlineCut<'a> {
+    evidence: InlineEvidence<'a>,
+    kept: usize,
+    /// The message with none of it.
+    bare: &'a str,
+}
+
+/// The system policy and the final message as they stand before anything
+/// optional is chosen: the policy with the memory rules appended, and the
+/// current input under its date line.
+fn fixed_messages(
+    system_policy: &str,
+    current_input: &str,
+    today: chrono::NaiveDate,
+) -> (CompletionInput, render::FinalUserMessage) {
+    let policy = if system_policy.trim().is_empty() {
+        render::MEMORY_USE_POLICY.to_string()
+    } else {
+        format!("{}\n\n{}", system_policy.trim(), render::MEMORY_USE_POLICY)
+    };
+    (
+        CompletionInput::Message {
+            role: "system".into(),
+            content: policy,
+        },
+        render::FinalUserMessage::new(current_input, today),
+    )
+}
+
+impl Layout<'_> {
     fn into_messages(self) -> Vec<CompletionInput> {
         let mut messages = Vec::with_capacity(self.recent.len() + 3);
         messages.push(self.policy);

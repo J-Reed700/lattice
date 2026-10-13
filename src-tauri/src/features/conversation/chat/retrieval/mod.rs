@@ -34,7 +34,7 @@ mod rerank;
 mod source_citations;
 pub use self::source_citations::WEB_SOURCE_PREFIX;
 pub(super) use self::source_citations::{
-    drop_unbudgeted_sources, render_web_context, WebContextItem,
+    drop_unbudgeted_sources, web_context_entries, WebContextItem,
 };
 mod sufficiency;
 mod tool_format;

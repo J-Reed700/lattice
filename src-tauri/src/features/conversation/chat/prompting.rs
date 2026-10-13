@@ -31,6 +31,8 @@ pub(super) struct PromptMessageBuilder<'a> {
     /// Set on a deep-research turn that may search again: the searches its
     /// first round already ran.
     deep_research_searches: Option<Vec<String>>,
+    /// Some of the evidence the turn found was left out to fit the window.
+    evidence_cut: bool,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -58,7 +60,16 @@ impl<'a> PromptMessageBuilder<'a> {
             kb_attempted: false,
             thin_kb_reason: None,
             deep_research_searches: None,
+            evidence_cut: false,
         }
+    }
+
+    /// Say that evidence the turn found was left out because the model's
+    /// window could not hold it, so the model neither reports a search that
+    /// found nothing nor takes what is left for everything there is.
+    pub(super) fn with_evidence_cut(mut self, evidence_cut: bool) -> Self {
+        self.evidence_cut = evidence_cut;
+        self
     }
 
     /// A deep-research turn that may search again after its first round,
@@ -175,15 +186,7 @@ impl<'a> PromptMessageBuilder<'a> {
         // retrieved. With no knowledge-base section at all, the templates below
         // already say there was nothing to go on.
         let thin_kb_reason = self.thin_kb_reason.as_deref().filter(|_| has_kb_context);
-        let mut context_sections: Vec<String> = vec![
-            "Conversation continuity: Answer the ongoing question using the user's established facts, \
-             conversation memory, and relevant original evidence from earlier turns together with new sources. \
-             New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
-             Before declaring information unavailable, consult retained evidence and available history/source \
-             tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
-             Earlier assistant claims alone are not source evidence; use the numbered original passages \
-             supplied now, or retrieve the original source.".to_string()
-        ];
+        let mut context_sections: Vec<String> = vec![CONTINUITY_NOTE.to_string()];
         if let Some(context) = self.explorer_context.as_ref() {
             context_sections.push(context.clone());
         }
@@ -232,6 +235,9 @@ from general knowledge as though it came from the user's documents."
                 context_sections.push(deep_research_instruction(searches));
             }
         }
+        if self.evidence_cut && context_sections.len() > 1 {
+            context_sections.push(EVIDENCE_CUT_NOTE.to_string());
+        }
 
         if context_sections.len() > 1 {
             return render_prompt_template(
@@ -249,7 +255,13 @@ from general knowledge as though it came from the user's documents."
             );
         }
 
-        if self.force_web_search && self.web_context.is_none() && self.kb_context.is_none() {
+        // Evidence that was found and then cut for room is not a failed
+        // search, so the two notes below do not describe it.
+        if self.force_web_search
+            && !self.evidence_cut
+            && self.web_context.is_none()
+            && self.kb_context.is_none()
+        {
             let web_failure_note = self
                 .web_search_error
                 .as_deref()
@@ -262,7 +274,7 @@ Do not mention the knowledge base unless asked.\n\nQuestion: {question}",
             );
         }
 
-        if self.force_kb_search && self.kb_context.is_none() {
+        if self.force_kb_search && !self.evidence_cut && self.kb_context.is_none() {
             let kb_reason = self
                 .kb_unavailable_reason
                 .as_deref()
@@ -289,8 +301,16 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
     /// a vault with nothing in it tells the reader their documents were read
     /// and rejected, which is a claim about their documents that nobody made.
     /// The reason for an unreachable vault is already computed during
-    /// retrieval — it just never reached the prompt on this path.
+    /// retrieval — it just never reached the prompt on this path. Evidence
+    /// that was found and then cut for room is a fourth outcome, and the
+    /// same care applies: it is not a search that found nothing.
     fn retrieval_note(&self) -> String {
+        if self.evidence_cut {
+            return "Evidence was found for this turn, but the model's context window had no room \
+to carry any of it. Say so, and use the document search and read tools if they are available, \
+rather than describing this as a search that found nothing."
+                .to_string();
+        }
         if let Some(reason) = self.kb_unavailable_reason.as_deref() {
             return format!(
                 "Their documents were not searched for this turn, because {reason}. Do not describe this as a search that found nothing."
@@ -302,6 +322,35 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
         }
         "No passages from their documents were available for this turn.".to_string()
     }
+}
+
+/// The standing instruction that opens every evidence-carrying message.
+const CONTINUITY_NOTE: &str = "Conversation continuity: Answer the ongoing question using the user's established facts, \
+     conversation memory, and relevant original evidence from earlier turns together with new sources. \
+     New search results supplement that evidence; they do not replace it. Ignore unrelated results. \
+     Before declaring information unavailable, consult retained evidence and available history/source \
+     tools. Describe only the specific remaining gap, not a reset of knowledge for this search round. \
+     Earlier assistant claims alone are not source evidence; use the numbered original passages \
+     supplied now, or retrieve the original source.";
+
+/// Closes the evidence of a message whose lowest-ranked evidence was cut to
+/// fit the model's window.
+const EVIDENCE_CUT_NOTE: &str =
+    "Context window: Lower-ranked evidence found for this turn was left \
+out because the model's context window could not hold it. If what is here does not settle the \
+question, use the document search and read tools before concluding the evidence is missing.";
+
+/// The message an evidence-carrying turn sends with every passage taken out:
+/// the template, its standing instructions and the question.
+///
+/// The turn's budget charges this as the message before it sizes the
+/// evidence, because it is what the evidence travels in.
+pub(super) fn evidence_frame(prompt_settings: &LLMPromptSettingsDto, question: &str) -> String {
+    render_prompt_template(
+        &prompt_settings.rag_prompt_template,
+        CONTINUITY_NOTE,
+        question,
+    )
 }
 
 /// The most searches a deep-research instruction lists, and the longest each.
@@ -375,6 +424,9 @@ fn describe_thin_evidence(reasons: &[&'static str]) -> String {
 ///
 /// Each number identifies one evidence passage, even when several passages
 /// come from the same document. Never invent a number for missing evidence.
+/// The turn renders them through [`kb_passages`], one item each, so it can
+/// cut them one at a time; this is the section they make whole.
+#[cfg(test)]
 pub(super) fn build_kb_context(
     budgeted_results: &[&SearchResultDto],
     citation_ids: &std::collections::HashMap<String, u32>,
@@ -384,37 +436,52 @@ pub(super) fn build_kb_context(
     }
 
     Some(
-        budgeted_results
-            .iter()
-            .filter_map(|result| {
-                let doc_name = result.path.as_ref().unwrap_or(&result.title);
-                let doc_id_line = result
-                    .document_id
-                    .as_deref()
-                    .map(|id| format!("\nDocument ID: {}", id))
-                    .unwrap_or_default();
-
-                let citation = citation_ids.get(&result.id)?;
-
-                let page = result
-                    .metadata
-                    .get("pageNumber")
-                    .and_then(|v| v.as_u64())
-                    .map(|p| format!("\nPhysical PDF page: {p}"))
-                    .unwrap_or_default();
-                let section = result
-                    .metadata
-                    .get("section")
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!("\nSource heading: {s}"))
-                    .unwrap_or_default();
-                Some(format!(
-                    "[{}] Document: {}{}{}{}\nContent: {}",
-                    citation, doc_name, doc_id_line, page, section, result.content
-                ))
-            })
+        kb_passages(budgeted_results, citation_ids)
+            .into_iter()
+            .map(|(_, passage)| passage)
             .collect::<Vec<_>>()
             .join("\n\n"),
+    )
+}
+
+/// Each retrieved passage as the prompt shows it, beside its citation number,
+/// best first. A passage with no number is left out.
+pub(super) fn kb_passages(
+    budgeted_results: &[&SearchResultDto],
+    citation_ids: &std::collections::HashMap<String, u32>,
+) -> Vec<(u32, String)> {
+    budgeted_results
+        .iter()
+        .filter_map(|result| {
+            let citation = *citation_ids.get(&result.id)?;
+            Some((citation, kb_passage(result, citation)))
+        })
+        .collect()
+}
+
+/// One retrieved passage under its citation number.
+pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
+    let doc_name = result.path.as_ref().unwrap_or(&result.title);
+    let doc_id_line = result
+        .document_id
+        .as_deref()
+        .map(|id| format!("\nDocument ID: {}", id))
+        .unwrap_or_default();
+    let page = result
+        .metadata
+        .get("pageNumber")
+        .and_then(|v| v.as_u64())
+        .map(|p| format!("\nPhysical PDF page: {p}"))
+        .unwrap_or_default();
+    let section = result
+        .metadata
+        .get("section")
+        .and_then(|v| v.as_str())
+        .map(|s| format!("\nSource heading: {s}"))
+        .unwrap_or_default();
+    format!(
+        "[{}] Document: {}{}{}{}\nContent: {}",
+        citation, doc_name, doc_id_line, page, section, result.content
     )
 }
 

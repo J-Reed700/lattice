@@ -7,6 +7,7 @@
 
 mod eviction;
 mod prefix;
+mod turn_evidence;
 
 use super::*;
 use crate::domain::conversation::memory::{
@@ -82,6 +83,7 @@ fn request<'a>(
         conversation_id: "c1",
         system_policy: "You are a helpful assistant.",
         current_input: QUESTION,
+        inline_evidence: None,
         tool_schema_tokens: 0,
         snapshot,
         recent,

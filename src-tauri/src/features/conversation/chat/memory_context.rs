@@ -19,8 +19,8 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
-    ContextAssembler, ContextPlan, ContextRequest, ModelCapacity, RankedEvidence, TokenAccounting,
-    TokenCounter,
+    ContextAssembler, ContextPlan, ContextRequest, InlineEvidence, ModelCapacity, RankedEvidence,
+    TokenAccounting, TokenCounter,
 };
 use crate::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use crate::shared::error::{AppError, Result};
@@ -128,6 +128,7 @@ pub async fn build_memory_plan(
         conversation_id,
         system_policy,
         current_input,
+        None,
         tool_schema_tokens,
         document_evidence,
         enabled,
@@ -137,6 +138,9 @@ pub async fn build_memory_plan(
     .await
 }
 
+/// `current_input` is the message as it reads with none of `inline_evidence`,
+/// the evidence the caller rendered into it; the assembler cuts that evidence,
+/// lowest-ranked first, before it refuses a request that does not fit.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_memory_plan_for_query(
     memory: &dyn ConversationMemoryPort,
@@ -145,6 +149,7 @@ pub async fn build_memory_plan_for_query(
     conversation_id: &str,
     system_policy: &str,
     current_input: &str,
+    inline_evidence: Option<InlineEvidence<'_>>,
     tool_schema_tokens: usize,
     document_evidence: Vec<RankedEvidence>,
     enabled: bool,
@@ -241,6 +246,7 @@ pub async fn build_memory_plan_for_query(
         conversation_id,
         system_policy,
         current_input,
+        inline_evidence,
         tool_schema_tokens,
         snapshot: Some(&snapshot),
         recent: &recent,

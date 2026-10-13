@@ -34,6 +34,7 @@ impl LLMPort for Unanswering {
 fn prompt() -> RenderedPrompt {
     RenderedPrompt {
         enhanced_message: "question".into(),
+        message: None,
         sources: Vec::new(),
         retrieval_trace: None,
         short_circuit_response: None,
