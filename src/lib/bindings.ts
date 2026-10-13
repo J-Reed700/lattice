@@ -964,7 +964,7 @@ async deleteStudyDeck(id: string) : Promise<Result<null, ApiError>> {
 /**
  * Download a model by ID
  *
- * Thin wrapper that delegates to the existing download_model implementation in llm.rs.
+ * Thin wrapper over `download_model_impl`, the shared model-setup command.
  * Maps the response from DownloadModelResponseDto to DownloadModelResponse.
  */
 async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, ApiError>> {
@@ -4492,6 +4492,9 @@ failedItems: number;
 createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
 export type CacheMetrics = { hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
+/**
+ * The query cache's statistics, reported with each search response.
+ */
 export type CacheStatsDto = { size: number; capacity: number; hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
 /**
  * Request to cancel a batch job.
