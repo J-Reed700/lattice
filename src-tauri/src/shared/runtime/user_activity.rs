@@ -38,6 +38,8 @@ mod macos {
         Message,
     };
 
+    use crate::shared::error::AppError;
+
     // Public Foundation NSActivityOptions. UserInitiated with the idle-system-
     // sleep bit removed: prevent App Nap, without overriding sleep preferences.
     const USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 = 0x00FF_FFFF & !(1 << 20);
@@ -54,35 +56,44 @@ mod macos {
     unsafe impl Send for Activity {}
 
     impl Activity {
-        pub(super) fn begin(reason: &str) -> Result<Self, String> {
+        pub(super) fn begin(reason: &str) -> Result<Self, AppError> {
+            let unavailable = |what: &str| AppError::ServiceNotAvailable(what.to_string());
             super::super::with_autorelease_pool(|| {
                 // SAFETY: Foundation is linked by the desktop runtime. These
                 // public methods take NSUInteger, NSString*, and no other state.
                 // Every pointer is checked and retained before the pool drains.
                 #[allow(unsafe_code)]
                 unsafe {
-                    let class =
-                        Class::get("NSProcessInfo").ok_or("NSProcessInfo is unavailable")?;
+                    let class = Class::get("NSProcessInfo")
+                        .ok_or_else(|| unavailable("NSProcessInfo is unavailable"))?;
                     let process: *mut Object = class
                         .send_message(Sel::register("processInfo"), ())
-                        .map_err(|e| e.to_string())?;
-                    let process_ref = process.as_ref().ok_or("NSProcessInfo returned nil")?;
-                    let string_class = Class::get("NSString").ok_or("NSString is unavailable")?;
-                    let reason = std::ffi::CString::new(reason).map_err(|e| e.to_string())?;
+                        .map_err(|e| AppError::InternalError(e.to_string()))?;
+                    let process_ref = process
+                        .as_ref()
+                        .ok_or_else(|| unavailable("NSProcessInfo returned nil"))?;
+                    let string_class = Class::get("NSString")
+                        .ok_or_else(|| unavailable("NSString is unavailable"))?;
+                    let reason = std::ffi::CString::new(reason)
+                        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
                     let text: *mut Object = string_class
                         .send_message(Sel::register("stringWithUTF8String:"), (reason.as_ptr(),))
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| AppError::InternalError(e.to_string()))?;
                     if text.is_null() {
-                        return Err("Could not construct activity reason".into());
+                        return Err(AppError::InternalError(
+                            "Could not construct activity reason".to_string(),
+                        ));
                     }
                     let token: *mut Object = process_ref
                         .send_message(
                             Sel::register("beginActivityWithOptions:reason:"),
                             (USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP, text),
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| AppError::InternalError(e.to_string()))?;
                     if token.is_null() {
-                        return Err("Could not begin user activity".into());
+                        return Err(AppError::InternalError(
+                            "Could not begin user activity".to_string(),
+                        ));
                     }
                     tracing::info!("Protected active user work from App Nap");
                     Ok(Self {

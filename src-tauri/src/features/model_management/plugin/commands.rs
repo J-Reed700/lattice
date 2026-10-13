@@ -4,6 +4,7 @@
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
 use crate::interfaces::di::Container;
+use crate::shared::error::AppError;
 use crate::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -53,12 +54,10 @@ pub async fn download_model(
         Err(e) => {
             // Map AppError to ApiError with appropriate error codes
             let (code, message) = match e {
-                crate::shared::error::AppError::InvalidInput(msg) => (ErrorCode::InvalidInput, msg),
-                crate::shared::error::AppError::NotFound(msg) => (ErrorCode::NotFound, msg),
-                crate::shared::error::AppError::RateLimitExceeded(msg) => {
-                    (ErrorCode::RateLimitExceeded, msg)
-                }
-                crate::shared::error::AppError::Network(msg) => (ErrorCode::NetworkError, msg),
+                AppError::InvalidInput(msg) => (ErrorCode::InvalidInput, msg),
+                AppError::NotFound(msg) => (ErrorCode::NotFound, msg),
+                AppError::RateLimitExceeded(msg) => (ErrorCode::RateLimitExceeded, msg),
+                AppError::Network(msg) => (ErrorCode::NetworkError, msg),
                 _ => (ErrorCode::InternalError, e.to_string()),
             };
 
@@ -113,11 +112,7 @@ pub async fn delete_model(
 ) -> Result<(), ApiError> {
     delete_downloaded_model_and_file_impl(container.inner(), &model_id, delete_file)
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 /// List all downloaded models
@@ -128,11 +123,7 @@ pub async fn list_downloaded_models(
 ) -> Result<Vec<DownloadedModelResponse>, ApiError> {
     let json_str = get_models_with_metadata_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
+        .map_err(ApiError::from)?;
 
     serde_json::from_str(&json_str).map_err(|e| ApiError {
         code: ErrorCode::SerializationError,
@@ -149,11 +140,7 @@ pub async fn is_model_already_downloaded(
 ) -> Result<bool, ApiError> {
     is_model_already_downloaded_impl(container.inner(), &model_id)
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 /// Set active embedding model
@@ -165,11 +152,7 @@ pub async fn set_active_embedding_model(
 ) -> Result<(), ApiError> {
     set_active_embedding_model_impl(container.inner(), &model_id)
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -180,11 +163,7 @@ pub async fn set_active_chat_model(
 ) -> Result<(), ApiError> {
     set_active_chat_model_impl(container.inner(), &model_id)
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -194,11 +173,7 @@ pub async fn get_active_chat_model(
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
     let json_str = get_active_chat_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
+        .map_err(ApiError::from)?;
 
     serde_json::from_str(&json_str).map_err(|e| ApiError {
         code: ErrorCode::SerializationError,
@@ -214,11 +189,7 @@ pub async fn get_active_embedding_model(
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
     let json_str = get_active_embedding_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
+        .map_err(ApiError::from)?;
 
     serde_json::from_str(&json_str).map_err(|e| ApiError {
         code: ErrorCode::SerializationError,
@@ -251,11 +222,7 @@ pub async fn get_active_models(container: State<'_, Container>) -> Result<Active
 pub async fn clear_active_chat_model(container: State<'_, Container>) -> Result<(), ApiError> {
     clear_active_chat_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -263,11 +230,7 @@ pub async fn clear_active_chat_model(container: State<'_, Container>) -> Result<
 pub async fn clear_active_embedding_model(container: State<'_, Container>) -> Result<(), ApiError> {
     clear_active_embedding_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 /// Set the active utility model (HyDE / router / intent classification).
@@ -279,11 +242,7 @@ pub async fn set_active_utility_model(
 ) -> Result<(), ApiError> {
     set_active_utility_model_impl(container.inner(), &model_id)
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
 }
 
 /// Clear the active utility model — reverts HyDE/router back to the chat model.
@@ -292,11 +251,25 @@ pub async fn set_active_utility_model(
 pub async fn clear_active_utility_model(container: State<'_, Container>) -> Result<(), ApiError> {
     clear_active_utility_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(ApiError::from)
+}
+
+/// Map a warm-up failure for IPC.
+///
+/// A model that is missing or would not load is the failure the user acts on
+/// from Settings, and its sentence says what happened to their selection, so
+/// it crosses as the message rather than behind "AI model not available".
+fn warm_up_api_error(error: AppError) -> ApiError {
+    let code = match &error {
+        AppError::ModelLoadFailed(_) => ErrorCode::ModelLoadError,
+        AppError::AiModelsNotInstalled(_) => ErrorCode::ModelNotLoaded,
+        _ => return ApiError::from(error),
+    };
+    ApiError {
+        code,
+        message: error.to_string(),
+        details: None,
+    }
 }
 
 #[tauri::command]
@@ -304,11 +277,7 @@ pub async fn clear_active_utility_model(container: State<'_, Container>) -> Resu
 pub async fn warm_up_active_chat_model(container: State<'_, Container>) -> Result<(), ApiError> {
     warm_up_active_chat_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(warm_up_api_error)
 }
 
 #[tauri::command]
@@ -316,11 +285,7 @@ pub async fn warm_up_active_chat_model(container: State<'_, Container>) -> Resul
 pub async fn warm_up_active_utility_model(container: State<'_, Container>) -> Result<(), ApiError> {
     warm_up_active_utility_model_impl(container.inner())
         .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
+        .map_err(warm_up_api_error)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

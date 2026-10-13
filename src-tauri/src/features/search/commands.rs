@@ -31,6 +31,7 @@ use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, Au
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
+use crate::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -207,7 +208,7 @@ async fn enrich_hybrid_results(
 /// # Returns
 ///
 /// * `Ok(EnhancedSearchResponse)` - Search results with caching metadata and performance stats
-/// * `Err(AppError)` - If rate limited, validation fails, or search execution fails
+/// * `Err(ApiError)` - If rate limited, validation fails, or search execution fails
 ///
 /// # Errors
 ///
@@ -279,17 +280,10 @@ async fn enrich_hybrid_results(
 pub async fn search_documents(
     container: State<'_, Container>,
     options: SearchOptions,
-) -> Result<serde_json::Value, String> {
-    let result = search_documents_impl(&container, options)
+) -> Result<EnhancedSearchResponse, ApiError> {
+    search_documents_impl(&container, options)
         .await
-        .map_err(|e| e.to_string());
-
-    match result {
-        Ok(data) => Ok(serde_json::json!({ "ok": true, "data": data })),
-        Err(e) => Ok(
-            serde_json::json!({ "ok": false, "error": { "code": "SEARCH_ERROR", "message": e } }),
-        ),
-    }
+        .map_err(ApiError::from)
 }
 
 /// Implementation: Fast lightweight search returning minimal data (IDs and scores only).
@@ -301,8 +295,8 @@ pub async fn search_documents(
 /// # Architecture Note
 ///
 /// This function contains the core business logic and returns ApiResult<T>.
-/// The Tauri command handler `search_fast` below wraps this implementation
-/// using the TauriResultBoundary trait.
+/// The Tauri command handler `search_fast` below turns it into the command's
+/// `Result` with `ApiResult::into_result`.
 #[tracing::instrument(skip(container), fields(query = %query, limit = limit))]
 async fn search_fast_impl(
     container: &Container,
@@ -386,30 +380,23 @@ async fn search_fast_impl(
 ///
 /// # Returns
 ///
-/// * JSON response with structure:
-///   - Success: `{ "ok": true, "data": [[chunk_id, score], ...] }`
-///   - Error: `{ "ok": false, "error": { "code": "...", "message": "..." } }`
+/// * `Ok(Vec<(chunk_id, score)>)` - Ranked chunk IDs with their scores
+/// * `Err(ApiError)` - If rate limited, validation fails, or search fails
 ///
 /// # Example
 ///
 /// ```typescript
 /// import { invoke } from '@tauri-apps/api/core';
 ///
-/// // Fast search without metadata
-/// const response = await invoke<{
-///   ok: boolean;
-///   data?: [string, number][];
-///   error?: { code: string; message: string; }
-/// }>('search_fast', {
+/// // Fast search without metadata; a failure rejects with an ApiError
+/// const hits = await invoke<[string, number][]>('search_fast', {
 ///   query: 'neural networks',
 ///   limit: 10
 /// });
 ///
-/// if (response.ok) {
-///   response.data.forEach(([chunkId, score]) => {
-///     console.log(`${chunkId}: ${score}`);
-///   });
-/// }
+/// hits.forEach(([chunkId, score]) => {
+///   console.log(`${chunkId}: ${score}`);
+/// });
 /// ```
 ///
 /// # Security
@@ -437,11 +424,10 @@ pub async fn search_fast(
     container: State<'_, Container>,
     query: String,
     limit: usize,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = search_fast_impl(&container, query, limit).await;
-    result.to_tauri_result()
+) -> Result<Vec<(String, f32)>, ApiError> {
+    search_fast_impl(&container, query, limit)
+        .await
+        .into_result()
 }
 
 /// Pure semantic search using vector similarity (DDD use case)
@@ -568,11 +554,10 @@ pub async fn semantic_search_impl(
 pub async fn semantic_search(
     container: State<'_, Container>,
     request: SearchRequestDto,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = semantic_search_impl(&container, request).await;
-    result.to_tauri_result()
+) -> Result<SearchResponseDto, ApiError> {
+    semantic_search_impl(&container, request)
+        .await
+        .into_result()
 }
 
 /// Hybrid search combining vector similarity and BM25 keyword matching
@@ -745,11 +730,10 @@ pub struct HybridSearchArgs {
 pub async fn hybrid_search(
     container: State<'_, Container>,
     args: HybridSearchArgs,
-) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
-    let result = hybrid_search_impl(&container, args.query, args.limit, args.search_mode).await;
-    result.to_tauri_result()
+) -> Result<Vec<SearchResultDto>, ApiError> {
+    hybrid_search_impl(&container, args.query, args.limit, args.search_mode)
+        .await
+        .into_result()
 }
 
 /// Finds documents similar to a given chunk

@@ -192,7 +192,10 @@ fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<Page
                 "Layout-aware PDF extraction fell back to plain text for this page"
             );
         })
-        .map_err(IndexingError::Other)?;
+        .map_err(|e| IndexingError::ContentExtraction {
+            path: path.display().to_string(),
+            reason: format!("Failed to read page {}: {}", page, e),
+        })?;
         retained_layout_bytes = retained_layout_bytes.saturating_add(layout.retained_bytes());
         if retained_layout_bytes > MAX_PDF_LAYOUT_BYTES {
             return Err(IndexingError::Other(

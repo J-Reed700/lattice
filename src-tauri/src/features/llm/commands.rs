@@ -927,7 +927,7 @@ pub async fn list_models(
 /// # Returns
 ///
 /// * `Ok(String)` - Absolute path to the models directory
-/// * `Err(String)` - If directory creation fails or path validation fails
+/// * `Err(AppError)` - If directory creation fails or path validation fails
 ///
 /// # Errors
 ///
@@ -985,34 +985,36 @@ pub async fn list_models(
 /// 3. Create directory if it doesn't exist
 /// 4. Validate path is within app data directory
 /// 5. Return absolute path as string
-pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<String, AppError> {
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+        .map_err(|e| AppError::FileSystem(format!("Failed to get app data directory: {}", e)))?;
 
     // Construct models directory path
     let models_dir = app_data_dir.join("models");
 
     fs::create_dir_all(&models_dir)
-        .map_err(|e| format!("Failed to create models directory: {}", e))?;
+        .map_err(|e| AppError::FileSystem(format!("Failed to create models directory: {}", e)))?;
 
     // Validate path is within app data directory (security: prevent directory traversal)
     let canonical_models = models_dir
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize models path: {}", e))?;
+        .map_err(|e| AppError::FileSystem(format!("Failed to canonicalize models path: {}", e)))?;
 
-    let canonical_app_data = app_data_dir
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize app data path: {}", e))?;
+    let canonical_app_data = app_data_dir.canonicalize().map_err(|e| {
+        AppError::FileSystem(format!("Failed to canonicalize app data path: {}", e))
+    })?;
 
     if !canonical_models.starts_with(&canonical_app_data) {
-        return Err("Models directory is not within app data directory".to_string());
+        return Err(AppError::Security(
+            "Models directory is not within app data directory".to_string(),
+        ));
     }
 
     canonical_models
         .to_str()
-        .ok_or_else(|| "Failed to convert path to string".to_string())
+        .ok_or_else(|| AppError::FileSystem("Failed to convert path to string".to_string()))
         .map(|s| s.to_string())
 }
 

@@ -47,6 +47,7 @@
 //! # }
 //! ```
 
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -439,17 +440,20 @@ impl ModelMetadata {
     ///     "https://huggingface.co/microsoft%2FPhi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf"
     /// );
     /// ```
-    pub fn build_download_url(&self) -> Result<String, String> {
+    pub fn build_download_url(&self) -> Result<String> {
         if let (Some(model_id), Some(filename)) = (&self.model_id, &self.default_filename) {
             if !model_id.contains('/') || model_id.contains("..") {
-                return Err(format!("Invalid model_id format: {}", model_id));
+                return Err(AppError::InvalidInput(format!(
+                    "Invalid model_id format: {}",
+                    model_id
+                )));
             }
 
             if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-                return Err(format!(
+                return Err(AppError::InvalidInput(format!(
                     "Invalid filename contains path separators: {}",
                     filename
-                ));
+                )));
             }
 
             // URL-encode both model_id and filename to handle special characters
@@ -458,11 +462,19 @@ impl ModelMetadata {
             let encoded_org = parts
                 .first()
                 .map(|s| urlencoding::encode(s))
-                .ok_or_else(|| "Invalid model ID format: missing organization".to_string())?;
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "Invalid model ID format: missing organization".to_string(),
+                    )
+                })?;
             let encoded_repo = parts
                 .get(1)
                 .map(|s| urlencoding::encode(s))
-                .ok_or_else(|| "Invalid model ID format: missing repository".to_string())?;
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "Invalid model ID format: missing repository".to_string(),
+                    )
+                })?;
 
             Ok(format!(
                 "https://huggingface.co/{}/{}/resolve/main/{}",
@@ -473,9 +485,9 @@ impl ModelMetadata {
         } else {
             // Multi-file and repo-only entries carry no `default_filename`;
             // fall back to the catalog's direct URL.
-            self.download_url
-                .clone()
-                .ok_or_else(|| "No download URL available for this model".to_string())
+            self.download_url.clone().ok_or_else(|| {
+                AppError::NotFound("No download URL available for this model".to_string())
+            })
         }
     }
 
@@ -685,7 +697,7 @@ impl CompatibilityScorer {
         &self,
         model: &ModelMetadata,
         capabilities: &SystemCapabilities,
-    ) -> Result<CompatibilityScore, String> {
+    ) -> Result<CompatibilityScore> {
         let mut blockers = Vec::new();
         let mut recommendations = Vec::new();
 
@@ -1000,7 +1012,10 @@ mod tests {
         let result = model.build_download_url();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid model_id format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid model_id format"));
     }
 
     #[test]
@@ -1013,6 +1028,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
+            .to_string()
             .contains("Invalid filename contains path separators"));
     }
 
@@ -1026,6 +1042,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
+            .to_string()
             .contains("Invalid filename contains path separators"));
     }
 
@@ -1037,7 +1054,10 @@ mod tests {
         let result = model.build_download_url();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid model_id format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid model_id format"));
     }
 
     #[test]
@@ -1078,6 +1098,9 @@ mod tests {
         let result = model.build_download_url();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No download URL available"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No download URL available"));
     }
 }

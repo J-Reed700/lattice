@@ -4,6 +4,7 @@
 //! Handles common model naming conventions from HuggingFace and Ollama.
 //! Also provides ModelFile for multi-file model support (e.g., ONNX models with separate data files).
 
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -114,7 +115,7 @@ impl ModelType {
     /// (`chat`, `embedding`, `qa`, `multi_modal`, `custom`, `ocr`,
     /// `unknown`), so stored rows carry those spellings rather than the
     /// variant names `to_db_string` produces. Both sets are accepted.
-    pub fn from_db_string(s: &str) -> Result<Self, String> {
+    pub fn from_db_string(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "text_embeddings" => Ok(Self::TextEmbeddings),
             "vision" => Ok(Self::Vision),
@@ -126,7 +127,7 @@ impl ModelType {
             // See `to_db_string`: the CHECK constraint has no `transcription`
             // value, so transcription models round-trip through `custom`.
             "custom" | "transcription" => Ok(Self::Transcription),
-            _ => Err(format!("Invalid model type: {}", s)),
+            _ => Err(AppError::InvalidData(format!("Invalid model type: {}", s))),
         }
     }
 }

@@ -548,13 +548,14 @@ fn dictionary_has_image(doc: &Document, resources: &Dictionary) -> bool {
 /// trusted, calling `on_fallback` with the reason so the caller can log it.
 /// Errors only when the page can be read neither way — an unreadable page must
 /// fail the import rather than become an empty passage in a document the rest
-/// of the application treats as fully indexed.
+/// of the application treats as fully indexed. The error is lopdf's, so the
+/// caller can name the file it came from.
 pub(super) fn read_page(
     doc: &Document,
     page: u32,
     page_id: ObjectId,
     on_fallback: impl FnOnce(String),
-) -> Result<PageLayout, String> {
+) -> lopdf::Result<PageLayout> {
     let has_image = page_has_image(doc, page_id);
     let plain = |doc: &Document| {
         doc.extract_text_with_limit(&[page], super::pdf::MAX_PDF_STREAM_BYTES)
@@ -571,7 +572,7 @@ pub(super) fn read_page(
         // like, but also what a font we cannot decode looks like, so give the
         // plain path a chance before calling the page textless.
         Ok(_) => {
-            let text = plain(doc).map_err(|error| error.to_string())?;
+            let text = plain(doc)?;
             let recovered = (!text.is_empty()).then_some(text);
             if recovered.is_some() {
                 on_fallback("no positioned text runs were recovered".into());
@@ -588,7 +589,7 @@ pub(super) fn read_page(
             Ok(PageLayout {
                 page,
                 lines: Vec::new(),
-                fallback_text: Some(plain(doc).map_err(|error| error.to_string())?),
+                fallback_text: Some(plain(doc)?),
                 has_image,
             })
         }

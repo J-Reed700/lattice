@@ -6,7 +6,7 @@
  */
 
 import { ErrorCode } from '../types/api/errorCodes';
-import { type ApiError } from '../types/api/result';
+import { type ApiError, type ApiFailure } from '../types/api/result';
 
 /**
  * User-friendly error messages mapped to error codes
@@ -149,6 +149,18 @@ export function parseApiError(error: unknown): ApiError {
     message: 'An unexpected error occurred',
     details: String(error),
   };
+}
+
+/**
+ * One line for the user from a failed call: the backend's message, then its
+ * detail when the message does not already carry it. A generic message such
+ * as "Network error" only helps with the reason after it.
+ */
+export function describeFailure(failure: ApiFailure): string {
+  const detail = failure.details?.details;
+  return detail && !failure.error.includes(detail)
+    ? `${failure.error}: ${detail}`
+    : failure.error;
 }
 
 /**

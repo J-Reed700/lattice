@@ -33,6 +33,7 @@
 //! ```
 
 use crate::domain::models::selection::{ModelCategory, ModelMetadata};
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 /// Search filters for model catalog queries.
@@ -74,10 +75,12 @@ impl SearchFilters {
         max_size_gb: Option<f64>,
         required_capabilities: Vec<String>,
         query_text: Option<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         if let Some(size) = max_size_gb {
             if size <= 0.0 {
-                return Err("max_size_gb must be positive".into());
+                return Err(AppError::InvalidInput(
+                    "max_size_gb must be positive".to_string(),
+                ));
             }
         }
 
@@ -417,7 +420,7 @@ mod tests {
         let result = SearchFilters::new(None, Some(-1.0), vec![], None);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("positive"));
+        assert!(result.unwrap_err().to_string().contains("positive"));
     }
 
     #[test]

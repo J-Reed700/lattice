@@ -125,8 +125,7 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
     type Error = AppError;
 
     fn try_from(record: DownloadedModelRecord) -> Result<Self, Self::Error> {
-        let model_type_enum = ModelType::from_db_string(&record.model_type)
-            .map_err(|e| AppError::InvalidData(format!("Invalid model type: {}", e)))?;
+        let model_type_enum = ModelType::from_db_string(&record.model_type)?;
 
         let downloaded_at_dt =
             parse_optional_db_timestamp(record.downloaded_at.as_deref())?.unwrap_or_else(Utc::now);

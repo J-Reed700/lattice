@@ -332,7 +332,7 @@ impl DownloadModelUseCase {
                 self.catalog.get_model_by_id(&repo_id).await?
             };
             let mut resolved = match metadata {
-                Some(meta) => meta.to_domain_model().map_err(AppError::InvalidInput)?,
+                Some(meta) => meta.to_domain_model()?,
                 None => crate::features::model_management::domain::ModelMetadata {
                     id: model_id.to_string(),
                     name: Self::infer_model_name_from_repo(&repo_id),
