@@ -389,6 +389,7 @@ async fn live_corpus_retrieval_and_answer() {
         None,
         &catalog,
         &HashMap::new(),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -743,6 +744,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
         None,
         &correction_catalog(),
         &correction,
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -769,14 +771,15 @@ async fn the_planner_request_carries_the_turns_cancellation() {
     let stub = PlannerStub::new(&[
         r#"{"queries":["garden leave notice period"],"opening_document_ids":[],"start_at_beginning":false}"#,
     ]);
-    let turn = CancellationToken::new();
+    let stop = CancellationToken::new();
     plan(
         &stub,
         "What about garden leave?",
         None,
         &correction_catalog(),
         &HashMap::new(),
-        &turn,
+        &PlannerTurn::new(),
+        &stop,
     )
     .await
     .unwrap();
@@ -784,7 +787,7 @@ async fn the_planner_request_carries_the_turns_cancellation() {
         .clone()
         .expect("the turn's token");
     assert!(!carried.is_cancelled());
-    turn.cancel();
+    stop.cancel();
     assert!(carried.is_cancelled());
 }
 
@@ -806,6 +809,7 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
         None,
         &correction_catalog(),
         &correction,
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await;
@@ -926,6 +930,7 @@ async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
         Some(&history),
         &wide_catalog(43),
         &Default::default(),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -960,6 +965,7 @@ async fn a_correction_block_is_charged_against_the_same_window() {
         Some(&"user: earlier turn\n".repeat(200)),
         &wide_catalog(43),
         &correction,
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await

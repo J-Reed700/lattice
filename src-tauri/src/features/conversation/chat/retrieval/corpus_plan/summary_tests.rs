@@ -96,6 +96,7 @@ async fn the_catalog_carries_summaries_when_the_tier_has_them() {
         None,
         &catalog,
         &summaries(&[("doc-1", "A manual about preflight and engine start.")]),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -117,6 +118,7 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
         None,
         &catalog,
         &HashMap::new(),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -128,6 +130,7 @@ async fn an_empty_summary_map_reproduces_the_plain_catalog() {
         None,
         &catalog,
         &HashMap::new(),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
@@ -147,6 +150,7 @@ async fn catalog_summaries_are_truncated_per_document() {
         None,
         &catalog,
         &summaries(&[("doc-1", &long)]),
+        &PlannerTurn::new(),
         &CancellationToken::new(),
     )
     .await
