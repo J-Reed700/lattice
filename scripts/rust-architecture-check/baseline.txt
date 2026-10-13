@@ -46,7 +46,7 @@ feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 2
 feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
-feature-edge features::conversation features::function_calling 54
+feature-edge features::conversation features::function_calling 51
 feature-edge features::conversation features::llm 2
 feature-edge features::conversation features::qa 17
 feature-edge features::conversation features::references 1

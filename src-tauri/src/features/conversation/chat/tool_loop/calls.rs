@@ -18,15 +18,18 @@ use super::document_progress::DocumentProgress;
 use super::tool_sources::collect_tool_sources;
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
-    tool_result_allowance, RequestedCall, ToolLoopTimingMetrics,
+    tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
 };
 use crate::application::ports::llm_port::CompletionInput;
 use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::cancellation::cancelled_error;
+use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::fetch_memory::{self, Delivery, FetchMemory, Recall};
 use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::history_tools::{self, HistoryToolMemo};
-use crate::features::conversation::chat::ports::{ChatRecords, ChatRuntime, ExplorerTurn};
+use crate::features::conversation::chat::ports::{
+    ChatRecords, ChatRuntime, ExplorerTurn, FetchUrlContentOutput, FunctionCall, FunctionResult,
+};
 use crate::features::conversation::chat::retrieval::{
     assign_citation_ids, deduplicate_sources, fetched_page_text_room, format_tool_result,
     merge_tool_sources, record_tool_document_references,
@@ -36,10 +39,7 @@ use crate::features::conversation::chat::{
     source_snapshots, web_steps, ChatEventSink, ChatStreamEventDto, RetrievalTraceDto,
 };
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::features::function_calling::dto::FetchUrlContentOutput;
-use crate::features::qa::dto::SourceDto;
-use crate::features::settings::dto::ToolOutputSettingsDto;
+use crate::features::explorer::tools::is_explorer_tool;
 use crate::shared::error::Result;
 use crate::shared::http::url_identity::identity;
 use futures::{FutureExt, StreamExt};
@@ -77,7 +77,7 @@ pub(super) fn runs_alongside_others(tool: &str) -> bool {
             | "get_document"
             | "list_documents"
             | "list_attachments"
-    ) || crate::features::explorer::tools::is_explorer_tool(tool)
+    ) || is_explorer_tool(tool)
 }
 
 /// What every call of the turn reads and none changes.
@@ -470,9 +470,7 @@ impl<'a> ToolCalls<'a> {
             tool,
             pending.arguments.clone(),
         );
-        let explorer_turn = scope
-            .explorer
-            .filter(|_| crate::features::explorer::tools::is_explorer_tool(tool));
+        let explorer_turn = scope.explorer.filter(|_| is_explorer_tool(tool));
         if let Some(turn) = explorer_turn {
             // Cut to the same allowance as every other result, at a line
             // boundary, with a note saying where to read on.

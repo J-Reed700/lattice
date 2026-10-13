@@ -2,12 +2,13 @@
 //! a page the model read, a Wikipedia summary. Each becomes a citation the
 //! answer can point at.
 
+use super::ToolOutputSettingsDto;
+use crate::features::conversation::chat::dto::SourceDto;
+use crate::features::conversation::chat::ports::FunctionResult;
 use crate::features::conversation::chat::retrieval::build_web_source_citations;
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
-use crate::features::qa::dto::SourceDto;
-use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::shared::text::{build_excerpt, safe_truncate};
 
 /// Preview length for a page the model fetched itself, matching the preview a
@@ -16,7 +17,7 @@ const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
 
 pub(super) fn collect_tool_sources(
     tool_name: &str,
-    result: &crate::features::function_calling::domain::FunctionResult,
+    result: &FunctionResult,
     highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
 ) -> Vec<SourceDto> {

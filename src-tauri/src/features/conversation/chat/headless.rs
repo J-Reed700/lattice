@@ -7,9 +7,14 @@
 //! process does not have, so this is the one door it uses instead: the same
 //! [`run_turn`] the window command calls, with the stream delivered to a sink
 //! the caller owns.
+//!
+//! It takes the turn's dependencies as the feature's own [`ChatRuntime`] port,
+//! not the DI container: the caller builds the container (the example does, in
+//! `app::open`) and passes it in, so this module stays on the feature side of
+//! the layer boundary.
+use super::ports::ChatRuntime;
 use super::turn::run_turn;
 use super::{ChatEventSink, ChatResponse, ToolPreferences};
-use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 
 /// Run one turn exactly as `chat_with_conversation` does, streaming every
@@ -19,14 +24,14 @@ use crate::shared::error::Result;
 /// a first message. The grounding check finishes after this returns; it
 /// arrives on `events` as a `verification` payload.
 pub async fn run_headless_turn(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: ToolPreferences,
     events: ChatEventSink,
 ) -> Result<ChatResponse> {
     run_turn(
-        container,
+        runtime,
         conversation_id,
         message,
         Some(tool_preferences),

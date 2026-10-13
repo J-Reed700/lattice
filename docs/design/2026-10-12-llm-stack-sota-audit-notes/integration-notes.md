@@ -180,3 +180,41 @@ The integration-test binaries were not run: main changed nothing under `src-taur
   - `feature-edge` `conversation ->` `explorer` 10/9, `function_calling` 55/54, `qa` 19/17, `settings` 19/17.
 
   Either move the references or regenerate the baseline with `bash scripts/check-rust-layer-boundaries.sh --write-baseline`. That choice was left to Josh.
+
+# Pass 4: layer boundaries (2026-10-13)
+
+`bash scripts/check-rust-layer-boundaries.sh` (CI's "architecture boundary checks" job) reported the 5 violations listed under Pass 3's "Still open". All 5 are fixed in code; the baseline only shrank.
+
+## What moved
+
+- **`conversation/chat/headless.rs` no longer imports `interfaces::di`.** `run_headless_turn` takes `runtime: &dyn ChatRuntime`, the feature's own port from `chat/ports.rs` and the type `run_turn` already takes, instead of `&Container`. The container is still built in the example (`examples/shipped_path_eval/app.rs`, `app::open`), and the call site passes `&Container` unchanged, because `Container` implements `ChatRuntime` (`conversation/di/chat_runtime.rs`). The example's source did not change. Its run record hashes `headless.rs`, so runs before and after this commit show different harness hashes for that one file.
+- **The four feature-edge excesses came from B2's split of `tool_loop.rs` into `tool_loop/*.rs`.** `calls.rs` and `tool_sources.rs` each repeated imports that the single `tool_loop.rs` had made once, and `calls.rs` added a second inline `is_explorer_tool` path for `runs_alongside_others`. Each now goes through a path the feature already has:
+  - `FunctionCall`, `FunctionResult` and `FetchUrlContentOutput` in `calls.rs`, and `FunctionResult` in `tool_sources.rs`, come from the `chat/ports.rs` re-exports;
+  - `SourceDto` comes from `chat/dto.rs`'s re-export, as `turn/mod.rs` already does;
+  - `ToolOutputSettingsDto` comes from `tool_loop.rs`'s own import (`use super::ToolOutputSettingsDto`);
+  - `calls.rs` imports `explorer::tools::is_explorer_tool` once instead of naming the full path at both call sites.
+
+## Baseline
+
+Only one line changed: `feature-edge features::conversation features::function_calling` 54 → 51. The ratchet fails when a count falls as well as when it rises, so the smaller count had to be written (`--write-baseline`; the Tauri command-orphan baseline it also rewrites came out unchanged). `explorer` (9), `qa` (17) and `settings` (17) are back at their baseline counts, and the `headless.rs` container-import line was never added. No count rose.
+
+Separately: the checker reads `baseline.txt` from the path compiled into its binary (`env!("CARGO_MANIFEST_DIR")`), and cargo does not rebuild it when another worktree with the same sources shares the target directory. With `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2`, the binary had been built from `../lattice-llm-h` and read that worktree's baseline. Touching `scripts/rust-architecture-check/src/main.rs` forces a rebuild from this worktree. CI is not affected, because it builds from a fresh checkout.
+
+## Text fix
+
+`curated.rs`: the 9B MTP entry's description no longer says the speed-up "has not been measured here yet". It now gives Track G's result: about 1.5x faster decoding on Apple Silicon with a draft depth of 3 (1.8x while thinking), at the cost of a single server slot.
+
+## Verification
+
+All cargo commands ran one at a time with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2` and `jobs = 2`. No llama-server ran and nothing was downloaded.
+
+| Command | Result |
+|---|---|
+| `bash scripts/check-rust-layer-boundaries.sh` | clean, 0 violations |
+| `bash scripts/check-repository-barrier.sh` | clean (272 production feature files) |
+| `python3 scripts/check-tauri-command-inventory.py` | clean |
+| `cargo fmt --all -- --check` | clean, after `cargo fmt` reflowed two lines in `calls.rs` |
+| `cargo check --all-targets` | clean, no warnings (only the build script's empty-sidecar notice) |
+| `cargo clippy --all-targets` | 0 warnings |
+| `cargo test --lib -- conversation::chat models::curated` | 427 passed, 0 failed, 2 ignored |
+| `cargo check --example shipped_path_eval` | clean |
