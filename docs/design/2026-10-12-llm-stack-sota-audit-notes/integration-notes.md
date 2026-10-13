@@ -140,3 +140,43 @@ The pass 1 follow-ups still stand, along with the following:
   - `TuningTab.tsx` (2 hunks).
 
   #42 moved those files' tests into new files, so the branch's test edits there need to move too. Main was not merged here, because a merge needs its own verification run.
+
+# Pass 3: merge of main (2026-10-13)
+
+`origin/main` (d1fb4c4b, #42) was merged into `llm/sota-2026-10` with a merge commit, not a rebase. #42 split 31 backend files and 9 React components and moved their tests into new files; it changed no behaviour and nothing under `src-tauri/tests`. The rule for every conflict: keep main's layout and the branch's behaviour, and move the branch's test edits into the file main moved those tests to.
+
+## Conflicts and resolutions
+
+- **`contracts/settings.rs`** (3 hunks). Main's version, plus `mod generation;` and its `pub use`. A's fields (`presence_penalty`, `answer_thinking`, `thinking_override`, `thinking_sampling`, `speculative_decoding`), the card-profile defaults and the router default `qwen3.5-4b-q4_k_m` went into main's `settings/llm.rs`. C's full-precision compression default and the reranker comment went into `settings/retrieval.rs`. The default-value assertions went into `settings/tests.rs`, and `generation_settings_fill_in_when_missing_and_keep_their_wire_shape` went into `settings/memory_defaults_tests.rs`, the module it already lived in.
+- **`curated.rs`** (1 hunk). The branch's catalog (D's `CuratedChatModel` table and `mtp_draft`, H's `CuratedOcrModel`) with main's `#[path = "curated_tests.rs"] mod tests;`. The branch's 31 tests went into `curated_tests.rs`. Main's two tests that are not there (`test_phi3_mini_metadata`, `every_ram_tier_recommends_a_downloadable_catalog_entry`) were already removed by D before the merge; main had only moved them.
+- **`ollama_client.rs`** (1 hunk). The branch's client (A's thinking switch, card profile and `presence_penalty`) with main's `mod tests;`. The branch's tests went into `ollama_client/tests.rs`, including the new `a_thinking_answer_turns_think_on_with_the_thinking_profile`.
+- **`TuningTab.tsx`** (2 hunks). Main's split version. A's draft defaults (0.8/20/1.0, presence 1.5) and the `ThinkingSection` between the runtime and router sections stay in `TuningTab.tsx`. The presence-penalty row and the `presencePenalty` draft field moved into main's `RuntimeTuningSection.tsx`.
+
+Main's moved test files differ from the base's test modules only by formatting, so no test of main's was edited away. `reranker.rs` merged cleanly. `src/tests/fixtures/appSettings.ts` and `AITab.test.tsx` were untouched by main. Main added no test file for the Tuning sections.
+
+## Verification
+
+All cargo commands ran one at a time with `CARGO_TARGET_DIR=/Users/josh/Code/lattice-imm-target2` and `jobs = 2`. No llama-server ran and nothing was downloaded.
+
+| Command | Result |
+|---|---|
+| `cargo fmt --all -- --check` | clean, after formatting the two dedented test files |
+| `cargo check --all-targets` | clean, no warnings (only the build script's empty-sidecar notice) |
+| `cargo clippy --all-targets` | 0 warnings |
+| `cargo test --lib -- settings models::curated llm::ollama llm_port llama_cpp conversation::chat context_assembler search learning::lessons::content_verification` | 1238 passed, 0 failed, 7 ignored |
+| `cargo test --lib -- ollama_client` (the `llm::ollama` filter matches nothing: the path is `llm::engine::ollama_client`) | 11 passed |
+| `cargo run --features bindings-export --bin export_bindings -- --check` | up to date |
+| `npx tsc --noEmit -p .` | clean |
+| `npx vitest run src/features/settings` | 19 files, 172 passed |
+| `bash scripts/check-repository-barrier.sh` | clean |
+| `bash scripts/check-rust-layer-boundaries.sh` | 5 violations; the same 5 on the pre-merge branch, so they are not from the merge (see below) |
+
+The integration-test binaries were not run: main changed nothing under `src-tauri/tests`, and the resolutions keep the branch's behaviour, so no snapshot input moved.
+
+## Still open
+
+- **Layer ratchet (CI runs it).** The branch, before and after the merge, exceeds `scripts/rust-architecture-check/baseline.txt`:
+  - `container-import`: `conversation/chat/headless.rs -> interfaces::di` (E1's runner), not in the baseline;
+  - `feature-edge` `conversation ->` `explorer` 10/9, `function_calling` 55/54, `qa` 19/17, `settings` 19/17.
+
+  Either move the references or regenerate the baseline with `bash scripts/check-rust-layer-boundaries.sh --write-baseline`. That choice was left to Josh.
