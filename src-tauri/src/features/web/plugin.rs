@@ -28,7 +28,7 @@ pub async fn ingest_web_url(
 pub async fn fetch_url_preview(
     url: String,
     container: State<'_, Container>,
-) -> Result<crate::features::function_calling::dto::UrlPreview, ApiError> {
+) -> Result<crate::application::contracts::web::UrlPreview, ApiError> {
     web_ingest::fetch_url_preview(url, container)
         .await
         .map_err(ApiError::from)
@@ -39,7 +39,7 @@ pub async fn fetch_url_preview(
 pub async fn extract_article(
     url: String,
     container: State<'_, Container>,
-) -> Result<crate::features::function_calling::dto::CleanArticle, ApiError> {
+) -> Result<crate::application::contracts::web::CleanArticle, ApiError> {
     web_ingest::extract_article(url, container)
         .await
         .map_err(ApiError::from)

@@ -17,17 +17,16 @@ use crate::features::model_management::commands_extra::{
     warm_up_active_utility_model_impl,
 };
 use crate::interfaces::commands::model_setup::{
-    check_first_run_status_impl, download_default_embedding_model_impl,
+    check_first_run_status_impl, download_default_embedding_model_impl, download_model_impl,
 };
 
 use crate::domain::download::DownloadOperationState;
-use crate::features::llm::commands::download_model as download_model_impl;
 
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
 
 /// Download a model by ID
 ///
-/// Thin wrapper that delegates to the existing download_model implementation in llm.rs.
+/// Thin wrapper over `download_model_impl`, the shared model-setup command.
 /// Maps the response from DownloadModelResponseDto to DownloadModelResponse.
 #[tauri::command]
 #[specta::specta]
@@ -35,8 +34,7 @@ pub async fn download_model(
     model_id: String,
     container: State<'_, Container>,
 ) -> Result<DownloadModelResponse, ApiError> {
-    // Delegate to existing implementation in llm.rs
-    match download_model_impl(model_id.clone(), container).await {
+    match download_model_impl(model_id.clone(), &container).await {
         Ok(response) => {
             // Map DownloadModelResponseDto to DownloadModelResponse
             // The model id is also the stable download id.

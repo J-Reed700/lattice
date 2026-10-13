@@ -6,6 +6,7 @@
 //!
 //! - `check_first_run_status_impl` - Check if first-run setup is needed
 //! - `download_default_embedding_model_impl` - Download and activate default model
+//! - `download_model_impl` - Download a catalog model by id
 //!
 //! # Gateway Pattern
 //!
@@ -16,9 +17,10 @@ use crate::audit_success;
 use crate::domain::download::DownloadOperationState;
 use crate::domain::models::embedding_defaults::default_embedding_model;
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
-use crate::features::llm::dto::DownloadModelRequestDto;
+use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::interfaces::di::Container;
+use crate::shared::error::AppError;
 
 #[derive(Debug, serde::Serialize)]
 struct DownloadDefaultModelResponse {
@@ -142,6 +144,179 @@ pub async fn download_default_embedding_model_impl(
     .ok();
 
     serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// Downloads an LLM model with progress tracking and integrity verification
+///
+/// Initiates download of a model from remote storage to local filesystem. Provides
+/// real-time progress updates via events, validates downloaded file integrity, and
+/// handles network errors gracefully with retry logic. This is a resource-intensive
+/// operation protected by rate limiting to prevent abuse and ensure system stability.
+///
+/// # Arguments
+///
+/// * `model_id` - Unique identifier of the model to download (e.g., "llama-3-8b")
+/// * `container` - Service container with use cases and security context
+///
+/// # Returns
+///
+/// * `Ok(DownloadModelResponseDto)` - Download completion status with path
+/// * `Err(AppError)` - If rate limited, download fails, or verification fails
+///
+/// # Errors
+///
+/// * `AppError::RateLimitExceeded` - Too many download requests (CWE-770 mitigation)
+/// * `AppError::InvalidInput` - Model ID invalid or not in catalog
+/// * `AppError::Other` - Network error, storage full, or integrity check failed
+///
+/// # Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+/// import { listen } from '@tauri-apps/api/event';
+///
+/// interface DownloadProgress {
+///   modelId: string;
+///   bytesDownloaded: number;
+///   totalBytes: number;
+///   percentComplete: number;
+///   downloadSpeed: number;      // Bytes per second
+///   estimatedTimeRemaining: number; // Seconds
+/// }
+///
+/// interface DownloadComplete {
+///   modelId: string;
+///   path: string;
+///   sizeBytes: number;
+///   downloadTimeSeconds: number;
+/// }
+///
+/// // Listen for progress updates using the unified download:progress event
+/// const unlisten = await listen<DownloadStateSnapshot>('download:progress', (event) => {
+///   const snapshot = event.payload;
+///   if (snapshot.kind === 'single') {
+///     console.log(`Downloading ${snapshot.filename}: ${snapshot.percentage}%`);
+///     console.log(`Speed: ${(snapshot.bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s`);
+///     console.log(`ETA: ${snapshot.etaSeconds}s`);
+///   }
+/// });
+///
+/// try {
+///   // Start download
+///   const result = await invoke<DownloadComplete>('download_model', {
+///     modelId: 'llama-3-8b'
+///   });
+///
+///   console.log(`Download complete: ${result.path}`);
+///   console.log(`Downloaded in ${result.downloadTimeSeconds}s`);
+///   console.log(`Size: ${(result.sizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
+/// } catch (error) {
+///   console.error('Download failed:', error);
+/// } finally {
+///   unlisten();
+/// }
+/// ```
+///
+/// # Download Process
+///
+/// **Workflow**:
+/// 1. **Rate Limit Check**: Prevents excessive downloads (CWE-770)
+/// 2. **Model Validation**: Verify model ID exists in catalog
+/// 3. **Storage Check**: Ensure sufficient disk space
+/// 4. **Network Download**: Stream model file with progress events
+/// 5. **Integrity Verification**: Validate checksum after download
+/// 6. **Audit Logging**: Log successful download (CWE-778)
+///
+/// **Progress Events**:
+/// - Emitted every 1 second or 10MB, whichever comes first
+/// - Event name: `download:progress` (unified download event system)
+/// - Payload: DownloadStateSnapshot with discriminated union (kind: 'single' | 'batch')
+/// - Includes: bytes downloaded, total size, percentage, speed, ETA
+///
+/// **Error Handling**:
+/// - **Network Failure**: Automatic retry up to 3 times with exponential backoff
+/// - **Storage Full**: Clean error message, suggests freeing disk space
+/// - **Integrity Failure**: Deletes corrupted file, suggests retry
+/// - **Rate Limited**: Suggests waiting before retrying
+///
+/// # Security
+///
+/// - **Rate Limiting (CWE-770)**: Max 5 downloads per hour to prevent DoS
+/// - **Audit Logging (CWE-778)**: All downloads logged with model ID and result
+/// - **Integrity Verification**: SHA-256 checksum validation
+/// - **Path Validation**: Downloads only to safe, validated paths (CWE-22)
+/// - **Size Limits**: Rejects downloads exceeding maximum size (100GB)
+///
+/// # Performance
+///
+/// **Download Speeds** (typical):
+/// - **Small Models** (<5GB): 2-5 minutes on 100Mbps connection
+/// - **Medium Models** (5-15GB): 5-15 minutes on 100Mbps connection
+/// - **Large Models** (15-50GB): 15-60 minutes on 100Mbps connection
+/// - **Ultra Models** (>50GB): 1+ hours on 100Mbps connection
+///
+/// **Resource Usage**:
+/// - **Memory**: ~100-200MB for download buffer
+/// - **Disk I/O**: Sequential writes, minimal system impact
+/// - **Network**: Sustained download, may affect other network operations
+///
+/// # Architecture
+///
+/// Thin controller with cross-cutting concerns:
+/// 1. **Rate Limiting**: Applied before execution
+/// 2. **Use Case Execution**: DownloadModelUseCase handles business logic
+/// 3. **Audit Logging**: Applied after successful execution
+///
+/// # Command Flow
+///
+/// 1. Check rate limit (prevent abuse)
+/// 2. Get use case from container
+/// 3. Create request DTO with model ID
+/// 4. Execute download (validate, download, verify)
+/// 5. Log audit event (success)
+/// 6. Return DownloadModelResponseDto with path
+///
+/// # Note
+///
+/// Downloads can be cancelled using a separate `cancel_download` command. Progress
+/// is saved, allowing resumption on retry (if supported by download source).
+pub async fn download_model_impl(
+    model_id: String,
+    container: &Container,
+) -> Result<DownloadModelResponseDto, AppError> {
+    tracing::info!(model_id = %model_id, "Command: download_model - ENTRY");
+
+    // Rate limiting (resource-intensive operation)
+    container
+        .security_context()
+        .rate_limiters()
+        .indexing
+        .check_rate_limit(&model_id)
+        .await
+        .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
+
+    let use_case = container.download_model_use_case();
+    let request = DownloadModelRequestDto {
+        model_id: model_id.clone(),
+    };
+    let response = use_case.execute(request).await.map_err(|e| {
+        tracing::error!(model_id = %model_id, error = %e, "Command: download_model - ERROR");
+        e
+    })?;
+
+    // Audit logging
+    let logger = crate::audit::get_audit_logger();
+    crate::audit_success!(
+        logger,
+        crate::audit::AuditAction::ModelDownloaded,
+        &model_id,
+        "model_type" => "llm"
+    )
+    .await
+    .ok();
+
+    tracing::info!(model_id = %model_id, "Command: download_model - EXIT");
+    Ok(response)
 }
 
 #[cfg(test)]

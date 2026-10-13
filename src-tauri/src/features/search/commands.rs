@@ -21,12 +21,12 @@
 
 use crate::application::ports::RepositoryPort;
 use crate::domain::entities::Document;
-use crate::features::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchModeDto, SearchOptions,
     SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
 use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
+use crate::features::search::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;

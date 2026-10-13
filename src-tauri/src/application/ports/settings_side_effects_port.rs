@@ -1,9 +1,11 @@
 //! Cache-invalidation + transition reactions fired by settings mutation use cases
 //! after a successful write. Implementations are best-effort —
 //! failures must not propagate, the user's setting has already been
-//! persisted.
+//! persisted. The one exception is `check_vault_enable`, which runs before
+//! the write so it can still refuse it.
 
 use crate::application::contracts::settings::SettingsCategory;
+use crate::shared::error::Result;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,6 +23,13 @@ pub trait SettingsSideEffectsPort: Send + Sync {
         category: Option<SettingsCategory>,
         hints: SettingsTransitionHints,
     );
+
+    /// Runs before an update that turns the vault on. An error refuses the
+    /// update and nothing is written. `vault_path` is the configured folder,
+    /// empty for the default. Accepts every folder unless overridden.
+    async fn check_vault_enable(&self, _vault_path: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub struct NoopSettingsSideEffects;

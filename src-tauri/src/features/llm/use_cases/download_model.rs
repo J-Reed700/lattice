@@ -395,7 +395,7 @@ impl DownloadModelUseCase {
                 // it would fall through to a bare single-file download with
                 // no tokenizer or config beside it.
                 if filename.ends_with(".safetensors")
-                    || filename == crate::features::embedding::candle_service::WEIGHTS_PYTORCH_BIN
+                    || filename == crate::domain::models::checkpoint::WEIGHTS_PYTORCH_BIN
                 {
                     resolved.files = Self::build_safetensors_embedding_file_list(
                         &repo_id,

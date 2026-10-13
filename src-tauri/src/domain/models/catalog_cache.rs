@@ -1,3 +1,6 @@
+//! Curated model names and the type each one is, read when a finished
+//! download is classified and when model management records one.
+
 use crate::domain::models::embedding_defaults::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, QWEN3_EMBEDDING_MODEL_CURATED_ID,
     QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,

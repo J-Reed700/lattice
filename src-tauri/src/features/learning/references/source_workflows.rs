@@ -1,5 +1,5 @@
 //! Web-source ingestion workflow. The command supplies the guarded fetch operation.
-use crate::features::function_calling::dto::FetchUrlContentOutput;
+use crate::application::contracts::web::FetchUrlContentOutput;
 use crate::features::learning::dto::{
     AddLearningWebSourceRequestDto, LearningSourceKind, LearningSourceWorkspaceDto,
 };

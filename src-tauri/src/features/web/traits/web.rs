@@ -2,9 +2,7 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::features::function_calling::dto::{
-    FetchUrlContentOutput, WebSearchInput, WebSearchOutput,
-};
+use crate::application::contracts::web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

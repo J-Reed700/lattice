@@ -14,6 +14,8 @@
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
+#   feature-cycle <features::a> <features::b> <n>         a feature-edge on a cycle; n features share
+#                                                         its strongly connected component
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
 #                                                         DI, desktop, setup and interfaces files
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
@@ -39,7 +41,7 @@ feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2
 feature-edge features::batch features::indexing 4
 feature-edge features::batch features::web 2
-feature-edge features::cache features::search 2
+feature-edge features::cache features::search 1
 feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 2
 feature-edge features::conversation features::embedding 3
@@ -56,11 +58,7 @@ feature-edge features::corpus_shape features::embedding 1
 feature-edge features::daily_notes features::conversation 1
 feature-edge features::daily_notes features::qa 6
 feature-edge features::daily_notes features::vault 1
-feature-edge features::download features::embedding 4
-feature-edge features::download features::model_management 1
-feature-edge features::embedding features::download 1
-feature-edge features::embedding features::indexing 6
-feature-edge features::embedding features::search 1
+feature-edge features::embedding features::download 2
 feature-edge features::explorer features::conversation 1
 feature-edge features::explorer features::function_calling 4
 feature-edge features::explorer features::search 3
@@ -74,31 +72,24 @@ feature-edge features::function_calling features::settings 4
 feature-edge features::function_calling features::tags 1
 feature-edge features::function_calling features::web 1
 feature-edge features::health features::llm 1
-feature-edge features::indexing features::cache 6
 feature-edge features::indexing features::embedding 14
 feature-edge features::indexing features::mentions 1
-feature-edge features::indexing features::search 1
+feature-edge features::indexing features::search 7
 feature-edge features::indexing features::summaries 2
 feature-edge features::indexing features::transcription 1
-feature-edge features::indexing features::web 2
 feature-edge features::initialization features::download 1
 feature-edge features::learning features::conversation 1
 feature-edge features::learning features::daily_notes 5
-feature-edge features::learning features::function_calling 4
 feature-edge features::learning features::vault 1
 feature-edge features::learning features::web 14
 feature-edge features::llm features::download 9
-feature-edge features::llm features::embedding 3
+feature-edge features::llm features::embedding 2
 feature-edge features::llm features::model_management 22
-feature-edge features::model_management features::download 20
-feature-edge features::model_management features::embedding 8
-feature-edge features::model_management features::llm 2
-feature-edge features::search features::cache 5
+feature-edge features::model_management features::download 21
+feature-edge features::model_management features::embedding 5
 feature-edge features::search features::download 1
 feature-edge features::search features::embedding 13
-feature-edge features::settings features::function_calling 1
 feature-edge features::settings features::llm 2
-feature-edge features::settings features::vault 3
 feature-edge features::stats features::health 1
 feature-edge features::stats features::tags 3
 feature-edge features::summaries features::search 1
@@ -107,8 +98,14 @@ feature-edge features::vault features::daily_notes 4
 feature-edge features::vault features::file 2
 feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
-feature-edge features::web features::function_calling 17
-feature-edge features::web features::indexing 8
+feature-edge features::web features::indexing 7
+
+feature-cycle features::conversation features::daily_notes 4
+feature-cycle features::conversation features::explorer 4
+feature-cycle features::daily_notes features::conversation 4
+feature-cycle features::daily_notes features::vault 4
+feature-cycle features::explorer features::conversation 4
+feature-cycle features::vault features::daily_notes 4
 
 container-import features/compare/retrieval.rs interfaces::di 1
 container-import features/compare/use_case.rs interfaces::di 1

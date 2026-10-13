@@ -1,3 +1,6 @@
+//! The process-wide cache of search results, keyed by query and corpus
+//! generation. Indexing invalidates it; the cache commands report and clear it.
+
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

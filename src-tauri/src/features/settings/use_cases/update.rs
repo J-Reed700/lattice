@@ -45,16 +45,9 @@ impl UpdateSettingsUseCase {
         // Pre-flight vault writability on enable flip.
         if let Some(proposed) = compute_proposed_vault(&request, previous.as_ref()) {
             if !previous_vault_enabled && proposed.enabled {
-                let root =
-                    crate::features::vault::writeback::resolve_vault_root(&proposed.vault_path)
-                        .ok_or_else(|| {
-                            AppError::InvalidInput(
-                                "Vault root could not be resolved (no home directory available). \
-                         Pick an explicit folder in Vault settings."
-                                    .to_string(),
-                            )
-                        })?;
-                probe_vault_writable(&root).await?;
+                self.side_effects
+                    .check_vault_enable(&proposed.vault_path)
+                    .await?;
             }
         }
 
@@ -232,32 +225,6 @@ fn compute_proposed_vault(
         }
         Some(_) => None,
     }
-}
-
-async fn probe_vault_writable(root: &std::path::Path) -> Result<()> {
-    if let Err(e) = tokio::fs::create_dir_all(root).await {
-        return Err(AppError::InvalidInput(format!(
-            "Vault folder '{}' could not be created: {}. Pick a different folder.",
-            root.display(),
-            e
-        )));
-    }
-    let sentinel = root.join(".lattice-vault-probe");
-    if let Err(e) = tokio::fs::write(&sentinel, b"probe").await {
-        return Err(AppError::InvalidInput(format!(
-            "Vault folder '{}' is not writable: {}. Check permissions, or pick a different folder.",
-            root.display(),
-            e
-        )));
-    }
-    if let Err(e) = tokio::fs::remove_file(&sentinel).await {
-        tracing::warn!(
-            sentinel = %sentinel.display(),
-            error = %e,
-            "vault writability probe: failed to clean up sentinel file"
-        );
-    }
-    Ok(())
 }
 
 fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
@@ -516,6 +483,47 @@ mod tests {
             vec![Some(SettingsCategory::Llm)],
             "side effect must fire exactly once with the updated category"
         );
+    }
+
+    #[tokio::test]
+    async fn enabling_the_vault_is_refused_when_its_folder_fails_the_pre_flight() {
+        use crate::application::ports::settings_side_effects_port::SettingsTransitionHints;
+
+        struct RefuseVaultFolder;
+
+        #[async_trait::async_trait]
+        impl SettingsSideEffectsPort for RefuseVaultFolder {
+            async fn on_settings_updated(
+                &self,
+                _category: Option<SettingsCategory>,
+                _hints: SettingsTransitionHints,
+            ) {
+            }
+
+            async fn check_vault_enable(&self, _vault_path: &str) -> Result<()> {
+                Err(AppError::InvalidInput("vault folder refused".to_string()))
+            }
+        }
+
+        let repository = Arc::new(MockSettingsRepository::new());
+        let use_case = UpdateSettingsUseCase::with_side_effects(
+            repository.clone(),
+            Arc::new(RefuseVaultFolder),
+        );
+
+        let mut updates = HashMap::new();
+        updates.insert("enabled".to_string(), json!(true));
+        updates.insert("vaultPath".to_string(), json!(""));
+        let result = use_case
+            .update_category(SettingsCategory::Vault, updates)
+            .await;
+
+        assert!(
+            matches!(&result, Err(AppError::InvalidInput(message)) if message == "vault folder refused"),
+            "the pre-flight error is the update's error (got {result:?})"
+        );
+        let stored = repository.get_all().await.expect("settings stay readable");
+        assert!(!stored.vault.enabled, "a refused update writes nothing");
     }
 
     #[tokio::test]

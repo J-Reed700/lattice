@@ -37,7 +37,7 @@
 //! # }
 //! ```
 
-use crate::features::function_calling::dto::*;
+use crate::application::contracts::web::*;
 use crate::features::web::services::page_cache::{CachedFetch, CachedPage, PageCache};
 use crate::features::web::services::stealth;
 use crate::features::web::WebServiceTrait;

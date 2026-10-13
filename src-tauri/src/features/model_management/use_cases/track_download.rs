@@ -62,7 +62,7 @@ impl TrackDownloadUseCase {
             architecture,
             metadata,
             |identifier| {
-                crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
+                crate::domain::models::catalog_cache::ModelCatalogCache::instance()
                     .lookup(identifier)
             },
         )?;

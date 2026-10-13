@@ -16,15 +16,12 @@
 //!   ModelCatalogPort impl backed by HuggingFace
 //! - `crate::features::model_management::cache_adapter` —
 //!   ModelCacheAdapter (in-memory model cache)
-//! - `crate::features::model_management::catalog_cache` —
-//!   persistent model catalog cache
 //! - `crate::features::model_management::plugin::init()` — Tauri plugin
 //!
 //! No DTO, port, or service traits — commands speak in domain types
 //! directly.
 
 pub mod cache_adapter;
-pub mod catalog_cache;
 pub mod commands;
 pub mod commands_extra;
 pub mod di;

@@ -3,14 +3,16 @@
 //! The identity is a SHA-256 over the model's preprocessing and weights. It is
 //! computed when a model is activated for embedding and stored on its row;
 //! launch and model load read the stored value and never hash model files.
+//! It lives with the downloaded-model records because it describes the files
+//! on disk, and the download saga establishes it when it auto-activates one.
 
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::domain::models::checkpoint::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::domain::models::downloaded::DownloadedModel;
 use crate::domain::value_objects::ArtifactIdentity;
-use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};
 
 /// Stream the artifacts under `dir` through SHA-256. The input is the

@@ -3,7 +3,7 @@
 
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::WebIngestionService;
-use crate::features::function_calling::dto::CleanArticle;
+use crate::application::contracts::web::CleanArticle;
 use crate::shared::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};

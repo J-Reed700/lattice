@@ -118,7 +118,7 @@ pub(crate) async fn publish_chunks_to_live_index(
     tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
         .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
         .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))?;
-    crate::features::cache::query_cache::invalidate_query_cache();
+    crate::features::search::query_cache::invalidate_query_cache();
     Ok(())
 }
 
@@ -657,7 +657,7 @@ impl IndexFileUseCase {
                 .map_err(|e| AppError::Other(format!("Search cleanup task failed: {e}")))??;
         }
         self.publish_document(&document, embeddings).await?;
-        crate::features::cache::query_cache::invalidate_query_cache();
+        crate::features::search::query_cache::invalidate_query_cache();
         // Summaries are a background tier: this returns before the model is
         // even consulted, and does nothing at all while the tier is off.
         crate::features::summaries::notify_document_indexed(&document_id).await;
@@ -704,7 +704,7 @@ impl IndexFileUseCase {
             .ok_or_else(|| AppError::NotFound(format!("Saved document {document_id} not found")))?;
         let embeddings = self.embedding_repo.find_by_document_id(document_id).await?;
         self.publish_document(&document, embeddings).await?;
-        crate::features::cache::query_cache::invalidate_query_cache();
+        crate::features::search::query_cache::invalidate_query_cache();
         Ok(())
     }
 

@@ -47,6 +47,7 @@ use tokio::sync::Mutex;
 
 use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
 use crate::application::ports::EmbeddingPort;
+use crate::domain::models::checkpoint::{weights_path, WEIGHTS_PYTORCH_BIN};
 use crate::domain::value_objects::{ArtifactIdentity, SparseEmbedding};
 use crate::features::embedding::late_chunking::{
     l2_normalize_in_place, mean_pool_rows, pooling_token_indices, validate_chunk_ranges,
@@ -163,33 +164,6 @@ const MAX_BATCH_ROWS: usize = 64;
 /// same question a handful of times — first-pass retrieval, planner rewrites,
 /// tool-loop searches — so this only has to outlive a turn, not a session.
 const QUERY_CACHE_CAPACITY: usize = 256;
-
-/// The weights file Candle prefers: a memory-mappable safetensors archive.
-pub const WEIGHTS_SAFETENSORS: &str = "model.safetensors";
-
-/// The PyTorch pickle accepted when a repository never published a safetensors
-/// conversion. `BAAI/bge-m3` is that case in the curated catalog — its only
-/// root-level weights file is `pytorch_model.bin`, so requiring safetensors
-/// made the model impossible to download or load at all.
-pub const WEIGHTS_PYTORCH_BIN: &str = "pytorch_model.bin";
-
-/// The weights file to load out of `model_dir`, or `None` when it holds
-/// neither candidate.
-///
-/// Safetensors wins when both are present: it mmaps instead of materializing
-/// every tensor, and it is the format every existing model identity was
-/// computed over.
-pub fn weights_path(model_dir: &Path) -> Option<PathBuf> {
-    [WEIGHTS_SAFETENSORS, WEIGHTS_PYTORCH_BIN]
-        .into_iter()
-        .map(|name| model_dir.join(name))
-        .find(|path| path.is_file())
-}
-
-/// Whether `model_dir` holds weights the Candle runtime can load.
-pub fn has_loadable_weights(model_dir: &Path) -> bool {
-    weights_path(model_dir).is_some()
-}
 
 /// Errors specific to model loading. Surfaced through `AppError::EmbeddingFailed`
 /// at the trait boundary but enumerated here so callers can match if needed.
@@ -512,7 +486,7 @@ impl CandleEmbeddingService {
     /// activation path; it streams every weights file through SHA-256.
     pub fn open_unregistered(model_dir: impl AsRef<Path>) -> Result<Self> {
         let dir = model_dir.as_ref();
-        let identity = crate::features::embedding::artifact_identity::compute(dir)?;
+        let identity = crate::features::download::artifact_identity::compute(dir)?;
         Self::open(dir, identity)
     }
 
@@ -551,7 +525,7 @@ impl CandleEmbeddingService {
     /// `embed_batch` — we just unwrap the contextualized text first.
     pub async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
+        chunks: &[crate::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         if chunks.is_empty() {
             return Ok(vec![]);
@@ -1269,7 +1243,7 @@ impl EmbeddingServiceTrait for CandleEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
+        chunks: &[crate::domain::value_objects::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         self.embed_contextualized_chunks(chunks).await
     }
@@ -1721,7 +1695,8 @@ use candle_core::IndexOp;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::features::embedding::artifact_identity;
+    use crate::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
+    use crate::features::download::artifact_identity;
     use tempfile::TempDir;
 
     /// A one-layer, four-wide BERT: config, tokenizer and the weight shapes.
@@ -1984,27 +1959,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Cls);
-    }
-
-    #[test]
-    fn weights_path_prefers_safetensors_and_accepts_the_pickle() {
-        let dir = TempDir::new().unwrap();
-        assert!(weights_path(dir.path()).is_none());
-        assert!(!has_loadable_weights(dir.path()));
-
-        std::fs::write(dir.path().join(WEIGHTS_PYTORCH_BIN), b"pickle").unwrap();
-        assert_eq!(
-            weights_path(dir.path()),
-            Some(dir.path().join(WEIGHTS_PYTORCH_BIN))
-        );
-        assert!(has_loadable_weights(dir.path()));
-
-        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"tensors").unwrap();
-        assert_eq!(
-            weights_path(dir.path()),
-            Some(dir.path().join(WEIGHTS_SAFETENSORS)),
-            "safetensors wins when both are present"
-        );
     }
 
     #[test]

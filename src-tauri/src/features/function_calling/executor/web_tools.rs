@@ -2,6 +2,7 @@
 //! and `wiki_summary`.
 
 use super::{FunctionExecutor, WIKIPEDIA_USER_AGENT};
+use crate::application::contracts::web::WebSearchInput;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::*;
 use crate::shared::error::{AppError, Result};

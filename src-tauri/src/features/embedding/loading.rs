@@ -6,13 +6,27 @@ use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::features::embedding::late_chunking::EmbeddingStrategy;
 use crate::infrastructure::security::SecurityContext;
 use crate::shared::error::{AppError, Result};
+use async_trait::async_trait;
 use std::sync::Arc;
+
+/// The search index a loaded model binds before it is published. Search
+/// implements it, so loading never names the index it fills.
+#[async_trait]
+pub(crate) trait EmbeddingIndexBinding: Send + Sync {
+    /// Bind the vector space of `model`, or fail when the index already holds
+    /// a different one.
+    async fn bind_first(
+        &self,
+        pool: &sqlx::SqlitePool,
+        model: &dyn EmbeddingPort,
+        late_chunking: bool,
+    ) -> Result<()>;
+}
 
 pub(crate) struct EmbeddingLoader {
     pub downloaded_models: Arc<DownloadedModelRepository>,
     pub security: Arc<SecurityContext>,
-    pub index:
-        Arc<crate::features::search::engine::vector_search::runtime_index::RuntimeVectorIndex>,
+    pub index: Arc<dyn EmbeddingIndexBinding>,
     pub pool: sqlx::SqlitePool,
     /// How chunk vectors are produced, straight from the user's settings.
     ///
