@@ -146,15 +146,17 @@ impl JobStore {
         kind: &str,
         subject_id: &str,
     ) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC")
-            .bind(kind)
-            .bind(subject_id)
-            .fetch_all(connection)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(parse)
-            .collect()
+        sqlx::query(
+            "SELECT * FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC",
+        )
+        .bind(kind)
+        .bind(subject_id)
+        .fetch_all(connection)
+        .await
+        .map_err(db)?
+        .iter()
+        .map(parse)
+        .collect()
     }
 
     /// Pending and running jobs of a kind, oldest first.
