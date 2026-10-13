@@ -9,123 +9,16 @@ import { matchSlashCommands, parseSlashSubmission } from '@/features/chat/compon
 import type { ComposerModeState, SlashCommandId } from '@/features/chat/components/composer/slashCommands';
 import { replaceTrigger } from '@/features/chat/components/composer/suggestTrigger';
 import type { SuggestTrigger } from '@/features/chat/components/composer/suggestTrigger';
-import { WEB_TOOL_NAMES, WIKI_TOOL_NAMES } from '@/features/chat/components/composer/toolNames';
 import { useComposerSuggest } from '@/features/chat/components/composer/useComposerSuggest';
 import { useRefocusAfterTurn } from '@/features/chat/components/composer/useRefocusAfterTurn';
-import { DEEP_RESEARCH_WARNING_MESSAGE, type TurnMode } from '@/features/chat/components/ComposerControls';
 import type { AttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
+import { useComposerToolPreferences } from '@/features/chat/hooks/useComposerToolPreferences';
 import { useSpaceDocuments } from '@/features/chat/hooks/useSpaceDocuments';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
-import { toast } from '@/stores/toastStore';
-import type { CustomToolSettings, SpaceDocument, ToolPreferences } from '@/types';
+import type { CustomToolSettings } from '@/types';
 
-const normalizeEnabledTools = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  return [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))];
-};
-
-const setToolNames = (
-  current: string[] | undefined,
-  names: readonly string[],
-  enabled: boolean
-): string[] => {
-  const set = new Set((current ?? []).map((name) => name.trim()).filter(Boolean));
-  for (const name of names) {
-    if (enabled) {
-      set.add(name);
-    } else {
-      set.delete(name);
-    }
-  }
-  return [...set];
-};
-
-const defaultToolPreferences = (): ToolPreferences => ({
-  knowledgeBase: false,
-  webSearch: false,
-  deepResearchMode: false,
-  followupMode: false,
-  turnMode: 'auto',
-  enabledTools: [],
-});
-
-const normalizeTurnMode = (value: unknown): TurnMode | null => {
-  if (value === 'auto' || value === 'followup' || value === 'query') {
-    return value;
-  }
-  return null;
-};
-
-const resolveTurnMode = (parsed: Record<string, unknown>): TurnMode => {
-  const explicitTurnMode =
-    normalizeTurnMode(parsed.turnMode) ?? normalizeTurnMode(parsed.turn_mode);
-  if (explicitTurnMode) {
-    return explicitTurnMode;
-  }
-
-  const followupMode =
-    typeof parsed.followupMode === 'boolean'
-      ? parsed.followupMode
-      : (typeof parsed.followup_mode === 'boolean' ? parsed.followup_mode : false);
-
-  return followupMode ? 'followup' : 'auto';
-};
-
-const parseToolPreferences = (serialized: string | null | undefined): ToolPreferences => {
-  const defaults = defaultToolPreferences();
-  if (!serialized) {
-    return defaults;
-  }
-
-  try {
-    const parsed = JSON.parse(serialized) as Record<string, unknown>;
-    const knowledgeBase =
-      typeof parsed.knowledgeBase === 'boolean'
-        ? parsed.knowledgeBase
-        : (typeof parsed.knowledge_base === 'boolean'
-          ? parsed.knowledge_base
-          : defaults.knowledgeBase);
-    const webSearch =
-      typeof parsed.webSearch === 'boolean'
-        ? parsed.webSearch
-        : (typeof parsed.web_search === 'boolean' ? parsed.web_search : defaults.webSearch);
-    const deepResearchMode =
-      typeof parsed.deepResearchMode === 'boolean'
-        ? parsed.deepResearchMode
-        : (typeof parsed.deep_research_mode === 'boolean' ? parsed.deep_research_mode : false);
-    const turnMode = resolveTurnMode(parsed);
-    const followupMode = turnMode === 'followup';
-
-    const enabledTools =
-      normalizeEnabledTools(parsed.enabledTools) ?? normalizeEnabledTools(parsed.enabled_tools);
-    if (enabledTools) {
-      return {
-        knowledgeBase,
-        webSearch,
-        deepResearchMode,
-        followupMode,
-        turnMode,
-        enabledTools,
-      };
-    }
-
-    return {
-      knowledgeBase,
-      webSearch,
-      deepResearchMode,
-      followupMode,
-      turnMode,
-      enabledTools: webSearch ? [...WEB_TOOL_NAMES] : [],
-    };
-  } catch {
-    return defaults;
-  }
-};
 
 interface ComposerOptions {
   conversationId: string | null;
@@ -171,21 +64,12 @@ export function useComposer({
   );
 
   const [input, setInput] = useState('');
-  const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(defaultToolPreferences);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
-  const [focusDocuments, setFocusDocuments] = useState<SpaceDocument[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
-  const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Typing is never blocked during a turn (a turn can run for many minutes);
   // only submitting is, in handleSubmit.
   useRefocusAfterTurn(isSending, textareaRef);
-
-  const enabledToolSet = useMemo(
-    () => new Set(toolPreferences.enabledTools ?? []),
-    [toolPreferences.enabledTools]
-  );
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -194,177 +78,22 @@ export function useComposer({
     }
   }, [input]);
 
-  useEffect(() => {
-    if (!conversationId) {
-      lastAppliedToolPreferenceConversationRef.current = null;
-      const defaults = defaultToolPreferences();
-      setToolPreferences(defaults);
-      toolPreferencesRef.current = defaults;
-      return;
-    }
-    if (lastAppliedToolPreferenceConversationRef.current === conversationId) {
-      return;
-    }
-
-    const activeConversation = conversations.find(
-      (conversation) => conversation.id === conversationId
-    );
-    if (!activeConversation) {
-      return;
-    }
-
-    const spaceId = activeConversation?.spaceId;
-    if (!spaceId) {
-      const defaults = defaultToolPreferences();
-      setToolPreferences(defaults);
-      toolPreferencesRef.current = defaults;
-      lastAppliedToolPreferenceConversationRef.current = conversationId;
-      return;
-    }
-
-    const space = spaces.find((item) => item.id === spaceId);
-    if (!space) {
-      return;
-    }
-
-    const next = parseToolPreferences(space.toolPreferencesJson);
-    setToolPreferences(next);
-    toolPreferencesRef.current = next;
-
-    lastAppliedToolPreferenceConversationRef.current = conversationId;
-  }, [conversationId, conversations, spaces]);
-
-  const updateToolPreferences = useCallback(
-    (updater: (_prev: ToolPreferences) => ToolPreferences) => {
-      setToolPreferences((prev) => {
-        const next = updater(prev);
-        toolPreferencesRef.current = next;
-        return next;
-      });
-    },
-    []
-  );
-
-  /**
-   * The chips above the composer and the ids the turn goes out with, set
-   * together. The names are only here to draw the chips; the ids are what the
-   * backend intersects with this conversation's space.
-   */
-  const applyFocusDocuments = useCallback(
-    (next: SpaceDocument[]) => {
-      setFocusDocuments(next);
-      updateToolPreferences((prev) => ({
-        ...prev,
-        focusDocumentIds: next.map((document) => document.documentId),
-      }));
-    },
-    [updateToolPreferences]
-  );
-
-  // Focus belongs to the chat it was set in. Opening another one starts over.
-  useEffect(() => {
-    applyFocusDocuments([]);
-  }, [conversationId, applyFocusDocuments]);
-
-  const toggleKnowledgeBase = () => {
-    updateToolPreferences((prev) => ({
-      ...prev,
-      knowledgeBase: !prev.knowledgeBase,
-    }));
-  };
-
-  const toggleWebTools = () => {
-    updateToolPreferences((prev) => {
-      const enabled = !prev.webSearch;
-      return {
-        ...prev,
-        webSearch: enabled,
-        enabledTools: setToolNames(prev.enabledTools, WEB_TOOL_NAMES, enabled),
-      };
-    });
-  };
-
-  const toggleWikiTools = () => {
-    updateToolPreferences((prev) => {
-      const currentlyEnabled = WIKI_TOOL_NAMES.some((toolName) =>
-        (prev.enabledTools ?? []).includes(toolName)
-      );
-      return {
-        ...prev,
-        enabledTools: setToolNames(prev.enabledTools, WIKI_TOOL_NAMES, !currentlyEnabled),
-      };
-    });
-  };
-
-  const toggleDeepResearch = () => {
-    const enabling = !(toolPreferencesRef.current.deepResearchMode ?? false);
-    updateToolPreferences((prev) => ({
-      ...prev,
-      deepResearchMode: !(prev.deepResearchMode ?? false),
-    }));
-    if (enabling) {
-      toast.warning('Deep research enabled', {
-        message: DEEP_RESEARCH_WARNING_MESSAGE,
-        duration: 5000,
-      });
-    }
-  };
-
-  const toggleCustomTool = (toolName: string) => {
-    updateToolPreferences((prev) => {
-      const currentlyEnabled = (prev.enabledTools ?? []).includes(toolName);
-      return {
-        ...prev,
-        enabledTools: setToolNames(prev.enabledTools, [toolName], !currentlyEnabled),
-      };
-    });
-  };
-
-  const handleTurnModeChange = (nextMode: TurnMode) => {
-    updateToolPreferences((prev) => ({
-      ...prev,
-      turnMode: nextMode,
-      followupMode: nextMode === 'followup',
-    }));
-  };
-
-  /**
-   * What a turn actually goes out with. Query mode turns every source on; the
-   * focus documents ride along with everything else the composer is showing,
-   * so a regenerated turn is the turn the chips describe.
-   */
-  const resolveEffectiveToolPreferences = useCallback((): ToolPreferences => {
-    const current = toolPreferencesRef.current;
-    const mode =
-      normalizeTurnMode(current.turnMode) ?? (current.followupMode ? 'followup' : 'auto');
-    const queryModeEnabledTools =
-      mode === 'query'
-        ? [
-            ...new Set([
-              ...(current.enabledTools ?? []),
-              ...WEB_TOOL_NAMES,
-              ...customTools.map((tool) => tool.name),
-            ]),
-          ]
-        : current.enabledTools;
-
-    return {
-      ...current,
-      turnMode: mode,
-      followupMode: mode === 'followup',
-      knowledgeBase: mode === 'query' ? true : current.knowledgeBase,
-      webSearch: mode === 'query' ? true : current.webSearch,
-      enabledTools: queryModeEnabledTools,
-    };
-  }, [customTools]);
-
-  const turnMode: TurnMode =
-    normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
-
-  const wikipediaEnabled = WIKI_TOOL_NAMES.some((toolName) => enabledToolSet.has(toolName));
-  const enabledCustomToolNames = customTools
-    .map((tool) => tool.name)
-    .filter((name) => enabledToolSet.has(name));
+  const {
+    toolPreferences,
+    focusDocuments,
+    enabledToolSet,
+    applyFocusDocuments,
+    toggleKnowledgeBase,
+    toggleWebTools,
+    toggleWikiTools,
+    toggleDeepResearch,
+    toggleCustomTool,
+    handleTurnModeChange,
+    resolveEffectiveToolPreferences,
+    turnMode,
+    wikipediaEnabled,
+    enabledCustomToolNames,
+  } = useComposerToolPreferences({ conversationId, conversations, spaces, customTools });
 
   /** What the switches are set to now: the chips and the slash rows read this. */
   const composerMode: ComposerModeState = {
