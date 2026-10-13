@@ -367,6 +367,15 @@ impl Container {
         Arc::clone(self.search.hybrid_search_use_case())
     }
 
+    /// The reranker setup's toggle. The container itself answers it, reading
+    /// the user's `search.enableReranking` setting on demand, so flipping the
+    /// switch takes effect without a restart.
+    pub fn reranking_toggle(
+        &self,
+    ) -> Arc<dyn crate::features::search::reranker_setup::RerankingToggle> {
+        Arc::new(self.clone())
+    }
+
     /// Get vector search service (for legacy search commands, from SearchModule)
     pub fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         Arc::clone(self.search.search_service())
