@@ -255,16 +255,13 @@ impl Container {
                 })?;
 
                 let generation_config = crate::features::llm::engine::GenerationConfig {
-                    temperature: settings.llm.temperature,
-                    top_p: settings.llm.top_p,
-                    top_k: settings.llm.top_k,
                     // A ceiling, not an allowance: each caller sends the cap its own
                     // work needs and `max_output_tokens` only ever tightens this one.
                     // It was 512, which was below what several callers were already
                     // asking for — memory extraction requests 8192 — so their JSON was
                     // cut off mid-array and read back as malformed.
                     max_tokens: DEFAULT_UTILITY_MAX_OUTPUT_TOKENS,
-                    repeat_penalty: settings.llm.repeat_penalty,
+                    ..crate::features::llm::engine::GenerationConfig::from_settings(&settings.llm)
                 };
 
                 let ollama_utility_tag = {
@@ -289,7 +286,9 @@ impl Container {
                                 .load_utility_local(
                                     &active,
                                     generation_config,
-                                    settings.llm.local_context_window,
+                                    crate::features::llm::engine::factory::LocalServerOptions::from_settings(
+                                        &settings.llm,
+                                    ),
                                 )
                                 .await
                         } else {

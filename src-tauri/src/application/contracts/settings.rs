@@ -10,6 +10,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+mod generation;
+pub use generation::{
+    presence_penalty_problem, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
+    DEFAULT_MTP_DRAFT_N_MAX, MAX_MTP_DRAFT_N_MAX,
+};
+
 /// Complete application settings structure.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -289,6 +295,29 @@ pub struct LLMSettingsDto {
     #[serde(default = "default_repeat_penalty")]
     pub repeat_penalty: f32,
 
+    /// Flat penalty on any token already in the recent window. The Qwen 3.5
+    /// cards recommend 1.5 in both modes to stop loops, and warn it can
+    /// occasionally mix languages, so it stays the user's to lower. Zero is off.
+    #[serde(default = "default_presence_penalty")]
+    pub presence_penalty: f32,
+
+    /// Let the model think before an answer that offers it no tools. Rounds
+    /// that can call tools never think: Qwen 3.5 9B writes its calls inside
+    /// the thinking block, where llama.cpp's tool grammar ends generation.
+    #[serde(default)]
+    pub answer_thinking: bool,
+
+    /// Pin thinking on or off for every request, overriding the rule above
+    /// and the model's own (Laguna always thinks: with thinking off it
+    /// repeats one special token). `Auto` keeps both rules.
+    #[serde(default)]
+    pub thinking_override: ThinkingOverrideDto,
+
+    /// Sampling for requests that think before answering. The fields above
+    /// are the profile for answering directly.
+    #[serde(default)]
+    pub thinking_sampling: SamplingProfileDto,
+
     /// Maximum tokens to generate
     pub max_tokens: u32,
 
@@ -305,6 +334,12 @@ pub struct LLMSettingsDto {
     /// shrunk. `context_window` above governs remote providers, not this.
     #[serde(default)]
     pub local_context_window: Option<u32>,
+
+    /// Speculative decoding for the bundled local server. Experimental, and
+    /// applied only to a model that carries a multi-token-prediction head;
+    /// every other model starts as it always has.
+    #[serde(default)]
+    pub speculative_decoding: SpeculativeDecodingDto,
 
     /// Ollama server URL
     pub ollama_url: String,
@@ -858,16 +893,22 @@ impl ValidationResult {
     }
 }
 
+// The answer defaults are the Qwen 3.5 card's non-thinking profile, the
+// family the curated catalog leads with.
 fn default_top_p() -> f32 {
-    0.9
+    0.8
 }
 
 fn default_top_k() -> i32 {
-    40
+    20
 }
 
 fn default_repeat_penalty() -> f32 {
-    1.1
+    1.0
+}
+
+fn default_presence_penalty() -> f32 {
+    1.5
 }
 
 fn default_web_fetch_page_count() -> u32 {
@@ -950,7 +991,7 @@ impl Default for RouterSettingsDto {
     fn default() -> Self {
         Self {
             enabled: false,
-            model: "phi-3.5-mini-instruct-q4_k_m".to_string(),
+            model: "qwen3.5-4b-q4_k_m".to_string(),
             timeout_ms: 350,
             max_tokens: 120,
             temperature: 0.1,
@@ -991,6 +1032,8 @@ impl Default for SearchSettingsDto {
         Self {
             max_results: 10,
             similarity_threshold: 0.7,
+            // Off: Qwen3-Reranker-0.6B raised nDCG@5 on v3 but not recall@5,
+            // at about 5.6 s per query and 3.8 GB on an M3 Max.
             enable_reranking: false,
             hybrid_search_alpha: 0.5,
             retrieval_tuning: RetrievalTuningSettingsDto::default(),
@@ -1004,11 +1047,15 @@ impl Default for SearchSettingsDto {
 impl Default for VectorIndexCompressionSettingsDto {
     fn default() -> Self {
         Self {
-            // Enabled only for models that explicitly advertise Matryoshka
-            // support; the composition root falls back to full precision for
-            // MiniLM and arbitrary local models. Qwen3 at 256 dims/i8 matched
-            // full-precision retrieval in the production-path evaluation.
-            mode: VectorIndexCompressionModeDto::Truncated,
+            // Full precision. On the v3 fixture Qwen3 at 256 dims/i8 cost 1.7
+            // points of recall@5 and 1.5 of nDCG@5: below 20k vectors the
+            // exact scan picks candidates from the compressed vectors and only
+            // the over-fetched window is rescored in full. Full-precision
+            // vectors cost 4 KB each, about 41 MB resident at 10k chunks and
+            // 410 MB at 100k, which a 16 GB machine can carry. The dims and
+            // quantization below are what truncation starts from when a user
+            // turns it on, and it still only applies to Matryoshka models.
+            mode: VectorIndexCompressionModeDto::None,
             dims: DEFAULT_VECTOR_COMPRESSION_DIMS,
             quantization: VectorQuantizationDto::I8,
         }
@@ -1085,12 +1132,17 @@ impl Default for LLMSettingsDto {
             provider: LLMProvider::Auto,
             model: "llama3.2:latest".to_string(),
             temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
-            repeat_penalty: 1.1,
+            top_p: default_top_p(),
+            top_k: default_top_k(),
+            repeat_penalty: default_repeat_penalty(),
+            presence_penalty: default_presence_penalty(),
+            answer_thinking: false,
+            thinking_override: ThinkingOverrideDto::Auto,
+            thinking_sampling: SamplingProfileDto::thinking(),
             max_tokens: 131072,
             context_window: 131072,
             local_context_window: None,
+            speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,
             ollama_utility_model: String::new(),
@@ -1205,7 +1257,7 @@ mod tests {
         assert_eq!(settings.search.max_results, 10);
         assert_eq!(
             settings.search.vector_index_compression.mode,
-            VectorIndexCompressionModeDto::Truncated
+            VectorIndexCompressionModeDto::None
         );
         assert_eq!(
             settings.search.vector_index_compression.dims,
@@ -1216,6 +1268,33 @@ mod tests {
         // A judge that samples is a judge that disagrees with itself.
         assert_eq!(settings.llm.verification.temperature, 0.0);
         assert_eq!(settings.llm.verification.top_k, 1);
+        // Answers sample with the Qwen 3.5 card's non-thinking profile and
+        // never think unless the user turns it on.
+        assert_eq!(
+            (
+                settings.llm.temperature,
+                settings.llm.top_p,
+                settings.llm.top_k,
+                settings.llm.presence_penalty,
+                settings.llm.repeat_penalty
+            ),
+            (0.7, 0.8, 20, 1.5, 1.0)
+        );
+        assert!(!settings.llm.answer_thinking);
+        assert_eq!(
+            settings.llm.thinking_sampling,
+            SamplingProfileDto {
+                temperature: 1.0,
+                top_p: 0.95,
+                top_k: 20,
+                presence_penalty: 1.5,
+                repeat_penalty: 1.0,
+            }
+        );
+        assert_eq!(
+            settings.llm.speculative_decoding,
+            SpeculativeDecodingDto::Off
+        );
         assert_eq!(settings.ui.theme, "system");
     }
 
@@ -1290,5 +1369,45 @@ mod memory_defaults_tests {
         value["boundedConversationMemory"] = serde_json::json!(false);
         let disabled: LLMSettingsDto = serde_json::from_value(value).unwrap();
         assert!(!disabled.bounded_conversation_memory);
+    }
+
+    #[test]
+    fn generation_settings_fill_in_when_missing_and_keep_their_wire_shape() {
+        let mut value = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+        assert_eq!(
+            value["speculativeDecoding"],
+            serde_json::json!({"mode": "off"})
+        );
+        assert_eq!(value["thinkingOverride"], "auto");
+        let object = value.as_object_mut().unwrap();
+        for key in [
+            "presencePenalty",
+            "answerThinking",
+            "thinkingOverride",
+            "thinkingSampling",
+            "speculativeDecoding",
+        ] {
+            object.remove(key);
+        }
+        let missing: LLMSettingsDto = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(missing.presence_penalty, 1.5);
+        assert!(!missing.answer_thinking);
+        assert_eq!(missing.thinking_override, ThinkingOverrideDto::Auto);
+        assert_eq!(missing.thinking_sampling, SamplingProfileDto::thinking());
+
+        value["speculativeDecoding"] = serde_json::json!({"mode": "mtpDraft", "nMax": 4});
+        let mtp: LLMSettingsDto = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            mtp.speculative_decoding,
+            SpeculativeDecodingDto::MtpDraft { n_max: 4 }
+        );
+        assert!(mtp.speculative_decoding.problem().is_none());
+        assert!(SpeculativeDecodingDto::MtpDraft { n_max: 0 }
+            .problem()
+            .is_some());
+        assert!(SamplingProfileDto::thinking()
+            .problems("thinking")
+            .is_empty());
+        assert!(presence_penalty_problem("llm", 2.5).is_some());
     }
 }

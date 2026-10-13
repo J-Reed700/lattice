@@ -445,6 +445,17 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         if settings.llm.repeat_penalty <= 0.0 {
             result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
         }
+        let generation_problems =
+            crate::application::contracts::settings::presence_penalty_problem(
+                "llm",
+                settings.llm.presence_penalty,
+            )
+            .into_iter()
+            .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
+            .chain(settings.llm.speculative_decoding.problem());
+        for problem in generation_problems {
+            result.add_error("llm", problem);
+        }
         if settings.llm.max_tokens == 0 {
             result.add_error("llm", "max_tokens must be greater than 0".to_string());
         }

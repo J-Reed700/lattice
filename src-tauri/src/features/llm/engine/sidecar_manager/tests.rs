@@ -1200,6 +1200,76 @@ fn build_server_args_includes_required_flags() {
 /// on the machine, browsers included, and the bundled web UI is an HTML
 /// surface we never meant to serve. The key authenticates the port, so it
 /// must not travel in argv, where `ps` hands it to those same processes.
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|at| args.get(at + 1))
+        .map(String::as_str)
+}
+
+/// A hybrid model rolls back to its last checkpoint on any prefix change; at
+/// the server's default spacing that was the start of an 8k prompt.
+#[test]
+fn build_server_args_checkpoint_the_prompt_cache_every_thousand_tokens() {
+    let args = build_server_args(
+        &SidecarConfig::for_model(PathBuf::from("/models/qwen.gguf")),
+        12345,
+    );
+    assert_eq!(flag_value(&args, "--ctx-checkpoints"), Some("32"));
+    assert_eq!(flag_value(&args, "--checkpoint-min-step"), Some("1024"));
+    assert!(
+        !args.iter().any(|a| a == "-fa"),
+        "flash attention is already the server's default"
+    );
+}
+
+/// MTP drafting needs both the user's opt-in and a GGUF with the head, and
+/// forces a single slot; every other combination launches as before.
+#[test]
+fn build_server_args_draft_with_mtp_only_when_asked_and_able() {
+    let base = SidecarConfig::for_model(PathBuf::from("/models/qwen-mtp.gguf"));
+    let combinations = [
+        (false, SpeculativeDecoding::Off, None),
+        (true, SpeculativeDecoding::Off, None),
+        (false, SpeculativeDecoding::MtpDraft { n_max: 4 }, None),
+        (true, SpeculativeDecoding::MtpDraft { n_max: 4 }, Some("4")),
+    ];
+    for (mtp_capable, speculative_decoding, drafted) in combinations {
+        let config = SidecarConfig {
+            mtp_capable,
+            speculative_decoding,
+            ..base.clone()
+        };
+        let args = build_server_args(&config, 12345);
+        let case = format!("{mtp_capable} {speculative_decoding:?}");
+        assert_eq!(flag_value(&args, "--spec-draft-n-max"), drafted, "{case}");
+        match drafted {
+            Some(_) => {
+                assert_eq!(
+                    flag_value(&args, "--spec-type"),
+                    Some("draft-mtp"),
+                    "{case}"
+                );
+                assert_eq!(flag_value(&args, "-np"), Some("1"), "{case}");
+            }
+            None => {
+                assert!(flag_value(&args, "--spec-type").is_none(), "{case}");
+                assert!(
+                    flag_value(&args, "-np").is_none(),
+                    "the server keeps its own slot count: {case}"
+                );
+            }
+        }
+    }
+    // A CPU fallback is the same model, so it drafts the same way.
+    let drafting = SidecarConfig {
+        mtp_capable: true,
+        speculative_decoding: SpeculativeDecoding::MtpDraft { n_max: 2 },
+        ..base
+    };
+    assert_eq!(drafting.without_gpu_offload().mtp_draft(), Some(2));
+}
+
 #[test]
 fn build_server_args_drop_the_web_ui_and_keep_the_key_out_of_argv() {
     let cfg = SidecarConfig::for_model(PathBuf::from("/models/llama.gguf"));

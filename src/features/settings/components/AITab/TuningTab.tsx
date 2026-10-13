@@ -8,6 +8,7 @@ import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/u
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
 import { SWITCH_CLASS, NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite, clamp } from './shared';
+import { ThinkingSection } from './ThinkingSection';
 import { useLlmSettings } from './useLlmSettings';
 
 
@@ -29,9 +30,10 @@ export function TuningTab() {
 
   const [runtimeDraft, setRuntimeDraft] = useState({
     temperature: 0.7,
-    topP: 0.9,
-    topK: 40,
-    repeatPenalty: 1.1,
+    topP: 0.8,
+    topK: 20,
+    repeatPenalty: 1.0,
+    presencePenalty: 1.5,
     maxTokens: 131072,
     contextWindow: 131072,
     localContextWindow: null as number | null,
@@ -47,6 +49,7 @@ export function TuningTab() {
       topP: llmSettings.topP,
       topK: llmSettings.topK,
       repeatPenalty: llmSettings.repeatPenalty,
+      presencePenalty: llmSettings.presencePenalty,
       maxTokens: llmSettings.maxTokens,
       contextWindow: llmSettings.contextWindow,
       localContextWindow: llmSettings.localContextWindow,
@@ -197,6 +200,31 @@ export function TuningTab() {
           />
         </SettingsRow>
 
+        <SettingsRow
+          label="Presence penalty"
+          hint="Discourages repeating what was just said. Qwen 3.5 recommends 1.5; lower it if answers drift into another language."
+          htmlFor="tuning-presence-penalty"
+        >
+          <input
+            id="tuning-presence-penalty"
+            type="number"
+            min={-2}
+            max={2}
+            step={0.1}
+            value={runtimeDraft.presencePenalty}
+            onChange={(event) =>
+              setRuntimeDraft((previous) => ({
+                ...previous,
+                presencePenalty: toFinite(event.target.value, previous.presencePenalty),
+              }))
+            }
+            onBlur={() =>
+              void saveLlmUpdates({ presencePenalty: clamp(runtimeDraft.presencePenalty, -2, 2) })
+            }
+            className={NUMBER_FIELD_CLASS}
+          />
+        </SettingsRow>
+
         <SettingsRow label="Max tokens" htmlFor="tuning-max-tokens">
           <input
             id="tuning-max-tokens"
@@ -333,6 +361,8 @@ export function TuningTab() {
           />
         </SettingsRow>
       </SettingsSection>
+
+      <ThinkingSection llmSettings={llmSettings} saveLlmUpdates={saveLlmUpdates} />
 
       <SettingsSection title="Router">
         <SettingsRow label="Route follow-up questions">
