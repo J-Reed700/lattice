@@ -42,7 +42,8 @@ pub use patch::{
     ValidatedAddition, ValidatedPatch, ValidatedTransition, ValidatedTransitionTarget,
 };
 pub use redaction::{
-    drop_forgotten_additions, redact_suppressed, SuppressedSpan, FORGOTTEN_MARKER,
+    drop_forgotten_additions, redact_suppressed, SuppressedSpan, SuppressionsByMessage,
+    FORGOTTEN_MARKER,
 };
 pub use validation::{parse_patch, validate_patch, SourceIndex};
 

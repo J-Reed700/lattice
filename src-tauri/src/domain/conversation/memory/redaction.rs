@@ -7,7 +7,7 @@
 //! in the summary's prose, and as a fresh item quoting the same words.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     compute_digest, EvidencePurpose, EvidenceSpan, ValidatedPatch, ValidatedTransitionTarget,
@@ -36,6 +36,33 @@ impl SuppressedSpan {
             && evidence.content_digest == self.content_digest
             && self.start_byte < i64::from(evidence.end_byte)
             && self.end_byte > i64::from(evidence.start_byte)
+    }
+}
+
+/// Forgotten spans grouped by message, so a batch of messages read together is
+/// redacted from one read.
+pub struct SuppressionsByMessage<'a> {
+    by_message: HashMap<&'a str, Vec<&'a SuppressedSpan>>,
+}
+
+impl<'a> SuppressionsByMessage<'a> {
+    pub fn new(spans: &'a [SuppressedSpan]) -> Self {
+        let mut by_message: HashMap<&'a str, Vec<&'a SuppressedSpan>> = HashMap::new();
+        for span in spans {
+            by_message
+                .entry(span.message_id.as_str())
+                .or_default()
+                .push(span);
+        }
+        Self { by_message }
+    }
+
+    /// `content`, the text of `message_id`, with its forgotten spans cut out.
+    pub fn redact<'c>(&self, message_id: &str, content: &'c str) -> Cow<'c, str> {
+        match self.by_message.get(message_id) {
+            Some(spans) => redact_suppressed(content, spans),
+            None => Cow::Borrowed(content),
+        }
     }
 }
 

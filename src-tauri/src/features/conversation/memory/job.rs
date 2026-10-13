@@ -6,6 +6,7 @@
 //! selection, the batch loop, the candidate ledger a run builds before it is
 //! allowed to write anything, and the single commit that publishes it.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,9 +21,9 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::memory::{
-    apply_patch, drop_forgotten_additions, redact_suppressed, EvidenceSpan, MemoryCommit,
-    MemoryItem, MemoryKind, MemorySnapshot, MemoryState, MemoryValidationError, SemanticVerdict,
-    SourceMessage, SuppressedSpan, ValidatedPatch, ValidatedTransitionTarget,
+    apply_patch, drop_forgotten_additions, EvidenceSpan, MemoryCommit, MemoryItem, MemoryKind,
+    MemorySnapshot, MemoryState, MemoryValidationError, SemanticVerdict, SourceMessage,
+    SuppressedSpan, SuppressionsByMessage, ValidatedPatch, ValidatedTransitionTarget,
 };
 use crate::shared::error::Result;
 
@@ -1028,18 +1029,12 @@ fn redact_forgotten(
     if suppressed.is_empty() {
         return messages;
     }
-    let mut by_message: HashMap<&str, Vec<&SuppressedSpan>> = HashMap::new();
-    for span in suppressed {
-        by_message
-            .entry(span.message_id.as_str())
-            .or_default()
-            .push(span);
-    }
+    let forgotten = SuppressionsByMessage::new(suppressed);
     messages
         .into_iter()
         .map(|mut message| {
-            if let Some(spans) = by_message.get(message.id.as_str()) {
-                message.content = redact_suppressed(&message.content, spans).into_owned();
+            if let Cow::Owned(redacted) = forgotten.redact(&message.id, &message.content) {
+                message.content = redacted;
             }
             message
         })
