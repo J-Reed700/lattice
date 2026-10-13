@@ -25,6 +25,7 @@ export type RuntimeDraft = {
   topP: number;
   topK: number;
   repeatPenalty: number;
+  presencePenalty: number;
   maxTokens: number;
   contextWindow: number;
   localContextWindow: number | null;
@@ -123,6 +124,31 @@ export function RuntimeTuningSection({
           }
           onBlur={() =>
             void saveLlmUpdates({ repeatPenalty: clamp(runtimeDraft.repeatPenalty, 0.5, 2) })
+          }
+          className={NUMBER_FIELD_CLASS}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="Presence penalty"
+        hint="Discourages repeating what was just said. Qwen 3.5 recommends 1.5; lower it if answers drift into another language."
+        htmlFor="tuning-presence-penalty"
+      >
+        <input
+          id="tuning-presence-penalty"
+          type="number"
+          min={-2}
+          max={2}
+          step={0.1}
+          value={runtimeDraft.presencePenalty}
+          onChange={(event) =>
+            setRuntimeDraft((previous) => ({
+              ...previous,
+              presencePenalty: toFinite(event.target.value, previous.presencePenalty),
+            }))
+          }
+          onBlur={() =>
+            void saveLlmUpdates({ presencePenalty: clamp(runtimeDraft.presencePenalty, -2, 2) })
           }
           className={NUMBER_FIELD_CLASS}
         />

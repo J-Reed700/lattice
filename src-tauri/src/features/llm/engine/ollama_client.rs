@@ -20,7 +20,9 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, StatusCode};
 use tracing::{debug, warn};
 
-use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use crate::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode,
+};
 use crate::application::ports::LLMPort;
 use crate::features::llm::engine::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
@@ -237,22 +239,32 @@ impl OllamaClient {
                 .collect()
         });
         let sampling = request.sampling.unwrap_or_default();
+        // Thinking is a template switch on Ollama as on llama.cpp, decided the
+        // same way: the user's pin, or the request with tool rounds held off.
+        let thinking = self.config.thinking_override.mode_for(request);
+        let profile = self.config.profile(thinking);
         let options = HashMap::from([
             (
                 "temperature".to_string(),
-                serde_json::json!(sampling.temperature.unwrap_or(self.config.temperature)),
+                serde_json::json!(sampling.temperature.unwrap_or(profile.temperature)),
             ),
             (
                 "top_p".to_string(),
-                serde_json::json!(sampling.top_p.unwrap_or(self.config.top_p)),
+                serde_json::json!(sampling.top_p.unwrap_or(profile.top_p)),
             ),
             (
                 "top_k".to_string(),
-                serde_json::json!(sampling.top_k.unwrap_or(self.config.top_k)),
+                serde_json::json!(sampling.top_k.unwrap_or(profile.top_k)),
+            ),
+            (
+                "presence_penalty".to_string(),
+                serde_json::json!(sampling
+                    .presence_penalty
+                    .unwrap_or(profile.presence_penalty)),
             ),
             (
                 "repeat_penalty".to_string(),
-                serde_json::json!(self.config.repeat_penalty),
+                serde_json::json!(profile.repeat_penalty),
             ),
             (
                 "num_predict".to_string(),
@@ -262,21 +274,24 @@ impl OllamaClient {
             ),
         ]);
 
-        let think = match request.reasoning_effort.as_deref() {
-            // Capturing a supplied reasoning channel must not force thinking
-            // on models that reject it. Keep Ollama's model default unless an
-            // effort was explicitly requested.
-            None | Some("none") => None,
-            Some(effort @ ("low" | "medium" | "high")) => {
-                Some(serde_json::Value::String(effort.to_string()))
+        // `think: false` is sent every time thinking is off: Ollama rejects
+        // only a truthy `think` on a model without thinking, and leaving it out
+        // let Qwen 3.5 think by its template's default. Turned on, a level
+        // goes through for models that grade it (gpt-oss) and `true` otherwise.
+        let think = match (thinking, request.reasoning_effort.as_deref()) {
+            (ThinkingMode::Off, _) => serde_json::Value::Bool(false),
+            (ThinkingMode::On, None | Some("none")) => serde_json::Value::Bool(true),
+            (ThinkingMode::On, Some(effort @ ("low" | "medium" | "high"))) => {
+                serde_json::Value::String(effort.to_string())
             }
-            Some(_) => {
+            (ThinkingMode::On, Some(_)) => {
                 return Err(AppError::InvalidInput(
-                    "Ollama supports model-default reasoning or low, medium, and high levels"
-                        .into(),
+                    "Ollama supports thinking on or off, or low, medium, and high levels".into(),
                 ));
             }
         };
+        // Ollama's chat API has no `tool_choice`; a round that forbids calls
+        // still offers the tools, and the tool loop ignores any call made in it.
 
         Ok(OllamaChatRequest {
             model: self.model_name.clone(),
@@ -286,7 +301,7 @@ impl OllamaClient {
             keep_alive: None,
             tools,
             format: request.json_schema.clone(),
-            think,
+            think: Some(think),
         })
     }
 

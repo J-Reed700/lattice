@@ -278,6 +278,8 @@ impl Default for SearchSettingsDto {
         Self {
             max_results: 10,
             similarity_threshold: 0.7,
+            // Off: Qwen3-Reranker-0.6B raised nDCG@5 on v3 but not recall@5,
+            // at about 5.6 s per query and 3.8 GB on an M3 Max.
             enable_reranking: false,
             hybrid_search_alpha: 0.5,
             retrieval_tuning: RetrievalTuningSettingsDto::default(),
@@ -291,11 +293,15 @@ impl Default for SearchSettingsDto {
 impl Default for VectorIndexCompressionSettingsDto {
     fn default() -> Self {
         Self {
-            // Enabled only for models that explicitly advertise Matryoshka
-            // support; the composition root falls back to full precision for
-            // MiniLM and arbitrary local models. Qwen3 at 256 dims/i8 matched
-            // full-precision retrieval in the production-path evaluation.
-            mode: VectorIndexCompressionModeDto::Truncated,
+            // Full precision. On the v3 fixture Qwen3 at 256 dims/i8 cost 1.7
+            // points of recall@5 and 1.5 of nDCG@5: below 20k vectors the
+            // exact scan picks candidates from the compressed vectors and only
+            // the over-fetched window is rescored in full. Full-precision
+            // vectors cost 4 KB each, about 41 MB resident at 10k chunks and
+            // 410 MB at 100k, which a 16 GB machine can carry. The dims and
+            // quantization below are what truncation starts from when a user
+            // turns it on, and it still only applies to Matryoshka models.
+            mode: VectorIndexCompressionModeDto::None,
             dims: DEFAULT_VECTOR_COMPRESSION_DIMS,
             quantization: VectorQuantizationDto::I8,
         }

@@ -6189,6 +6189,29 @@ topK: number;
  */
 repeatPenalty: number;
 /**
+ * Flat penalty on any token already in the recent window. The Qwen 3.5
+ * cards recommend 1.5 in both modes to stop loops, and warn it can
+ * occasionally mix languages, so it stays the user's to lower. Zero is off.
+ */
+presencePenalty: number;
+/**
+ * Let the model think before an answer that offers it no tools. Rounds
+ * that can call tools never think: Qwen 3.5 9B writes its calls inside
+ * the thinking block, where llama.cpp's tool grammar ends generation.
+ */
+answerThinking: boolean;
+/**
+ * Pin thinking on or off for every request, overriding the rule above
+ * and the model's own (Laguna always thinks: with thinking off it
+ * repeats one special token). `Auto` keeps both rules.
+ */
+thinkingOverride: ThinkingOverrideDto;
+/**
+ * Sampling for requests that think before answering. The fields above
+ * are the profile for answering directly.
+ */
+thinkingSampling: SamplingProfileDto;
+/**
  * Maximum tokens to generate
  */
 maxTokens: number;
@@ -6207,6 +6230,12 @@ contextWindow: number;
  * shrunk. `context_window` above governs remote providers, not this.
  */
 localContextWindow: number | null;
+/**
+ * Speculative decoding for the bundled local server. Experimental, and
+ * applied only to a model that carries a multi-token-prediction head;
+ * every other model starts as it always has.
+ */
+speculativeDecoding: SpeculativeDecodingDto;
 /**
  * Ollama server URL
  */
@@ -7296,6 +7325,18 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
+/**
+ * The sampling a model runs with in one mode.
+ */
+export type SamplingProfileDto = { temperature: number; topP: number; topK: number;
+/**
+ * Flat penalty on any token already in the recent window. Zero is off.
+ */
+presencePenalty: number;
+/**
+ * Multiplicative penalty on repeated tokens. One is off.
+ */
+repeatPenalty: number }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
@@ -7704,6 +7745,15 @@ export type SourceGroup = { id: string; title: string; edition: string | null; d
  */
 export type SpaceDocumentDto = { documentId: string; fileName: string; category: string | null; modifiedAt: string | null }
 /**
+ * Speculative decoding for the bundled llama-server.
+ */
+export type SpeculativeDecodingDto = { mode: "off" } |
+/**
+ * Draft with the model's own multi-token-prediction head. Only GGUFs
+ * that carry one can use it; the server then runs a single slot.
+ */
+{ mode: "mtpDraft"; nMax: number }
+/**
  * Request to start a batch file import job.
  *
  * Accepts 1-100 file paths for batch processing.
@@ -7920,6 +7970,23 @@ export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxR
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
+/**
+ * Whether the model thinks, overriding the rule for its model.
+ */
+export type ThinkingOverrideDto =
+/**
+ * Answers think when the user asked and no tool can be called; a model
+ * that breaks with thinking off (Laguna) always thinks.
+ */
+"auto" |
+/**
+ * Every request thinks, tool rounds included.
+ */
+"on" |
+/**
+ * No request thinks, whatever the model.
+ */
+"off"
 /**
  * Tool (function) definition for LLM function calling
  *

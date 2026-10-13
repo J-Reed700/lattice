@@ -24,18 +24,16 @@
 //! shape as [`crate::application::ports::TranscriptionPort`], which also takes
 //! a path and lets the adapter own decoding.
 //!
-//! # What a llama.cpp (Qwen2.5-VL) adapter would do with it
+//! An image file (PNG or JPEG) is a one-page document: `page` is `1`.
 //!
-//! 1. Render page `page` of `document` to a PNG at ~150 DPI, longest side
-//!    capped (Qwen2.5-VL's window makes >1568px wasteful).
-//! 2. Spawn/reuse a `llama-server` sidecar started with both the text weights
-//!    (`-m qwen2.5-vl-7b-instruct-q4_k_m.gguf`) and the vision projector
-//!    (`--mmproj mmproj-qwen2.5-vl-7b-f16.gguf`). The projector is a second
-//!    file that today's download catalog entry does not list.
-//! 3. POST `/v1/chat/completions` with an OpenAI-shaped multimodal message:
-//!    a `text` part with the transcription instruction and an `image_url`
-//!    part carrying `data:image/png;base64,...`.
-//! 4. Return the assistant message as the page's text.
+//! # The adapter
+//!
+//! `features::ocr::VisionOcr` renders the page to a PNG, starts a dedicated
+//! `llama-server` with the OCR model and its vision projector (`--mmproj`) only
+//! when a page needs it, and asks `/v1/chat/completions` for the page's text.
+//! It is a separate process from the chat sidecar because `--mmproj` cannot
+//! share a server with MTP speculative decoding, and because the OCR model is
+//! wanted for minutes at a time while the chat model is resident for hours.
 //!
 //! Implementations must be `Send + Sync`, must not load a model until the
 //! first `recognize_page` call (nothing may block app startup), and must run
@@ -59,6 +57,10 @@ pub enum OcrError {
     PageRender { page: u32, reason: String },
     /// The model was reachable but did not produce text for the page.
     Recognition { page: u32, reason: String },
+    /// OCR cannot run at all right now: the OCR server would not start, or
+    /// this platform cannot render the document. Unlike a page failure, every
+    /// later page would fail the same way, so callers stop asking.
+    Unavailable { reason: String },
 }
 
 impl fmt::Display for OcrError {
@@ -66,7 +68,7 @@ impl fmt::Display for OcrError {
         match self {
             Self::NotConfigured => write!(
                 f,
-                "No OCR model is configured. Download a vision model in Settings → AI → Models to index scanned pages."
+                "No OCR model is downloaded. Download PaddleOCR-VL in Settings → AI → Models to index scanned pages."
             ),
             Self::PageRender { page, reason } => {
                 write!(f, "Could not render page {page} for OCR: {reason}")
@@ -74,6 +76,7 @@ impl fmt::Display for OcrError {
             Self::Recognition { page, reason } => {
                 write!(f, "OCR failed on page {page}: {reason}")
             }
+            Self::Unavailable { reason } => write!(f, "OCR is unavailable: {reason}"),
         }
     }
 }
@@ -96,6 +99,8 @@ pub trait OcrPort: Send + Sync {
     /// - [`OcrError::NotConfigured`] when no vision model is available.
     /// - [`OcrError::PageRender`] when the page cannot be rasterized.
     /// - [`OcrError::Recognition`] when inference fails.
+    /// - [`OcrError::Unavailable`] when no page of this document can be
+    ///   recognized right now.
     async fn recognize_page(&self, document: &Path, page: u32) -> Result<String, OcrError>;
 }
 

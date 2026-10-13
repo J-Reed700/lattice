@@ -63,6 +63,14 @@ fn context(prompt: &str) -> Value {
 /// instructions followed by the user's request; a single claim check reads as
 /// its user prompt, which is where the check states the claim.
 pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
+    // A two-step call's prose step is answered by `fixture_completion` alone,
+    // so scripted replies and call counts belong to the structured answer.
+    if crate::features::learning::lessons::structured_call::is_draft_request(request) {
+        return Vec::new();
+    }
+    if let Some(schema) = &request.json_schema {
+        assert_schema_request_holds_the_shape(request, schema);
+    }
     let (system, user) = fixture_messages(request);
     if let Some(batch) = fixture_batch(user) {
         let challenge = system.starts_with("Plan independent evidence searches");
@@ -97,6 +105,11 @@ pub(crate) fn fixture_completion(
     request: &CompletionRequest,
     replies: Vec<String>,
 ) -> CompletionResponse {
+    if crate::features::learning::lessons::structured_call::is_draft_request(request) {
+        return CompletionResponse::from_text(
+            crate::features::learning::lessons::structured_call::FIXTURE_DRAFT,
+        );
+    }
     let (system, user) = fixture_messages(request);
     let text = if let Some(batch) = fixture_batch(user) {
         let challenge = system.starts_with("Plan independent evidence searches");
@@ -130,21 +143,58 @@ pub(crate) fn fixture_completion(
     CompletionResponse::from_text(text)
 }
 
-fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
-    let message = |wanted: &str| {
-        request.input.iter().rev().find_map(|item| match item {
-            crate::application::ports::llm_port::CompletionInput::Message { role, content }
-                if role == wanted =>
-            {
-                Some(content.as_str())
-            }
-            _ => None,
-        })
+/// Every schema-constrained learning request a fixture answers: its grammar
+/// survives llama.cpp's repetition limit, so the server holds the shape, and
+/// none of its messages also asks for the format in words.
+fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &Value) {
+    use crate::features::conversation::memory::prompts::{
+        largest_repetition_bound, GRAMMAR_REPETITION_LIMIT,
     };
-    (
-        message("system").unwrap_or(""),
-        message("user").unwrap_or(""),
-    )
+    let (bound, path) = largest_repetition_bound(schema);
+    assert!(
+        bound <= GRAMMAR_REPETITION_LIMIT as u64,
+        "schema bound {bound} at {path} would make llama.cpp drop the grammar"
+    );
+    // The batched claim check is the shared claim-verification service's
+    // prompt (application/services/claim_verification/batch.rs), not
+    // learning's; it still says "Return JSON with checks" and is left to its
+    // owner.
+    let shared_claim_check = request.input.iter().any(|item| {
+        matches!(
+            item,
+            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+                if role == "system" && content.contains("Check the supplied claims independently.")
+        )
+    });
+    if shared_claim_check {
+        return;
+    }
+    for item in &request.input {
+        if let crate::application::ports::llm_port::CompletionInput::Message { content, .. } = item
+        {
+            for demand in [
+                "Return only JSON",
+                "Return JSON",
+                "strict JSON",
+                "JSON only",
+                "matching the schema",
+                "supplied schema",
+                "original schema",
+                "requested JSON",
+            ] {
+                assert!(
+                    !content.contains(demand),
+                    "a schema request still asks for the format in words: {demand}"
+                );
+            }
+        }
+    }
+}
+
+/// The task's own system and user text, so the answer step of a two-step call
+/// reads as the one-step request it replaces.
+fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
+    crate::features::learning::lessons::structured_call::task_messages(request)
 }
 
 fn is_claim_check(user: &str) -> bool {

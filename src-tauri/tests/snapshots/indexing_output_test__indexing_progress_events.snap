@@ -1,28 +1,28 @@
 ---
 source: tests/indexing_output_test.rs
-assertion_line: 284
+assertion_line: 205
 expression: progress_events
 ---
 [
   {
-    "chunks_processed": 50,
+    "type": "progress",
     "current": 10,
+    "total": 100,
     "percentage": 10.0,
-    "total": 100,
-    "type": "progress"
+    "chunks_processed": 50
   },
   {
-    "chunks_processed": 250,
+    "type": "progress",
     "current": 50,
-    "percentage": 50.0,
     "total": 100,
-    "type": "progress"
+    "percentage": 50.0,
+    "chunks_processed": 250
   },
   {
-    "chunks_processed": 500,
+    "type": "progress",
     "current": 100,
-    "percentage": 100.0,
     "total": 100,
-    "type": "progress"
+    "percentage": 100.0,
+    "chunks_processed": 500
   }
 ]

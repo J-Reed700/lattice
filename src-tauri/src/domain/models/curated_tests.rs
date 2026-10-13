@@ -7,7 +7,206 @@ use super::*;
 #[test]
 fn test_llm_models_count() {
     let models = get_curated_llm_models();
-    assert_eq!(models.len(), 10);
+    assert_eq!(models.len(), 9);
+}
+
+/// The fresh-install bugs of September came from catalog URLs nobody had
+/// fetched. Every chat entry is now one file whose size and digest were
+/// read from Hugging Face, and the download is checked against both.
+#[test]
+fn every_chat_entry_downloads_one_pinned_file() {
+    for model in get_curated_llm_models() {
+        let repo = model.model_id.as_deref().expect("names its repository");
+        let file = model.default_filename.as_deref().expect("names its file");
+        assert_eq!(model.files.len(), 1, "{}", model.id);
+        let pinned = &model.files[0];
+        assert_eq!(pinned.filename, file, "{}", model.id);
+        assert_eq!(
+            pinned.url,
+            format!("https://huggingface.co/{repo}/resolve/main/{file}"),
+            "{}",
+            model.id
+        );
+        assert!(pinned.size_bytes > 0, "{}", model.id);
+        assert_eq!(pinned.size_bytes, model.total_size_bytes, "{}", model.id);
+        let digest = pinned.checksum.as_deref().expect("pins a digest");
+        assert_eq!(digest.len(), 64, "{}", model.id);
+        assert!(
+            digest
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "{} digest is not lower-case hex",
+            model.id
+        );
+        assert!(file.ends_with(".gguf"), "{}", model.id);
+        assert!(!model.requires_auth, "{}", model.id);
+    }
+}
+
+/// The figures the catalog browser shows as "Est. memory": weights, KV
+/// cache at 8K (minimum) and 32K (comfortable) from each GGUF header, and
+/// a gigabyte of runtime. Pinned so a changed entry changes them on
+/// purpose.
+#[test]
+fn memory_estimates_are_weights_plus_kv_plus_runtime() {
+    let expected = [
+        ("qwen3.5-2b-q4_k_m", 2.4, 2.7),
+        ("qwen3.5-4b-q4_k_m", 4.1, 4.9),
+        ("gemma-4-e4b-it-q4_k_m", 6.2, 6.6),
+        ("qwen3.5-9b-q4_k_m", 7.0, 7.8),
+        ("qwen3.5-9b-mtp-q4_k_m", 7.2, 8.1),
+        ("gemma-4-12b-it-q4_k_m", 8.8, 9.2),
+        ("qwen3.8-27b-ud-q4_k_m", 18.1, 19.8),
+        ("gemma-4-26b-a4b-it-ud-q4_k_m", 18.5, 19.0),
+        ("qwen3.6-35b-a3b-ud-q4_k_xl", 23.6, 24.1),
+    ];
+    let models = get_curated_llm_models();
+    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    let expected_ids: Vec<&str> = expected.iter().map(|(id, _, _)| *id).collect();
+    assert_eq!(ids, expected_ids, "smallest working set first");
+    for (model, (id, minimum, comfortable)) in models.iter().zip(expected) {
+        assert!(
+            (model.minimum_ram_gb - minimum).abs() < 1e-9,
+            "{id}: minimum {} GB, expected {minimum}",
+            model.minimum_ram_gb
+        );
+        assert!(
+            (model.recommended_ram_gb - comfortable).abs() < 1e-9,
+            "{id}: comfortable {} GB, expected {comfortable}",
+            model.recommended_ram_gb
+        );
+        assert!(
+            model.minimum_ram_gb > model.size_gb,
+            "{id} counts its weights"
+        );
+    }
+}
+
+/// The verdict `computeModelFit` (catalogUtils.ts) gives an Apple Silicon
+/// or CPU-only machine: memory may use 70% of RAM, and "Fits" means the
+/// model needs at most 80% of that.
+fn fits(minimum_ram_gb: f64, machine_ram_gb: f64) -> bool {
+    minimum_ram_gb <= 0.8 * 0.7 * machine_ram_gb
+}
+
+/// First run downloads what this picks, so on every machine size it has to
+/// read "Fits" in the catalog, not merely load. A 4 GB machine is the one
+/// exception: nothing current fits it comfortably, and the 2B still loads.
+#[test]
+fn first_run_tier_fits_every_machine_size() {
+    let models = get_curated_llm_models();
+    for ram in [4.0, 6.0, 8.0, 12.0, 15.9, 16.0, 24.0, 32.0, 36.0, 64.0] {
+        let id = recommend_chat_model_for_ram(ram);
+        let entry = models
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| panic!("{id} is recommended at {ram} GB but is not in the catalog"));
+        if ram < 6.0 {
+            assert!(entry.minimum_ram_gb <= 0.7 * ram, "{id} at {ram} GB");
+        } else {
+            assert!(fits(entry.minimum_ram_gb, ram), "{id} at {ram} GB");
+        }
+    }
+}
+
+/// The large entries are honest about the machines they need: the 27B
+/// and the Gemma MoE fit from 36 GB, the 35B A3B is too large for 32 GB.
+#[test]
+fn large_entries_name_the_machines_they_fit() {
+    let models = get_curated_llm_models();
+    let minimum = |id: &str| {
+        models
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.minimum_ram_gb)
+            .expect("in the catalog")
+    };
+    for id in ["qwen3.8-27b-ud-q4_k_m", "gemma-4-26b-a4b-it-ud-q4_k_m"] {
+        assert!(
+            !fits(minimum(id), 32.0) && minimum(id) <= 0.7 * 32.0,
+            "{id}"
+        );
+        assert!(fits(minimum(id), 36.0), "{id}");
+    }
+    let moe = minimum("qwen3.6-35b-a3b-ud-q4_k_xl");
+    assert!(moe > 0.7 * 32.0, "too large for 32 GB");
+    assert!(moe <= 0.7 * 36.0, "loads on 36 GB");
+    assert!(fits(moe, 48.0), "fits on 48 GB");
+}
+
+/// Only the entry built for the MTP experiment opts in, and only where a
+/// catalog download of it lands: the plain 9B publishes the same file name.
+#[test]
+fn only_the_mtp_build_is_served_with_mtp() {
+    let models = Path::new("/Users/someone/.cache/lattice/models");
+    assert!(chat_model_uses_mtp_draft(
+        &models.join("qwen3.5-9b-mtp-q4_k_m/Qwen3.5-9B-Q4_K_M.gguf")
+    ));
+    assert!(!chat_model_uses_mtp_draft(
+        &models.join("qwen3.5-9b-q4_k_m/Qwen3.5-9B-Q4_K_M.gguf")
+    ));
+    assert!(!chat_model_uses_mtp_draft(
+        &models.join("qwen3.8-27b-ud-q4_k_m/Qwen3.8-27B-UD-Q4_K_M.gguf")
+    ));
+    assert!(!chat_model_uses_mtp_draft(Path::new(
+        "Qwen3.5-9B-Q4_K_M.gguf"
+    )));
+    let flagged: Vec<_> = CURATED_CHAT_MODELS
+        .iter()
+        .filter(|model| model.mtp_draft)
+        .map(|model| model.id)
+        .collect();
+    assert_eq!(flagged, ["qwen3.5-9b-mtp-q4_k_m"]);
+}
+
+/// Pre-Qwen-3.5 families were removed, not hidden.
+#[test]
+fn chat_catalog_is_current_generation_only() {
+    for model in get_curated_llm_models() {
+        let id = model.id.as_str();
+        assert!(
+            id.starts_with("qwen3.5-")
+                || id.starts_with("qwen3.6-")
+                || id.starts_with("qwen3.8-")
+                || id.starts_with("gemma-4-"),
+            "{id} is an older generation"
+        );
+    }
+}
+
+#[test]
+fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
+    let entry = curated_chat_model_for_file(
+        "unsloth/Qwen3.6-35B-A3B-GGUF",
+        "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    )
+    .expect("a catalog file");
+    assert_eq!(entry.id, "qwen3.6-35b-a3b-ud-q4_k_xl");
+    assert_eq!(entry.files[0].size_bytes, 22_360_456_160);
+    // Same file name, other repository: the MTP build, not the plain 9B.
+    let mtp = curated_chat_model_for_file("unsloth/Qwen3.5-9B-MTP-GGUF", "Qwen3.5-9B-Q4_K_M.gguf")
+        .expect("a catalog file");
+    assert_eq!(mtp.id, "qwen3.5-9b-mtp-q4_k_m");
+    // Another quantisation of a catalog repository is not vouched for.
+    assert!(
+        curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q8_0.gguf").is_none()
+    );
+}
+
+#[test]
+fn catalog_search_matches_every_term() {
+    let ids = |query: &str| -> Vec<String> {
+        curated_chat_models_matching(query)
+            .into_iter()
+            .map(|model| model.id)
+            .collect()
+    };
+    assert_eq!(ids("").len(), CURATED_CHAT_MODELS.len());
+    assert_eq!(ids("gguf").len(), CURATED_CHAT_MODELS.len());
+    assert_eq!(ids("gemma 12b"), ["gemma-4-12b-it-q4_k_m".to_string()]);
+    assert_eq!(ids("Qwen3.6").len(), 1);
+    assert!(ids("qwen").len() >= 6);
+    assert!(ids("llama").is_empty());
 }
 
 /// The default install runs whatever tier first run picks, so each tier is
@@ -32,30 +231,6 @@ fn every_first_run_tier_can_call_tools_and_unknown_files_cannot() {
     ));
 }
 
-/// First run downloads whatever this names, so every tier has to be a real
-/// catalog entry with a file to fetch.
-#[test]
-fn every_ram_tier_recommends_a_downloadable_catalog_entry() {
-    let models = get_curated_llm_models();
-    for ram in [4.0, 8.0, 15.9, 16.0, 64.0] {
-        let id = recommend_chat_model_for_ram(ram);
-        let entry = models
-            .iter()
-            .find(|m| m.id == id)
-            .unwrap_or_else(|| panic!("{id} is recommended at {ram} GB but is not in the catalog"));
-        assert!(entry.default_filename.is_some(), "{id} names no file");
-        assert!(
-            !entry.requires_auth,
-            "{id} cannot be fetched without a token"
-        );
-        assert!(
-            entry.minimum_ram_gb <= ram.max(4.0),
-            "{id} needs {} GB, more than the {ram} GB tier it is recommended for",
-            entry.minimum_ram_gb
-        );
-    }
-}
-
 #[test]
 fn embedding_catalog_contains_supported_runtime_models() {
     let models = get_curated_embedding_models();
@@ -69,7 +244,28 @@ fn embedding_catalog_contains_supported_runtime_models() {
 #[test]
 fn test_ocr_models_count() {
     let models = get_curated_ocr_models();
-    assert_eq!(models.len(), 2);
+    assert_eq!(models.len(), 1);
+}
+
+/// The OCR engine loads `<dir>/model.gguf` beside `<dir>/mmproj.gguf`, and
+/// the download records the first `.gguf` as the model's location.
+#[test]
+fn every_ocr_entry_downloads_weights_then_projector_with_digests() {
+    for model in get_curated_ocr_models() {
+        let names: Vec<&str> = model.files.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(names, [OCR_MODEL_FILE, OCR_PROJECTOR_FILE], "{}", model.id);
+        for file in &model.files {
+            assert!(file.size_bytes > 0, "{} has no size", file.filename);
+            let digest = file.checksum.as_deref().unwrap_or_default();
+            assert_eq!(digest.len(), 64, "{} has no sha256", file.filename);
+            assert!(file.url.starts_with("https://huggingface.co/"));
+            assert!(file.url.contains("/resolve/main/"));
+        }
+        assert_eq!(
+            model.total_size_bytes,
+            model.files.iter().map(|f| f.size_bytes).sum::<u64>()
+        );
+    }
 }
 
 #[test]
@@ -91,13 +287,13 @@ fn all_curated_models_have_unique_ids_and_valid_categories() {
 #[test]
 fn test_get_by_category() {
     let llms = get_curated_models_by_category(ModelCategory::LLM);
-    assert_eq!(llms.len(), 10);
+    assert_eq!(llms.len(), 9);
 
     let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
     assert_eq!(embeddings.len(), 2);
 
     let ocr = get_curated_models_by_category(ModelCategory::OCR);
-    assert_eq!(ocr.len(), 2);
+    assert_eq!(ocr.len(), 1);
 
     let transcription = get_curated_models_by_category(ModelCategory::Transcription);
     assert_eq!(transcription.len(), 2);
@@ -184,7 +380,7 @@ fn test_existing_gguf_entries_default_to_gguf_format() {
         .iter()
         .filter(|m| m.format == ModelFormat::Gguf)
         .count();
-    assert_eq!(gguf_count, 10, "every curated chat model is GGUF");
+    assert_eq!(gguf_count, models.len(), "every curated chat model is GGUF");
 }
 
 #[test]
@@ -261,18 +457,6 @@ fn test_performance_tiers() {
     assert!(has_fast);
     assert!(has_balanced);
     assert!(has_accurate);
-}
-
-#[test]
-fn test_phi3_mini_metadata() {
-    let models = get_curated_llm_models();
-    let phi3 = models.iter().find(|m| m.id.contains("phi-3-mini")).unwrap();
-
-    assert_eq!(phi3.category, ModelCategory::LLM);
-    assert!(phi3.size_gb < 3.0);
-    assert_eq!(phi3.license, "MIT");
-    assert!(phi3.capabilities.contains(&"chat".into()));
-    assert!(phi3.capabilities.contains(&"code".into()));
 }
 
 #[test]

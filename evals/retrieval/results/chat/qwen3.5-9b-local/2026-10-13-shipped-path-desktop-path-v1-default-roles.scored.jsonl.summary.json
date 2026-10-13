@@ -1,0 +1,470 @@
+{
+  "items": 34,
+  "turns": 44,
+  "errors": [
+    "dp-paraphrase-monitor",
+    "dp-transcript-rollback",
+    "dp-mt-encryption-versions"
+  ],
+  "overall": {
+    "items": 34,
+    "mechanical": {
+      "passed": 21,
+      "total": 34,
+      "rate": 0.6176470588235294,
+      "wilson95": [
+        0.450410173444307,
+        0.7609981667549109
+      ]
+    },
+    "judge_pass3": {
+      "passed": 20,
+      "total": 34,
+      "rate": 0.5882352941176471,
+      "wilson95": [
+        0.42221593878812513,
+        0.7363403163612884
+      ]
+    },
+    "both": {
+      "passed": 20,
+      "total": 34,
+      "rate": 0.5882352941176471,
+      "wilson95": [
+        0.42221593878812513,
+        0.7363403163612884
+      ]
+    }
+  },
+  "by_tag": {
+    "multi-hop": {
+      "items": 4,
+      "mechanical": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      },
+      "judge_pass3": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 4,
+        "rate": 0.5,
+        "wilson95": [
+          0.15003898915214947,
+          0.8499610108478506
+        ]
+      }
+    },
+    "planner-rewrite": {
+      "items": 5,
+      "mechanical": {
+        "passed": 3,
+        "total": 5,
+        "rate": 0.6,
+        "wilson95": [
+          0.2307242812760128,
+          0.882379225767352
+        ]
+      },
+      "judge_pass3": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      }
+    },
+    "corrective-retry": {
+      "items": 5,
+      "mechanical": {
+        "passed": 3,
+        "total": 5,
+        "rate": 0.6,
+        "wilson95": [
+          0.2307242812760128,
+          0.882379225767352
+        ]
+      },
+      "judge_pass3": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      },
+      "both": {
+        "passed": 2,
+        "total": 5,
+        "rate": 0.4,
+        "wilson95": [
+          0.11762077423264783,
+          0.769275718723987
+        ]
+      }
+    },
+    "opening-or-section": {
+      "items": 5,
+      "mechanical": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      },
+      "judge_pass3": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 5,
+        "rate": 0.2,
+        "wilson95": [
+          0.03622410863243014,
+          0.6244653702374747
+        ]
+      }
+    },
+    "abstain": {
+      "items": 6,
+      "mechanical": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333333333333334,
+        "wilson95": [
+          0.43649717781352987,
+          0.9699466302516935
+        ]
+      },
+      "judge_pass3": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333333333333334,
+        "wilson95": [
+          0.43649717781352987,
+          0.9699466302516935
+        ]
+      },
+      "both": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333333333333334,
+        "wilson95": [
+          0.43649717781352987,
+          0.9699466302516935
+        ]
+      }
+    },
+    "conflict": {
+      "items": 7,
+      "mechanical": {
+        "passed": 5,
+        "total": 7,
+        "rate": 0.7142857142857143,
+        "wilson95": [
+          0.35893445183261935,
+          0.9177810759959433
+        ]
+      },
+      "judge_pass3": {
+        "passed": 5,
+        "total": 7,
+        "rate": 0.7142857142857143,
+        "wilson95": [
+          0.35893445183261935,
+          0.9177810759959433
+        ]
+      },
+      "both": {
+        "passed": 5,
+        "total": 7,
+        "rate": 0.7142857142857143,
+        "wilson95": [
+          0.35893445183261935,
+          0.9177810759959433
+        ]
+      }
+    },
+    "numeric-precision": {
+      "items": 27,
+      "mechanical": {
+        "passed": 18,
+        "total": 27,
+        "rate": 0.6666666666666666,
+        "wilson95": [
+          0.47824760507320074,
+          0.8135673850128435
+        ]
+      },
+      "judge_pass3": {
+        "passed": 17,
+        "total": 27,
+        "rate": 0.6296296296296297,
+        "wilson95": [
+          0.4422923441210239,
+          0.784674870390344
+        ]
+      },
+      "both": {
+        "passed": 17,
+        "total": 27,
+        "rate": 0.6296296296296297,
+        "wilson95": [
+          0.4422923441210239,
+          0.784674870390344
+        ]
+      }
+    },
+    "follow-up-memory": {
+      "items": 8,
+      "mechanical": {
+        "passed": 3,
+        "total": 8,
+        "rate": 0.375,
+        "wilson95": [
+          0.13684428582359742,
+          0.6942576053973727
+        ]
+      },
+      "judge_pass3": {
+        "passed": 3,
+        "total": 8,
+        "rate": 0.375,
+        "wilson95": [
+          0.13684428582359742,
+          0.6942576053973727
+        ]
+      },
+      "both": {
+        "passed": 3,
+        "total": 8,
+        "rate": 0.375,
+        "wilson95": [
+          0.13684428582359742,
+          0.6942576053973727
+        ]
+      }
+    },
+    "table": {
+      "items": 3,
+      "mechanical": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "judge_pass3": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "both": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385029682449546,
+          1
+        ]
+      }
+    },
+    "ocr": {
+      "items": 1,
+      "mechanical": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "judge_pass3": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "both": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      }
+    },
+    "multilingual": {
+      "items": 1,
+      "mechanical": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "judge_pass3": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      },
+      "both": {
+        "passed": 0,
+        "total": 1,
+        "rate": 0.0,
+        "wilson95": [
+          0,
+          0.7934506856227626
+        ]
+      }
+    },
+    "entity-collision": {
+      "items": 1,
+      "mechanical": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "judge_pass3": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      }
+    },
+    "fragment": {
+      "items": 1,
+      "mechanical": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "judge_pass3": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "both": {
+        "passed": 1,
+        "total": 1,
+        "rate": 1.0,
+        "wilson95": [
+          0.20654931437723745,
+          1
+        ]
+      }
+    }
+  },
+  "timing_ms": {
+    "answered_ms": {
+      "median": 21094.5,
+      "p95": 42941
+    },
+    "retrieval_ms": {
+      "median": 396,
+      "p95": 3644
+    },
+    "generation_ms": {
+      "median": 19116,
+      "p95": 35429
+    },
+    "verification_wait_ms": {
+      "median": 9594,
+      "p95": 32322
+    }
+  },
+  "prompt_tokens": {
+    "cached_prompt_tokens": 162465,
+    "evaluated_prompt_tokens": 318610,
+    "completion_tokens": 20120
+  },
+  "observed": {
+    "turns_with_kb_search": 41,
+    "turns_with_corrective_retry": 0,
+    "turns_planner_skipped": 0,
+    "turns_insufficient": 7,
+    "turns_with_tool_calls": 0,
+    "model_calls_per_turn_median": 6.0
+  },
+  "disagreements": [
+    {
+      "query_id": "dp-paraphrase-sick-child",
+      "mechanical": true,
+      "judge": false
+    }
+  ],
+  "judge_split_turns": []
+}

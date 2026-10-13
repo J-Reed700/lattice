@@ -56,6 +56,8 @@ mod cancellation;
 mod document_text;
 mod fetch_memory;
 mod focus;
+// Public so the shipped-path evaluation can drive the desktop's own turn.
+pub mod headless;
 mod prior_evidence;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
@@ -74,7 +76,9 @@ pub mod router;
 pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
 mod tool_loop;
 pub mod turn_record;
-mod verification;
+// Public so the claim-checker evaluation harness measures the verifier that
+// ships instead of a copy of its rules.
+pub mod verification;
 mod web_steps;
 
 use self::attachments::{build_turn_attachments, TurnAttachments};

@@ -1,0 +1,361 @@
+//! The two-step call against a recording model: what each step sends, when a
+//! call stays in one step, and how a saved draft resumes.
+#![allow(clippy::indexing_slicing)]
+use super::*;
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use std::sync::Mutex;
+
+const SYSTEM: &str = "Teach one idea to a beginner.";
+const PROMPT: &str = r#"{"task":"Explain why the sky looks blue","priorKnowledge":"none"}"#;
+const BRIEF: &str = "Work out the explanation step by step and check each step.";
+const DRAFT: &str = "Sunlight scatters off air molecules, and shorter wavelengths scatter most.";
+const ANSWER: &str = r#"{"answer":"Air scatters blue light more than red light."}"#;
+
+/// Answers the prose step with a draft and the schema step with an answer, or
+/// fails the schema step as a dropped connection would.
+struct Recorder {
+    window: usize,
+    draft: CompletionResponse,
+    answer: Option<&'static str>,
+    sent: Mutex<Vec<CompletionRequest>>,
+}
+
+impl Recorder {
+    fn new(window: usize) -> Self {
+        Self {
+            window,
+            draft: CompletionResponse::from_text(DRAFT),
+            answer: Some(ANSWER),
+            sent: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn sent(&self) -> Vec<CompletionRequest> {
+        self.sent
+            .lock()
+            .map(|sent| sent.clone())
+            .unwrap_or_default()
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recorder {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Ok(mut sent) = self.sent.lock() {
+            sent.push(request.clone());
+        }
+        if request.json_schema.is_none() {
+            return Ok(self.draft.clone());
+        }
+        self.answer
+            .map(CompletionResponse::from_text)
+            .ok_or_else(|| AppError::Network("fixture connection dropped".into()))
+    }
+    fn model_name(&self) -> &str {
+        "two-step-recorder"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["answer"],"properties":{"answer":{"type":"string"}}})
+}
+
+async fn call(llm: &Recorder, kind: CallKind) -> Result<String> {
+    complete_reasoned_json(
+        llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        ReasonFirst {
+            kind,
+            subject: "the explanation",
+            brief: BRIEF,
+        },
+    )
+    .await
+}
+
+fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
+    request
+        .input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { role, content } => Some((role.as_str(), content.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn two_step_system() -> String {
+    format!("{SYSTEM}\n\n{TWO_STEPS} {BRIEF} {DRAFT_CLOSE}")
+}
+
+/// What a request would say if it still asked for the format in words.
+const FORMAT_DEMANDS: [&str; 6] = [
+    "JSON",
+    "schema",
+    "format",
+    "Return only",
+    "no prose",
+    "no other text",
+];
+
+#[tokio::test]
+async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let answer = call(&llm, CallKind::Authoring).await?;
+    assert_eq!(answer, ANSWER);
+
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2, "one prose step, one answer step");
+    let (draft, structured) = (&sent[0], &sent[1]);
+    let system = two_step_system();
+
+    assert_eq!(draft.json_schema, None);
+    assert!(
+        draft.sampling.is_none(),
+        "the draft samples as the chat does"
+    );
+    assert_eq!(draft.max_output_tokens, Some(1000));
+    assert_eq!(
+        messages(draft),
+        vec![("system", system.as_str()), ("user", PROMPT)]
+    );
+
+    // The answer step continues the draft's conversation, so it opens with
+    // exactly the messages the server has just read.
+    assert_eq!(structured.json_schema, Some(schema()));
+    assert_eq!(
+        messages(structured),
+        vec![
+            ("system", system.as_str()),
+            ("user", PROMPT),
+            ("assistant", DRAFT),
+            ("user", ANSWER_STEP),
+        ]
+    );
+    let sampling = structured.sampling.unwrap_or_default();
+    assert_eq!(sampling.temperature, Some(0.0));
+    assert_eq!(sampling.top_k, Some(1));
+    for request in [draft, structured] {
+        for (_, content) in messages(request) {
+            for demand in FORMAT_DEMANDS {
+                assert!(
+                    !content.contains(demand),
+                    "a two-step request still names a format: {demand}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_window_without_room_for_a_draft_answers_in_one_step() -> Result<()> {
+    // Room for the prompt and one answer, not for a draft beside it.
+    let llm = Recorder::new(2_400);
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert_eq!(
+        messages(&sent[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn each_kind_follows_its_knob() -> Result<()> {
+    for (kind, reasons_first) in [
+        (CallKind::Authoring, model_call::REASON_FIRST_AUTHORING),
+        (CallKind::Classifier, model_call::REASON_FIRST_CLASSIFIERS),
+    ] {
+        let llm = Recorder::new(32_000);
+        call(&llm, kind).await?;
+        assert_eq!(llm.sent().len(), if reasons_first { 2 } else { 1 });
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_draft_that_ran_out_of_room_is_still_answered_from() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.draft = CompletionResponse {
+        text: "Sunlight scatters off air molecules, and".into(),
+        finish_reason: "length".into(),
+        ..Default::default()
+    };
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(messages(&sent[1]).contains(&("assistant", "Sunlight scatters off air molecules, and")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_empty_draft_falls_back_to_the_one_step_request() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.draft = CompletionResponse::from_text("  ");
+    assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        messages(&sent[1]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft() -> Result<()> {
+    use crate::features::learning::{
+        curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
+        dto::AcceptLearningProgramRequestDto, plan_dto::StartLearningGenerationJobRequestDto,
+        repository::LearningRepository,
+    };
+    use crate::shared::runtime::jobs::JobStore;
+    let pool = crate::features::learning::tests::pool().await?;
+    let programs = LearningRepository::new(pool.clone());
+    let program = crate::features::learning::tests::fixture();
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program = programs.get(&program.summary.id).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .map(|lesson| lesson.id.clone())
+        .ok_or_else(|| AppError::InternalError("fixture has no lesson".into()))?;
+    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let job = jobs
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: json!({ "lessonIds": [lesson] }).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    JobStore::new(pool.clone()).claim(&job.id).await?;
+
+    let mut interrupted = Recorder::new(32_000);
+    interrupted.answer = None;
+    let first = lesson_drafts::run(
+        &jobs,
+        &job.id,
+        &lesson,
+        call(&interrupted, CallKind::Authoring),
+    )
+    .await;
+    assert!(matches!(first, Err(AppError::Network(_))));
+    assert_eq!(interrupted.sent().len(), 2);
+
+    let resumed = Recorder::new(32_000);
+    let answer =
+        lesson_drafts::run(&jobs, &job.id, &lesson, call(&resumed, CallKind::Authoring)).await?;
+    assert_eq!(answer, ANSWER);
+    let sent = resumed.sent();
+    assert_eq!(sent.len(), 1, "the saved draft is not written again");
+    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert!(messages(&sent[0]).contains(&("assistant", DRAFT)));
+    Ok(())
+}
+
+#[test]
+fn finish_reasons_that_cut_the_answer_short_are_rejected() {
+    for reason in [
+        "length",
+        "max_tokens",
+        "MAX_OUTPUT_TOKENS",
+        "incomplete",
+        "content_filter",
+    ] {
+        assert!(reject_incomplete_finish_reason(reason).is_err(), "{reason}");
+    }
+    assert!(reject_incomplete_finish_reason("stop").is_ok());
+    assert!(cut_off("length") && !cut_off("content_filter"));
+}
+
+#[test]
+fn the_fixture_view_of_an_answer_step_is_the_one_step_task() {
+    let input = |messages: &[(&str, &str)]| CompletionRequest {
+        input: messages
+            .iter()
+            .map(|(role, content)| CompletionInput::Message {
+                role: (*role).into(),
+                content: (*content).into(),
+            })
+            .collect(),
+        json_schema: Some(schema()),
+        ..Default::default()
+    };
+    let system = two_step_system();
+    let answer = input(&[
+        ("system", system.as_str()),
+        ("user", PROMPT),
+        ("assistant", DRAFT),
+        ("user", ANSWER_STEP),
+    ]);
+    assert_eq!(task_messages(&answer), (SYSTEM, PROMPT));
+    assert!(!is_draft_request(&answer));
+    let mut draft = input(&[("system", system.as_str()), ("user", PROMPT)]);
+    draft.json_schema = None;
+    assert!(is_draft_request(&draft));
+    let direct = input(&[("system", SYSTEM), ("user", PROMPT)]);
+    assert_eq!(task_messages(&direct), (SYSTEM, PROMPT));
+}
+
+/// llama.cpp drops a request's whole grammar when any repetition bound in its
+/// schema exceeds `GRAMMAR_REPETITION_LIMIT`, and a learning prompt no longer
+/// asks for the format in words, so a grammar silently dropped would leave
+/// nothing holding the shape. Bounds computed at run time are checked on
+/// every request the learning fixtures answer; this catches the literal ones,
+/// including schemas whose calls have no fixture.
+#[test]
+fn no_learning_schema_literal_exceeds_the_grammar_repetition_limit() -> Result<()> {
+    use crate::features::conversation::memory::prompts::GRAMMAR_REPETITION_LIMIT;
+    let pattern = regex::Regex::new(r#""(maxLength|maxItems|minLength|minItems)"\s*:\s*(\d+)"#)
+        .map_err(|error| AppError::InternalError(error.to_string()))?;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src/features/learning");
+    let mut scanned = 0;
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.map_err(|error| AppError::InternalError(error.to_string()))?;
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        scanned += 1;
+        let source = std::fs::read_to_string(entry.path())?;
+        for found in pattern.captures_iter(&source) {
+            let bound: usize = found
+                .get(2)
+                .and_then(|digits| digits.as_str().parse().ok())
+                .unwrap_or(usize::MAX);
+            assert!(
+                bound <= GRAMMAR_REPETITION_LIMIT,
+                "{} sets a schema bound of {bound}, above llama.cpp's grammar limit of {GRAMMAR_REPETITION_LIMIT}",
+                entry.path().display()
+            );
+        }
+    }
+    assert!(scanned > 50, "the learning sources were not found");
+    Ok(())
+}

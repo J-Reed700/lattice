@@ -58,9 +58,9 @@ shipping behavior and experiments:
 | --- | --- | --- |
 | First-run embedding model | Qwen3 where there is a GPU | `Qwen3-Embedding-0.6B` on a machine with a working Metal (or CUDA) backend, `all-MiniLM-L6-v2` on CPU-only machines, where 0.6B parameters would make bulk indexing an overnight job |
 | Vector + keyword fusion | Keep and default on | Weighted RRF: vector `0.7`, keyword `0.3`, `k = 10` |
-| Qwen3 vector compression | Keep and default on | 256 Matryoshka dimensions with i8 storage; non-Matryoshka models fall back to full precision |
+| Qwen3 vector compression | Keep as an option, default off since 2026-10-12 | Full precision by default; 256-d i8 cost about 1.7 points of recall@5 on v3 ([2026-10-12](2026-10-12-RERANKER-FTS-HEADER-FUSION.md)) |
 | Corrective retrieval retry | Keep | Sufficiency may trigger one retry; it must not suppress an answer by itself |
-| Cross-encoder reranking | Keep as an experiment | Available, off by default because the measured gain was small relative to latency |
+| Cross-encoder reranking | Keep as an experiment | Available, off by default; since 2026-10-12 the download is Qwen3-Reranker-0.6B, which lifts nDCG@5 on v3 but costs seconds per query ([2026-10-12](2026-10-12-RERANKER-FTS-HEADER-FUSION.md)) |
 | Late chunking | Keep as an experiment | Available, off by default because Qwen3 was neutral and it was the slowest configuration |
 | Claim verification | Keep | On by default; annotates unsupported or contradicted claims without rewriting or suppressing the answer |
 | Summary index | Park | Off by default pending an in-app corpus-level evaluation |
@@ -233,6 +233,12 @@ planned query), HyDE text in the rerank query, document openings and section
 lookups, the corrective retry, workspace scoping, and answer generation. It has no
 page ranges, so `page_number` is always NULL.
 
+To measure what a turn adds, use the shipped-path runner
+(`src-tauri/examples/shipped_path_eval` plus `scripts/shipped_path_eval.py`). It
+drives the desktop's own turn, from intent through the grounding check, against
+a live llama-server and the 34-item `desktop-path-v1.json` rubric set. See
+[`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
+
 ### Embedding strategy
 
 `--strategy chunk-first` (the default) embeds every chunk on its own with its
@@ -291,7 +297,9 @@ Pass a reranker directory as the optional third argument in either mode. In
 embedding mode it reranks the top-48 passage pool; in production mode the fused
 pool is widened as chat widens it (three times `--top-k`, at most 64) and passed
 through the orchestrator's rerank stage — the stage chat calls — at chat's default
-candidate cap (48) and query budget, then cut to `--top-k`:
+candidate cap (48) and query budget, then cut to `--top-k`. At `--top-k 10` that pool is
+30, so only 30 candidates are scored; `--rerank-depth N` scores `N` and widens the pool to
+match:
 
 ```sh
 cd src-tauri

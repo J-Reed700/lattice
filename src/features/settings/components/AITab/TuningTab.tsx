@@ -9,6 +9,7 @@ import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
 import { RouterTuningSection } from './RouterTuningSection';
 import { RuntimeTuningSection } from './RuntimeTuningSection';
+import { ThinkingSection } from './ThinkingSection';
 import { ToolOutputTuningSection } from './ToolOutputTuningSection';
 import { useLlmSettings } from './useLlmSettings';
 
@@ -18,9 +19,10 @@ export function TuningTab() {
 
   const [runtimeDraft, setRuntimeDraft] = useState({
     temperature: 0.7,
-    topP: 0.9,
-    topK: 40,
-    repeatPenalty: 1.1,
+    topP: 0.8,
+    topK: 20,
+    repeatPenalty: 1.0,
+    presencePenalty: 1.5,
     maxTokens: 131072,
     contextWindow: 131072,
     localContextWindow: null as number | null,
@@ -36,6 +38,7 @@ export function TuningTab() {
       topP: llmSettings.topP,
       topK: llmSettings.topK,
       repeatPenalty: llmSettings.repeatPenalty,
+      presencePenalty: llmSettings.presencePenalty,
       maxTokens: llmSettings.maxTokens,
       contextWindow: llmSettings.contextWindow,
       localContextWindow: llmSettings.localContextWindow,
@@ -64,6 +67,8 @@ export function TuningTab() {
         setRuntimeDraft={setRuntimeDraft}
         saveLlmUpdates={saveLlmUpdates}
       />
+
+      <ThinkingSection llmSettings={llmSettings} saveLlmUpdates={saveLlmUpdates} />
 
       <RouterTuningSection
         llmSettings={llmSettings}

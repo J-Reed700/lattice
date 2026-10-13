@@ -15,6 +15,19 @@ use crate::application::services::grounded_generation::{
 };
 use crate::shared::error::{AppError, Result};
 
+/// Whether authoring calls — outline and lesson drafts and the reviews that
+/// judge them — work through the task in prose before the schema-constrained
+/// answer. Asking for the format in the same call that does the reasoning
+/// costs small open models most of their structured-output accuracy, while
+/// the grammar itself is neutral at 4B and above, so these calls reason in
+/// one request and are held to the schema in a second.
+pub(in crate::features::learning) const REASON_FIRST_AUTHORING: bool = true;
+
+/// The same for short checks that choose among fixed verdicts. Their answer
+/// is a label and a sentence, so a prose step would roughly double their
+/// latency for little gain.
+pub(in crate::features::learning) const REASON_FIRST_CLASSIFIERS: bool = false;
+
 /// A strict-JSON request: the system instructions, a prompt the model reads
 /// whole, and the schema its answer must match. `output_tokens` is the
 /// answer's reservation; the planner clamps it to what the model can give.
@@ -29,6 +42,23 @@ pub(in crate::features::learning) fn structured(
     request.output_tokens = output_tokens;
     request.call = CallOptions {
         json_schema: Some(schema),
+        reasoning_effort: Some(reasoning_effort.to_owned()),
+        ..Default::default()
+    };
+    request
+}
+
+/// A free-text request with the same call options as [`structured`] and no
+/// schema: the reasoning step of a reason-first call.
+pub(in crate::features::learning) fn prose(
+    system: &str,
+    prompt: String,
+    output_tokens: usize,
+    reasoning_effort: &str,
+) -> GroundedRequest {
+    let mut request = GroundedRequest::new(system, prompt);
+    request.output_tokens = output_tokens;
+    request.call = CallOptions {
         reasoning_effort: Some(reasoning_effort.to_owned()),
         ..Default::default()
     };

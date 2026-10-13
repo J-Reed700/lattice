@@ -15,15 +15,17 @@
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
 
-/// What the reranker download costs, taken from the published artifact.
+/// What the reranker download costs: the pinned revision's weights, tokenizer
+/// and config added up.
 ///
 /// Reported so the UI can name a size before starting rather than opening an
-/// indeterminate progress bar. The tokenizer and config add well under a
-/// megabyte between them.
-pub const RERANKER_DOWNLOAD_BYTES: u64 = 90_870_598;
+/// indeterminate progress bar.
+pub const RERANKER_DOWNLOAD_BYTES: u64 = 1_191_588_280 + 11_422_654 + 727;
 
-/// The cross-encoder Lattice reranks with.
-pub const RERANKER_MODEL_NAME: &str = "cross-encoder/ms-marco-MiniLM-L-6-v2";
+/// The reranker Lattice downloads. ms-marco-MiniLM-L-6-v2 moved nothing on the
+/// v3 fixture; this one lifted nDCG@5 (see
+/// `evals/retrieval/2026-10-12-RERANKER-FTS-HEADER-FUSION.md`).
+pub const RERANKER_MODEL_NAME: &str = "Qwen/Qwen3-Reranker-0.6B";
 
 /// Whether reranking is switched on, and whether it could run if it were.
 ///
@@ -125,9 +127,9 @@ mod tests {
     #[test]
     fn the_status_names_the_model_and_what_it_costs() {
         let status = RerankerStatusDto::new(false, false);
-        assert_eq!(status.model_name, "cross-encoder/ms-marco-MiniLM-L-6-v2");
+        assert_eq!(status.model_name, "Qwen/Qwen3-Reranker-0.6B");
         assert!(
-            status.download_bytes > 80_000_000 && status.download_bytes < 100_000_000,
+            status.download_bytes > 1_150_000_000 && status.download_bytes < 1_250_000_000,
             "a size the UI can show before starting, not a placeholder"
         );
     }

@@ -2,7 +2,9 @@
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
 use crate::application::{
     contracts::settings::{LLMProvider, LLMSettingsDto},
-    ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse, LLMPort},
+    ports::llm_port::{
+        CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode, ToolChoice,
+    },
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -82,6 +84,9 @@ impl CloudLlm {
             let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":max_output});
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
+                if let Some(choice) = request.tool_choice {
+                    set_field(&mut body, "tool_choice", json!(choice.as_str()))?;
+                }
             }
             if let Some(schema) = &request.json_schema {
                 set_field(
@@ -90,6 +95,9 @@ impl CloudLlm {
                     json!({"format":{"type":"json_schema","name":"response","schema":schema,"strict":true}}),
                 )?;
             }
+            // `request.thinking` is deliberately not read here: an OpenAI
+            // reasoning model always reasons and a chat model never does, so
+            // the effort level below is the only control the API offers.
             let effort = openai_reasoning_effort(&self.model, request.reasoning_effort.as_deref());
             if is_openai_reasoning_model(&self.model)
                 && (effort.is_some() || request.include_reasoning)
@@ -152,20 +160,35 @@ impl CloudLlm {
             if !system.is_empty() {
                 set_field(&mut body, "system", json!(system.join("\n\n")))?;
             }
+            // Extended thinking is off unless a `thinking` block asks for it.
+            // A thinking request asks, and so does a real effort level, which
+            // grades it; "none" is expressed by leaving the block out, since
+            // requesting adaptive thinking turned "do not think" into its
+            // opposite.
+            let effort = request.reasoning_effort.as_deref();
+            let thinks = request.thinking == ThinkingMode::On
+                || effort.is_some_and(|effort| effort != "none");
+            if thinks {
+                set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
+            }
+            if let Some(effort) = effort {
+                // Anthropic has no "none" effort of its own, so the answer
+                // itself is held at the lowest setting instead.
+                let effort = if effort == "none" { "low" } else { effort };
+                set_field(&mut body, "output_config", json!({"effort":effort}))?;
+            }
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
-            }
-            if let Some(effort) = &request.reasoning_effort {
-                // Extended thinking is off unless a `thinking` block asks for it,
-                // so "none" is expressed by leaving that block out — requesting
-                // adaptive thinking turned "do not think" into its opposite.
-                // Anthropic has no "none" effort of its own, so the answer itself
-                // is held at the lowest setting instead.
-                if effort == "none" {
-                    set_field(&mut body, "output_config", json!({"effort":"low"}))?;
-                } else {
-                    set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
-                    set_field(&mut body, "output_config", json!({"effort":effort}))?;
+                // Forcing a call is refused while extended thinking is on, so a
+                // thinking request that requires one leaves the choice to the model.
+                let choice = match request.tool_choice {
+                    Some(ToolChoice::Required) if !thinks => Some("any"),
+                    Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
+                    Some(ToolChoice::None) => Some("none"),
+                    None => None,
+                };
+                if let Some(choice) = choice {
+                    set_field(&mut body, "tool_choice", json!({"type": choice}))?;
                 }
             }
             if let Some(schema) = &request.json_schema {
@@ -647,6 +670,75 @@ mod tests {
         let body = anthropic_body("medium");
         assert_eq!(body["thinking"]["type"], "adaptive");
         assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Anthropic,
+            ..Default::default()
+        };
+        let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+        let tool = crate::application::ports::ToolDefinition {
+            name: "search".into(),
+            description: "Search".into(),
+            parameters: json!({"type":"object"}),
+        };
+        let body = |thinking, choice| {
+            anthropic
+                .body(
+                    &CompletionRequest {
+                        tools: vec![tool.clone()],
+                        thinking,
+                        tool_choice: Some(choice),
+                        ..Default::default()
+                    },
+                    false,
+                )
+                .unwrap()
+        };
+        let plain = body(ThinkingMode::Off, ToolChoice::Required);
+        assert!(plain.get("thinking").is_none());
+        assert_eq!(plain["tool_choice"]["type"], "any");
+        assert_eq!(
+            body(ThinkingMode::Off, ToolChoice::None)["tool_choice"]["type"],
+            "none"
+        );
+        let thinking = body(ThinkingMode::On, ToolChoice::Required);
+        assert_eq!(thinking["thinking"]["type"], "adaptive");
+        assert_eq!(
+            thinking["tool_choice"]["type"], "auto",
+            "a forced call is refused while thinking"
+        );
+    }
+
+    #[test]
+    fn openai_sends_the_tool_choice_with_tools() {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Openai,
+            model: "gpt-5.1".into(),
+            ..Default::default()
+        };
+        let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+        let request = CompletionRequest {
+            tools: vec![crate::application::ports::ToolDefinition {
+                name: "search".into(),
+                description: "Search".into(),
+                parameters: json!({"type":"object"}),
+            }],
+            tool_choice: Some(ToolChoice::None),
+            ..Default::default()
+        };
+        assert_eq!(openai.body(&request, false).unwrap()["tool_choice"], "none");
+        let bare = CompletionRequest {
+            tools: Vec::new(),
+            ..request
+        };
+        assert!(openai
+            .body(&bare, false)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
     }
 
     fn openai_body(model: &str, effort: Option<&str>) -> Value {

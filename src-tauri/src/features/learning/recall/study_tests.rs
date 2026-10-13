@@ -408,7 +408,10 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
         .to_lowercase();
     assert!(!system.contains("patent") && !system.contains("mpep"));
     assert_eq!(body["stream"], true);
-    assert_eq!(body["chat_template_kwargs"]["reasoning_effort"], "low");
+    // Learning asks for "low" effort; on llama.cpp that is no switch, so the
+    // request turns thinking off explicitly and sends no level with it.
+    assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+    assert!(body.get("reasoning_effort").is_none());
     assert!(body["response_format"]["json_schema"]["schema"].is_object());
     Ok(())
 }

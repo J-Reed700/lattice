@@ -171,11 +171,13 @@ fn source_context(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
 }
 
 fn activity_schema() -> serde_json::Value {
+    // Length caps above 2000 are checked after parsing: as schema bounds they
+    // would void llama.cpp's whole grammar.
     let file = serde_json::json!({
         "type":"object","additionalProperties":false,"required":["path","content"],
         "properties":{
             "path":{"type":"string","minLength":1,"maxLength":240},
-            "content":{"type":"string","maxLength":262144}
+            "content":{"type":"string"}
         }
     });
     serde_json::json!({
@@ -183,7 +185,7 @@ fn activity_schema() -> serde_json::Value {
         "required":["title","brief","sourceVersionIds","rubric","starterFiles","referenceFiles"],
         "properties":{
             "title":{"type":"string","minLength":1,"maxLength":160},
-            "brief":{"type":"string","minLength":1,"maxLength":12000},
+            "brief":{"type":"string","minLength":1},
             "sourceVersionIds":{"type":"array","maxItems":12,"items":{"type":"string"}},
             "rubric":{"type":"array","minItems":2,"maxItems":8,"items":{
                 "type":"object","additionalProperties":false,
@@ -201,13 +203,15 @@ fn activity_schema() -> serde_json::Value {
 }
 
 fn checks_schema() -> serde_json::Value {
+    // Length caps above 2000 are checked after parsing: as schema bounds they
+    // would void llama.cpp's whole grammar.
     serde_json::json!({
         "type":"object","additionalProperties":false,"required":["checkFiles"],
         "properties":{"checkFiles":{"type":"array","minItems":1,"maxItems":16,"items":{
             "type":"object","additionalProperties":false,"required":["path","content"],
             "properties":{
                 "path":{"type":"string","minLength":1,"maxLength":240},
-                "content":{"type":"string","minLength":1,"maxLength":262144}
+                "content":{"type":"string","minLength":1}
             }
         }}}
     })
@@ -290,7 +294,7 @@ pub async fn generate_activity(
     });
     let raw = complete_json(
         llm,
-        "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. When source snapshots are supplied, use them for factual claims. Without sources, build from the lesson and general knowledge, acknowledge uncertainty, and leave sourceVersionIds empty. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer. Return strict JSON.",
+        "Design a demanding, subject-neutral practical exercise. It must require the learner to make decisions or create an artifact, state constraints and deliverables, and use a visible analytic rubric. When source snapshots are supplied, use them for factual claims. Without sources, build from the lesson and general knowledge, acknowledge uncertainty, and leave sourceVersionIds empty. Do not include a worked solution or hidden answer. For code work, starter files may contain incomplete code but never a completed answer.",
         context.to_string(),
         activity_schema(),
         4_000,
@@ -358,7 +362,7 @@ pub async fn generate_activity(
             .collect::<Vec<_>>();
         let raw = complete_json(
             llm,
-            "Author deterministic evaluator files for the supplied practical brief and exact executionEnvironment contract. Use its required evaluator entrypoint, supported language version, and only dependencies explicitly available there. Test stated behavior and edge cases. Throw an uncaught assertion or exit nonzero on failure; zero checks must never count as success. Do not include a reference implementation, derive expected output from hidden solution text, use the network, or execute a host shell. Return strict JSON.",
+            "Author deterministic evaluator files for the supplied practical brief and exact executionEnvironment contract. Use its required evaluator entrypoint, supported language version, and only dependencies explicitly available there. Test stated behavior and edge cases. Throw an uncaught assertion or exit nonzero on failure; zero checks must never count as success. Do not include a reference implementation, derive expected output from hidden solution text, use the network, or execute a host shell.",
             serde_json::json!({"brief":&parsed.brief,"publicFiles":public_files,"executionEnvironment":runtime}).to_string(),
             checks_schema(),
             2_500,
@@ -428,10 +432,12 @@ pub async fn generate_simulation_turn(
         "finalFeedback":final_feedback,
     })
     .to_string();
+    // The turn's 6000-character cap is checked after parsing: as a schema
+    // bound it would void llama.cpp's whole grammar.
     let schema = serde_json::json!({
         "type":"object","additionalProperties":false,"required":["content","citations"],
         "properties":{
-            "content":{"type":"string","minLength":1,"maxLength":6000},
+            "content":{"type":"string","minLength":1},
             "citations":{"type":"array","maxItems":5,"items":{
                 "type":"object","additionalProperties":false,
                 "required":["sourceId","versionId","quote"],
@@ -443,9 +449,9 @@ pub async fn generate_simulation_turn(
         }
     });
     let system = if final_feedback {
-        "You are the coach closing a role simulation. Evaluate only behavior visible in the learner's turns against the supplied rubric. Quote the learner when making an observation, state uncertainty where evidence is missing, never claim mastery or readiness, and cite only exact supplied source passages for factual guidance. Return strict JSON."
+        "You are the coach closing a role simulation. Evaluate only behavior visible in the learner's turns against the supplied rubric. Quote the learner when making an observation, state uncertainty where evidence is missing, never claim mastery or readiness, and cite only exact supplied source passages for factual guidance."
     } else {
-        "Continue the role simulation as the named counterpart. Stay inside the scenario, introduce one realistic decision or complication, do not solve the task for the learner, and cite only exact supplied source passages when making a factual claim. Return strict JSON."
+        "Continue the role simulation as the named counterpart. Stay inside the scenario, introduce one realistic decision or complication, do not solve the task for the learner, and cite only exact supplied source passages when making a factual claim."
     };
     let raw = complete_json(llm, system, prompt, schema, 1_500).await?;
     let parsed: SimulationJson = serde_json::from_str(&raw)

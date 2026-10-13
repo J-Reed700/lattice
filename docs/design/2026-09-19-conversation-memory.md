@@ -661,7 +661,7 @@ Version prompts as constants/resources near the use case and record versions in 
 ### Extractor must be told
 
 - Extract applicable user requirements, goals, decisions, facts, preferences, and unresolved questions from the supplied original source passages.
-- Return the exact JSON schema, no commentary.
+- Nothing about the output format. The request carries the JSON schema and the backend constrains decoding to it, so the prompt names no format and makes no "return JSON" demand: on small models such a demand costs more accuracy than the grammar recovers. The parser still rejects anything outside the schema. (Since 2026-10-13, extractor `2026-10-13.13`, verifier `2026-10-13.8`.)
 - Quote exact original text with source IDs; never paraphrase inside `quote`.
 - Distinguish a direct user instruction from quoted third-party material, hypothetical examples, assistant suggestions, and completed actions.
 - Propose changes to existing items by ID; absence from the response leaves items unchanged.

@@ -32,6 +32,7 @@ pub mod llm;
 pub mod mentions;
 pub mod metrics;
 pub mod model_management;
+pub mod ocr;
 pub mod qa;
 pub mod recent;
 pub mod references;

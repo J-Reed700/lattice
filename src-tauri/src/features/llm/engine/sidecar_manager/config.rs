@@ -52,6 +52,24 @@ pub struct SidecarConfig {
     /// constrained by the model's training context; we cap at 8192
     /// to avoid OOM on entry-level hardware.
     pub context_size: u32,
+
+    /// Whether the GGUF carries a multi-token-prediction head llama-server
+    /// can draft with. Only an MTP build of a model has one.
+    pub mtp_capable: bool,
+
+    /// The speculative decoding the user opted into. It reaches the server
+    /// only when the model is [`Self::mtp_capable`].
+    pub speculative_decoding: SpeculativeDecoding,
+}
+
+/// Speculative decoding a bundled server can be launched with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SpeculativeDecoding {
+    #[default]
+    Off,
+    /// Draft up to `n_max` tokens a step with the model's own
+    /// multi-token-prediction head.
+    MtpDraft { n_max: u32 },
 }
 
 /// RAM threshold (GB) below which we reduce the context window to keep
@@ -175,6 +193,17 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers: 99,
             context_size: DEFAULT_GPU_CONTEXT_SIZE,
+            mtp_capable: false,
+            speculative_decoding: SpeculativeDecoding::Off,
+        }
+    }
+
+    /// Tokens to draft a step, when this server drafts with an MTP head:
+    /// the user asked for it and the model has one.
+    pub fn mtp_draft(&self) -> Option<u32> {
+        match self.speculative_decoding {
+            SpeculativeDecoding::MtpDraft { n_max } if self.mtp_capable => Some(n_max),
+            _ => None,
         }
     }
 
@@ -186,6 +215,8 @@ impl SidecarConfig {
             model_path: self.model_path.clone(),
             n_gpu_layers: 0,
             context_size: self.context_size.min(DEFAULT_CPU_CONTEXT_SIZE),
+            mtp_capable: self.mtp_capable,
+            speculative_decoding: self.speculative_decoding,
         }
     }
 
@@ -236,6 +267,8 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers,
             context_size,
+            mtp_capable: false,
+            speculative_decoding: SpeculativeDecoding::Off,
         }
     }
 

@@ -27,8 +27,9 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
             {"role":"user","content":"Check this batch."}
         ],
         "stream":true,
-        "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"num_predict":2048},
-        "format":schema
+        "options":{"temperature":0.0,"top_p":1.0,"top_k":1,"presence_penalty":0.0,"num_predict":2048},
+        "format":schema,
+        "think":false
     });
     Mock::given(method("POST"))
         .and(path("/api/chat"))
@@ -85,7 +86,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
     let repeat_penalty = sent["options"]["repeat_penalty"]
         .as_f64()
         .expect("repeat penalty is numeric");
-    assert!((repeat_penalty - 1.1).abs() < 1e-6);
+    assert!((repeat_penalty - 1.0).abs() < 1e-6);
     sent["options"]
         .as_object_mut()
         .unwrap()
@@ -343,7 +344,8 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
     let sent: serde_json::Value =
         serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
     assert_eq!(sent["stream"], true);
-    assert!(sent.get("think").is_none());
+    // A tool round never thinks, and says so: Qwen 3.5 thinks by default.
+    assert_eq!(sent["think"], false);
     assert_eq!(
         sent["tools"][0]["function"]["name"],
         "search_saved_knowledge"
@@ -535,4 +537,37 @@ async fn a_stream_that_goes_silent_is_a_stall_not_a_wait() {
         .unwrap_err();
     assert!(error.to_string().contains("sent nothing"), "{error}");
     server.abort();
+}
+
+#[test]
+fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
+    use crate::application::ports::llm_port::ToolDefinition;
+    let client = OllamaClient::with_model_and_timeouts(
+        "http://localhost:11434",
+        "qwen3.5",
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let mut request = CompletionRequest {
+        thinking: ThinkingMode::On,
+        ..Default::default()
+    };
+    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    assert_eq!(sent["think"], true);
+    assert_eq!(sent["options"]["temperature"], 1.0);
+    assert_eq!(sent["options"]["top_k"], 20);
+    request.reasoning_effort = Some("high".into());
+    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    assert_eq!(sent["think"], "high");
+    request.tools = vec![ToolDefinition {
+        name: "search".into(),
+        description: "Search".into(),
+        parameters: serde_json::json!({"type":"object"}),
+    }];
+    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    assert_eq!(
+        sent["think"], false,
+        "a round that can call tools never thinks"
+    );
 }

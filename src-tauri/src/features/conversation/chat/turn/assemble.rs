@@ -6,6 +6,7 @@ use super::retrieve::Retrieved;
 use super::*;
 use crate::application::ports::llm_port::CompletionInput;
 use crate::application::ports::ToolDefinition;
+use crate::application::services::context_assembler::render;
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 
 /// The rendered prompt and the numbered sources it cites.
@@ -335,6 +336,8 @@ pub(super) async fn plan_request(
     } else {
         turn.llm.count_tokens(&tool_loop::tool_schema_text(&tools))
     };
+    // Read once, so a compaction retry and every tool round carry the same day.
+    let today = chrono::Local::now().date_naive();
     let memory_turn = memory_context::prepare_memory_turn(
         || async {
             let memory_turn = memory_context::build_memory_plan_for_query(
@@ -348,6 +351,7 @@ pub(super) async fn plan_request(
                 Vec::new(),
                 turn.settings.llm.bounded_conversation_memory,
                 &turn.message,
+                today,
             )
             .await?;
 
@@ -387,10 +391,16 @@ pub(super) async fn plan_request(
             input_budget: memory_turn.plan.accounting.input_budget,
         },
         None => PlannedRequest {
+            // The date leads the final message here too, never the system
+            // prompt: that would change the head of the request every day.
             input: crate::application::services::completion_input::from_context(
                 &turn.prompt_settings.system_prompt,
                 &turn.context,
-                &prompt.enhanced_message,
+                &format!(
+                    "{}\n\n{}",
+                    render::render_date_line(today),
+                    prompt.enhanced_message
+                ),
             ),
             tools,
             max_output_tokens: turn.budget.output_tokens,

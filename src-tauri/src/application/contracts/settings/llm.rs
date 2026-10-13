@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::generation::{SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto};
+
 /// LLM provider selection.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
@@ -41,6 +43,29 @@ pub struct LLMSettingsDto {
     #[serde(default = "default_repeat_penalty")]
     pub repeat_penalty: f32,
 
+    /// Flat penalty on any token already in the recent window. The Qwen 3.5
+    /// cards recommend 1.5 in both modes to stop loops, and warn it can
+    /// occasionally mix languages, so it stays the user's to lower. Zero is off.
+    #[serde(default = "default_presence_penalty")]
+    pub presence_penalty: f32,
+
+    /// Let the model think before an answer that offers it no tools. Rounds
+    /// that can call tools never think: Qwen 3.5 9B writes its calls inside
+    /// the thinking block, where llama.cpp's tool grammar ends generation.
+    #[serde(default)]
+    pub answer_thinking: bool,
+
+    /// Pin thinking on or off for every request, overriding the rule above
+    /// and the model's own (Laguna always thinks: with thinking off it
+    /// repeats one special token). `Auto` keeps both rules.
+    #[serde(default)]
+    pub thinking_override: ThinkingOverrideDto,
+
+    /// Sampling for requests that think before answering. The fields above
+    /// are the profile for answering directly.
+    #[serde(default)]
+    pub thinking_sampling: SamplingProfileDto,
+
     /// Maximum tokens to generate
     pub max_tokens: u32,
 
@@ -57,6 +82,12 @@ pub struct LLMSettingsDto {
     /// shrunk. `context_window` above governs remote providers, not this.
     #[serde(default)]
     pub local_context_window: Option<u32>,
+
+    /// Speculative decoding for the bundled local server. Experimental, and
+    /// applied only to a model that carries a multi-token-prediction head;
+    /// every other model starts as it always has.
+    #[serde(default)]
+    pub speculative_decoding: SpeculativeDecodingDto,
 
     /// Ollama server URL
     pub ollama_url: String,
@@ -308,16 +339,22 @@ pub struct CustomToolSettingsDto {
     pub default_max_results: u32,
 }
 
+// The answer defaults are the Qwen 3.5 card's non-thinking profile, the
+// family the curated catalog leads with.
 fn default_top_p() -> f32 {
-    0.9
+    0.8
 }
 
 fn default_top_k() -> i32 {
-    40
+    20
 }
 
 fn default_repeat_penalty() -> f32 {
-    1.1
+    1.0
+}
+
+fn default_presence_penalty() -> f32 {
+    1.5
 }
 
 fn default_custom_tool_enabled() -> bool {
@@ -358,7 +395,7 @@ impl Default for RouterSettingsDto {
     fn default() -> Self {
         Self {
             enabled: false,
-            model: "phi-3.5-mini-instruct-q4_k_m".to_string(),
+            model: "qwen3.5-4b-q4_k_m".to_string(),
             timeout_ms: 350,
             max_tokens: 120,
             temperature: 0.1,
@@ -390,12 +427,17 @@ impl Default for LLMSettingsDto {
             provider: LLMProvider::Auto,
             model: "llama3.2:latest".to_string(),
             temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
-            repeat_penalty: 1.1,
+            top_p: default_top_p(),
+            top_k: default_top_k(),
+            repeat_penalty: default_repeat_penalty(),
+            presence_penalty: default_presence_penalty(),
+            answer_thinking: false,
+            thinking_override: ThinkingOverrideDto::Auto,
+            thinking_sampling: SamplingProfileDto::thinking(),
             max_tokens: 131072,
             context_window: 131072,
             local_context_window: None,
+            speculative_decoding: SpeculativeDecodingDto::Off,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_configured: false,
             ollama_utility_model: String::new(),

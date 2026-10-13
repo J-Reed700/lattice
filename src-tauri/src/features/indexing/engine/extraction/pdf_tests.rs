@@ -414,6 +414,137 @@ async fn recognized_text_lands_inside_its_own_page_range() {
     assert_eq!(&extracted.text[start..end], "\nRecognized scan of page 2");
 }
 
+/// Answers each page from a script, counting the questions.
+struct ScriptedOcr {
+    answer: fn(u32) -> std::result::Result<String, OcrError>,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl ScriptedOcr {
+    fn new(answer: fn(u32) -> std::result::Result<String, OcrError>) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            asked: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl OcrPort for ScriptedOcr {
+    async fn recognize_page(
+        &self,
+        _document: &Path,
+        page: u32,
+    ) -> std::result::Result<String, OcrError> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        (self.answer)(page)
+    }
+}
+
+/// A server that cannot start would fail every page the same way, each after
+/// its own startup attempt; one answer is enough.
+#[tokio::test]
+async fn unavailable_ocr_is_asked_once_and_named_in_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "scans.pdf",
+        vec![TestPage::scan(), TestPage::scan(), TestPage::scan()],
+    );
+    let ocr = ScriptedOcr::new(|_| {
+        Err(OcrError::Unavailable {
+            reason: "llama-server exited during startup".into(),
+        })
+    });
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert_eq!(ocr.asked(), 1);
+    assert!(error.contains("OCR could not run"), "{error}");
+    assert!(error.contains("exited during startup"), "{error}");
+}
+
+#[tokio::test]
+async fn a_scan_without_an_ocr_model_points_at_the_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(dir.path(), "scan.pdf", vec![TestPage::scan()]);
+    let noop: Arc<dyn OcrPort> = Arc::new(crate::application::ports::NoopOcr);
+
+    let error = extract_pdf(&path, NO_SIZE_LIMIT, Some(&noop))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Settings → AI → Models"), "{error}");
+    assert!(error.contains("OCR"), "{error}");
+}
+
+/// One unreadable page is that page's problem; the next scan is still read
+/// and keeps its own page number.
+#[tokio::test]
+async fn a_failed_page_does_not_stop_the_next_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "two-scans.pdf",
+        vec![
+            TestPage::scan(),
+            TestPage::scan(),
+            TestPage::text(body_paragraphs(720.0)),
+        ],
+    );
+    let ocr = ScriptedOcr::new(|page| match page {
+        1 => Err(OcrError::Recognition {
+            page,
+            reason: "no answer within 180 s".into(),
+        }),
+        _ => Ok(format!("Recognized scan of page {page}")),
+    });
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    let extracted = extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+        .await
+        .unwrap();
+
+    assert_eq!(ocr.asked(), 2);
+    assert_eq!(extracted.needs_ocr, vec![1]);
+    assert_ranges_cover(&extracted.text, &extracted.page_ranges);
+    let (_, start, end) = extracted
+        .page_ranges
+        .iter()
+        .find(|(page, _, _)| *page == 2)
+        .copied()
+        .expect("page two has a range");
+    assert!(extracted.text[start..end].contains("Recognized scan of page 2"));
+}
+
+/// A document with a text layer never reaches the OCR server.
+#[tokio::test]
+async fn a_text_pdf_never_asks_for_ocr() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_pdf(
+        dir.path(),
+        "text.pdf",
+        vec![TestPage::text(body_paragraphs(720.0))],
+    );
+    let ocr = ScriptedOcr::new(|_| Ok("should not be asked".into()));
+    let port: Arc<dyn OcrPort> = ocr.clone();
+
+    extract_pdf(&path, NO_SIZE_LIMIT, Some(&port))
+        .await
+        .unwrap();
+
+    assert_eq!(ocr.asked(), 0);
+}
+
 #[test]
 fn failed_page_does_not_return_a_partial_document() {
     let result = collect_pdf_pages(Path::new("mpep.pdf"), 1..=3, |page| {

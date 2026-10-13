@@ -109,6 +109,9 @@ impl ClaimJudge {
             temperature: Some(tuning.temperature),
             top_p: Some(tuning.top_p),
             top_k: Some(tuning.top_k),
+            // The judge's prompt lists the verdict labels just before it
+            // answers; a presence penalty would push it off the one it means.
+            presence_penalty: Some(0.0),
         };
         self
     }

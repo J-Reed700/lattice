@@ -21,6 +21,8 @@ pub(super) struct FakeRuntime {
     pub(super) jobs: Option<Arc<JobRuntime>>,
     /// One service for the whole test, so what a turn saves can be read back.
     pub(super) conversations: Arc<MockConversationService>,
+    /// The `answer_thinking` setting the turn reads.
+    pub(super) answer_thinking: bool,
 }
 
 impl Default for FakeRuntime {
@@ -30,6 +32,7 @@ impl Default for FakeRuntime {
             tools: None,
             jobs: None,
             conversations: Arc::new(MockConversationService::new()),
+            answer_thinking: false,
         }
     }
 }
@@ -130,6 +133,7 @@ impl ChatPolicy for FakeRuntime {
     async fn settings(&self) -> Result<crate::features::settings::dto::SettingsDto> {
         let mut settings = crate::features::settings::dto::SettingsDto::default();
         settings.llm.verification.enabled = false;
+        settings.llm.answer_thinking = self.answer_thinking;
         Ok(settings)
     }
     async fn validate_message(&self, message: &str) -> Result<String> {
