@@ -59,7 +59,6 @@ pub trait ChunkRepositoryPort: RepositoryPort<Chunk> + Send + Sync {
     /// # Errors
     ///
     /// - `AppError::Database` if creation fails
-    #[allow(clippy::too_many_arguments)]
     async fn create(
         &self,
         document_id: &str,

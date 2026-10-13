@@ -90,7 +90,6 @@ pub async fn build(
 /// not interchangeable with chunk-first vectors of the same model, so the
 /// strategy joins the artifact digest in the embedding identity that selects
 /// which persisted vectors this index is rebuilt from.
-#[allow(clippy::too_many_arguments)]
 pub async fn build_with_compression(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
@@ -480,7 +479,9 @@ mod reembed_marker_tests {
 mod index_identity_tests {
     use super::index_identity;
     use crate::domain::models::checkpoint::WEIGHTS_SAFETENSORS;
-    use crate::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use crate::domain::models::downloaded::{
+        DownloadedModel, ModelLocation, StoredDownloadedModel,
+    };
     use crate::domain::models::metadata::ModelType;
     use crate::domain::value_objects::ArtifactIdentity;
     use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
@@ -491,23 +492,23 @@ mod index_identity_tests {
     }
 
     fn model(location: ModelLocation, identity: Option<ArtifactIdentity>) -> DownloadedModel {
-        DownloadedModel::from_db(
-            "row-1".into(),
-            "embedder".into(),
-            "org/embedder".into(),
+        DownloadedModel::from_db(StoredDownloadedModel {
+            id: "row-1".into(),
+            model_name: "embedder".into(),
+            model_id: "org/embedder".into(),
             location,
-            0,
-            ModelType::TextEmbeddings,
-            "bert".into(),
-            chrono::Utc::now(),
-            None,
-            0,
-            false,
-            true,
-            None,
-            false,
-            identity,
-        )
+            file_size_bytes: 0,
+            model_type: ModelType::TextEmbeddings,
+            architecture: "bert".into(),
+            downloaded_at: chrono::Utc::now(),
+            last_used_at: None,
+            use_count: 0,
+            is_active_for_chat: false,
+            is_active_for_embedding: true,
+            metadata: None,
+            is_active_for_utility: false,
+            embedding_artifact_identity: identity,
+        })
     }
 
     fn local(dir: &Path) -> ModelLocation {

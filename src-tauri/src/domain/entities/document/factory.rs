@@ -6,6 +6,29 @@ use crate::shared::error::Result;
 use crate::shared::types::{DocumentId, TagId, ValidatedFilePath};
 use chrono::{DateTime, Utc};
 
+/// A document's stored fields, for [`Document::with_id`]. Chunks, tags and
+/// source context are attached afterwards.
+pub struct StoredDocument {
+    pub id: DocumentId,
+    pub file_path: ValidatedFilePath,
+    pub file_name: String,
+    pub file_type: Option<String>,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub modified_at: DateTime<Utc>,
+    pub indexed_at: DateTime<Utc>,
+    pub checksum: Checksum,
+    pub status: DocumentStatus,
+    pub error_message: Option<String>,
+    pub language: Language,
+    pub category: Category,
+    pub quality_score: f32,
+    pub access_count: i32,
+    pub last_accessed_at: Option<DateTime<Utc>>,
+    pub word_count: i32,
+    pub content: String,
+}
+
 impl Document {
     /// Create document from file metadata and content.
     ///
@@ -159,27 +182,27 @@ impl Document {
     /// Create document with existing ID (for reconstruction from storage).
     ///
     /// This is typically used by repositories when loading documents from storage.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_id(
-        id: DocumentId,
-        file_path: ValidatedFilePath,
-        file_name: String,
-        file_type: Option<String>,
-        mime_type: String,
-        size_bytes: i64,
-        modified_at: DateTime<Utc>,
-        indexed_at: DateTime<Utc>,
-        checksum: Checksum,
-        status: DocumentStatus,
-        error_message: Option<String>,
-        language: Language,
-        category: Category,
-        quality_score: f32,
-        access_count: i32,
-        last_accessed_at: Option<DateTime<Utc>>,
-        word_count: i32,
-        content: String,
-    ) -> Self {
+    pub fn with_id(stored: StoredDocument) -> Self {
+        let StoredDocument {
+            id,
+            file_path,
+            file_name,
+            file_type,
+            mime_type,
+            size_bytes,
+            modified_at,
+            indexed_at,
+            checksum,
+            status,
+            error_message,
+            language,
+            category,
+            quality_score,
+            access_count,
+            last_accessed_at,
+            word_count,
+            content,
+        } = stored;
         Self {
             id,
             file_path,

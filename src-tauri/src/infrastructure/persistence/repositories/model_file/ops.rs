@@ -300,7 +300,6 @@ pub async fn update_file_status_by_model_and_name(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn parse_model_file_from_row(row: ModelFileRow) -> Result<ModelFile> {
     let status_enum = FileStatus::from_str(&row.status)
         .map_err(|e| AppError::InvalidData(format!("Invalid file status: {}", e)))?;

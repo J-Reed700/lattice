@@ -186,6 +186,26 @@ pub struct DownloadedModel {
     embedding_artifact_identity: Option<ArtifactIdentity>,
 }
 
+/// Every field of a downloaded model as it was stored, for
+/// [`DownloadedModel::from_db`].
+pub struct StoredDownloadedModel {
+    pub id: String,
+    pub model_name: String,
+    pub model_id: String,
+    pub location: ModelLocation,
+    pub file_size_bytes: i64,
+    pub model_type: ModelType,
+    pub architecture: String,
+    pub downloaded_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub use_count: i64,
+    pub is_active_for_chat: bool,
+    pub is_active_for_embedding: bool,
+    pub metadata: Option<JsonValue>,
+    pub is_active_for_utility: bool,
+    pub embedding_artifact_identity: Option<ArtifactIdentity>,
+}
+
 impl DownloadedModel {
     /// Create a new downloaded model record
     ///
@@ -238,7 +258,6 @@ impl DownloadedModel {
 
     /// Create a model using a catalog lookup supplied by the application.
     /// Catalog matches take precedence over filename and extension heuristics.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_catalog(
         id: String,
         model_name: String,
@@ -316,24 +335,24 @@ impl DownloadedModel {
     ///
     /// Used by repository when reconstructing from database.
     /// Does not perform validation since data is assumed to be valid in DB.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_db(
-        id: String,
-        model_name: String,
-        model_id: String,
-        location: ModelLocation,
-        file_size_bytes: i64,
-        model_type: ModelType,
-        architecture: String,
-        downloaded_at: DateTime<Utc>,
-        last_used_at: Option<DateTime<Utc>>,
-        use_count: i64,
-        is_active_for_chat: bool,
-        is_active_for_embedding: bool,
-        metadata: Option<JsonValue>,
-        is_active_for_utility: bool,
-        embedding_artifact_identity: Option<ArtifactIdentity>,
-    ) -> Self {
+    pub fn from_db(stored: StoredDownloadedModel) -> Self {
+        let StoredDownloadedModel {
+            id,
+            model_name,
+            model_id,
+            location,
+            file_size_bytes,
+            model_type,
+            architecture,
+            downloaded_at,
+            last_used_at,
+            use_count,
+            is_active_for_chat,
+            is_active_for_embedding,
+            metadata,
+            is_active_for_utility,
+            embedding_artifact_identity,
+        } = stored;
         Self {
             id,
             model_name,

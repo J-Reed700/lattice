@@ -152,7 +152,6 @@ impl Mention {
     /// Create mention with existing ID (for reconstruction from storage).
     ///
     /// This is typically used by repositories when loading mentions from storage.
-    #[allow(clippy::too_many_arguments)]
     pub fn with_id(
         id: MentionId,
         document_id: DocumentId,

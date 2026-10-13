@@ -311,19 +311,21 @@ impl LearningSourceLibraryRepository {
             let timestamp = now();
             insert_version(
                 &mut tx,
-                &req.program_id,
-                &req.source_id,
-                &req.version_id,
-                next,
-                &title,
-                publisher.as_deref(),
-                requested_url.as_deref(),
-                resolved_url.as_deref(),
-                &text,
-                truncated,
-                &extraction,
-                timestamp,
-                &digest_value,
+                SourceVersionInsert {
+                    program_id: &req.program_id,
+                    source_id: &req.source_id,
+                    version_id: &req.version_id,
+                    version_number: next,
+                    title: &title,
+                    publisher: publisher.as_deref(),
+                    requested_url: requested_url.as_deref(),
+                    resolved_url: resolved_url.as_deref(),
+                    full_text: &text,
+                    truncated,
+                    extraction_version: &extraction,
+                    acquired_at: timestamp,
+                    content_sha256: &digest_value,
+                },
             )
             .await?;
             mirror_legacy(

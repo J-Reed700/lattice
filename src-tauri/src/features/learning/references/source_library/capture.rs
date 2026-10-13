@@ -103,19 +103,21 @@ impl LearningSourceLibraryRepository {
             .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).execute(&mut *tx).await.map_err(db)?;
         insert_version(
             &mut tx,
-            program_id,
-            source_id,
-            version_id,
-            1,
-            title,
-            captured.publisher.as_deref(),
-            requested_url,
-            captured.resolved_url.as_deref(),
-            &text,
-            truncated,
-            &captured.extraction_version,
-            acquired,
-            &text_digest,
+            SourceVersionInsert {
+                program_id,
+                source_id,
+                version_id,
+                version_number: 1,
+                title,
+                publisher: captured.publisher.as_deref(),
+                requested_url,
+                resolved_url: captured.resolved_url.as_deref(),
+                full_text: &text,
+                truncated,
+                extraction_version: &captured.extraction_version,
+                acquired_at: acquired,
+                content_sha256: &text_digest,
+            },
         )
         .await?;
         mirror_legacy(
@@ -282,19 +284,21 @@ impl LearningSourceLibraryRepository {
                         let requested_url: Option<String> = src.get("requested_url");
                         insert_version(
                             &mut tx,
-                            &req.program_id,
-                            &req.source_id,
-                            &version_id,
-                            next,
-                            captured.title.trim(),
-                            captured.publisher.as_deref(),
-                            requested_url.as_deref(),
-                            captured.resolved_url.as_deref(),
-                            &text,
-                            captured.truncated,
-                            &captured.extraction_version,
-                            checked,
-                            &new_digest,
+                            SourceVersionInsert {
+                                program_id: &req.program_id,
+                                source_id: &req.source_id,
+                                version_id: &version_id,
+                                version_number: next,
+                                title: captured.title.trim(),
+                                publisher: captured.publisher.as_deref(),
+                                requested_url: requested_url.as_deref(),
+                                resolved_url: captured.resolved_url.as_deref(),
+                                full_text: &text,
+                                truncated: captured.truncated,
+                                extraction_version: &captured.extraction_version,
+                                acquired_at: checked,
+                                content_sha256: &new_digest,
+                            },
                         )
                         .await?;
                         mirror_legacy(
