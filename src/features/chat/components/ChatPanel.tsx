@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { Cpu, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, ScrollText } from 'lucide-react';
 
 import { ChatEmptyStateIngestDelta } from '@/features/chat/components/ChatEmptyStateIngestDelta';
+import { chatPaletteCommands } from '@/features/chat/components/chatPaletteCommands';
 import { ChatStarters } from '@/features/chat/components/ChatStarters';
 import { CompactionStatus } from '@/features/chat/components/CompactionStatus';
 import { Composer } from '@/features/chat/components/composer/Composer';
@@ -12,12 +12,16 @@ import { ConversationMemoryPanel } from '@/features/chat/components/Conversation
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
 import { ImportFailuresNotice } from '@/features/chat/components/ImportFailuresNotice';
 import { Message } from '@/features/chat/components/Message';
+import { NoConversationOpen } from '@/features/chat/components/NoConversationOpen';
 import { ConversationTangents } from '@/features/chat/components/tangents/ConversationTangents';
 import { UtilityModelNotice } from '@/features/chat/components/UtilityModelNotice';
-import { VirtualizedMessageList, type VirtualizedMessageListHandle } from '@/features/chat/components/VirtualizedMessageList';
+import { VirtualizedMessageList } from '@/features/chat/components/VirtualizedMessageList';
 import { useAttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
+import { useChatCompaction } from '@/features/chat/hooks/useChatCompaction';
+import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions';
 import { useComposer } from '@/features/chat/hooks/useComposer';
-import { useCompactionStore } from '@/features/chat/stores/compactionStore';
+import { useThreadMessages } from '@/features/chat/hooks/useThreadMessages';
+import { useThreadScroll } from '@/features/chat/hooks/useThreadScroll';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
@@ -49,8 +53,6 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   const createConversation = useConversationsStore((state) => state.createConversation);
   const regenerateResponse = useConversationsStore((state) => state.regenerateResponse);
   const forkConversation = useConversationsStore((state) => state.forkConversation);
-  const compactConversation = useConversationsStore((state) => state.compactConversation);
-  const moveConversationToSpace = useConversationsStore((state) => state.moveConversationToSpace);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const settings = useSettingsQuery().data;
 
@@ -62,171 +64,32 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   // The memory reader is an overlay off the palette, like the source reader:
   // a read-only look at what was recorded, never a place to edit it.
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
-  // A /compact outlives this panel (it carries on across a switch to
-  // Explorer and back), so where it stands lives in a store.
-  const compactionRun = useCompactionStore((state) =>
-    activeConversationId ? state.runs[activeConversationId] : undefined
-  );
-  const dismissCompaction = useCompactionStore((state) => state.dismiss);
-  const isCompacting = compactionRun?.state === 'running';
   const panelRef = useRef<HTMLDivElement>(null);
   const modelLabelRef = useRef<HTMLButtonElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const messageListRef = useRef<VirtualizedMessageListHandle>(null);
-  const previousConversationIdRef = useRef<string | null>(null);
-  const previousMessageCountRef = useRef(0);
-  const shouldAutoScrollRef = useRef(true);
-  const [visibleMessage, setVisibleMessage] = useState<{ conversationId: string | null; index: number }>({ conversationId: null, index: 0 });
-  const knownMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
-    conversationId: null,
-    ids: new Set(),
-  });
   const prefersReducedMotion = useReducedMotion();
 
-  const messages = useMemo(() => {
-    if (!activeConversationId) return [];
-
-    const realMessages =
-      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
-    const optimisticForConversation = Array.from(optimisticMessages.values()).filter(
-      (message) =>
-        message.conversationId === activeConversationId || message.conversationId === 'temp'
-    );
-    return [...realMessages, ...optimisticForConversation];
-  }, [activeConversationId, conversations, optimisticMessages]);
-
-  /**
-   * Raw content of the loaded messages, for resolving memory evidence spans.
-   *
-   * The memory panel needs the stored text, not the rendered markdown: its
-   * spans are UTF-8 byte offsets into what the backend holds.
-   */
-  const messageContentById = useMemo(() => {
-    const byId = new Map<string, string>();
-    for (const message of messages) {
-      if ('id' in message && typeof message.content === 'string') {
-        byId.set(message.id, message.content);
-      }
-    }
-    return byId;
-  }, [messages]);
-
-  const getMessageKey = useCallback(
-    (message: typeof messages[number]): string =>
-      'tempId' in message ? message.tempId : message.id,
-    []
+  const { messages, messageContentById, getMessageKey, getPersistedMessageId } = useThreadMessages(
+    activeConversationId,
+    conversations,
+    optimisticMessages
   );
-  const getPersistedMessageId = useCallback(
-    (message: typeof messages[number]): string | null => 'id' in message ? message.id : null,
-    []
-  );
+  const {
+    scrollContainerRef,
+    messageListRef,
+    shouldAutoScrollRef,
+    visibleMessage,
+    handleVisibleMessage,
+    navigateToMessage,
+    navigateToLatest,
+    freshMessageKeys,
+  } = useThreadScroll({ activeConversationId, messages, getMessageKey, prefersReducedMotion });
 
-  const handleVisibleMessage = useCallback((index: number) => {
-    setVisibleMessage({ conversationId: activeConversationId, index });
-  }, [activeConversationId]);
-
-  const navigateToMessage = useCallback((index: number) => {
-    // Jump to the beginning even when the answer is several screens tall.
-    // Disable following first so a streaming update cannot pull us back down.
-    shouldAutoScrollRef.current = false;
-    messageListRef.current?.scrollToIndex(index, { align: 'start', behavior: 'auto' });
-  }, []);
-
-  const navigateToLatest = useCallback(() => {
-    shouldAutoScrollRef.current = true;
-    messageListRef.current?.scrollToIndex(messages.length - 1, { align: 'end', behavior: 'auto' });
-  }, [messages.length]);
-
-  const freshMessageKeys = useMemo(() => {
-    const fresh = new Set<string>();
-    const tracker = knownMessageIdsRef.current;
-    if (tracker.conversationId !== activeConversationId) {
-      tracker.conversationId = activeConversationId ?? null;
-      tracker.ids = new Set(messages.map(getMessageKey));
-      return fresh;
-    }
-    for (const message of messages) {
-      const key = getMessageKey(message);
-      if (!tracker.ids.has(key)) {
-        fresh.add(key);
-        tracker.ids.add(key);
-      }
-    }
-    return fresh;
-  }, [activeConversationId, getMessageKey, messages]);
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    const previousConversationId = previousConversationIdRef.current;
-    const isConversationChange = previousConversationId !== activeConversationId;
-    const isInitialMessageLoad = previousMessageCountRef.current === 0;
-    previousConversationIdRef.current = activeConversationId ?? null;
-    previousMessageCountRef.current = messages.length;
-
-    if (isConversationChange) {
-      shouldAutoScrollRef.current = true;
-    } else if (!shouldAutoScrollRef.current) {
-      return;
-    }
-
-    // The global `prefers-reduced-motion` rule in index.css covers CSS
-    // transitions, not programmatic scrolling: this ride has to be opted out
-    // of here or it happens on every message.
-    messageListRef.current?.scrollToIndex(messages.length - 1, {
-      align: 'end',
-      // The conversation can arrive before its messages. Treat that first
-      // batch as a jump too; smooth scrolling through estimated long rows
-      // can stop partway down the history and compete with a navigation click.
-      behavior: isConversationChange || isInitialMessageLoad || prefersReducedMotion ? 'auto' : 'smooth',
-    });
-  }, [messages, activeConversationId, prefersReducedMotion]);
-
-  // The applied compaction for the active conversation, if any, drives the
-  // "Context compacted" divider. A /compact from this session takes
-  // precedence; otherwise the persisted record on the conversation, so the
-  // divider survives a reload.
-  const compactionRecord = activeConversationId
-    ? (compactionRun?.state === 'done' ? compactionRun.record : null) ??
-      conversations.find((conversation) => conversation.id === activeConversationId)
-        ?.compaction ??
-      null
-    : null;
-
-  const handleCompact = useCallback(
-    async (conversationId: string) => {
-      const runs = useCompactionStore.getState();
-      if (!runs.start(conversationId)) return;
-      // The status row lands at the end of the thread: take the reader there,
-      // since a minute of summarizing with nothing in view reads as nothing.
-      shouldAutoScrollRef.current = true;
-      window.requestAnimationFrame(() => {
-        const container = scrollContainerRef.current;
-        container?.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-      });
-      try {
-        const outcome = await compactConversation(conversationId);
-        if (outcome.ok) {
-          useCompactionStore.getState().finish(conversationId, outcome.record);
-          // No "lossless"/"complete" framing: compaction summarizes, and the
-          // only thing it actually guarantees is that active requirements
-          // survive and the raw messages are still searchable.
-          toast.success('Context compacted', {
-            message:
-              'Older context compacted. Active requirements preserved; original messages remain searchable.',
-          });
-        } else {
-          useCompactionStore.getState().fail(conversationId, outcome.error);
-        }
-      } catch (error) {
-        useCompactionStore
-          .getState()
-          .fail(conversationId, error instanceof Error ? error.message : String(error));
-      }
-    },
-    [compactConversation]
-  );
+  const { compactionRun, dismissCompaction, isCompacting, compactionRecord, handleCompact } = useChatCompaction({
+    activeConversationId,
+    conversations,
+    scrollContainerRef,
+    shouldAutoScrollRef,
+  });
 
   const handleCancel = async () => {
     if (!activeConversationId || !isSending) return;
@@ -301,63 +164,12 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
   });
   const { applyFocusDocuments, resolveEffectiveToolPreferences } = composer;
   const { chooseFiles } = attachments;
-
-  /**
-   * Move this chat to another space, which changes the documents every later
-   * answer can draw on. The toast names the space: General is a space like any
-   * other, and calling a move there "searching your whole vault" promised
-   * documents filed elsewhere that it cannot reach.
-   */
-  const handleChangeSpace = useCallback(
-    async (spaceId: string, spaceName: string) => {
-      if (!activeConversationId) return;
-      // A document pinned in the old space is not in the new one, and focus
-      // fails closed: keeping it would leave the chat asking nothing at all.
-      applyFocusDocuments([]);
-      await moveConversationToSpace(activeConversationId, spaceId);
-      toast.success(`Now searching ${spaceName}`, {
-        message: 'Answers from here on use the documents filed there.',
-      });
-    },
-    [activeConversationId, applyFocusDocuments, moveConversationToSpace]
-  );
-
-  const handleSearchGeneral = useCallback(
-    () => handleChangeSpace(GENERAL_SPACE_ID, 'General'),
-    [handleChangeSpace]
-  );
-
-  const handleSwitchActiveModel = useCallback(
-    async (modelId: string, modelLabel: string) => {
-      const previousModelId = activeModel?.model_id ?? null;
-      const previousLabel = activeModel?.model_name ?? previousModelId;
-      try {
-        await setActiveChatModel(modelId);
-      } catch (error) {
-        toast.error("Couldn't switch model", {
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      // The switch is app-wide, so always offer the way back — same as the
-      // "Try with another model" toast on a message.
-      toast.success(`Switched to ${modelLabel}`, {
-        ...(previousModelId && previousModelId !== modelId
-          ? {
-              action: {
-                label: 'Switch back',
-                onClick: () => {
-                  void setActiveChatModel(previousModelId).then(() => {
-                    toast.success(`Back to ${previousLabel}`);
-                  });
-                },
-              },
-            }
-          : {}),
-      });
-    },
-    [activeModel, setActiveChatModel]
-  );
+  const { handleChangeSpace, handleSearchGeneral, handleSwitchActiveModel } = useChatSwitchActions({
+    activeConversationId,
+    applyFocusDocuments,
+    activeModel,
+    setActiveChatModel,
+  });
 
   const handleCreateEmptyStateConversation = async () => {
     if (isCreatingConversation) return;
@@ -380,105 +192,25 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
     activeConversationId && !isSending && lastMessage?.role === 'assistant'
   );
   const paletteCommands = useMemo(
-    () => [
-      {
-        id: 'chat.regenerate',
-        label: 'Regenerate answer',
-        group: 'Chat',
-        icon: RefreshCw,
-        enabled: canRegenerate,
-        run: () => {
-          if (!activeConversationId) return;
-          // Re-run the turn the composer is describing, not a default one.
-          void regenerateResponse(
-            activeConversationId,
-            resolveEffectiveToolPreferences()
-          ).then((outcome) => {
-            if (outcome === 'answered' || outcome === 'cancelled') return;
-            toast.error("Couldn't regenerate", {
-              message:
-                outcome === 'busy'
-                  ? 'This conversation is still answering.'
-                  : 'Your question is back in the composer.',
-            });
-          });
-        },
-      },
-      {
-        id: 'chat.branch',
-        label: 'Branch this conversation',
-        group: 'Chat',
-        icon: GitBranch,
-        enabled: Boolean(activeConversationId) && messages.length > 0,
-        run: () => {
-          if (activeConversationId) {
-            void forkConversation(activeConversationId).then((newId) => {
-              if (newId) toast.success('Branched', { message: "You're in the new conversation." });
-            });
-          }
-        },
-      },
-      {
-        id: 'chat.compact',
-        label: 'Compact context',
-        group: 'Chat',
-        icon: Scissors,
-        enabled: Boolean(activeConversationId) && !isCompacting && messages.length > 0,
-        description: 'Fold older messages into a summary (/compact).',
-        run: () => {
-          if (activeConversationId) void handleCompact(activeConversationId);
-        },
-      },
-      {
-        id: 'chat.memory',
-        label: 'Show conversation memory',
-        group: 'Chat',
-        icon: ScrollText,
-        enabled: Boolean(activeConversationId),
-        description: 'What was recorded, and the quotation behind each item.',
-        run: () => {
-          setIsMemoryOpen(true);
-        },
-      },
-      {
-        id: 'chat.switch-model',
-        label: 'Switch chat model',
-        group: 'Chat',
-        icon: Cpu,
-        // The picker hangs off the active-model label, so the verb only works
-        // when that label is on screen. No verb that does nothing.
-        enabled:
-          Boolean(activeModelLabel) &&
-          downloadedModels.some((model) => model.model_type === 'language_model'),
-        run: () => {
-          modelLabelRef.current?.click();
-        },
-      },
-      {
-        id: 'chat.add-files',
-        label: 'Add files to this conversation',
-        group: 'Chat',
-        icon: Paperclip,
-        enabled: Boolean(activeConversationId),
-        description: 'Or drop them onto the conversation.',
-        run: () => {
-          void chooseFiles();
-        },
-      },
-      {
-        id: 'chat.search-general',
-        label: 'Move this chat to General',
-        group: 'Chat',
-        icon: Library,
-        description: conversationSpaceName
-          ? `It searches ${conversationSpaceName} now.`
-          : undefined,
-        enabled: isScopedToLinkedFiles,
-        run: () => {
-          void handleSearchGeneral();
-        },
-      },
-    ],
+    () =>
+      chatPaletteCommands({
+        activeConversationId,
+        activeModelLabel,
+        canRegenerate,
+        downloadedModels,
+        forkConversation,
+        chooseFiles,
+        handleCompact,
+        handleSearchGeneral,
+        conversationSpaceName,
+        isCompacting,
+        isScopedToLinkedFiles,
+        messageCount: messages.length,
+        regenerateResponse,
+        resolveEffectiveToolPreferences,
+        setIsMemoryOpen,
+        modelLabelRef,
+      }),
     [
       activeConversationId,
       activeModelLabel,
@@ -500,25 +232,10 @@ export function ChatPanel({ composerNotice, composerChips }: ChatPanelProps = {}
 
   if (!activeConversationId) {
     return (
-      <div className="flex h-full min-h-0 min-w-0 flex-1 items-center justify-center bg-bg">
-        <div className="max-w-md px-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-[hsl(var(--text-primary)/0.05)] text-text-tertiary shadow-[inset_0_0_0_1px_hsl(var(--text-primary)/0.05)]">
-            <MessageCircle className="h-5 w-5" strokeWidth={1.6} />
-          </div>
-          <p className="font-serif text-[19px] font-medium tracking-[-0.015em] text-text-primary">No conversation open.</p>
-          <p className="mt-1.5 text-ui leading-relaxed text-text-muted">Pick one from the list, or start a new one and ask your library a question.</p>
-          <button
-            type="button"
-            onClick={() => { void handleCreateEmptyStateConversation(); }}
-            disabled={isCreatingConversation}
-            aria-label="Create new conversation"
-            className="pressable mt-5 inline-flex h-8 items-center justify-center gap-2 rounded-md bg-action px-3 text-ui font-medium text-action-fg shadow-action transition-[background-color,scale] duration-fast hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            New conversation
-            <kbd className="kbd bg-[hsl(var(--action-fg)/0.14)] text-[hsl(var(--action-fg)/0.8)] shadow-none">⌘N</kbd>
-          </button>
-        </div>
-      </div>
+      <NoConversationOpen
+        isCreatingConversation={isCreatingConversation}
+        onCreate={handleCreateEmptyStateConversation}
+      />
     );
   }
 
