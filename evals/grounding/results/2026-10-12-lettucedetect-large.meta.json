@@ -1,0 +1,18 @@
+{
+  "checker": "lettucedetect-large",
+  "family": "LettuceDetect",
+  "repo": "KRLabsOrg/lettucedect-large-modernbert-en-v1",
+  "revision": "22296c700ef0ba4ab3e5c9afffa0185caaf61e52",
+  "architecture": "ModernBERT-large token classifier",
+  "parameters": 395833346,
+  "device": "cpu",
+  "threads": 4,
+  "load_seconds": 2.237632374977693,
+  "pairs": 101,
+  "median_latency_ms": 136.19645906146616,
+  "torch": "2.14.1",
+  "transformers": "5.19.0",
+  "python": "3.11.15",
+  "machine": "arm64",
+  "decision_rule": "any claim token with P(hallucinated) > 0.5 makes it unsupported"
+}

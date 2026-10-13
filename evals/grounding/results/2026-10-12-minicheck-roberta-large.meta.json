@@ -1,0 +1,18 @@
+{
+  "checker": "minicheck-roberta-large",
+  "family": "MiniCheck",
+  "repo": "lytang/MiniCheck-RoBERTa-Large",
+  "revision": "74c8919647e61ed0f71bc177d94f10930f090068",
+  "architecture": "RoBERTa-large sequence classifier",
+  "parameters": 355361794,
+  "device": "cpu",
+  "threads": 4,
+  "load_seconds": 3.8030320829711854,
+  "pairs": 101,
+  "median_latency_ms": 110.86433299351484,
+  "torch": "2.14.1",
+  "transformers": "5.19.0",
+  "python": "3.11.15",
+  "machine": "arm64",
+  "decision_rule": "P(supported) > 0.5 (package pred_label)"
+}
