@@ -14,7 +14,7 @@ use crate::application::ports::{LLMPort, RepositoryPort};
 use crate::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
-use crate::interfaces::di::Container;
+use crate::features::compare::di::CompareDeps;
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::timestamps::now_db_timestamp;
 
@@ -245,13 +245,13 @@ pub(super) async fn fill_row(
 }
 
 async fn build_row(
-    container: &Container,
+    deps: &CompareDeps,
     llm: &Arc<dyn LLMPort>,
     document: &ResolvedDocument,
     columns: &[String],
 ) -> Result<CompareRowDto> {
     let super::retrieval::DocumentChunks { chunks, degraded } =
-        retrieve_for_document(container, &document.id, columns).await?;
+        retrieve_for_document(deps, &document.id, columns).await?;
     if chunks.is_empty() {
         return Ok(empty_row(
             document,
@@ -282,7 +282,7 @@ async fn build_row(
 }
 
 pub async fn compare_documents_impl(
-    container: &Container,
+    deps: &CompareDeps,
     request: CompareDocumentsRequestDto,
 ) -> Result<CompareTableDto> {
     let columns = sanitize_columns(request.columns);
@@ -300,7 +300,7 @@ pub async fn compare_documents_impl(
     }
 
     // Resolve titles once. A missing document is a row, never a hard failure.
-    let repository = container.document_repository();
+    let repository = &deps.documents;
     let mut documents: Vec<ResolvedDocument> = Vec::with_capacity(document_ids.len());
     for id in &document_ids {
         match RepositoryPort::find_by_id(repository.as_ref(), id).await {
@@ -320,7 +320,7 @@ pub async fn compare_documents_impl(
     }
 
     // Without a model there is no table: this is the one whole-request failure.
-    let llm = container.get_or_load_llm().await.map_err(|error| {
+    let llm = deps.load_llm.load().await.map_err(|error| {
         debug!(%error, "compare: no language model available");
         AppError::ServiceNotAvailable(
             "No language model is loaded. Pick one in Settings → AI.".to_string(),
@@ -338,7 +338,7 @@ pub async fn compare_documents_impl(
                 }
                 match tokio::time::timeout(
                     Duration::from_secs(PER_DOCUMENT_TIMEOUT_SECS),
-                    build_row(container, &llm, &document, &columns),
+                    build_row(deps, &llm, &document, &columns),
                 )
                 .await
                 {
