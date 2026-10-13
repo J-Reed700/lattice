@@ -124,6 +124,27 @@ pub struct Container {
     pub(crate) folder_index:
         Option<Arc<crate::features::explorer::index::manager::FolderIndexManager>>,
 
+    /// The one registry of in-flight turn stop buttons for this process: a
+    /// stop press and the turn it targets must meet in the same map.
+    pub(crate) turn_cancellation:
+        Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry>,
+
+    /// The one map of commands waiting on their deep research turns for this
+    /// process: a research job and the command it answers must meet in it.
+    pub(crate) research_waiters: Arc<crate::features::conversation::chat::ResearchWaiters>,
+
+    /// The one registry of in-flight learning outline runs for this process.
+    pub(crate) outline_run_registry:
+        Arc<crate::features::learning::outline_progress::OutlineRunRegistry>,
+
+    /// The one registry of learning outline drafts being reviewed, repaired
+    /// or accepted in this process.
+    pub(crate) draft_run_registry: Arc<crate::features::learning::outline_draft::DraftRunRegistry>,
+
+    /// The one registry of executing learning practical runs for this process.
+    pub(crate) practical_run_registry:
+        Arc<crate::features::learning::practical_runs::PracticalRunRegistry>,
+
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
     /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
@@ -296,6 +317,18 @@ impl Container {
 
         let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
 
+        let turn_cancellation = Arc::new(
+            crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
+        );
+        let research_waiters =
+            Arc::new(crate::features::conversation::chat::ResearchWaiters::new());
+        let outline_run_registry =
+            Arc::new(crate::features::learning::outline_progress::OutlineRunRegistry::new());
+        let draft_run_registry =
+            Arc::new(crate::features::learning::outline_draft::DraftRunRegistry::new());
+        let practical_run_registry =
+            Arc::new(crate::features::learning::practical_runs::PracticalRunRegistry::new());
+
         Ok(Self {
             core,
             system,
@@ -315,6 +348,11 @@ impl Container {
             vault_write_suppression,
             settings_side_effects,
             jobs,
+            turn_cancellation,
+            research_waiters,
+            outline_run_registry,
+            draft_run_registry,
+            practical_run_registry,
             folder_index: None,
             app_handle: None,
         })
@@ -324,6 +362,25 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        // The vault writer starts before the container exists, so its corpus
+        // sink is installed here, once the indexing pipeline is built. Until
+        // then — and in tests that skip this step — the writer defers its
+        // outbox entries and retries on the next pass. The sink gets only the
+        // pieces it uses, never the container: the container owns the writer,
+        // so a container handle inside the sink would be a reference cycle
+        // that keeps the writer's lifetime guard from ever dropping.
+        use crate::features::indexing::note_index_sink::NoteIndexSinkAdapter;
+        let note_index_sink = NoteIndexSinkAdapter::new(
+            self.index_file_use_case(),
+            self.delete_document_use_case(),
+            Arc::clone(self.indexing.document_repo()),
+            Arc::new(self.active_embedding()),
+            self.get_settings_use_case(),
+            self.file_access_config(),
+            Arc::clone(self.indexing.indexing_state()),
+        );
+        self.vault_writer
+            .set_note_index_sink(Arc::new(note_index_sink));
         // Watcher reads settings once and exits if disabled.
         crate::features::vault::watcher::start_vault_watcher(
             Arc::clone(self.system.get_settings_use_case()),
@@ -362,6 +419,30 @@ impl Container {
 
     pub fn jobs(&self) -> &Arc<crate::shared::runtime::jobs::JobRuntime> {
         &self.jobs
+    }
+
+    /// The one registry of in-flight learning outline runs: the commands
+    /// that start or stop a run all consult this same map.
+    pub fn outline_run_registry(
+        &self,
+    ) -> Arc<crate::features::learning::outline_progress::OutlineRunRegistry> {
+        Arc::clone(&self.outline_run_registry)
+    }
+
+    /// The one registry of learning outline drafts in use: generation,
+    /// repair and acceptance of a draft all consult this same set.
+    pub fn draft_run_registry(
+        &self,
+    ) -> Arc<crate::features::learning::outline_draft::DraftRunRegistry> {
+        Arc::clone(&self.draft_run_registry)
+    }
+
+    /// The one registry of executing learning practical runs: the commands
+    /// that start or cancel a run all consult this same map.
+    pub fn practical_run_registry(
+        &self,
+    ) -> Arc<crate::features::learning::practical_runs::PracticalRunRegistry> {
+        Arc::clone(&self.practical_run_registry)
     }
 
     pub fn folder_index(
@@ -489,5 +570,165 @@ impl Container {
         self.file_access_config().set_allowed_roots(roots)?;
         tracing::info!(count, "recomputed file-access allowed roots");
         Ok(())
+    }
+}
+
+/// The note-index sink's readiness gate, implemented over the embedding
+/// runtime and its loader: the same single-flight load with retry cooldown
+/// that `get_or_load_embedding` gives every other caller, then the shared
+/// readiness check the `index_file` command applies. Cross-feature — the
+/// port is indexing's, the runtime is embedding's — so it is bound here,
+/// where both may be named.
+#[async_trait::async_trait]
+impl crate::features::indexing::note_index_sink::EmbeddingReadiness
+    for crate::features::embedding::runtime::ActiveEmbedding
+{
+    async fn ensure_ready(&self) -> Result<()> {
+        crate::features::indexing::commands::require_embedding_ready(self.get_or_load().await).await
+    }
+}
+
+/// The note-index sink's chunk-size preference, implemented over the
+/// settings use case. The impl sits at the composition root because it
+/// crosses two features — indexing's port, satisfied from settings — and
+/// the root is the one place allowed to name both.
+#[async_trait::async_trait]
+impl crate::features::indexing::note_index_sink::ChunkSizePreference
+    for crate::features::settings::use_cases::GetSettingsUseCase
+{
+    async fn chunk_size(&self) -> Result<u32> {
+        self.execute()
+            .await
+            .map(|settings| settings.indexing.chunk_size)
+    }
+}
+
+/// The reranker setup's toggle, implemented over the settings use case, for
+/// the same reason as the chunk-size preference: search's port, satisfied
+/// from settings, bound where both may be named.
+#[async_trait::async_trait]
+impl crate::features::search::reranker_setup::RerankingToggle for Container {
+    async fn enabled(&self) -> Result<bool> {
+        self.get_settings_use_case()
+            .execute()
+            .await
+            .map(|settings| settings.search.enable_reranking)
+    }
+}
+
+/// The journal synthesis's entry reads, implemented over the references and
+/// daily-notes repositories. The impl sits at the composition root for the
+/// same reason as its siblings: conversation's port, satisfied from two
+/// other features, bound where all three may be named.
+#[async_trait::async_trait]
+impl crate::features::conversation::chat::ports::SynthesisEntries for Container {
+    async fn references_created_since(
+        &self,
+        cutoff: &str,
+        limit: i64,
+    ) -> crate::shared::error::Result<
+        Vec<crate::features::references::repository::PassageReferenceRecord>,
+    > {
+        crate::features::references::repository::PassageReferenceRepository::new(
+            self.db_pool().clone(),
+        )
+        .list_created_since(cutoff, limit)
+        .await
+    }
+
+    async fn notes_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> crate::shared::error::Result<
+        Vec<crate::features::conversation::chat::ports::StoredJournalPage>,
+    > {
+        let rows = crate::features::daily_notes::repository::DailyNotesRepository::new(
+            self.db_pool().clone(),
+        )
+        .list_in_date_range(start_date, end_date)
+        .await?;
+        // Field for field, so a column added to the row fails to compile here.
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let crate::features::daily_notes::repository::WorkspaceNoteRecord {
+                    revision,
+                    id,
+                    title,
+                    journal_id,
+                    content,
+                    linked_document_ids,
+                    linked_conversation_ids,
+                    highlights_json,
+                    sticky_notes_json,
+                    conversation_snapshots_json,
+                    sources_json,
+                    created_at,
+                    updated_at,
+                } = row;
+                crate::features::conversation::chat::ports::StoredJournalPage {
+                    revision,
+                    id,
+                    title,
+                    journal_id,
+                    content,
+                    linked_document_ids,
+                    linked_conversation_ids,
+                    highlights_json,
+                    sticky_notes_json,
+                    conversation_snapshots_json,
+                    sources_json,
+                    created_at,
+                    updated_at,
+                }
+            })
+            .collect())
+    }
+
+    async fn hydrate_note(
+        &self,
+        page: crate::features::conversation::chat::ports::StoredJournalPage,
+    ) -> crate::shared::error::Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+        let crate::features::conversation::chat::ports::StoredJournalPage {
+            revision,
+            id,
+            title,
+            journal_id,
+            content,
+            linked_document_ids,
+            linked_conversation_ids,
+            highlights_json,
+            sticky_notes_json,
+            conversation_snapshots_json,
+            sources_json,
+            created_at,
+            updated_at,
+        } = page;
+        let row = crate::features::daily_notes::repository::WorkspaceNoteRecord {
+            revision,
+            id,
+            title,
+            journal_id,
+            content,
+            linked_document_ids,
+            linked_conversation_ids,
+            highlights_json,
+            sticky_notes_json,
+            conversation_snapshots_json,
+            sources_json,
+            created_at,
+            updated_at,
+        };
+        crate::features::daily_notes::commands::hydrate_workspace_note(
+            &crate::features::daily_notes::repository::DailyNotesRepository::new(
+                self.db_pool().clone(),
+            ),
+            &crate::features::conversation::repository::ConversationRepository::new(
+                self.db_pool().clone(),
+            ),
+            row,
+        )
+        .await
     }
 }
