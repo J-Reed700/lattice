@@ -595,6 +595,13 @@ impl IndexingModule {
         &self.indexing.chunk_repo
     }
 
+    /// Document rows: the sink adapter needs the same repository the
+    /// use cases above use, so a mirrored note resolves to the document
+    /// a user-initiated delete would have found.
+    pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
+        &self.indexing.document_repo
+    }
+
     /// Opens the transactions that commit an imported document whole.
     pub fn uow_factory(&self) -> &Arc<dyn crate::application::ports::UnitOfWorkFactory> {
         &self.indexing.uow_factory

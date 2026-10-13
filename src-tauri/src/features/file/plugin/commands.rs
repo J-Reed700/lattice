@@ -33,14 +33,9 @@ fn unwrap_api_result<T>(result: crate::shared::ipc::ApiResult<T>) -> Result<T, A
 }
 
 async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<String>>) {
-    const DEFAULT_CHUNK_TOKENS: usize = 800;
-    const MIN_CHUNK_TOKENS: usize = 64;
-    const MAX_CHUNK_TOKENS: usize = 4096;
-
     match container.get_settings_use_case().execute().await {
         Ok(settings) => {
-            let chunk_tokens =
-                (settings.indexing.chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS);
+            let chunk_tokens = indexing_commands::chunk_tokens_for(settings.indexing.chunk_size);
             let include_extensions = if settings.indexing.file_types.is_empty() {
                 None
             } else {
@@ -53,7 +48,7 @@ async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<
                 error = %error,
                 "Failed to resolve indexing settings for file plugin; using defaults"
             );
-            (DEFAULT_CHUNK_TOKENS, None)
+            (indexing_commands::DEFAULT_CHUNK_TOKENS, None)
         }
     }
 }
