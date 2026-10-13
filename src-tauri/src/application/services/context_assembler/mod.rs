@@ -27,13 +27,23 @@
 //! supporting material, the date and the request, in that order. Two turns of
 //! the same conversation therefore share every message up to the newest
 //! answer, and the server re-reads only what was added.
+//!
+//! That holds past the window too, because the window is anchored: it opens
+//! right after the last message the summary covers and stays there while the
+//! budget allows, rather than reaching back as far as it can and starting one
+//! turn later every time a turn is added. When it no longer fits it has to
+//! start later, and the plan asks for the summary to be refolded over what it
+//! dropped ([`ContextPlan::summary_refold`]). Consolidation does that after
+//! the answer, and the window then opens at the summary's new end.
 
 pub mod budget;
 pub mod plan;
 pub mod render;
 
 use crate::application::ports::llm_port::CompletionInput;
-use crate::domain::conversation::memory::{MemoryItem, MemorySnapshot, SourceMessage};
+use crate::domain::conversation::memory::{
+    MemoryItem, MemorySnapshot, SourceMessage, SummaryRefold,
+};
 use crate::shared::error::{AppError, Result};
 
 pub use budget::{
@@ -282,16 +292,48 @@ impl ContextAssembler {
         // paraphrase of them, and whether the summary is needed at all depends
         // on how far back the window reaches. Newest first so the most recent
         // turn is the one that survives, then restored to chronological order.
-        let mut recent_messages: Vec<(i64, CompletionInput)> = Vec::new();
-        let mut recent_tokens = 0usize;
-        let mut oldest_kept_sequence = i64::MAX;
+        //
+        // A transcript that fits whole is carried whole. Otherwise, with a
+        // summary to carry, the window opens right after the last message it
+        // covers and never reaches further back, even when there is room: the
+        // summary and the oldest turns then stay the same from one turn to the
+        // next, and each request extends the one before it. A summary too
+        // large for its pool is not carried, so it anchors nothing.
+        let summary = request
+            .snapshot
+            .filter(|snapshot| snapshot.is_usable())
+            .and_then(|snapshot| {
+                let message = render::render_summary(snapshot.summary.as_deref()?)?;
+                let cost = self.count_input(&message);
+                Some((snapshot.summary_through_sequence, message, cost))
+            });
+        let candidates: Vec<(i64, CompletionInput, usize)> = request
+            .recent
+            .iter()
+            .map(|message| {
+                let rendered = render::render_recent(message);
+                let cost = self.count_input(&rendered);
+                (message.sequence, rendered, cost)
+            })
+            .collect();
         let recent_pool = allocation
             .recent_history
             .max(newest_turn_tokens)
             .min(remaining);
-        for message in request.recent.iter().rev() {
-            let rendered = render::render_recent(message);
-            let cost = self.count_input(&rendered);
+        let whole_transcript_fits = request.recent_reaches_start
+            && candidates.iter().map(|(_, _, cost)| cost).sum::<usize>() <= recent_pool;
+        let anchored_after = summary
+            .as_ref()
+            .filter(|(_, _, cost)| !whole_transcript_fits && *cost <= allocation.summary)
+            .map_or(0, |(through, _, _)| *through);
+        let mut recent_messages: Vec<(i64, CompletionInput)> = Vec::new();
+        let mut recent_tokens = 0usize;
+        let mut oldest_kept_sequence = i64::MAX;
+        for (sequence, rendered, cost) in candidates
+            .into_iter()
+            .rev()
+            .take_while(|(sequence, _, _)| *sequence > anchored_after)
+        {
             if recent_tokens + cost > recent_pool && !recent_messages.is_empty() {
                 break;
             }
@@ -299,8 +341,8 @@ impl ContextAssembler {
                 break;
             }
             recent_tokens += cost;
-            oldest_kept_sequence = oldest_kept_sequence.min(message.sequence);
-            recent_messages.push((message.sequence, rendered));
+            oldest_kept_sequence = oldest_kept_sequence.min(sequence);
+            recent_messages.push((sequence, rendered));
         }
         recent_messages.reverse();
         remaining = remaining.saturating_sub(recent_tokens);
@@ -319,24 +361,18 @@ impl ContextAssembler {
             });
 
         // --- 6. working summary --------------------------------------------
-        // Background consolidation refolds the summary after every answer, so
-        // carrying it while the window still holds the whole transcript would
-        // change the second message of every request — and with it the cached
-        // prefix of everything after — to repeat text the model already has
-        // verbatim. It is carried only once older turns have left the window.
+        // Carried only once older turns have left the window. While the window
+        // still holds the whole transcript the summary would only repeat text
+        // the model has verbatim, and a request without it stays append-only
+        // from the first turn.
         let window_reaches_start = request.recent_reaches_start
             && request
                 .recent
                 .first()
                 .is_none_or(|first| oldest_kept_sequence == first.sequence);
-        let summary_message = request
-            .snapshot
-            .filter(|snapshot| snapshot.is_usable() && !window_reaches_start)
-            .and_then(|snapshot| snapshot.summary.as_deref())
-            .and_then(render::render_summary);
+        let summary_message = summary.filter(|_| !window_reaches_start);
         let summary_message = match summary_message {
-            Some(message) => {
-                let cost = self.count_input(&message);
+            Some((_, message, cost)) => {
                 // Dropped whole rather than sliced: cutting a summary mid-clause
                 // can invert a condition it was describing.
                 if cost <= allocation.summary.min(remaining) {
@@ -479,6 +515,9 @@ impl ContextAssembler {
             || evicted_sequences
                 .iter()
                 .any(|sequence| *sequence > request.processed_through_sequence);
+        // Measured on the window as sent, after overflow eviction, which can
+        // move its start too.
+        let summary_refold = self.summary_refold(request, &layout.recent, anchored_after);
 
         Ok(ContextPlan {
             messages: layout.into_messages(),
@@ -493,8 +532,76 @@ impl ContextAssembler {
             accounting,
             retrieval,
             compaction_required: dropped_unprocessed,
+            summary_refold,
             max_output_tokens: allocation.output_reserved,
             used_memory_ids,
+        })
+    }
+
+    /// The refold this request asks for, when its window had to drop turns
+    /// the summary does not cover.
+    ///
+    /// `covered` is where the window was anchored: the summary's end, or zero
+    /// when no summary anchors it. An uncovered turn was dropped when a
+    /// candidate between the two was left out, or when the candidates begin
+    /// past it because older ones were never read.
+    ///
+    /// The summary is asked to end inside the window rather than just before
+    /// it. The newest half of what the window carried stays verbatim, opening
+    /// on a user turn, and the rest is folded, so the next window starts with
+    /// half its room free and the turns that follow extend an unchanged prefix
+    /// until it fills. Half is counted in tokens, and also in messages when it
+    /// was the candidate list rather than the budget that ended the window.
+    fn summary_refold(
+        &self,
+        request: &ContextRequest<'_>,
+        window: &[(i64, CompletionInput)],
+        covered: i64,
+    ) -> Option<SummaryRefold> {
+        let window_start = window.first().map(|(sequence, _)| *sequence)?;
+        let first_candidate = request.recent.first().map(|message| message.sequence);
+        let unread_before_candidates = !request.recent_reaches_start
+            && first_candidate.is_some_and(|first| first > covered.saturating_add(1));
+        let dropped = unread_before_candidates
+            || request
+                .recent
+                .iter()
+                .any(|message| message.sequence > covered && message.sequence < window_start);
+        if !dropped {
+            return None;
+        }
+
+        let costs: Vec<usize> = window
+            .iter()
+            .map(|(_, message)| self.count_input(message))
+            .collect();
+        let token_room = costs.iter().sum::<usize>() / 2;
+        let message_room = if first_candidate == Some(window_start) {
+            window.len() / 2
+        } else {
+            window.len()
+        };
+        let mut kept_tokens = 0usize;
+        let mut kept = 0usize;
+        for cost in costs.iter().rev() {
+            if kept >= message_room || kept_tokens.saturating_add(*cost) > token_room {
+                break;
+            }
+            kept += 1;
+            kept_tokens += cost;
+        }
+        let through_sequence = match window
+            .iter()
+            .skip(window.len().saturating_sub(kept))
+            .find(|(_, message)| is_user_turn(message))
+        {
+            Some((next_start, _)) => next_start.saturating_sub(1),
+            // Nothing small enough stays: the whole window is folded.
+            None => window.last().map(|(sequence, _)| *sequence)?,
+        };
+        Some(SummaryRefold {
+            window_start_sequence: window_start,
+            through_sequence,
         })
     }
 
@@ -685,6 +792,11 @@ impl Layout<'_> {
         messages.push(self.last.render());
         messages
     }
+}
+
+/// Whether a rendered recent message is one of the user's own turns.
+fn is_user_turn(message: &CompletionInput) -> bool {
+    matches!(message, CompletionInput::Message { role, .. } if role == "user")
 }
 
 /// Label of a prepared optional memory item among the evidence.

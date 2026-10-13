@@ -14,6 +14,7 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::application::ports::LLMPort;
+use crate::domain::conversation::memory::SummaryRefold;
 use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
@@ -187,7 +188,16 @@ pub async fn compact_for_turn(
 /// interactive work. The conversation's compaction slot coalesces queued
 /// requests through the durable watermark: a consolidation waiting behind
 /// another of the same conversation finds nothing left to do.
-pub fn consolidate_after_turn(container: Container, conversation_id: String) {
+///
+/// `summary_refold` is the turn's plan asking for the working summary to
+/// move, because its window had to drop turns the summary does not cover.
+/// Without it consolidation extracts and leaves the summary alone, so the
+/// next request still opens the same way.
+pub fn consolidate_after_turn(
+    container: Container,
+    conversation_id: String,
+    summary_refold: Option<SummaryRefold>,
+) {
     let cancel = crate::shared::runtime::background::cancellation_token();
     crate::shared::runtime::background::spawn(async move {
         let result: Result<()> = async {
@@ -215,6 +225,7 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
                 CompactionRequest {
                     trigger: CompactionTrigger::Maintenance,
                     cancellation: Some(cancel.clone()),
+                    summary_refold,
                     ..Default::default()
                 },
             )

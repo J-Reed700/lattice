@@ -3,6 +3,7 @@ use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
 use super::research::Rounds;
 use super::*;
+use crate::domain::conversation::memory::SummaryRefold;
 use crate::features::conversation::chat::tool_loop::LoopRequest;
 
 /// The answer and what it cites, before it is saved.
@@ -13,6 +14,8 @@ pub(super) struct GeneratedAnswer {
     pub(super) retrieval_trace: Option<RetrievalTraceDto>,
     pub(super) tokens: TurnTokensDto,
     pub(super) memory_usage: Option<serde_json::Value>,
+    /// Passed on to consolidation after the answer is saved.
+    pub(super) summary_refold: Option<SummaryRefold>,
 }
 
 /// `research` saves each round of a research turn, and resumes one after the
@@ -41,6 +44,7 @@ pub(super) async fn generate_answer(
         max_output_tokens,
         input_budget,
         memory_usage,
+        summary_refold,
     } = request;
     let generation_start = Instant::now();
     let mut tokens = TurnTokensDto::default();
@@ -94,5 +98,6 @@ pub(super) async fn generate_answer(
         retrieval_trace,
         tokens,
         memory_usage,
+        summary_refold,
     })
 }

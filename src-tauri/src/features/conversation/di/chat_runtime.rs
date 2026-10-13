@@ -148,8 +148,16 @@ impl ChatPolicy for Container {
     ) -> Result<()> {
         crate::features::conversation::compaction::compact_for_turn(self, id, cancel).await
     }
-    fn consolidate_after_turn(&self, id: String) {
-        crate::features::conversation::compaction::consolidate_after_turn(self.clone(), id);
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
+    ) {
+        crate::features::conversation::compaction::consolidate_after_turn(
+            self.clone(),
+            id,
+            summary_refold,
+        );
     }
 }
 

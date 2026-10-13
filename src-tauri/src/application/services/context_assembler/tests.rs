@@ -70,6 +70,9 @@ fn snapshot(items: Vec<MemoryItem>, summary: Option<&str>, watermark: i64) -> Me
         transcript_revision: 11,
         active_items: items,
         summary: summary.map(str::to_owned),
+        // The summary covers older history outside `recent`, so it anchors
+        // nothing a test passes in unless the test says where it ends.
+        summary_through_sequence: 0,
         latest_sequence: watermark,
     }
 }

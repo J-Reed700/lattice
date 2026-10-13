@@ -463,6 +463,86 @@ async fn recompacting_updates_the_one_summary_row_in_place() {
 }
 
 #[tokio::test]
+async fn the_snapshot_reports_where_the_summary_ends_and_a_commit_without_one_keeps_it() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let first_answer: i64 =
+        sqlx::query_scalar("SELECT sequence FROM conversation_messages WHERE id = 'mm2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let empty = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(
+        empty.summary_through_sequence, 0,
+        "no summary covers nothing"
+    );
+
+    // Extraction reaches the second exchange; the summary ends at the first.
+    let precondition = |revision: i64, operation: &str| MemoryCommitPreconditions {
+        conversation_id: conversation_id.clone(),
+        expected_transcript_revision: empty.transcript_revision,
+        expected_memory_revision: revision,
+        operation_id: operation.to_string(),
+    };
+    repo.commit_memory(
+        &precondition(0, "fold"),
+        &candidate(
+            MemoryCommit {
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            empty.transcript_revision,
+            Some(SummaryUpdate {
+                summary_text: "Deployment waits for approval.".to_string(),
+                up_to_message_id: "mm2".into(),
+                original_message_count: 2,
+                original_tokens: 20,
+                summary_tokens: 4,
+            }),
+        ),
+    )
+    .await
+    .unwrap();
+    let folded = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(folded.state.processed_through_sequence, 4);
+    assert_eq!(folded.summary_through_sequence, first_answer);
+
+    // The next consolidation extracts without refolding: the summary and its
+    // end stay where they were, and it is carried into the new revision.
+    repo.commit_memory(
+        &precondition(1, "extract-only"),
+        &candidate(
+            MemoryCommit {
+                processed_through_sequence: 4,
+                ..Default::default()
+            },
+            empty.transcript_revision,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    let later = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+    assert_eq!(later.state.memory_revision, 2);
+    assert_eq!(
+        later.summary.as_deref(),
+        Some("Deployment waits for approval.")
+    );
+    assert_eq!(later.summary_through_sequence, first_answer);
+    let paired: i64 = sqlx::query_scalar(
+        "SELECT memory_revision FROM conversation_summaries WHERE conversation_id = ?",
+    )
+    .bind(&conversation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(paired, later.state.memory_revision);
+}
+
+#[tokio::test]
 async fn evidence_resolves_to_exact_source_text_and_stops_when_the_source_moves() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;

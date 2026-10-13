@@ -173,7 +173,13 @@ pub trait ChatPolicy: Send + Sync {
         id: &str,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<()>;
-    fn consolidate_after_turn(&self, id: String);
+    /// `summary_refold` is the turn's plan asking for the working summary to
+    /// be refolded; consolidation leaves the summary alone without it.
+    fn consolidate_after_turn(
+        &self,
+        id: String,
+        summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
+    );
 }
 
 /// Where work that outlives a request runs: a deep research turn is a job.

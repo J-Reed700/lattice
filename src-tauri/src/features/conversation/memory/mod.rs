@@ -22,6 +22,11 @@
 //! committed state exactly as it was, and leaves the watermark where it was, so
 //! the same source is offered again next time (§12).
 //!
+//! Extraction and the working summary move separately. Extraction advances the
+//! watermark on every run; the summary is refolded only when a run is asked to,
+//! because the prompt opens its window where the summary ends and a summary
+//! that changed after every answer would change the head of every request.
+//!
 //! A run is bounded twice over — a five-minute deadline shared by every call,
 //! and a work cap of 256 messages or 1 MiB of source per attempt. Hitting the
 //! work cap returns [`CompactionStatus::Partial`] with the sequence to resume
@@ -52,7 +57,9 @@ use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use crate::application::ports::LLMPort;
-use crate::domain::conversation::memory::{MemoryCommit, MemorySnapshot, MemoryValidationError};
+use crate::domain::conversation::memory::{
+    MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
+};
 use crate::shared::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -435,6 +442,11 @@ pub struct CompactionRequest {
     /// Minimum raw messages to retain, adjusted outward to a turn boundary.
     pub keep_recent_messages: Option<usize>,
     pub cancellation: Option<CancellationToken>,
+    /// The refold a turn's prompt asked for, when its window had to drop
+    /// turns the working summary does not cover. Consolidation refolds only
+    /// on this; `/compact` and the compaction a turn waits on fold everything
+    /// they extract without it.
+    pub summary_refold: Option<SummaryRefold>,
 }
 
 /// How far a run got.

@@ -1123,6 +1123,11 @@ reliable, complete, lossless, or perfect until those measurements pass.
    optional addition is different: it may reflect a reviewer outage or real
    uncertainty, so the run records `ambiguous_optional_addition`, keeps the
    watermark behind the batch, and retries from the original source later.
+7. **The summary is not refolded on every run.** §7.3 step 8 folds new work
+   into the summary on every compaction. Consolidation after an answer now
+   extracts on every run but refolds only when a prompt's window had to drop
+   turns the summary does not cover, so the prompt's prefix can stay cached
+   (§24.8).
 
 ### 24.2 Pre-existing bugs found and fixed
 
@@ -1340,3 +1345,87 @@ full-context oracle. One cycle against ten cycles was 20/21 against 21/21.
 Stubbing the reviewer (26/27 in both arms) or removing recall (18/18 and
 abstention 6/6 in both arms) again changed no quality number. The printed report is
 `evals/conversation-memory/results/qwen3.8-27b-remote/2026-09-26-release-baseline-rerun.md`.
+
+### 24.8 Summary coverage and the anchored window (2026-10-13)
+
+Consolidation used to refold the working summary after every answer, so the
+summary always ended at the watermark. Once older turns had left the window,
+the summary (the second message of every request) and the window's first turn
+both changed on every turn. llama-server reuses its KV cache only up to the
+first changed token, so each turn re-read the whole conversation. Track B1 of
+the 2026-10-12 LLM-stack audit recorded this; this section is its fix.
+
+The summary's end is now tracked apart from the watermark.
+`MemorySnapshot::summary_through_sequence` is the sequence of the summary row's
+`up_to_message_id`, read through a join, so no column was added. The row cannot
+outlive that message: the foreign key and the clamp trigger delete it.
+
+Anchoring, in the context assembler's step 5:
+
+- Candidates that reach the first message and fit the recent pool are carried
+  whole, and the summary stays out. This is B1's rule, unchanged.
+- Otherwise, with a usable summary that fits its pool, the window opens at the
+  first message after the summary's end. It never reaches further back, even
+  with room to spare. While the turns after the summary fit, each request
+  repeats the one before it up to its newest answer, summary included.
+- When those turns no longer fit, the window starts later, filled newest first
+  as before. The turns between the summary's end and the window are then
+  carried only by the ledger and recall. The plan reports it in
+  `ContextPlan::summary_refold`: where the window started, and where the
+  summary should now end. It reports the same when the candidates themselves
+  begin past the summary's end, because the 64-message candidate cap left the
+  turns in between unread.
+- The summary is asked to end inside the window. The newest half of the
+  window's tokens stays verbatim, moved forward so the next window opens on a
+  user turn; when the candidate cap ended the window, half its messages too.
+  The next window starts half empty, and the turns that follow extend an
+  unchanged prefix until it fills. Each refold breaks the prefix once.
+- The eviction order is unchanged. Final overflow eviction can still move the
+  window's start, and the refold request is measured after it.
+
+Refolding, in the compaction job:
+
+- Consolidation after an answer still extracts on every run. It folds the
+  summary only when the turn's plan asked (`CompactionRequest::summary_refold`,
+  carried from the plan through the turn to `consolidate_after_turn`), and only
+  while the request still applies: a summary that already ends at or past the
+  message before the window is not refolded again
+  (`SummaryRefold::is_needed`). Two turns that ask before the first refold
+  lands therefore cause one refold.
+- A refold covers the messages after the summary's end through the requested
+  sequence, clamped to the new watermark, so the summary never covers a message
+  that has no memory record. Messages below the watermark were extracted by
+  earlier runs and are paged back from the transcript.
+- `/compact` and the automatic compaction a turn waits on fold everything they
+  extract, as before. The window afterwards opens after the compacted prefix,
+  so it starts with only the retained turns and grows from there.
+- A commit that does not refold carries the summary row into the new memory
+  revision, so the row still names the revision it is current for.
+
+Consequences:
+
+- Most consolidations make no summarizer call.
+- Regenerating an uncited last answer no longer deletes the summary, because
+  the summary rarely covers the newest turn.
+- A run with nothing new to extract does not refold. The next turn whose
+  window still has to move asks again.
+- A resumed research turn does not pass its plan's request on, for the same
+  reason.
+- Verbatim history between refolds is between half and all of the recent pool,
+  where before it was always all of it.
+- Summaries written before this change end at their last consolidated answer.
+  In a conversation that no longer fits its window, the window opens there, so
+  the first turns afterwards carry few verbatim turns until it refills. This
+  is pre-release data, so there is no migration; deleting the database or the
+  summary rows avoids it.
+
+Not measured: cache reuse on a live server (`cache_n`) and answer quality with
+the shorter windows. The tests are in `context_assembler/tests/prefix.rs`
+(`consecutive_turns_past_the_window_share_every_message_up_to_the_newest_answer`,
+`the_summary_refolds_when_the_window_start_moves`,
+`candidates_that_start_past_the_summary_ask_for_a_refold`), `memory/tests.rs`
+(`consolidation_extracts_without_touching_the_summary_when_no_refold_is_asked`,
+`consolidation_refolds_the_summary_over_the_turns_the_window_dropped`,
+`a_refold_never_runs_past_what_extraction_accepted`) and
+`repository/tests/memory.rs`
+(`the_snapshot_reports_where_the_summary_ends_and_a_commit_without_one_keeps_it`).

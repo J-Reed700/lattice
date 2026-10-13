@@ -170,7 +170,12 @@ impl ChatPolicy for FakeRuntime {
     ) -> Result<()> {
         unreachable!("{UNUSED}")
     }
-    fn consolidate_after_turn(&self, _id: String) {}
+    fn consolidate_after_turn(
+        &self,
+        _id: String,
+        _summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
+    ) {
+    }
 }
 
 impl ChatJobs for FakeRuntime {

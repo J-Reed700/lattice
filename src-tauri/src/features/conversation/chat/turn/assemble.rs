@@ -357,6 +357,9 @@ pub(super) struct PlannedRequest {
     pub(super) input_budget: usize,
     /// The memory the answer was given, recorded on it.
     pub(super) memory_usage: Option<serde_json::Value>,
+    /// The plan asking for the working summary to be refolded, because its
+    /// window had to drop turns the summary does not cover.
+    pub(super) summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
 }
 
 /// Choose the turn's tools and plan its input.
@@ -449,6 +452,7 @@ pub(super) async fn plan_request(
                     recall_passages = memory_turn.plan.retrieval.passages_selected,
                     recall_error = ?memory_turn.plan.retrieval.index_error,
                     compaction_required = memory_turn.plan.compaction_required,
+                    summary_refold = ?memory_turn.plan.summary_refold,
                     evicted = ?memory_turn.plan.accounting.evicted,
                     elapsed_ms = elapsed_ms(memory_plan_start),
                     "Assembled bounded conversation memory for this turn"
@@ -482,6 +486,7 @@ pub(super) async fn plan_request(
                 "revision": memory_turn.plan.memory_revision,
                 "recallPassages": memory_turn.plan.retrieval.passages_selected,
             })),
+            summary_refold: memory_turn.plan.summary_refold,
             input: memory_turn.plan.messages,
             tools,
             max_output_tokens: memory_turn.plan.max_output_tokens,
@@ -503,6 +508,7 @@ pub(super) async fn plan_request(
             max_output_tokens: turn.budget.output_tokens,
             input_budget: turn.budget.input_budget,
             memory_usage: None,
+            summary_refold: None,
         },
     })
 }

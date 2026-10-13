@@ -291,13 +291,22 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory evidence: {}", e)))?;
 
-        let summary: Option<String> = sqlx::query_scalar(
-            "SELECT summary_text FROM conversation_summaries WHERE conversation_id = ?",
+        // The summary's end is the sequence of the message it was folded up
+        // to. That message cannot be missing: deleting it deletes the summary
+        // through the foreign key.
+        let summary: Option<(String, i64)> = sqlx::query_as(
+            "SELECT s.summary_text, m.sequence FROM conversation_summaries s \
+             JOIN conversation_messages m ON m.id = s.up_to_message_id \
+             WHERE s.conversation_id = ?",
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to load working summary: {}", e)))?;
+        let (summary, summary_through_sequence) = match summary {
+            Some((text, through)) => (Some(text), through),
+            None => (None, 0),
+        };
 
         let latest_sequence: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(sequence), 0) FROM conversation_messages WHERE conversation_id = ?",
@@ -316,6 +325,7 @@ impl ConversationRepository {
             transcript_revision: conversation.transcript_revision,
             active_items: assemble_items(item_rows, evidence_rows)?,
             summary,
+            summary_through_sequence,
             latest_sequence,
         })
     }
@@ -932,6 +942,18 @@ impl ConversationRepository {
             .bind(ratio)
             .bind(&now)
             .bind(next_revision)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        } else {
+            // Extraction moved on without refolding the summary. It still
+            // describes the same messages, so it is carried into the new
+            // revision rather than left naming one the ledger has passed.
+            sqlx::query(
+                "UPDATE conversation_summaries SET memory_revision = ? WHERE conversation_id = ?",
+            )
+            .bind(next_revision)
+            .bind(conversation_id)
             .execute(&mut *tx)
             .await
             .map_err(db)?;

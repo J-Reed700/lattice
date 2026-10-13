@@ -1083,7 +1083,22 @@ fn an_unknown_stored_schema_is_not_read_as_empty_memory() {
         transcript_revision: 1,
         active_items: vec![item("i1", MemoryKind::Constraint, 1, "Do not deploy")],
         summary: None,
+        summary_through_sequence: 0,
         latest_sequence: 1,
     };
     assert!(!snapshot.is_usable());
+}
+
+#[test]
+fn a_refold_is_needed_only_while_the_summary_ends_before_the_window_gap() {
+    let refold = SummaryRefold {
+        window_start_sequence: 9,
+        through_sequence: 12,
+    };
+    // Messages 5 to 8 were dropped and nothing covers them.
+    assert!(refold.is_needed(4));
+    // An earlier refold already reached the window: asking again would only
+    // change the prompt's prefix a second time.
+    assert!(!refold.is_needed(8));
+    assert!(!refold.is_needed(12));
 }

@@ -70,6 +70,7 @@ pub(super) async fn finalize_successful_turn(
     mut sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
     memory_usage: Option<serde_json::Value>,
+    summary_refold: Option<crate::domain::conversation::memory::SummaryRefold>,
     retrieval_trace: Option<RetrievalTraceDto>,
     turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
@@ -123,7 +124,7 @@ pub(super) async fn finalize_successful_turn(
     .await?;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
-    container.consolidate_after_turn(conversation_id.to_string());
+    container.consolidate_after_turn(conversation_id.to_string(), summary_refold);
 
     spawn_memory_indexing(
         container.share(),

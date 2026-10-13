@@ -28,8 +28,8 @@ use crate::application::ports::LLMPort;
 use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
-    SourceRole, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES,
-    MAX_QUOTE_BYTES,
+    SourceRole, SummaryRefold, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
+    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
 use crate::shared::error::{AppError, Result};
 
@@ -192,6 +192,8 @@ struct PortState {
     messages: Vec<SourceMessage>,
     items: Vec<MemoryItem>,
     summary: Option<String>,
+    /// Sequence of the message the summary was folded up to.
+    summary_through: i64,
     state: ConversationMemoryState,
     transcript_revision: i64,
     committed: Vec<MemoryCommitCandidate>,
@@ -217,6 +219,7 @@ impl FakePort {
                 messages,
                 items,
                 summary: None,
+                summary_through: 0,
                 state,
                 transcript_revision: 7,
                 committed: Vec::new(),
@@ -229,6 +232,22 @@ impl FakePort {
 
     fn conflict_once(&self) {
         self.inner.lock().conflict_next_commit = true;
+    }
+
+    /// A summary an earlier run folded through `through`.
+    fn summarized_through(&self, text: &str, through: i64) {
+        let mut inner = self.inner.lock();
+        inner.summary = Some(text.to_string());
+        inner.summary_through = through;
+    }
+
+    fn append(&self, message: SourceMessage) {
+        self.inner.lock().messages.push(message);
+    }
+
+    fn summary(&self) -> (Option<String>, i64) {
+        let inner = self.inner.lock();
+        (inner.summary.clone(), inner.summary_through)
     }
 
     fn watermark(&self) -> i64 {
@@ -270,6 +289,7 @@ impl ConversationMemoryPort for FakePort {
                 .cloned()
                 .collect(),
             summary: inner.summary.clone(),
+            summary_through_sequence: inner.summary_through,
             latest_sequence: inner
                 .messages
                 .iter()
@@ -445,6 +465,11 @@ impl ConversationMemoryPort for FakePort {
         }
         if let Some(summary) = &candidate.summary {
             inner.summary = Some(summary.summary_text.clone());
+            inner.summary_through = inner
+                .messages
+                .iter()
+                .find(|message| message.id == summary.up_to_message_id)
+                .map_or(0, |message| message.sequence);
         }
         inner.state.memory_revision += 1;
         inner.state.processed_through_sequence = candidate.commit.processed_through_sequence;
@@ -487,6 +512,7 @@ impl ConversationMemoryPort for FakePort {
         inner.state.last_error_code = Some(code.to_string());
         inner.items.clear();
         inner.summary = None;
+        inner.summary_through = 0;
         Ok(())
     }
 
@@ -1492,4 +1518,166 @@ async fn maintenance_consolidates_the_first_completed_turn_without_waiting_for_o
     assert_eq!(outcome.status, CompactionStatus::Committed);
     assert_eq!(port.watermark(), 2);
     assert_eq!(outcome.commit.inserts.len(), 1);
+}
+
+#[tokio::test]
+async fn consolidation_extracts_without_touching_the_summary_when_no_refold_is_asked() {
+    // The first turn was extracted and summarized earlier; the second has
+    // just been answered, and its prompt's window did not have to move.
+    let port = FakePort::new(four_turns()[..4].to_vec(), Vec::new(), 2);
+    port.summarized_through("Deployment waits for approval.", 2);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["m3:s0", "m4:s0"]))],
+        vec![],
+        vec![Ok("A summary nobody asked for.".into())],
+    );
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                trigger: super::CompactionTrigger::Maintenance,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.status, CompactionStatus::Committed);
+    assert_eq!(port.watermark(), 4, "extraction still moves on");
+    assert_eq!(llm.count(Task::Summarize), 0, "no summarizer call");
+    assert_eq!(
+        port.summary(),
+        (Some("Deployment waits for approval.".to_string()), 2),
+        "the prompt's summary and the window it anchors stay as they were"
+    );
+    assert_eq!(
+        outcome.summary.as_deref(),
+        Some("Deployment waits for approval.")
+    );
+}
+
+#[tokio::test]
+async fn consolidation_refolds_the_summary_over_the_turns_the_window_dropped() {
+    // Extraction reached message 6 on earlier answers; the summary still ends
+    // at message 2. The last prompt's window had to start at message 5, so it
+    // asked for the summary to cover through 4.
+    let port = FakePort::new(four_turns()[..8].to_vec(), Vec::new(), 6);
+    port.summarized_through("Deployment waits for approval.", 2);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["m7:s0", "m8:s0"]))],
+        vec![],
+        vec![Ok("Approval required; staging may deploy.".into())],
+    );
+    let refold = SummaryRefold {
+        window_start_sequence: 5,
+        through_sequence: 4,
+    };
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                trigger: super::CompactionTrigger::Maintenance,
+                summary_refold: Some(refold),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(port.watermark(), 8);
+    assert_eq!(llm.count(Task::Summarize), 1);
+    // The fold reads the dropped turns back from below the watermark, and
+    // nothing the window still carries.
+    let fold = llm
+        .calls()
+        .iter()
+        .position(|task| *task == Task::Summarize)
+        .map(|index| llm.prompts()[index].clone())
+        .expect("a summarizer prompt");
+    assert!(fold.contains("Actually you may deploy staging."), "{fold}");
+    assert!(fold.contains("Noted, staging only."), "{fold}");
+    assert!(!fold.contains("What about production?"), "{fold}");
+    assert!(fold.contains("Deployment waits for approval."), "{fold}");
+    assert_eq!(
+        port.summary(),
+        (
+            Some("Approval required; staging may deploy.".to_string()),
+            4
+        )
+    );
+    assert_eq!(outcome.boundary_message_id.as_deref(), Some("m4"));
+
+    // A later turn that asked before this refold landed asks for nothing new:
+    // its consolidation extracts the next turn and leaves the summary alone.
+    port.append(message("m9", 9, SourceRole::User, "Ship staging tonight."));
+    port.append(message(
+        "m10",
+        10,
+        SourceRole::Assistant,
+        "Staging tonight.",
+    ));
+    let again = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![],
+            &["m9:s0", "m10:s0"],
+        ))],
+        vec![],
+        vec![],
+    );
+    job(port.clone(), again.clone(), small_config())
+        .run(
+            CONVERSATION,
+            CompactionRequest {
+                trigger: super::CompactionTrigger::Maintenance,
+                summary_refold: Some(SummaryRefold {
+                    window_start_sequence: 5,
+                    through_sequence: 6,
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(port.watermark(), 10);
+    assert_eq!(again.count(Task::Summarize), 0);
+    assert_eq!(port.summary().1, 4);
+}
+
+#[tokio::test]
+async fn a_refold_never_runs_past_what_extraction_accepted() {
+    // The window asked for everything through message 6, but extraction
+    // stops before the second turn: the summary ends where the watermark does.
+    let port = FakePort::new(four_turns()[..6].to_vec(), Vec::new(), 2);
+    let llm = FakeLlm::new(
+        vec![
+            Ok(extraction_response(vec![], vec![], &["m3:s0", "m4:s0"])),
+            Ok(extraction_response(vec![], vec![], &["m5:s0", "m6:s0"])),
+        ],
+        vec![],
+        vec![Ok("Staging may deploy.".into())],
+    );
+    let outcome = job(
+        port.clone(),
+        llm,
+        CompactionConfig {
+            max_source_messages_per_attempt: 2,
+            ..small_config()
+        },
+    )
+    .run(
+        CONVERSATION,
+        CompactionRequest {
+            trigger: super::CompactionTrigger::Maintenance,
+            summary_refold: Some(SummaryRefold {
+                window_start_sequence: 7,
+                through_sequence: 6,
+            }),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.processed_through_sequence, 4);
+    assert_eq!(port.summary(), (Some("Staging may deploy.".to_string()), 4));
 }

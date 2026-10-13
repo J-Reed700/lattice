@@ -613,6 +613,11 @@ pub struct MemorySnapshot {
     pub active_items: Vec<MemoryItem>,
     /// Working summary text, if a compaction has produced one.
     pub summary: Option<String>,
+    /// Sequence of the last message the summary covers, or zero when there is
+    /// no summary. Tracked apart from the extraction watermark: extraction
+    /// runs after every answer, while the summary moves only when the prompt's
+    /// window has to drop turns it does not cover, so the two usually differ.
+    pub summary_through_sequence: i64,
     /// Sequence of the newest message in the transcript.
     pub latest_sequence: i64,
 }
@@ -644,6 +649,37 @@ impl MemorySnapshot {
     /// Whether memory may be consulted at all.
     pub fn is_usable(&self) -> bool {
         self.state.validity == MemoryValidity::Ready && self.state.is_schema_supported()
+    }
+}
+
+/// A prompt's request to move the working summary's end forward.
+///
+/// The prompt opens its verbatim window where the summary ends, so the two
+/// together are a stable prefix the server can keep cached. When the window
+/// no longer fits it has to start later, and the turns it then drops are
+/// carried by nothing until the summary covers them. This names both ends of
+/// that: where the window had to start, and where the summary should end so
+/// the next window starts with room to grow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SummaryRefold {
+    /// The oldest message the prompt carried verbatim.
+    pub window_start_sequence: i64,
+    /// The sequence the summary should cover through. At or past the dropped
+    /// turns, and inside the window: the newest part of the window stays
+    /// verbatim and the rest is folded, so the turns that follow append to
+    /// an unchanged prefix for a while before the start has to move again.
+    pub through_sequence: i64,
+}
+
+impl SummaryRefold {
+    /// Whether a summary ending at `summary_through` still leaves a gap
+    /// before the window, so the refold has not happened yet.
+    ///
+    /// A request that a refold since then already satisfied asks for nothing:
+    /// two turns can both ask before the first refold lands, and refolding
+    /// twice would change the prompt's prefix twice.
+    pub fn is_needed(&self, summary_through: i64) -> bool {
+        summary_through.saturating_add(1) < self.window_start_sequence
     }
 }
 
