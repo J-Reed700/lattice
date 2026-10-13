@@ -15,6 +15,14 @@
 //! order. The current input and active constraints are retained; any omission
 //! of unprocessed original messages marks the plan as requiring compaction
 //! before generation.
+//!
+//! The rendered order is chosen for the server's prompt cache as much as for
+//! the model: the system policy, then the summary when older turns are out of
+//! the window, then the verbatim recent turns, then one user message carrying
+//! everything that depends on this turn — recall, recorded requirements,
+//! supporting material, the date and the request, in that order. Two turns of
+//! the same conversation therefore share every message up to the newest
+//! answer, and the server re-reads only what was added.
 
 pub mod budget;
 pub mod plan;
@@ -62,6 +70,10 @@ pub struct ContextRequest<'a> {
     /// Candidate recent messages, chronological, oldest first. The current
     /// input must not appear here — it is supplied separately and rendered once.
     pub recent: &'a [SourceMessage],
+    /// True when `recent` begins at the conversation's first message. A window
+    /// that keeps its oldest entry then carries the whole transcript, and the
+    /// summary would only repeat it. `false` when unknown.
+    pub recent_reaches_start: bool,
     /// Sequence through which extraction has processed. A recent message at or
     /// below this has a durable memory record; one above it does not, so
     /// dropping it would lose the only copy.
@@ -75,6 +87,9 @@ pub struct ContextRequest<'a> {
     pub recall_status: Option<&'a str>,
     /// Document and web evidence, any order; ranked for eviction.
     pub document_evidence: Vec<RankedEvidence>,
+    /// The user's local date for the date line. Supplied by the caller so a
+    /// plan stays a function of its request.
+    pub today: chrono::NaiveDate,
     pub capacity: ModelCapacity,
 }
 
@@ -145,10 +160,12 @@ impl ContextAssembler {
             role: "system".into(),
             content: policy,
         };
-        let current_message = render::render_current_input(request.current_input);
+        // The date line and the request are the part of the final message no
+        // eviction removes, so both are charged as fixed.
+        let mut last = render::FinalUserMessage::new(request.current_input, request.today);
 
         let policy_tokens = self.count_input(&policy_message);
-        let current_tokens = self.count_input(&current_message);
+        let current_tokens = self.count_input(&last.tail_message());
 
         let allocation = BudgetAllocation::plan(
             &request.capacity,
@@ -190,10 +207,10 @@ impl ContextAssembler {
                 })
                 .count();
 
-        let memory_message = render::render_memory_block(&mandatory_blocks);
-        let memory_tokens = memory_message
-            .as_ref()
-            .map(|message| self.count_input(message))
+        let memory_section = render::render_memory_block(&mandatory_blocks);
+        let memory_tokens = memory_section
+            .as_deref()
+            .map(|section| self.section_cost(section))
             .unwrap_or(0);
 
         // --- 3. reserve the newest complete turn ---------------------------
@@ -223,32 +240,11 @@ impl ContextAssembler {
         // Room left for everything selectable after mandatory memory is paid.
         let mut remaining = allocation.available.saturating_sub(memory_tokens);
 
-        // --- 5. working summary --------------------------------------------
-        let summary_message = request
-            .snapshot
-            .filter(|snapshot| snapshot.is_usable())
-            .and_then(|snapshot| snapshot.summary.as_deref())
-            .and_then(render::render_summary);
-        let mut summary_message = match summary_message {
-            Some(message) => {
-                let cost = self.count_input(&message);
-                // Dropped whole rather than sliced: cutting a summary mid-clause
-                // can invert a condition it was describing.
-                if cost <= allocation.summary.min(remaining) {
-                    accounting.summary = cost;
-                    remaining -= cost;
-                    Some(message)
-                } else {
-                    accounting.evicted.push("summary".into());
-                    None
-                }
-            }
-            None => None,
-        };
-
-        // --- 6. recent whole turns ----------------------------------------
-        // Newest first so the most recent turn is the one that survives, then
-        // restored to chronological order.
+        // --- 5. recent whole turns ----------------------------------------
+        // Chosen before the summary: the user's own turns outrank a model's
+        // paraphrase of them, and whether the summary is needed at all depends
+        // on how far back the window reaches. Newest first so the most recent
+        // turn is the one that survives, then restored to chronological order.
         let mut recent_messages: Vec<(i64, CompletionInput)> = Vec::new();
         let mut recent_tokens = 0usize;
         let mut oldest_kept_sequence = i64::MAX;
@@ -285,13 +281,46 @@ impl ContextAssembler {
                 oldest_kept_sequence == i64::MAX || message.sequence < oldest_kept_sequence
             });
 
+        // --- 6. working summary --------------------------------------------
+        // Background consolidation refolds the summary after every answer, so
+        // carrying it while the window still holds the whole transcript would
+        // change the second message of every request — and with it the cached
+        // prefix of everything after — to repeat text the model already has
+        // verbatim. It is carried only once older turns have left the window.
+        let window_reaches_start = request.recent_reaches_start
+            && request
+                .recent
+                .first()
+                .is_none_or(|first| oldest_kept_sequence == first.sequence);
+        let summary_message = request
+            .snapshot
+            .filter(|snapshot| snapshot.is_usable() && !window_reaches_start)
+            .and_then(|snapshot| snapshot.summary.as_deref())
+            .and_then(render::render_summary);
+        let summary_message = match summary_message {
+            Some(message) => {
+                let cost = self.count_input(&message);
+                // Dropped whole rather than sliced: cutting a summary mid-clause
+                // can invert a condition it was describing.
+                if cost <= allocation.summary.min(remaining) {
+                    accounting.summary = cost;
+                    remaining -= cost;
+                    Some(message)
+                } else {
+                    accounting.evicted.push("summary".into());
+                    None
+                }
+            }
+            None => None,
+        };
+
         // --- 7. recalled passages -----------------------------------------
         let mut recalled = Vec::new();
         let recall_pool = allocation.recall.min(remaining);
         let status_cost = request
             .recall_status
             .and_then(|status| render::render_recalled(&[], Some(status)))
-            .map(|message| self.count_input(&message))
+            .map(|section| self.section_cost(&section))
             .unwrap_or(0);
         let passage_pool = recall_pool.saturating_sub(status_cost);
         let mut recall_tokens = 0usize;
@@ -309,15 +338,15 @@ impl ContextAssembler {
             .iter()
             .map(|passage| passage.message_id.clone())
             .collect();
-        let mut recalled_message = render::render_recalled(&recalled, request.recall_status);
-        if let Some(message) = &recalled_message {
-            let cost = self.count_input(message);
+        let mut recalled_section = render::render_recalled(&recalled, request.recall_status);
+        if let Some(section) = &recalled_section {
+            let cost = self.section_cost(section);
             if cost <= remaining && cost <= recall_pool {
                 accounting.recall = cost;
                 remaining -= cost;
             } else {
                 accounting.evicted.push("recall".into());
-                recalled_message = None;
+                recalled_section = None;
                 retrieval.passages_selected = 0;
                 retrieval.selected_message_ids.clear();
             }
@@ -329,7 +358,7 @@ impl ContextAssembler {
             .flat_map(|p| &p.optional)
             .enumerate()
             .map(|(index, content)| RankedEvidence {
-                label: "Saved memory with original evidence".into(),
+                label: SAVED_MEMORY_LABEL.into(),
                 content: content.clone(),
                 rank: 1.0 / (index + 1) as f32,
             })
@@ -353,67 +382,37 @@ impl ContextAssembler {
                 continue;
             }
             evidence_tokens += cost;
-            if item.label == "Saved memory with original evidence" {
+            if item.label == SAVED_MEMORY_LABEL {
                 accounting.optional_selected_count += 1;
                 optional_memory_ids.extend(prepared_memory_id(&item.content));
             }
             evidence_blocks.push(block);
         }
-        let evidence_message = (!evidence_blocks.is_empty()).then(|| CompletionInput::Message {
-            role: "user".into(),
-            content: format!(
-                "[supporting material retrieved for this question]\n{}",
-                evidence_blocks.join("\n")
-            ),
-        });
-        if let Some(message) = &evidence_message {
-            accounting.document_evidence = self.count_input(message);
+        let evidence_section = render::render_evidence(&evidence_blocks);
+        if let Some(section) = &evidence_section {
+            accounting.document_evidence = self.section_cost(section);
         }
 
-        // --- 9. render in precedence order (§10.4) -------------------------
-        let mut messages = vec![policy_message];
-        if let Some(message) = summary_message.take() {
-            messages.push(message);
-        }
-        if let Some(message) = recalled_message {
-            messages.push(message);
-        }
-        if let Some(message) = memory_message {
-            messages.push(message);
-        }
-        if let Some(message) = evidence_message {
-            messages.push(message);
-        }
-        let recent_start = messages.len();
-        let recent_sequences: Vec<i64> = recent_messages
-            .iter()
-            .map(|(sequence, _)| *sequence)
-            .collect();
-        messages.extend(recent_messages.into_iter().map(|(_, message)| message));
-        // Current input last, exactly once.
-        messages.push(current_message);
-
-        accounting.total_input = messages
-            .iter()
-            .map(|message| self.count_input(message))
-            .sum::<usize>()
-            .saturating_add(request.tool_schema_tokens);
+        // --- 9. render, query-dependent material last ----------------------
+        last.recalled = recalled_section;
+        last.memory = memory_section;
+        last.evidence = evidence_section;
+        let mut layout = Layout {
+            policy: policy_message,
+            summary: summary_message,
+            recent: recent_messages,
+            last,
+        };
+        accounting.total_input = self.measure(&layout, request.tool_schema_tokens);
 
         // Counting the serialized result can exceed the budget even after the
         // per-pool arithmetic said it would not, because framing estimates are
         // estimates. Optional material is evicted in rank order until it fits.
-        let evicted_sequences = self.evict_until_fits(
-            &mut messages,
-            &mut accounting,
-            recent_start,
-            &recent_sequences,
-        );
-        // Overflow eviction drops the evidence message whole, and the optional
+        let evicted_sequences =
+            self.evict_until_fits(&mut layout, &mut accounting, request.tool_schema_tokens);
+        // Overflow eviction drops the evidence section whole, and the optional
         // memory went with it.
-        if messages.iter().any(|message| {
-            matches!(message, CompletionInput::Message { role, content }
-                if role == "user" && content.starts_with("[supporting material"))
-        }) {
+        if layout.last.evidence.is_some() {
             used_memory_ids.extend(optional_memory_ids);
         }
         let dropped_unprocessed = dropped_unprocessed
@@ -422,7 +421,7 @@ impl ContextAssembler {
                 .any(|sequence| *sequence > request.processed_through_sequence);
 
         Ok(ContextPlan {
-            messages,
+            messages: layout.into_messages(),
             memory_revision: request
                 .snapshot
                 .map(|snapshot| snapshot.state.memory_revision)
@@ -437,6 +436,26 @@ impl ContextAssembler {
             max_output_tokens: allocation.output_reserved,
             used_memory_ids,
         })
+    }
+
+    /// A section of the final message, priced as the message it would be on
+    /// its own: the framing estimate also covers the separator and its header.
+    fn section_cost(&self, section: &str) -> usize {
+        self.count(section) + MESSAGE_FRAMING_TOKENS
+    }
+
+    /// The whole request as it would be sent, tool schemas included.
+    fn measure(&self, layout: &Layout, tool_schema_tokens: usize) -> usize {
+        let history: usize = layout
+            .summary
+            .iter()
+            .chain(layout.recent.iter().map(|(_, message)| message))
+            .map(|message| self.count_input(message))
+            .sum();
+        self.count_input(&layout.policy)
+            .saturating_add(history)
+            .saturating_add(self.count_input(&layout.last.render()))
+            .saturating_add(tool_schema_tokens)
     }
 
     /// Render every mandatory item, resolving evidence against live source.
@@ -476,71 +495,70 @@ impl ContextAssembler {
     /// The order is fixed and deliberate: document evidence, then recalled
     /// passages, then the summary, then the oldest recent messages. Returned
     /// source sequences let the caller flag any unprocessed originals removed
-    /// here. The system policy, active memory and current input are preserved.
+    /// here. The system policy, active memory, the newest turn and the current
+    /// input are preserved.
     fn evict_until_fits(
         &self,
-        messages: &mut Vec<CompletionInput>,
+        layout: &mut Layout,
         accounting: &mut ContextAccounting,
-        mut recent_start: usize,
-        recent_sequences: &[i64],
+        tool_schema_tokens: usize,
     ) -> Vec<i64> {
-        let mut evicted_sequences = Vec::new();
-        let marker_of = |message: &CompletionInput| -> Option<&'static str> {
-            let CompletionInput::Message { role, content } = message else {
-                return None;
-            };
-            match role.as_str() {
-                "user" if content.starts_with("[supporting material") => Some("evidence"),
-                "user" if content.starts_with("[older passages") => Some("recall"),
-                "assistant" if content.starts_with("[generated summary") => Some("summary"),
-                _ => None,
-            }
-        };
-
-        for marker in ["evidence", "recall", "summary"] {
-            if accounting.fits() {
-                return evicted_sequences;
-            }
-            if let Some(index) = messages
-                .iter()
-                .take(recent_start)
-                .position(|message| marker_of(message) == Some(marker))
-            {
-                let removed = messages.remove(index);
-                recent_start -= 1;
-                let cost = self.count_input(&removed);
-                accounting.total_input = accounting.total_input.saturating_sub(cost);
-                match marker {
-                    "evidence" => accounting.document_evidence = 0,
-                    "recall" => accounting.recall = 0,
-                    _ => accounting.summary = 0,
-                }
-                accounting.evicted.push(format!("overflow:{marker}"));
-            }
+        if !accounting.fits() && layout.last.evidence.take().is_some() {
+            accounting.document_evidence = 0;
+            accounting.evicted.push("overflow:evidence".into());
+            accounting.total_input = self.measure(layout, tool_schema_tokens);
+        }
+        if !accounting.fits() && layout.last.recalled.take().is_some() {
+            accounting.recall = 0;
+            accounting.evicted.push("overflow:recall".into());
+            accounting.total_input = self.measure(layout, tool_schema_tokens);
+        }
+        if !accounting.fits() && layout.summary.take().is_some() {
+            accounting.summary = 0;
+            accounting.evicted.push("overflow:summary".into());
+            accounting.total_input = self.measure(layout, tool_schema_tokens);
         }
 
         // Track source identity through final eviction, too. This pass can
         // remove a message that survived the initial selection; the caller must
         // compact before sending if that original is above the watermark.
-        // Keep the newest message and current input intact. Use positions rather
-        // than content prefixes, which also occur in ordinary user messages.
-        for sequence in recent_sequences
-            .iter()
-            .take(recent_sequences.len().saturating_sub(1))
-        {
-            if accounting.fits() {
-                break;
-            }
-            let removed = messages.remove(recent_start);
+        let mut evicted_sequences = Vec::new();
+        while !accounting.fits() && layout.recent.len() > 1 {
+            let (sequence, removed) = layout.recent.remove(0);
             let cost = self.count_input(&removed);
             accounting.total_input = accounting.total_input.saturating_sub(cost);
             accounting.recent_history = accounting.recent_history.saturating_sub(cost);
             accounting.evicted.push("overflow:recent".into());
-            evicted_sequences.push(*sequence);
+            evicted_sequences.push(sequence);
         }
         evicted_sequences
     }
 }
+
+/// A plan's messages before they are flattened, kept in parts so overflow
+/// eviction removes material by what it is rather than by matching text a
+/// user could also have typed.
+struct Layout {
+    policy: CompletionInput,
+    summary: Option<CompletionInput>,
+    /// Verbatim turns, oldest first, beside their source sequence.
+    recent: Vec<(i64, CompletionInput)>,
+    last: render::FinalUserMessage,
+}
+
+impl Layout {
+    fn into_messages(self) -> Vec<CompletionInput> {
+        let mut messages = Vec::with_capacity(self.recent.len() + 3);
+        messages.push(self.policy);
+        messages.extend(self.summary);
+        messages.extend(self.recent.into_iter().map(|(_, message)| message));
+        messages.push(self.last.render());
+        messages
+    }
+}
+
+/// Label of a prepared optional memory item among the evidence.
+const SAVED_MEMORY_LABEL: &str = "Saved memory with original evidence";
 
 /// The id of one prepared memory item.
 ///

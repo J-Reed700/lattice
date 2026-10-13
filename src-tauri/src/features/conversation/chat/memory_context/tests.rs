@@ -273,26 +273,27 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
         })
         .collect();
 
-    // The constraint is present, quoted, and attributed to the user.
-    let block = rendered
-        .iter()
-        .find(|(role, content)| role == "user" && content.starts_with("[recorded requirements"))
+    // The constraint is present, quoted, and attributed to the user, in the
+    // final message ahead of the request.
+    let (role, last) = rendered.last().unwrap();
+    assert_eq!(role, "user");
+    let requirement = last
+        .find("[recorded requirements")
         .expect("the constraint must reach the prompt");
-    assert!(block.1.contains("Do not deploy until I approve."));
+    assert!(last[requirement..].contains("Do not deploy until I approve."));
 
-    // The summary is present as assistant context, not as policy.
-    let summary = rendered
+    // Every message the summary covers is carried verbatim, so it stays out
+    // rather than changing the head of the request after each consolidation.
+    assert!(!rendered
         .iter()
-        .find(|(_, content)| content.starts_with("[generated summary"))
-        .expect("the summary must be carried");
-    assert_eq!(summary.0, "assistant");
+        .any(|(_, content)| content.contains("[generated summary")));
 
-    // The current input is last and appears once.
-    assert_eq!(rendered.last().unwrap().1, "Can you ship it now?");
+    // The current input closes the final message and appears once.
+    assert!(last.ends_with("[current message]\nCan you ship it now?"));
     assert_eq!(
         rendered
             .iter()
-            .filter(|(_, content)| content == "Can you ship it now?")
+            .filter(|(_, content)| content.contains("Can you ship it now?"))
             .count(),
         1
     );
@@ -301,6 +302,44 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
     assert!(built.plan.accounting.fits());
     assert!(built.plan.max_output_tokens > 0);
     assert_eq!(built.plan.memory_revision, 1);
+}
+
+#[tokio::test]
+async fn the_summary_is_carried_as_assistant_context_once_older_turns_are_out_of_reach() {
+    let pool = database().await;
+    let id = seed(&pool, RECENT_CANDIDATE_MESSAGES + 8).await;
+    record_constraint(&pool, &id).await;
+    let repository = ConversationRepository::new(pool.clone());
+
+    let built = build_memory_plan(
+        &repository,
+        &repository,
+        &llm(),
+        &id,
+        "You are helpful.",
+        "Can you ship it now?",
+        0,
+        Vec::new(),
+        true,
+    )
+    .await
+    .unwrap()
+    .expect("a plan");
+
+    let summary = built
+        .plan
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            crate::application::ports::llm_port::CompletionInput::Message { role, content }
+                if content.starts_with("[generated summary") =>
+            {
+                Some(role.clone())
+            }
+            _ => None,
+        })
+        .expect("older turns have nothing else standing in for them");
+    assert_eq!(summary, "assistant", "a summary is never policy");
 }
 
 #[tokio::test]
@@ -470,10 +509,18 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     let latest = snapshot.latest_sequence;
 
     // The ledger covers all but the last three messages.
-    let (recent, unread) = load_recent(&repository, &id, &snapshot, latest - 3)
+    let RecentCandidates {
+        messages: recent,
+        unread_source: unread,
+        reaches_start,
+    } = load_recent(&repository, &id, &snapshot, latest - 3)
         .await
         .unwrap();
     assert!(!unread, "source the ledger covers is not missing");
+    assert!(
+        !reaches_start,
+        "a capped read does not hold the first message, so the summary must stay available"
+    );
     assert_eq!(
         recent.last().unwrap().sequence,
         latest,
@@ -486,7 +533,10 @@ async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unpro
     assert!(recent.first().unwrap().sequence <= latest - 3);
 
     // Without a ledger, the same cut really does leave source unaccounted for.
-    let (_, unread) = load_recent(&repository, &id, &snapshot, 0).await.unwrap();
+    let unread = load_recent(&repository, &id, &snapshot, 0)
+        .await
+        .unwrap()
+        .unread_source;
     assert!(unread);
 }
 

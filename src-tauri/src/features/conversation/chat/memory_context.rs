@@ -132,6 +132,7 @@ pub async fn build_memory_plan(
         document_evidence,
         enabled,
         current_input,
+        chrono::Local::now().date_naive(),
     )
     .await
 }
@@ -148,6 +149,7 @@ pub async fn build_memory_plan_for_query(
     document_evidence: Vec<RankedEvidence>,
     enabled: bool,
     query: &str,
+    today: chrono::NaiveDate,
 ) -> Result<Option<MemoryTurnContext>> {
     if !enabled {
         return Ok(None);
@@ -166,8 +168,11 @@ pub async fn build_memory_plan_for_query(
         < snapshot
             .latest_sequence
             .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64);
-    let (mut recent, unread_source) =
-        load_recent(memory, conversation_id, &snapshot, watermark).await?;
+    let RecentCandidates {
+        messages: mut recent,
+        unread_source,
+        reaches_start,
+    } = load_recent(memory, conversation_id, &snapshot, watermark).await?;
     // The pending current message is supplied separately, possibly enriched
     // with documents. Compare against the raw query before removing it.
     if recent.last().is_some_and(|m| {
@@ -239,11 +244,13 @@ pub async fn build_memory_plan_for_query(
         tool_schema_tokens,
         snapshot: Some(&snapshot),
         recent: &recent,
+        recent_reaches_start: reaches_start,
         processed_through_sequence: watermark,
         recalled: recalled.passages(),
         retrieval: recalled.diagnostics.clone(),
         recall_status: Some(recalled.availability().note()),
         document_evidence,
+        today,
         capacity,
     };
     let plan = assembler.assemble_with_memory(&request, prepared.as_ref())?;
@@ -320,8 +327,17 @@ async fn settle_exact_count(
     Ok(replanned)
 }
 
-/// The newest messages, oldest first, as assembler candidates, and whether
-/// source above the processed `watermark` went unread.
+/// The newest messages, oldest first, as assembler candidates.
+struct RecentCandidates {
+    messages: Vec<SourceMessage>,
+    /// Source above the processed watermark went unread.
+    unread_source: bool,
+    /// Nothing older than `messages` exists, so the assembler can tell when
+    /// its window carries the whole transcript.
+    reaches_start: bool,
+}
+
+/// The newest messages as assembler candidates, and what was left unread.
 ///
 /// Paged from the end rather than loading the aggregate: the whole point is that
 /// prompt construction stops reading the entire conversation. Read newest first
@@ -334,7 +350,7 @@ async fn load_recent(
     conversation_id: &str,
     snapshot: &MemorySnapshot,
     watermark: i64,
-) -> Result<(Vec<SourceMessage>, bool)> {
+) -> Result<RecentCandidates> {
     let from = snapshot
         .latest_sequence
         .saturating_sub(RECENT_CANDIDATE_MESSAGES as i64)
@@ -367,13 +383,15 @@ async fn load_recent(
     // A failed assistant output is not an answer that was returned, so it is not
     // replayed as one. A pending or failed *user* message is kept: the user still
     // said it, and a generation failure must not erase their instruction.
-    Ok((
-        page.messages
+    Ok(RecentCandidates {
+        reaches_start: from == 0 && !page.has_more,
+        messages: page
+            .messages
             .into_iter()
             .filter(SourceMessage::is_eligible_source)
             .collect(),
         unread_source,
-    ))
+    })
 }
 
 #[cfg(test)]
