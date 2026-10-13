@@ -20,9 +20,9 @@ use crate::application::ports::conversation_memory::{
 };
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::memory::{
-    apply_patch, redact_suppressed, EvidenceSpan, MemoryCommit, MemoryItem, MemoryKind,
-    MemorySnapshot, MemoryState, MemoryValidationError, SemanticVerdict, SourceMessage,
-    SuppressedSpan, ValidatedPatch, ValidatedTransitionTarget,
+    apply_patch, drop_forgotten_additions, redact_suppressed, EvidenceSpan, MemoryCommit,
+    MemoryItem, MemoryKind, MemorySnapshot, MemoryState, MemoryValidationError, SemanticVerdict,
+    SourceMessage, SuppressedSpan, ValidatedPatch, ValidatedTransitionTarget,
 };
 use crate::shared::error::Result;
 
@@ -33,7 +33,7 @@ use super::verify::EvidenceText;
 use super::{
     extract, segment, summarize, verify, CompactionConfig, CompactionError, CompactionOutcome,
     CompactionRequest, CompactionStatus, CompactionTrigger, Deadline, TokenCounter,
-    MAX_COMMIT_CONFLICT_RETRIES,
+    MAX_COMMIT_CONFLICT_RETRIES, MAX_FORGOTTEN_LABELS,
 };
 
 /// Extraction and compaction for one application.
@@ -195,7 +195,7 @@ impl CompactionJob {
                     let deadline =
                         Deadline::new(self.config.deadline, request.cancellation.clone())
                             .for_conversation(request.trigger.priority(), conversation_id);
-                    self.run_with_retry(conversation_id, &request, &operation_id, &deadline)
+                    self.run_pages(conversation_id, &request, &operation_id, &deadline)
                         .await
                 }
             }
@@ -245,6 +245,59 @@ impl CompactionJob {
             slots.remove(conversation_id);
         }
         drop(slot);
+    }
+
+    /// [`Self::run_with_retry`], again for each further page of a dropped
+    /// summary while consolidation's deadline has room for one.
+    ///
+    /// Only consolidation keeps going: it runs after an answer with no one
+    /// waiting, while a `/compact` or the compaction a turn waits on takes one
+    /// page as before. Each page commits on its own, so stopping early loses
+    /// nothing and the next run resumes from the summary's boundary. A page
+    /// needs room for twice what the last one took; one the deadline or a
+    /// cancellation cuts short anyway commits nothing, and the run reports
+    /// the pages before it rather than a failure.
+    async fn run_pages(
+        &self,
+        conversation_id: &str,
+        request: &CompactionRequest,
+        operation_id: &str,
+        deadline: &Deadline,
+    ) -> std::result::Result<CompactionOutcome, CompactionError> {
+        let started = Instant::now();
+        let mut outcome = self
+            .run_with_retry(conversation_id, request, operation_id, deadline)
+            .await?;
+        let mut last_page = started.elapsed();
+        let mut page = 1usize;
+        while request.trigger == CompactionTrigger::Maintenance
+            && outcome.refold_pending
+            && deadline.left() >= last_page.saturating_mul(2)
+        {
+            page += 1;
+            let started = Instant::now();
+            // Its own idempotency key: under the run's, the commit would be
+            // taken for a retry of the first page and not applied.
+            let page_operation = format!("{operation_id}/refold-{page}");
+            let next = match self
+                .run_with_retry(conversation_id, request, &page_operation, deadline)
+                .await
+            {
+                Ok(next) => next,
+                Err(CompactionError::DeadlineExceeded(_) | CompactionError::Cancelled) => break,
+                Err(other) => return Err(other),
+            };
+            // A page that ends where the last one did made no progress, and
+            // asking again would only repeat it.
+            if next.status == CompactionStatus::NothingToCompact
+                || next.boundary_message_id == outcome.boundary_message_id
+            {
+                break;
+            }
+            outcome = next;
+            last_page = started.elapsed();
+        }
+        Ok(outcome)
     }
 
     /// One fresh-snapshot retry after a commit conflict (§11.2).
@@ -387,6 +440,19 @@ impl CompactionJob {
             .filter(|message| message.is_eligible_source())
             .cloned()
             .collect();
+        // The user's forgets, read once for everything this attempt may extract
+        // from or fold: a rebuild extracts from the original messages again,
+        // and every fold is made from them.
+        let suppressions_phase = PhaseTiming::start(conversation_id, "read_suppressions");
+        let suppressed = self
+            .suppressed_spans(conversation_id, eligible.iter().chain(&refold.read))
+            .await;
+        suppressions_phase.finish(if suppressed.is_ok() {
+            "completed"
+        } else {
+            "error"
+        });
+        let suppressed = suppressed?;
         let segments = segment::segment_messages(
             &eligible,
             self.config.segment_max_bytes,
@@ -431,7 +497,7 @@ impl CompactionJob {
             } else {
                 "error"
             });
-            let outcome = match outcome {
+            let mut outcome = match outcome {
                 Ok(outcome) => outcome,
                 Err(CompactionError::Rejected(error)) => {
                     // Everything from this batch onward stays unprocessed, so
@@ -446,6 +512,13 @@ impl CompactionJob {
             extraction_calls += outcome.attempts;
             if outcome.repaired {
                 repaired_batches += 1;
+            }
+            let forgotten = drop_forgotten_additions(&mut outcome.patch, &suppressed);
+            if forgotten > 0 {
+                info!(
+                    conversation_id,
+                    forgotten, "Dropped extracted memory that quotes forgotten text"
+                );
             }
 
             let evidence_phase = PhaseTiming::start(conversation_id, "resolve_review_evidence");
@@ -557,11 +630,21 @@ impl CompactionJob {
         // The one place source text enters the summariser, for a normal fold,
         // a refold and a rebuild alike, so this is where a user's forget is
         // enforced: the summary is rebuilt from the originals, and the
-        // forgotten value must not come back with it.
-        let suppressions_phase = PhaseTiming::start(conversation_id, "read_suppressions");
-        let folded = self.redact_forgotten(conversation_id, folded).await;
-        suppressions_phase.finish(if folded.is_ok() { "completed" } else { "error" });
-        let folded = folded?;
+        // forgotten value must not come back with it. Forgotten spans are cut
+        // out; the forgotten facts are named, so a restatement elsewhere is
+        // left out as well.
+        let folded = redact_forgotten(folded, &suppressed);
+        let forgotten_labels = if folded.is_empty() {
+            Vec::new()
+        } else {
+            let labels_phase = PhaseTiming::start(conversation_id, "read_forgotten_labels");
+            let labels = self
+                .memory
+                .forgotten_labels(conversation_id, MAX_FORGOTTEN_LABELS)
+                .await;
+            labels_phase.finish(if labels.is_ok() { "completed" } else { "error" });
+            labels?
+        };
         let display_boundary = if refold.finished {
             prefix
                 .iter()
@@ -585,6 +668,7 @@ impl CompactionJob {
             previous_summary,
             &folded,
             &ledger.mandatory_labels(),
+            &forgotten_labels,
             self.config.summary_token_budget,
             self.count_tokens.as_ref(),
         )
@@ -695,6 +779,7 @@ impl CompactionJob {
             conflicts_recorded,
             commit_conflict_retries,
             resume_after_sequence: incomplete.then_some(accepted_through),
+            refold_pending: !refold.finished,
             was_already_committed: committed.was_already_committed,
         })
     }
@@ -767,39 +852,17 @@ impl CompactionJob {
         })
     }
 
-    /// `messages` with every span the user forgot replaced by a marker.
-    ///
-    /// One read for the whole batch. Only the copies handed to the summariser
-    /// change; the transcript and the ids recorded on the commit do not.
-    async fn redact_forgotten(
+    /// The forgotten spans in `messages`, in one read, or none without one.
+    async fn suppressed_spans<'a>(
         &self,
         conversation_id: &str,
-        messages: Vec<SourceMessage>,
-    ) -> std::result::Result<Vec<SourceMessage>, CompactionError> {
-        if messages.is_empty() {
-            return Ok(messages);
+        messages: impl Iterator<Item = &'a SourceMessage>,
+    ) -> std::result::Result<Vec<SuppressedSpan>, CompactionError> {
+        let ids: Vec<String> = messages.map(|message| message.id.clone()).collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
-        let suppressions = self.memory.suppressed_spans(conversation_id, &ids).await?;
-        if suppressions.is_empty() {
-            return Ok(messages);
-        }
-        let mut by_message: HashMap<&str, Vec<&SuppressedSpan>> = HashMap::new();
-        for span in &suppressions {
-            by_message
-                .entry(span.message_id.as_str())
-                .or_default()
-                .push(span);
-        }
-        Ok(messages
-            .into_iter()
-            .map(|mut message| {
-                if let Some(spans) = by_message.get(message.id.as_str()) {
-                    message.content = redact_suppressed(&message.content, spans).into_owned();
-                }
-                message
-            })
-            .collect())
+        Ok(self.memory.suppressed_spans(conversation_id, &ids).await?)
     }
 
     /// Page `(after_sequence, through_sequence]` oldest first until the range
@@ -952,6 +1015,35 @@ fn summary_resume_point(snapshot: &MemorySnapshot, start_after: i64) -> i64 {
         (Some(_), Some(through)) => through.min(start_after),
         (Some(_), None) => start_after,
     }
+}
+
+/// `messages` with every span the user forgot replaced by a marker.
+///
+/// Only the copies handed to the summariser change; the transcript and the ids
+/// recorded on the commit do not.
+fn redact_forgotten(
+    messages: Vec<SourceMessage>,
+    suppressed: &[SuppressedSpan],
+) -> Vec<SourceMessage> {
+    if suppressed.is_empty() {
+        return messages;
+    }
+    let mut by_message: HashMap<&str, Vec<&SuppressedSpan>> = HashMap::new();
+    for span in suppressed {
+        by_message
+            .entry(span.message_id.as_str())
+            .or_default()
+            .push(span);
+    }
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if let Some(spans) = by_message.get(message.id.as_str()) {
+                message.content = redact_suppressed(&message.content, spans).into_owned();
+            }
+            message
+        })
+        .collect()
 }
 
 /// One page of `(summary boundary, watermark]`: source the ledger covers and

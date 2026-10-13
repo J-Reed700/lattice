@@ -48,7 +48,7 @@ pub struct FittedSummary {
 }
 
 /// Fold the previous summary and the newly processed passages into one summary
-/// that fits `budget_tokens`.
+/// that fits `budget_tokens`, leaving out the facts in `forgotten_labels`.
 ///
 /// # Errors
 ///
@@ -65,6 +65,7 @@ pub async fn fold_summary(
     previous_summary: Option<&str>,
     passages: &[SourceMessage],
     mandatory_labels: &[String],
+    forgotten_labels: &[String],
     budget_tokens: usize,
     count_tokens: &(dyn Fn(&str) -> usize + Send + Sync),
 ) -> std::result::Result<FittedSummary, CompactionError> {
@@ -93,6 +94,7 @@ pub async fn fold_summary(
             current.as_deref(),
             &rendered,
             mandatory_labels,
+            forgotten_labels,
             budget_tokens,
             index + 1 == steps.len(),
         );

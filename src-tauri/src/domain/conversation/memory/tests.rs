@@ -1168,3 +1168,98 @@ fn redaction_cuts_only_suppressions_that_still_apply_and_never_panics() {
     );
     assert_eq!(redact(&[span(i64::MIN, i64::MAX, &digest)]), "[forgotten]");
 }
+
+#[test]
+fn an_addition_quoting_a_forgotten_span_is_dropped_with_what_depends_on_it() {
+    let messages = vec![
+        message("m1", 1, SourceRole::User, "Use Python."),
+        message("m2", 4, SourceRole::User, "Locker 4471. Actually use Rust."),
+    ];
+    let sources = SourceIndex::new(&messages);
+    let existing = vec![item("i1", MemoryKind::Decision, 1, "Use Python")];
+    let mut validated = validate_patch(
+        &patch(
+            vec![
+                constraint(
+                    "c1",
+                    "Locker code 4471",
+                    vec![evidence("m2", "Locker 4471.", "assertion")],
+                ),
+                ProposedItem {
+                    candidate_id: "c2".into(),
+                    kind: "decision".into(),
+                    label: "Use Rust".into(),
+                    evidence: vec![evidence("m2", "Actually use Rust.", "assertion")],
+                },
+            ],
+            vec![ProposedTransition {
+                item_id: "i1".into(),
+                state: "superseded".into(),
+                replacement_candidate_id: Some("c2".into()),
+                evidence: vec![evidence("m2", "Actually use Rust.", "transition")],
+            }],
+        ),
+        &sources,
+        &existing,
+        &[],
+    )
+    .expect("valid patch");
+    let content = &messages[1].content;
+    let forgot = |needle: &str, digest: String| {
+        let start = content.find(needle).unwrap() as i64;
+        SuppressedSpan {
+            message_id: "m2".into(),
+            start_byte: start,
+            end_byte: start + needle.len() as i64,
+            content_digest: digest,
+        }
+    };
+    let digest = compute_digest(content);
+
+    // Recorded against other text, or ending where the quote starts: neither
+    // covers the quote, so nothing is dropped.
+    let stale = forgot("4471", compute_digest("other text"));
+    let before = SuppressedSpan {
+        start_byte: 0,
+        end_byte: 0,
+        ..forgot("Locker", digest.clone())
+    };
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[stale, before]),
+        0
+    );
+    assert_eq!(validated.additions.len(), 2);
+
+    // Overlapping the quote's bytes is enough; the supersession by the other
+    // addition is untouched.
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[forgot("4471", digest.clone())]),
+        1
+    );
+    let left: Vec<&str> = validated
+        .additions
+        .iter()
+        .map(|addition| addition.candidate_id.as_str())
+        .collect();
+    assert_eq!(left, vec!["c2"]);
+    assert_eq!(validated.transitions.len(), 1);
+
+    // Forgetting the replacement takes the transition with it, so the item it
+    // would have retired stays active.
+    assert_eq!(
+        drop_forgotten_additions(&mut validated, &[forgot("use Rust", digest)]),
+        1
+    );
+    assert!(validated.additions.is_empty());
+    assert!(validated.transitions.is_empty());
+    let commit = apply_patch(
+        "c1",
+        &validated,
+        &existing,
+        &HashMap::new(),
+        &HashMap::new(),
+        2,
+        10,
+    );
+    assert!(commit.inserts.is_empty() && commit.updates.is_empty());
+}

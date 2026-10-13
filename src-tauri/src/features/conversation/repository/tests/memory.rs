@@ -1719,7 +1719,8 @@ async fn deleting_an_early_message_drops_the_summary_but_not_the_watermark() {
 
 /// A user's forget writes the suppression every summary fold redacts with. It
 /// comes back for that message in one batched read scoped to the conversation,
-/// and cuts exactly the forgotten text.
+/// and cuts exactly the forgotten text. The forgotten item's label is what the
+/// summariser is told to leave out.
 #[tokio::test]
 async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
     use crate::domain::conversation::memory::{redact_suppressed, SuppressedSpan};
@@ -1801,5 +1802,24 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
             .unwrap()
             .is_empty(),
         "another conversation cannot read them by message id"
+    );
+
+    assert_eq!(
+        repo.memory_forgotten_labels(&conversation_id, 32)
+            .await
+            .unwrap(),
+        vec!["Approval required before deploy".to_string()]
+    );
+    assert!(repo
+        .memory_forgotten_labels(&conversation_id, 0)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(
+        repo.memory_forgotten_labels(&other.id.to_string(), 32)
+            .await
+            .unwrap()
+            .is_empty(),
+        "another conversation's forgotten facts stay its own"
     );
 }

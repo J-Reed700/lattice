@@ -1,13 +1,17 @@
-//! Cutting forgotten spans out of source text before it is summarised.
+//! Keeping what a user forgot out of memory that is rebuilt from source.
 //!
 //! A user's forget records the item's assertion spans as suppressions and
 //! clears the working summary. The summary is then rebuilt from the original
-//! messages — by a refold, or by a full rebuild — so without this the
-//! forgotten value would come back in the summary's prose.
+//! messages — by a refold, or by a full rebuild — and a rebuild extracts items
+//! from those messages again. Without this the forgotten value would come back
+//! in the summary's prose, and as a fresh item quoting the same words.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
-use super::compute_digest;
+use super::{
+    compute_digest, EvidencePurpose, EvidenceSpan, ValidatedPatch, ValidatedTransitionTarget,
+};
 
 /// What stands in for a forgotten span, so the sentence around it still reads.
 pub const FORGOTTEN_MARKER: &str = "[forgotten]";
@@ -20,6 +24,64 @@ pub struct SuppressedSpan {
     pub start_byte: i64,
     pub end_byte: i64,
     pub content_digest: String,
+}
+
+impl SuppressedSpan {
+    /// Whether `evidence` asserts something inside this span: the same message,
+    /// unchanged since the forget, with overlapping bytes. The rule
+    /// `trg_memory_suppression_evidence` applies when such an item is stored.
+    pub fn covers(&self, evidence: &EvidenceSpan) -> bool {
+        evidence.purpose == EvidencePurpose::Assertion
+            && evidence.message_id == self.message_id
+            && evidence.content_digest == self.content_digest
+            && self.start_byte < i64::from(evidence.end_byte)
+            && self.end_byte > i64::from(evidence.start_byte)
+    }
+}
+
+/// Take out of `patch` every addition that asserts a forgotten span, with each
+/// transition that names one, and return how many additions went.
+///
+/// The store marks such an item forgotten as it lands, but until then the run
+/// would hold it as active memory: reviewed, and named to the summariser among
+/// the active requirements. A transition that names a dropped addition as its
+/// replacement goes too, so the item it would have retired stays as it was.
+pub fn drop_forgotten_additions(
+    patch: &mut ValidatedPatch,
+    suppressed: &[SuppressedSpan],
+) -> usize {
+    if suppressed.is_empty() {
+        return 0;
+    }
+    let forgotten: HashSet<String> = patch
+        .additions
+        .iter()
+        .filter(|addition| {
+            addition
+                .evidence
+                .iter()
+                .any(|evidence| suppressed.iter().any(|span| span.covers(evidence)))
+        })
+        .map(|addition| addition.candidate_id.clone())
+        .collect();
+    if forgotten.is_empty() {
+        return 0;
+    }
+    patch
+        .additions
+        .retain(|addition| !forgotten.contains(&addition.candidate_id));
+    patch.transitions.retain(|transition| {
+        let replaced_by_forgotten = transition
+            .replacement_candidate_id
+            .as_ref()
+            .is_some_and(|candidate| forgotten.contains(candidate));
+        let targets_forgotten = matches!(
+            &transition.target,
+            ValidatedTransitionTarget::Candidate(candidate) if forgotten.contains(candidate)
+        );
+        !replaced_by_forgotten && !targets_forgotten
+    });
+    forgotten.len()
 }
 
 /// `content` with each applicable suppressed range replaced by

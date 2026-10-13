@@ -41,7 +41,9 @@ pub use patch::{
     MemoryPatch, MemoryValidationError, ProposedEvidence, ProposedItem, ProposedTransition,
     ValidatedAddition, ValidatedPatch, ValidatedTransition, ValidatedTransitionTarget,
 };
-pub use redaction::{redact_suppressed, SuppressedSpan, FORGOTTEN_MARKER};
+pub use redaction::{
+    drop_forgotten_additions, redact_suppressed, SuppressedSpan, FORGOTTEN_MARKER,
+};
 pub use validation::{parse_patch, validate_patch, SourceIndex};
 
 /// Version of the persisted memory layout. Bump when a stored shape changes in

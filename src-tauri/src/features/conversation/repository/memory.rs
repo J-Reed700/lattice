@@ -602,6 +602,29 @@ impl ConversationRepository {
             .collect())
     }
 
+    /// Labels of the conversation's forgotten items, distinct, most recently
+    /// changed first, at most `limit`.
+    pub async fn memory_forgotten_labels(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT i.label \
+             FROM conversation_memory_items i \
+             JOIN conversation_memory_attributes a ON a.item_id = i.id \
+             WHERE i.conversation_id = ? AND a.forgotten = 1 \
+             GROUP BY i.label \
+             ORDER BY MAX(i.updated_at) DESC, i.label \
+             LIMIT ?",
+        )
+        .bind(conversation_id)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to read forgotten memory: {}", e)))
+    }
+
     /// Read specific messages, scoped to one conversation. Foreign ids are
     /// dropped by the `WHERE`, never returned.
     pub async fn read_memory_messages(
