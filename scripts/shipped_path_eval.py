@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+"""Score answers from the shipped desktop chat path.
+
+`src-tauri/examples/shipped_path_eval` asks each question of the desktop's own
+orchestrator and writes one row per item. This script grades those rows two
+ways and reports both, so each can be checked against the other:
+
+* mechanical checks against the item's rubric: required facts present
+  (case-insensitive substring, any listed alternative), forbidden claims
+  absent, abstention matching what the corpus supports, citation numbers that
+  exist, and the expected documents among those cited and among the evidence
+  the model was given;
+* a rubric judge: the local model grades each answer three times with a fixed
+  prompt, greedy sampling and thinking off, and a turn passes only when all
+  three grades pass (pass^3).
+
+The judge is the same model that wrote the answers, so its verdict is a
+smoke-level signal, not a calibrated one. Disagreements between the two are
+listed in the report for that reason.
+
+Commands:
+  validate QUESTIONS CORPUS        check a question set against its corpus
+  score QUESTIONS ANSWERS OUT      grade a run (add --endpoint to run the judge)
+  score-dataset DATASET EXPECTATIONS ANSWERS OUT
+                                   grade a run of a labelled dataset with the
+                                   answer harness's own regex checks
+"""
+import argparse
+import json
+import re
+import statistics
+import unicodedata
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from chat_rag_eval import ABSTENTION_RE, CITATION_RE, aggregate, evaluate_answer
+from eval_integrity import SCHEMA_VERSION, digest, unique_records, validate_expectations, wilson
+from rag_eval import validate_dataset
+
+ROW_SCHEMA = "lattice-shipped-path-answers/1"
+JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
+REPEATS = 3
+
+# Phrases a desktop answer uses to decline that the answer harness's pattern
+# does not list.
+EXTRA_ABSTENTION_RE = re.compile(
+    r"\b(?:no (?:mention|record|reference|document|entry)|isn't (?:mentioned|recorded|in)|"
+    r"is not (?:mentioned|recorded|in the)|couldn't find|could not find|none of the "
+    r"(?:documents|sources|notes)|not (?:mentioned|recorded|listed|included))\b",
+    re.IGNORECASE,
+)
+
+TURN_FIELDS = {
+    "index": int, "question": str, "answer": (str, type(None)), "error": (str, type(None)),
+    "answered_ms": int, "evidence": list, "citation_map": dict, "ranked_ids": list,
+    "model_calls": list, "prompt_tokens": dict,
+}
+ROW_FIELDS = {
+    "schema": str, "query_id": str, "tags": list, "answer": (str, type(None)),
+    "ranked_ids": list, "citation_map": dict, "latency_ms": int, "model": str,
+    "error": (str, type(None)), "turns": list,
+}
+
+JUDGE_SYSTEM = (
+    "You grade one answer from a document assistant against a rubric written by the "
+    "person who built the test. The documents are fictional, so use no outside "
+    "knowledge: judge only whether the answer meets the rubric. Paraphrases, "
+    "equivalent number and date formats, and extra correct detail are fine. Citation "
+    "markers such as [1] are not part of the content. Return JSON with verdict "
+    '"pass" or "fail" and a one-sentence reason.'
+)
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["pass", "fail"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["verdict", "reason"],
+}
+
+
+def normalize(text):
+    """Casefolded, NFKC, one space, ASCII hyphens, no Markdown emphasis."""
+    text = unicodedata.normalize("NFKC", text or "")
+    text = re.sub(r"[‐-―−]", "-", text)
+    text = re.sub(r"[*_`]", "", text)
+    return re.sub(r"\s+", " ", text).casefold().strip()
+
+
+def contains(haystack, needle):
+    return normalize(needle) in normalize(haystack)
+
+
+def load_jsonl(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def validate_row(row):
+    """Reject a row whose shape the scorer does not understand."""
+    for field, kind in ROW_FIELDS.items():
+        if field not in row or not isinstance(row[field], kind):
+            raise ValueError(f"row {row.get('query_id')!r}: field {field} missing or mistyped")
+    if row["schema"] != ROW_SCHEMA:
+        raise ValueError(f"row {row['query_id']!r}: schema {row['schema']!r} is not {ROW_SCHEMA}")
+    if not row["turns"]:
+        raise ValueError(f"row {row['query_id']!r}: no turns")
+    for turn in row["turns"]:
+        for field, kind in TURN_FIELDS.items():
+            if field not in turn or not isinstance(turn[field], kind):
+                raise ValueError(f"row {row['query_id']!r} turn: field {field} missing or mistyped")
+    return row
+
+
+def validate_questions(questions, corpus):
+    """Problems with a question set; empty when it is sound."""
+    problems = []
+    documents = {doc["id"]: doc for doc in corpus["documents"]}
+    vocabulary = set(questions.get("tags", {}))
+    items = questions.get("items")
+    if not isinstance(items, list) or not items:
+        return ["question set has no items"]
+    try:
+        unique_records(items, "id")
+    except ValueError as error:
+        problems.append(str(error))
+    for item in items:
+        where = item.get("id")
+        tags = item.get("tags") or []
+        if not tags or not set(tags) <= vocabulary:
+            problems.append(f"{where}: tags {tags} are empty or outside the vocabulary")
+        turns = item.get("turns") or []
+        if not turns:
+            problems.append(f"{where}: no turns")
+        for number, turn in enumerate(turns, 1):
+            rubric = turn.get("rubric")
+            if not isinstance(turn.get("ask"), str) or not turn["ask"].strip() or not isinstance(rubric, dict):
+                problems.append(f"{where} turn {number}: needs ask and rubric")
+                continue
+            if not isinstance(rubric.get("notes"), str) or not rubric["notes"].strip():
+                problems.append(f"{where} turn {number}: rubric needs notes for the judge")
+            expected = rubric.get("expected_citations", [])
+            unknown = [doc for doc in expected if doc not in documents]
+            if unknown:
+                problems.append(f"{where} turn {number}: unknown documents {unknown}")
+            groups = rubric.get("must_mention", [])
+            if rubric.get("abstain"):
+                if groups or expected:
+                    problems.append(f"{where} turn {number}: an abstention has no facts or citations")
+                for claim in rubric.get("must_not_claim", []):
+                    if any(contains(doc["text"], claim) for doc in documents.values()):
+                        problems.append(f"{where} turn {number}: {claim!r} occurs in the corpus")
+                continue
+            if not groups or not expected:
+                problems.append(f"{where} turn {number}: an answerable turn needs facts and citations")
+            source = " ".join(documents[doc]["text"] for doc in expected if doc in documents)
+            for group in groups:
+                if not isinstance(group, list) or not group:
+                    problems.append(f"{where} turn {number}: must_mention groups are nonempty lists")
+                elif not any(contains(source, option) for option in group):
+                    problems.append(f"{where} turn {number}: none of {group} occurs in {expected}")
+    return problems
+
+
+def abstained(answer):
+    return bool(ABSTENTION_RE.search(answer or "") or EXTRA_ABSTENTION_RE.search(answer or ""))
+
+
+def mechanical(rubric, turn):
+    """The rubric's checkable parts, applied to one turn."""
+    answer = turn.get("answer") or ""
+    groups = rubric.get("must_mention", [])
+    missing = [group for group in groups if not any(contains(answer, option) for option in group)]
+    forbidden = [claim for claim in rubric.get("must_not_claim", []) if contains(answer, claim)]
+    cited = list(dict.fromkeys(int(n) for n in CITATION_RE.findall(answer)))
+    citation_map = turn.get("citation_map") or {}
+    invalid = [n for n in cited if str(n) not in citation_map]
+    cited_docs = list(dict.fromkeys(citation_map[str(n)] for n in cited if str(n) in citation_map))
+    expected = rubric.get("expected_citations", [])
+    supplied = {entry.get("document_id") for entry in turn.get("evidence") or []}
+    expect_abstain = bool(rubric.get("abstain"))
+    did_abstain = abstained(answer)
+    abstention_ok = did_abstain if expect_abstain else not did_abstain
+    expected_cited = [doc for doc in expected if doc in cited_docs]
+    passed = (
+        turn.get("error") is None
+        and bool(answer.strip())
+        and not missing
+        and not forbidden
+        and abstention_ok
+        and not invalid
+        and len(expected_cited) == len(expected)
+    )
+    return {
+        "missing_facts": missing,
+        "forbidden_claims": forbidden,
+        "cited_ids": cited,
+        "invalid_citations": invalid,
+        "cited_document_ids": cited_docs,
+        "expected_cited": expected_cited,
+        "expected_in_evidence": [doc for doc in expected if doc in supplied],
+        "abstained": did_abstain,
+        "expected_abstain": expect_abstain,
+        "abstention_ok": abstention_ok,
+        "passed": passed,
+    }
+
+
+def judge_messages(item, turn_number, answers):
+    """The fixed judge prompt for one turn; earlier turns are context only."""
+    turns = item["turns"]
+    rubric = turns[turn_number]["rubric"]
+    lines = []
+    if turn_number:
+        lines.append("Earlier in the conversation (context only, not graded):")
+        for earlier in range(turn_number):
+            lines.append(f"Q{earlier + 1}: {turns[earlier]['ask']}")
+            lines.append(f"A{earlier + 1}: {answers[earlier] or '(no answer)'}")
+        lines.append("")
+    lines.append(f"Question being graded: {turns[turn_number]['ask']}")
+    lines.append("")
+    lines.append("Rubric:")
+    if rubric.get("abstain"):
+        lines.append("- The documents do not contain this answer. A correct answer says so and "
+                     "does not invent one.")
+    else:
+        lines.append("- The documents contain the answer. Declining to answer fails.")
+        for group in rubric.get("must_mention", []):
+            lines.append("- Must state: " + " (or) ".join(json.dumps(option) for option in group))
+    for claim in rubric.get("must_not_claim", []):
+        lines.append(f"- Must not claim: {json.dumps(claim)}")
+    lines.append(f"- What a correct answer says: {rubric['notes']}")
+    lines.append("")
+    lines.append("Answer to grade:")
+    lines.append("<<<")
+    lines.append(answers[turn_number] or "(no answer)")
+    lines.append(">>>")
+    return [{"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": "\n".join(lines)}]
+
+
+def judge_request(model, messages):
+    """Greedy, thinking off, schema-bound: the same input gives the same grade."""
+    return {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "temperature": 0,
+        "top_p": 1,
+        "top_k": 1,
+        "seed": 2026,
+        "max_tokens": 300,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "response_format": {"type": "json_schema",
+                            "json_schema": {"name": "verdict", "schema": JUDGE_SCHEMA}},
+    }
+
+
+def parse_verdict(payload):
+    content = payload["choices"][0]["message"]["content"]
+    verdict = json.loads(re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip())
+    if verdict.get("verdict") not in ("pass", "fail"):
+        raise ValueError(f"judge returned no verdict: {content!r}")
+    return verdict["verdict"] == "pass", str(verdict.get("reason", ""))
+
+
+def http_judge(endpoint, model, timeout=300):
+    url = endpoint.rstrip("/") + "/v1/chat/completions"
+
+    def call(messages):
+        body = json.dumps(judge_request(model, messages)).encode()
+        request = urllib.request.Request(url, data=body, method="POST",
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return parse_verdict(json.load(response))
+    return call
+
+
+def pass_k(verdicts):
+    """pass^k: every one of the k grades must pass."""
+    return bool(verdicts) and all(passed for passed, _ in verdicts)
+
+
+def score(questions, rows, judge=None, repeats=REPEATS):
+    """Scored rows, one per item, in question-set order."""
+    items = unique_records(questions["items"], "id")
+    by_id = unique_records([validate_row(row) for row in rows], "query_id")
+    unknown = set(by_id) - set(items)
+    if unknown:
+        raise ValueError(f"rows for items the question set does not have: {sorted(unknown)}")
+    scored = []
+    for item_id, item in items.items():
+        row = by_id.get(item_id)
+        if row is None:
+            continue
+        answers = [turn.get("answer") for turn in row["turns"]]
+        turn_scores = []
+        for number, spec in enumerate(item["turns"]):
+            turn = row["turns"][number] if number < len(row["turns"]) else {"answer": None, "error": "turn not run"}
+            checks = mechanical(spec["rubric"], turn)
+            result = {"turn": number, "mechanical": checks}
+            if judge is not None:
+                verdicts = []
+                if turn.get("answer"):
+                    messages = judge_messages(item, number, answers + [None] * len(item["turns"]))
+                    verdicts = [judge(messages) for _ in range(repeats)]
+                result["judge"] = {
+                    "verdicts": [{"pass": passed, "reason": reason} for passed, reason in verdicts],
+                    "pass_k": pass_k(verdicts) and len(verdicts) == repeats,
+                    "unanimous": len({passed for passed, _ in verdicts}) <= 1,
+                }
+            turn_scores.append(result)
+        last = row["turns"][-1]
+        mechanical_pass = all(t["mechanical"]["passed"] for t in turn_scores)
+        record = {
+            "query_id": item_id,
+            "tags": item["tags"],
+            "dimensions": item["tags"],
+            "answer": row["answer"],
+            "answer_sha256": digest(row["answer"]),
+            "ranked_ids": row["ranked_ids"],
+            "citation_map": row["citation_map"],
+            "cited_ids": turn_scores[-1]["mechanical"]["cited_ids"],
+            "cited_document_ids": turn_scores[-1]["mechanical"]["cited_document_ids"],
+            "invalid_citations": turn_scores[-1]["mechanical"]["invalid_citations"],
+            "abstained": turn_scores[-1]["mechanical"]["abstained"],
+            "expected_abstain": turn_scores[-1]["mechanical"]["expected_abstain"],
+            "mechanical_checks_passed": mechanical_pass,
+            "answer_correct": None,
+            "review_status": "unreviewed",
+            "latency_ms": row["latency_ms"],
+            "model": row["model"],
+            "error": row["error"],
+            "turn_scores": turn_scores,
+            "observed": [observed(turn) for turn in row["turns"]],
+            "verification": [verdict_counts(turn) for turn in row["turns"]],
+            "timing": [turn_timing(turn) for turn in row["turns"]],
+            "last_turn_evidence_docs": [e.get("document_id") for e in last.get("evidence", [])],
+        }
+        if judge is not None:
+            record["judge_pass_k"] = all(t["judge"]["pass_k"] for t in turn_scores)
+        scored.append(record)
+    return scored
+
+
+def observed(turn):
+    """What the shipped path actually did on this turn, from its own record."""
+    trace = turn.get("retrieval_trace") or {}
+    steps = (turn.get("turn_record") or {}).get("steps") or []
+    calls = turn.get("model_calls") or []
+    return {
+        "kb_searched": bool(trace) and not trace.get("unavailableReason"),
+        "passages": trace.get("passages"),
+        "kb_sufficient": trace.get("kbSufficient"),
+        "corrective_retries": trace.get("kbCorrectiveRetries"),
+        "planner_skipped": trace.get("kbPlannerSkipped"),
+        "sufficiency_reasons": trace.get("sufficiencyReasons", []),
+        "step_kinds": [step.get("kind") for step in steps],
+        "tool_calls": [call.get("name") for c in calls for call in c.get("tool_calls") or []],
+        "model_calls": len(calls),
+    }
+
+
+def verdict_counts(turn):
+    verification = turn.get("verification") or {}
+    return verification.get("verdictCounts")
+
+
+def turn_timing(turn):
+    flow = turn.get("flow_timing") or {}
+    tokens = turn.get("prompt_tokens") or {}
+    return {
+        "answered_ms": turn.get("answered_ms"),
+        "retrieval_ms": flow.get("retrievalPipelineMs"),
+        "generation_ms": flow.get("generationMs"),
+        "router_ms": flow.get("routerMs"),
+        "verification_wait_ms": turn.get("verification_wait_ms"),
+        "cached_prompt_tokens": tokens.get("cached"),
+        "evaluated_prompt_tokens": tokens.get("evaluated"),
+        "completion_tokens": tokens.get("completion"),
+    }
+
+
+def rate(passes, total):
+    return {"passed": passes, "total": total, "rate": passes / total if total else None,
+            "wilson95": wilson(passes, total)}
+
+
+def median(values):
+    values = [v for v in values if isinstance(v, (int, float))]
+    return statistics.median(values) if values else None
+
+
+def percentile(values, p):
+    values = sorted(v for v in values if isinstance(v, (int, float)))
+    if not values:
+        return None
+    return values[max(0, (p * len(values) + 99) // 100 - 1)]
+
+
+def summarize(scored, questions):
+    judged = all("judge_pass_k" in row for row in scored) and bool(scored)
+    tags = list(questions.get("tags", {}))
+    for row in scored:
+        tags += [tag for tag in row["tags"] if tag not in tags]
+
+    def bucket(rows):
+        result = {"items": len(rows),
+                  "mechanical": rate(sum(r["mechanical_checks_passed"] for r in rows), len(rows))}
+        if judged:
+            result["judge_pass3"] = rate(sum(r["judge_pass_k"] for r in rows), len(rows))
+            result["both"] = rate(sum(r["judge_pass_k"] and r["mechanical_checks_passed"]
+                                      for r in rows), len(rows))
+        return result
+
+    timings = [t for row in scored for t in row["timing"]]
+    observations = [o for row in scored for o in row["observed"]]
+    summary = {
+        "items": len(scored),
+        "turns": len(timings),
+        "errors": [row["query_id"] for row in scored if row["error"]],
+        "overall": bucket(scored),
+        "by_tag": {tag: bucket([r for r in scored if tag in r["tags"]]) for tag in tags
+                   if any(tag in r["tags"] for r in scored)},
+        "timing_ms": {key: {"median": median([t[key] for t in timings]),
+                            "p95": percentile([t[key] for t in timings], 95)}
+                      for key in ("answered_ms", "retrieval_ms", "generation_ms", "verification_wait_ms")},
+        "prompt_tokens": {key: sum(t[key] or 0 for t in timings)
+                          for key in ("cached_prompt_tokens", "evaluated_prompt_tokens", "completion_tokens")},
+        "observed": {
+            "turns_with_kb_search": sum(o["kb_searched"] for o in observations),
+            "turns_with_corrective_retry": sum(bool(o["corrective_retries"]) for o in observations),
+            "turns_planner_skipped": sum(bool(o["planner_skipped"]) for o in observations),
+            "turns_insufficient": sum(o["kb_sufficient"] is False for o in observations),
+            "turns_with_tool_calls": sum(bool(o["tool_calls"]) for o in observations),
+            "model_calls_per_turn_median": median([o["model_calls"] for o in observations]),
+        },
+    }
+    if judged:
+        summary["disagreements"] = [
+            {"query_id": r["query_id"], "mechanical": r["mechanical_checks_passed"], "judge": r["judge_pass_k"]}
+            for r in scored if r["mechanical_checks_passed"] != r["judge_pass_k"]]
+        summary["judge_split_turns"] = [
+            f"{r['query_id']}#{t['turn']}" for r in scored for t in r["turn_scores"]
+            if not t["judge"]["unanimous"]]
+    return summary
+
+
+def markdown(summary):
+    judged = "judge_pass3" in summary["overall"]
+    head = "| tag | items | mechanical |" + (" judge pass^3 | both |" if judged else "")
+    rule = "|---|---:|---:|" + ("---:|---:|" if judged else "")
+
+    def cell(r):
+        return f"{r['passed']}/{r['total']} ({r['rate']:.0%})" if r["total"] else "-"
+    lines = [head, rule]
+    for name, bucket in [("**overall**", summary["overall"])] + list(summary["by_tag"].items()):
+        line = f"| {name} | {bucket['items']} | {cell(bucket['mechanical'])} |"
+        if judged:
+            line += f" {cell(bucket['judge_pass3'])} | {cell(bucket['both'])} |"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def score_dataset(dataset, expectations, rows):
+    """A run over a labelled dataset, graded by `chat_rag_eval.evaluate_answer`.
+
+    `ranked_ids` there means "citation n is document n"; the desktop numbers
+    its evidence itself, so each row says whether the two agree and the
+    citation map is applied first when they do not.
+    """
+    validate_dataset(dataset)
+    labels = validate_expectations(dataset, expectations)
+    queries = unique_records(dataset["queries"], "id")
+    scored = []
+    for row in (validate_row(r) for r in rows):
+        citation_map = row["citation_map"]
+        numbered = [citation_map[str(n)] for n in range(1, len(citation_map) + 1) if str(n) in citation_map]
+        aligned = numbered == row["ranked_ids"] and len(numbered) == len(citation_map)
+        selected = row["ranked_ids"] if aligned else [citation_map.get(str(n), "")
+                                                       for n in range(1, max(map(int, citation_map), default=0) + 1)]
+        result = evaluate_answer(queries[row["query_id"]], labels[row["query_id"]], row["answer"] or "",
+                                 selected, row["latency_ms"], row["model"])
+        result.update({"citations_aligned": aligned, "error": row["error"],
+                       "observed": [observed(t) for t in row["turns"]],
+                       "timing": [turn_timing(t) for t in row["turns"]]})
+        scored.append(result)
+    return scored
+
+
+def manifest(questions, run_meta, judge_settings):
+    """Identity in the answer harness's manifest shape, so review tooling can check it."""
+    scripts = Path(__file__).parent
+    identity = {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_sha256": digest(questions),
+        "expectations_sha256": digest(None),
+        "retrieval_sha256": digest(None),
+        "settings": {
+            "harness": "shipped_desktop_path",
+            "model": run_meta.get("recipe", {}).get("server", {}).get("model"),
+            "model_revision": run_meta.get("gguf_sha256"),
+            "recipe_sha256": run_meta.get("recipe_sha256"),
+            "corpus_sha256": run_meta.get("corpus_sha256"),
+            "thinking": run_meta.get("thinking"),
+            "commit": run_meta.get("commit"),
+            "judge": judge_settings,
+        },
+        "harness_sha256": digest({
+            "runner": run_meta.get("harness_sha256"),
+            "scorer": digest((scripts / "shipped_path_eval.py").read_text()),
+        }),
+    }
+    return {**identity, "run_id": digest(identity)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    check = sub.add_parser("validate")
+    check.add_argument("questions", type=Path)
+    check.add_argument("corpus", type=Path)
+    run = sub.add_parser("score")
+    run.add_argument("questions", type=Path)
+    run.add_argument("answers", type=Path)
+    run.add_argument("output", type=Path)
+    run.add_argument("--endpoint", help="llama-server base URL; omit to skip the judge")
+    run.add_argument("--model", default="judge")
+    run.add_argument("--repeats", type=int, default=REPEATS)
+    labelled = sub.add_parser("score-dataset")
+    labelled.add_argument("questions", type=Path, help="the labelled dataset")
+    labelled.add_argument("expectations", type=Path)
+    labelled.add_argument("answers", type=Path)
+    labelled.add_argument("output", type=Path)
+    args = parser.parse_args()
+
+    questions = json.loads(args.questions.read_text())
+    if args.command == "validate":
+        problems = validate_questions(questions, json.loads(args.corpus.read_text()))
+        print("\n".join(problems) or f"{len(questions['items'])} items valid")
+        raise SystemExit(1 if problems else 0)
+
+    if args.output.exists():
+        raise SystemExit(f"{args.output} exists; scores are never overwritten")
+    rows = load_jsonl(args.answers)
+    if args.command == "score-dataset":
+        expectations = json.loads(args.expectations.read_text())
+        scored = score_dataset(questions, expectations, rows)
+        with args.output.open("x") as out:
+            for row in scored:
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+        report = aggregate(scored, len(questions["queries"]))
+        report["citations_aligned"] = sum(r["citations_aligned"] for r in scored)
+        report["by_dimension_mechanical"] = {
+            tag: rate(sum(r["mechanical_checks_passed"] for r in scored if tag in r["dimensions"]),
+                      sum(tag in r["dimensions"] for r in scored))
+            for tag in sorted({t for r in scored for t in r["dimensions"]})}
+        report["timing_ms"] = {key: {"median": median([t[key] for r in scored for t in r["timing"]]),
+                                     "p95": percentile([t[key] for r in scored for t in r["timing"]], 95)}
+                               for key in ("answered_ms", "retrieval_ms", "generation_ms")}
+        Path(str(args.output) + ".summary.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps(report, indent=2))
+        return
+    run_meta_path = Path(str(args.answers) + ".run.json")
+    run_meta = json.loads(run_meta_path.read_text()) if run_meta_path.exists() else {}
+    judge = http_judge(args.endpoint, args.model) if args.endpoint else None
+    judge_settings = (judge_request(args.model, [])
+                      | {"messages": None, "repeats": args.repeats, "rubric": JUDGE_RUBRIC}) if judge else None
+    scored = score(questions, rows, judge, args.repeats)
+    identity = manifest(questions, run_meta, judge_settings)
+    with args.output.open("x") as out:
+        for row in scored:
+            out.write(json.dumps({**row, "run_id": identity["run_id"]}, ensure_ascii=False) + "\n")
+    Path(str(args.output) + ".manifest.json").write_text(json.dumps(identity, indent=2) + "\n")
+    summary = summarize(scored, questions)
+    Path(str(args.output) + ".summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(markdown(summary))
+    print(json.dumps({k: summary[k] for k in summary if k not in ("by_tag", "overall")}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -186,7 +186,8 @@ pub struct Deadline {
     cancellation: Option<CancellationToken>,
     /// How the run's model calls queue at the backend.
     priority: InferencePriority,
-    /// The conversation, so its calls return to the slot holding its prefix.
+    /// The conversation's memory key, so its calls share one slot and keep
+    /// clear of the chat's own.
     cache_key: Option<String>,
 }
 
@@ -201,10 +202,13 @@ impl Deadline {
         }
     }
 
-    /// Queue this run's model calls at `priority`, keyed to `conversation_id`.
+    /// Queue this run's model calls at `priority`, keyed to `conversation_id`'s
+    /// memory. Not the conversation's own key: consolidation runs between
+    /// turns, and on the chat's slot it would overwrite the cached prefix the
+    /// next turn reuses.
     pub fn for_conversation(mut self, priority: InferencePriority, conversation_id: &str) -> Self {
         self.priority = priority;
-        self.cache_key = Some(conversation_id.to_string());
+        self.cache_key = Some(format!("memory:{conversation_id}"));
         self
     }
 

@@ -140,9 +140,6 @@ impl SettingsRepository {
     }
 
     /// Migrate settings from older version to current version.
-    ///
-    /// Currently a no-op as we're on version 1.
-    /// Future versions should implement migration logic here.
     async fn migrate_settings(&self, mut settings_file: SettingsFile) -> Result<SettingsFile> {
         tracing::info!(
             "Migrating settings from version {} to {}",
@@ -150,10 +147,57 @@ impl SettingsRepository {
             SETTINGS_VERSION
         );
 
+        if settings_file.version < 2 {
+            release_untouched_vector_compression(&mut settings_file.settings);
+            release_untouched_answer_sampling(&mut settings_file.settings);
+        }
         settings_file.version = SETTINGS_VERSION;
 
         self.write_settings_file(&settings_file).await?;
 
         Ok(settings_file)
+    }
+}
+
+/// Version 1 stored every vault's vectors truncated to 256 dims at i8 by
+/// default; version 2 stores them at full precision, which measured better.
+/// A document still holding exactly the old default never chose compression,
+/// so it takes the new default, and the index rebuilds into its own files on
+/// the next start. Any other compression setting was someone's choice and is
+/// kept.
+fn release_untouched_vector_compression(
+    settings: &mut crate::features::settings::dto::SettingsDto,
+) {
+    use crate::features::settings::dto::{VectorIndexCompressionModeDto, VectorQuantizationDto};
+
+    let stored = &mut settings.search.vector_index_compression;
+    if stored.mode == VectorIndexCompressionModeDto::Truncated
+        && stored.dims == 256
+        && stored.quantization == VectorQuantizationDto::I8
+    {
+        stored.mode = VectorIndexCompressionModeDto::None;
+    }
+}
+
+/// Version 1 sampled answers at top-p 0.9, top-k 40 and repeat penalty 1.1;
+/// version 2 uses the Qwen 3.5 card's non-thinking profile (0.8, 20, 1.0,
+/// with a presence penalty of 1.5 that older documents fill in on read).
+/// Temperature was 0.7 in both. A value still exactly on the old default was
+/// never tuned, so it moves; any other value was someone's choice and stays.
+fn release_untouched_answer_sampling(settings: &mut crate::features::settings::dto::SettingsDto) {
+    const OLD_TOP_P: f32 = 0.9;
+    const OLD_TOP_K: i32 = 40;
+    const OLD_REPEAT_PENALTY: f32 = 1.1;
+
+    let defaults = crate::features::settings::dto::LLMSettingsDto::default();
+    let stored = &mut settings.llm;
+    if stored.top_p == OLD_TOP_P {
+        stored.top_p = defaults.top_p;
+    }
+    if stored.top_k == OLD_TOP_K {
+        stored.top_k = defaults.top_k;
+    }
+    if stored.repeat_penalty == OLD_REPEAT_PENALTY {
+        stored.repeat_penalty = defaults.repeat_penalty;
     }
 }

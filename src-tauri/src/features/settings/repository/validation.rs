@@ -209,6 +209,17 @@ impl SettingsRepository {
         if settings.llm.repeat_penalty <= 0.0 {
             result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
         }
+        let generation_problems =
+            crate::application::contracts::settings::presence_penalty_problem(
+                "llm",
+                settings.llm.presence_penalty,
+            )
+            .into_iter()
+            .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
+            .chain(settings.llm.speculative_decoding.problem());
+        for problem in generation_problems {
+            result.add_error("llm", problem);
+        }
         if settings.llm.max_tokens == 0 {
             result.add_error("llm", "max_tokens must be greater than 0".to_string());
         }
@@ -337,7 +348,7 @@ impl SettingsRepository {
         if settings.llm.router.enabled && settings.llm.router.model.trim().is_empty() {
             result.add_error(
                 "llm",
-                "router.model cannot be empty; configure a small router model (e.g. Phi-3.5 Mini or TinyLlama)"
+                "router.model cannot be empty; configure a small router model (e.g. Qwen 3.5 4B)"
                     .to_string(),
             );
         }

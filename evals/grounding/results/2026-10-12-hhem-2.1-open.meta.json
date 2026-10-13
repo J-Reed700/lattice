@@ -1,0 +1,18 @@
+{
+  "checker": "hhem-2.1-open",
+  "family": "HHEM",
+  "repo": "vectara/hallucination_evaluation_model",
+  "revision": "de9a5e6ba9ba49531a022dba17e35ffeb2a6fad8",
+  "architecture": "Flan-T5-base encoder, token-classification head read at the first token",
+  "parameters": 109630082,
+  "device": "cpu",
+  "threads": 4,
+  "load_seconds": 2.970590458950028,
+  "pairs": 101,
+  "median_latency_ms": 48.947209026664495,
+  "torch": "2.14.1",
+  "transformers": "5.19.0",
+  "python": "3.11.15",
+  "machine": "arm64",
+  "decision_rule": "consistency score >= 0.5"
+}

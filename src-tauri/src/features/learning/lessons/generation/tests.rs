@@ -47,12 +47,6 @@ fn rejects_malformed_or_truncated_json_and_trailing_text() {
 }
 
 #[test]
-fn rejects_output_truncation_finish_reason() {
-    assert!(reject_incomplete_finish_reason("length").is_err());
-    assert!(reject_incomplete_finish_reason("stop").is_ok());
-}
-
-#[test]
 fn generated_ids_are_not_accepted_from_model_schema() {
     let schema = outline_schema(None, 1);
     assert!(schema.to_string().contains("additionalProperties"));

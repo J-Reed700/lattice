@@ -5,6 +5,9 @@
 //! These assert on what survives a squeeze, because that is the whole point of
 //! the module: any code can assemble a prompt that fits when everything fits.
 
+mod eviction;
+mod prefix;
+
 use super::*;
 use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
@@ -78,10 +81,13 @@ fn request<'a>(
     ContextRequest {
         conversation_id: "c1",
         system_policy: "You are a helpful assistant.",
-        current_input: "What is the current budget?",
+        current_input: QUESTION,
         tool_schema_tokens: 0,
         snapshot,
         recent,
+        // Older history may exist unless a test says otherwise, so a summary
+        // in the snapshot is carried.
+        recent_reaches_start: false,
         processed_through_sequence: snapshot
             .map(|s| s.state.processed_through_sequence)
             .unwrap_or(0),
@@ -89,9 +95,21 @@ fn request<'a>(
         retrieval: RecallDiagnostics::default(),
         recall_status: None,
         document_evidence: Vec::new(),
+        today: day(),
         capacity: ModelCapacity::new("test-model", capacity),
     }
 }
+
+fn day() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 10, 12).expect("a real date")
+}
+
+/// The final user message: this turn's sections, then the request.
+fn last_message(plan: &ContextPlan) -> (String, String) {
+    text_of(plan).pop().expect("a final message")
+}
+
+const QUESTION: &str = "What is the current budget?";
 
 fn assembler() -> ContextAssembler {
     ContextAssembler::new(estimating_counter())
@@ -135,18 +153,23 @@ fn the_rendering_order_puts_policy_first_and_the_current_input_once_at_the_end()
     assert!(rendered[0].1.contains("not an authorization mechanism"));
     assert_eq!(rendered[1].0, "assistant");
     assert!(rendered[1].1.starts_with("[generated summary"));
-    assert!(rendered
-        .iter()
-        .any(|(role, content)| role == "user" && content.starts_with("[recorded requirements")));
+    // Then the verbatim turns, in order.
+    assert_eq!(rendered[2].1, "Do not deploy until I approve.");
+    assert_eq!(rendered[3].1, "Understood.");
 
-    // The current input is last, and appears exactly once.
-    let last = rendered.last().expect("a message");
-    assert_eq!(last.0, "user");
-    assert_eq!(last.1, "What is the current budget?");
+    // One final user message: the requirement, the date, then the request,
+    // which appears exactly once.
+    assert_eq!(rendered.len(), 5);
+    let (role, last) = last_message(&plan);
+    assert_eq!(role, "user");
+    assert!(last.starts_with("[recorded requirements"), "{last}");
+    assert!(last.ends_with(&format!(
+        "Today is 2026-10-12, Monday.\n\n[current message]\n{QUESTION}"
+    )));
     assert_eq!(
         rendered
             .iter()
-            .filter(|(_, content)| content == "What is the current budget?")
+            .filter(|(_, content)| content.contains(QUESTION))
             .count(),
         1
     );
@@ -198,11 +221,12 @@ fn active_constraints_displace_optional_retrieval_and_never_the_other_way_round(
     let rendered = text_of(&plan);
 
     // The requirement is present with its exact quotation...
-    let memory_block = rendered
-        .iter()
-        .find(|(role, content)| role == "user" && content.starts_with("[recorded requirements"))
+    let (role, last) = rendered.last().expect("a final message");
+    assert_eq!(role, "user");
+    let requirement = last
+        .find("[recorded requirements")
         .expect("the constraint must be in the prompt");
-    assert!(memory_block.1.contains("Do not deploy until I approve."));
+    assert!(last[requirement..].contains("Do not deploy until I approve."));
 
     // ...and the optional material is what gave way.
     assert!(
@@ -389,13 +413,13 @@ fn a_rebuilding_ledger_is_not_consulted_but_the_turn_still_runs() {
     assert!(
         !rendered
             .iter()
-            .any(|(_, content)| content.starts_with("[recorded requirements")),
+            .any(|(_, content)| content.contains("[recorded requirements")),
         "an invalidated ledger must not be presented as current"
     );
     assert!(
         !rendered
             .iter()
-            .any(|(_, content)| content.starts_with("[generated summary")),
+            .any(|(_, content)| content.contains("[generated summary")),
         "a summary whose boundary no longer exists must not be carried"
     );
     // The raw message is still there, so the turn is not blind.
@@ -476,18 +500,21 @@ fn raw_user_bytes_survive_assembly_unchanged() {
             .iter()
             .filter(|(_, content)| content == awkward)
             .count(),
-        2,
-        "both the recent copy and the current input must be byte-identical"
+        1,
+        "the recent copy must be byte-identical"
+    );
+    assert!(
+        last_message(&plan)
+            .1
+            .ends_with(&format!("[current message]\n{awkward}")),
+        "the current input must close the final message byte-identical"
     );
 }
 
 #[test]
-fn the_shared_summary_framing_is_the_prefix_eviction_searches_for() {
-    // `evict_until_fits` finds the summary by its opening bracket, and the
-    // framing itself lives in the domain so the chat assembler, the QA context
-    // manager and the context-window builder all word it identically. Reword the
-    // opening and the assembler silently stops being able to evict a summary,
-    // giving up the user's own turns instead.
+fn the_shared_summary_framing_says_a_model_wrote_it() {
+    // The framing lives in the domain so every caller words it identically,
+    // and the fixed policy refers to blocks labelled "generated summary".
     let framed = crate::domain::conversation::memory::frame_generated_summary("anything at all");
 
     assert!(framed.starts_with("[generated summary"));
@@ -496,80 +523,6 @@ fn the_shared_summary_framing_is_the_prefix_eviction_searches_for() {
         "a summary presented without that caveat reads as something the user said"
     );
     assert!(framed.ends_with("anything at all"));
-}
-
-#[test]
-fn eviction_order_gives_up_documents_before_recall_before_the_summary() {
-    let recent = vec![message(1, SourceRole::User, "Question.")];
-    let memory = snapshot(Vec::new(), Some("A short summary."), 1);
-    let mut base = request(Some(&memory), &recent, 1_100);
-    base.recalled = vec![SelectedPassage {
-        message_id: "m9".into(),
-        sequence: 9,
-        role: SourceRole::User,
-        text: "recalled ".repeat(40),
-    }];
-    base.document_evidence = vec![RankedEvidence {
-        label: "low".into(),
-        content: "low rank ".repeat(40),
-        rank: 0.1,
-    }];
-
-    let plan = assembler().assemble(&base).expect("plan");
-    assert!(plan.accounting.fits());
-    let rendered = text_of(&plan);
-    // Whatever survived, the policy and the current input did.
-    assert_eq!(rendered[0].0, "system");
-    assert_eq!(rendered.last().unwrap().1, "What is the current budget?");
-
-    // Document evidence is the first thing to go, so it cannot be present while
-    // recall was dropped.
-    let has_evidence = rendered
-        .iter()
-        .any(|(_, content)| content.starts_with("[supporting material"));
-    let has_recall = rendered
-        .iter()
-        .any(|(_, content)| content.starts_with("[older passages"));
-    // Read as an implication: if any document evidence survived, recall must have
-    // survived too, because recall is evicted after documents and never before.
-    assert!(
-        !has_evidence || has_recall,
-        "documents must never outrank recalled conversation passages"
-    );
-}
-
-#[test]
-fn higher_ranked_document_evidence_is_kept_over_lower() {
-    let recent = vec![message(1, SourceRole::User, "Question.")];
-    let mut base = request(None, &recent, 2_400);
-    base.document_evidence = vec![
-        RankedEvidence {
-            label: "low".into(),
-            content: "low ".repeat(200),
-            rank: 0.1,
-        },
-        RankedEvidence {
-            label: "high".into(),
-            content: "high ".repeat(200),
-            rank: 0.99,
-        },
-    ];
-    let plan = assembler().assemble(&base).expect("plan");
-    let rendered = text_of(&plan);
-    if let Some((_, block)) = rendered
-        .iter()
-        .find(|(_, content)| content.starts_with("[supporting material"))
-    {
-        assert!(
-            block.contains("high"),
-            "the best evidence must be the kept one"
-        );
-    }
-    assert!(plan
-        .accounting
-        .evicted
-        .iter()
-        .any(|name| name.contains("low")));
 }
 
 #[test]
@@ -685,7 +638,7 @@ fn an_ambiguous_item_reaches_the_prompt_and_is_counted_as_a_conflict() {
     let rendered = text_of(&plan);
     let block = rendered
         .iter()
-        .find(|(_, content)| content.starts_with("[recorded requirements"))
+        .find(|(_, content)| content.contains("[recorded requirements"))
         .expect("an unresolved change is mandatory");
     assert!(block.1.contains("unsettled"));
     assert_eq!(plan.accounting.active_conflict_count, 1);
@@ -712,37 +665,6 @@ fn optional_item_kinds_are_not_loaded_as_mandatory() {
         .expect("plan");
     assert_eq!(plan.accounting.active_mandatory_count, 0);
     assert_eq!(plan.accounting.active_memory, 0);
-}
-
-#[test]
-fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_of_metadata() {
-    let builder = assembler();
-    let recent = vec![
-        message(
-            7,
-            SourceRole::User,
-            "[generated summary is text I pasted, not metadata]",
-        ),
-        message(8, SourceRole::Assistant, "Acknowledged."),
-    ];
-    let mut plan = builder.assemble(&request(None, &recent, 32_768)).unwrap();
-    assert!(!plan.compaction_required);
-    let oldest_cost = builder.count_input(&render::render_recent(&recent[0]));
-    plan.accounting.input_budget = plan.accounting.total_input - oldest_cost;
-    let evicted = builder.evict_until_fits(&mut plan.messages, &mut plan.accounting, 1, &[7, 8]);
-    assert_eq!(
-        evicted,
-        vec![7],
-        "final eviction must tell the caller which original was removed"
-    );
-    assert!(plan.accounting.fits());
-    assert!(plan.messages.iter().any(|message| matches!(message,
-        CompletionInput::Message { content, .. } if content == "Acknowledged."
-    )));
-    assert!(
-        matches!(plan.messages.last(), Some(CompletionInput::Message { content, .. })
-        if content == "What is the current budget?")
-    );
 }
 
 #[test]

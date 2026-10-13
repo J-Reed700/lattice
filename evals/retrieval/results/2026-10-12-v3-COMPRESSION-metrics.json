@@ -1,0 +1,77 @@
+{
+ "date": "2026-10-12",
+ "fixture": "synthetic-library-v3.json",
+ "embedding": "Qwen3-Embedding-0.6B (~/.cache/lattice/models/qwen3-embedding-0.6b), Metal, M3 Max 36 GB",
+ "harness": "retrieval_eval --mode production --top-k 10 --compression none|mrl256-i8 --sparse off (evalopt profile: dev + opt-level 3) --fts-header column --fts-header-weight 2",
+ "scorer": "scripts/rag_eval.py k=5; scripts/compare_rag_eval.py --samples 1000 --seed 2026",
+ "runs": {
+  "none": {
+   "recall@5": 0.7784200385356455,
+   "ndcg@5": 0.6899796839991295,
+   "mrr@5": 0.6971098265895953,
+   "passage_recall@5": 0.7630057803468208,
+   "p50_ms": 22.8139375,
+   "p95_ms": 24.605874999999997
+  },
+  "mrl256-i8": {
+   "recall@5": 0.7610789980732177,
+   "ndcg@5": 0.6755288169471064,
+   "mrr@5": 0.6836223506743738,
+   "passage_recall@5": 0.7456647398843931,
+   "p50_ms": 21.988771,
+   "p95_ms": 24.05125
+  }
+ },
+ "bootstrap": {
+  "mrl256i8_vs_none": {
+   "recall_at_k": {
+    "baseline": 0.7784200385356455,
+    "candidate": 0.7610789980732177,
+    "delta": -0.017341040462427744,
+    "paired_delta_95ci": [
+     -0.04046242774566474,
+     0.0
+    ]
+   },
+   "ndcg_at_k": {
+    "baseline": 0.6899796839991295,
+    "candidate": 0.6755288169471064,
+    "delta": -0.014450867052023121,
+    "paired_delta_95ci": [
+     -0.03468208092485549,
+     0.0007568193848061129
+    ]
+   },
+   "mrr_at_k": {
+    "baseline": 0.6971098265895953,
+    "candidate": 0.6836223506743738,
+    "delta": -0.013487475915221581,
+    "paired_delta_95ci": [
+     -0.03371868978805395,
+     0.0009633911368015415
+    ]
+   },
+   "queries": 173,
+   "p95_latency_ms": {
+    "baseline": 24.605874999999997,
+    "candidate": 24.05125
+   },
+   "bootstrap_samples": 1000,
+   "seed": 2026
+  }
+ },
+ "resident_vector_bytes": {
+  "f32_1024d_per_vector": 4096,
+  "mrl256_i8_per_vector": 256,
+  "10k_chunks": {
+   "f32": 40960000,
+   "mrl256_i8": 2560000
+  },
+  "100k_chunks": {
+   "f32": 409600000,
+   "mrl256_i8": 25600000
+  },
+  "note": "HNSW links (connectivity 32) are the same in both, about 300 B/vector; the compressed layout also keeps a 4 KB/vector full-precision side file on disk for rescoring"
+ },
+ "decision": "default vector_index_compression mode = none (full precision)"
+}

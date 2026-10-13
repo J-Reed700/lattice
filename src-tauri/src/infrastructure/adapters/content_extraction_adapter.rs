@@ -8,7 +8,7 @@
 use crate::application::ports::content_extraction_port::{
     ContentExtractionPort, ExtractedContentData,
 };
-use crate::application::ports::TranscriptionPort;
+use crate::application::ports::{OcrPort, TranscriptionPort};
 use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::features::transcription::engine::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
@@ -57,6 +57,13 @@ impl ContentExtractionAdapter {
             extractor: ContentExtractor::new(),
             transcription: Some(transcription),
         }
+    }
+
+    /// Reads scanned PDF pages through `ocr`. Without it they stay unindexed
+    /// and are reported in `ExtractedContent::needs_ocr`.
+    pub fn with_ocr(mut self, ocr: Arc<dyn OcrPort>) -> Self {
+        self.extractor = std::mem::take(&mut self.extractor).with_ocr(ocr);
+        self
     }
 
     async fn extract_audio(&self, path: &Path) -> Result<ExtractedContentData> {

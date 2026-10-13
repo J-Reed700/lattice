@@ -10,9 +10,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+mod generation;
 mod llm;
 mod preferences;
 mod retrieval;
+
+pub use generation::{
+    presence_penalty_problem, SamplingProfileDto, SpeculativeDecodingDto, ThinkingOverrideDto,
+    DEFAULT_MTP_DRAFT_N_MAX, MAX_MTP_DRAFT_N_MAX,
+};
 
 pub use llm::{
     CustomToolSettingsDto, LLMPromptSettingsDto, LLMProvider, LLMSettingsDto,

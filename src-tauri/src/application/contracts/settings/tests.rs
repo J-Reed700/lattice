@@ -12,7 +12,7 @@ fn test_settings_dto_default() {
     assert_eq!(settings.search.max_results, 10);
     assert_eq!(
         settings.search.vector_index_compression.mode,
-        VectorIndexCompressionModeDto::Truncated
+        VectorIndexCompressionModeDto::None
     );
     assert_eq!(
         settings.search.vector_index_compression.dims,
@@ -23,6 +23,33 @@ fn test_settings_dto_default() {
     // A judge that samples is a judge that disagrees with itself.
     assert_eq!(settings.llm.verification.temperature, 0.0);
     assert_eq!(settings.llm.verification.top_k, 1);
+    // Answers sample with the Qwen 3.5 card's non-thinking profile and
+    // never think unless the user turns it on.
+    assert_eq!(
+        (
+            settings.llm.temperature,
+            settings.llm.top_p,
+            settings.llm.top_k,
+            settings.llm.presence_penalty,
+            settings.llm.repeat_penalty
+        ),
+        (0.7, 0.8, 20, 1.5, 1.0)
+    );
+    assert!(!settings.llm.answer_thinking);
+    assert_eq!(
+        settings.llm.thinking_sampling,
+        SamplingProfileDto {
+            temperature: 1.0,
+            top_p: 0.95,
+            top_k: 20,
+            presence_penalty: 1.5,
+            repeat_penalty: 1.0,
+        }
+    );
+    assert_eq!(
+        settings.llm.speculative_decoding,
+        SpeculativeDecodingDto::Off
+    );
     assert_eq!(settings.ui.theme, "system");
 }
 

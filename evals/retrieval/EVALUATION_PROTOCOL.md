@@ -61,7 +61,11 @@ This is explicitly a **whole-document component harness**. It does not exercise
 streaming, desktop tools, workspace authorization, extraction, or answer
 verification. It must not be advertised as an end-to-end product benchmark.
 A future application adapter must export actual supplied evidence and complete
-execution traces; do not substitute whole documents for the retrieved passages.
+execution traces; do not substitute whole documents for the retrieved passages. That adapter now exists for chat:
+`src-tauri/examples/shipped_path_eval` runs the desktop turn headlessly and
+exports the evidence each turn supplied, every model request, the turn record
+and the grounding verdicts. See
+[`2026-10-12-SHIPPED-PATH-BASELINE.md`](2026-10-12-SHIPPED-PATH-BASELINE.md).
 
 A sibling `.manifest.json` records hashes of the corpus, labels, retrieval input,
 harness code, model revision and decoding settings; it also records the commit

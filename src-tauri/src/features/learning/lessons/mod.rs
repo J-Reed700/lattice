@@ -11,6 +11,7 @@ pub mod lesson_evidence;
 pub(crate) mod lesson_progress;
 pub mod reference_collection;
 pub(crate) mod review_evidence;
+pub(crate) mod structured_call;
 pub mod teaching;
 pub(crate) mod teaching_review;
 mod text_edits;

@@ -123,7 +123,9 @@ impl CheckFirstRunStatusUseCase {
             .map(|m| RecommendedModel {
                 model_id: m.id,
                 display_name: m.name,
-                estimated_size_bytes: (m.size_gb * 1_073_741_824.0) as u64,
+                // The pinned file size, not `size_gb` read back as GiB, which
+                // overstated every download by 7%.
+                estimated_size_bytes: m.total_size_bytes,
             })
     }
 }

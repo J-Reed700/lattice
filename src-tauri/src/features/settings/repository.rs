@@ -38,7 +38,9 @@ const SETTINGS_FILE_NAME: &str = "settings.json";
 const TEMP_SUFFIX: &str = ".tmp";
 
 /// Settings file version for migration support.
-const SETTINGS_VERSION: u32 = 1;
+///
+/// 2: full-precision vectors became the default (see `file_store::migrate_settings`).
+const SETTINGS_VERSION: u32 = 2;
 
 /// Settings file structure with version.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

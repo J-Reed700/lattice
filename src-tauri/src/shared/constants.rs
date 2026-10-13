@@ -63,6 +63,13 @@ pub const DEFAULT_RRF_K: f32 = 10.0;
 pub const DEFAULT_VECTOR_FUSION_WEIGHT: f32 = 0.7;
 pub const DEFAULT_KEYWORD_FUSION_WEIGHT: f32 = 0.3;
 
+/// Directory under the models folder that holds the reranker checkpoint.
+///
+/// Named after the checkpoint rather than the role, so a different reranker
+/// gets a different folder: a stale `reranker/` from the MiniLM era is never
+/// read, and the app cannot load one model while reporting another.
+pub const RERANKER_MODEL_DIR: &str = "qwen3-reranker-0.6b";
+
 /// Marker file in the app data directory meaning "derived vectors are missing
 /// and must be rebuilt". Written by a backup restore (archives omit
 /// embeddings); cleared by search startup once the vector generation is

@@ -1,27 +1,27 @@
 ---
 source: tests/audit_events_test.rs
-assertion_line: 212
+assertion_line: 211
 expression: snapshot_data
 ---
 [
   {
-    "result": "success",
-    "type": "success"
+    "type": "success",
+    "result": "success"
   },
   {
+    "type": "failure",
     "result": {
       "failure": {
         "reason": "Operation failed due to network error"
       }
-    },
-    "type": "failure"
+    }
   },
   {
+    "type": "denied",
     "result": {
       "denied": {
         "reason": "Access denied: insufficient permissions"
       }
-    },
-    "type": "denied"
+    }
   }
 ]

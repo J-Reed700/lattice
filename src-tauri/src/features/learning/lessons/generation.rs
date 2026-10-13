@@ -5,8 +5,11 @@
 //! snapshot before output crosses into persistence.
 
 use crate::application::ports::LLMPort;
-use crate::application::services::grounded_generation::{GroundedRequest, Streaming};
+use crate::application::services::grounded_generation::GroundedRequest;
 use crate::features::learning::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
+pub(crate) use crate::features::learning::lessons::structured_call::{
+    complete_json, complete_json_with_progress,
+};
 use crate::features::learning::model_call;
 use crate::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -22,8 +25,6 @@ pub(in crate::features::learning) use outline::{decode_outline, draft_outline, o
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
-// Existing budget for non-outline material generation only.
-const MATERIAL_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 /// Ceiling on the source excerpts one lesson or recall-draft request carries,
 /// below what a large window would allow, so its cost stays bounded.
 const SOURCE_EVIDENCE_CEILING: usize = 7000;
@@ -36,6 +37,9 @@ const MIN_QUOTE_CHARS: usize = 25;
 const MAX_QUOTE_CHARS: usize = 1200;
 const OUTLINE_OUTPUT_RESERVE: usize = 4000;
 const LESSON_OUTPUT_RESERVE: usize = 10000;
+
+/// Added to a draft brief when the material cites saved sources.
+const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt.";
 
 fn invalid(message: &'static str) -> AppError {
     AppError::InvalidInput(message.to_owned())
@@ -187,98 +191,6 @@ pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
     serde_json::from_str(candidate).map_err(|_| {
         invalid("The model returned malformed or incomplete learning material. Try again.")
     })
-}
-
-fn reject_incomplete_finish_reason(reason: &str) -> Result<()> {
-    let reason = reason.to_ascii_lowercase();
-    if [
-        "length",
-        "max_tokens",
-        "max_output_tokens",
-        "incomplete",
-        "content_filter",
-    ]
-    .iter()
-    .any(|needle| reason.contains(needle))
-    {
-        return Err(invalid("The model response was cut off before the learning material was complete. Try again with a smaller outline or lesson."));
-    }
-    Ok(())
-}
-
-pub(crate) async fn complete_json(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: String,
-    schema: serde_json::Value,
-    output_tokens: usize,
-) -> Result<String> {
-    complete_json_with_progress(llm, system, prompt, schema, output_tokens, None).await
-}
-
-pub(crate) async fn complete_json_with_progress(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: String,
-    schema: serde_json::Value,
-    output_tokens: usize,
-    progress: Option<&crate::features::learning::outline_progress::OutlineProgress>,
-) -> Result<String> {
-    // The output estimate reserves space when selecting sources; it is not a
-    // generation ceiling for streamed work. Reasoning models spend output
-    // tokens before emitting JSON, so those calls let the answer take the
-    // window the prompt leaves, still clamped to the user's configured output
-    // limit and its provider-specific budget.
-    let lesson_progress = crate::features::learning::lesson_progress::active();
-    let unbounded = progress.is_some() || lesson_progress;
-    let mut request = model_call::structured(system, prompt, schema, output_tokens, "low");
-    request.output_fills_window = unbounded;
-    request.call.time_budget = (!unbounded).then_some(MATERIAL_CALL_BUDGET);
-    request.call.no_time_limit = unbounded;
-    request.call.cache_key = crate::features::learning::lesson_progress::cache_key();
-    let _model_call = lesson_progress.then(crate::features::learning::lesson_progress::model_call);
-    let receive = |text: String| {
-        if let Some(progress) = progress {
-            progress.received(&text);
-        }
-        if lesson_progress {
-            crate::features::learning::lesson_progress::received(&text);
-        }
-        Ok(())
-    };
-    // Partial structured output is not published or parsed. The adapter can
-    // discard it and retry a broken connection, while the progress counter
-    // resets for the replacement response.
-    let retry = |attempt: usize| {
-        crate::features::learning::lesson_progress::model_retry(attempt);
-        Ok(())
-    };
-    let streaming = Streaming {
-        on_text: &receive,
-        on_retry: if lesson_progress { Some(&retry) } else { None },
-    };
-    // Outline and lesson requests are interactive and cancellable. A slow
-    // model is not a failed model; no elapsed-time deadline applies to them.
-    let response = model_call::send(
-        llm,
-        request,
-        unbounded.then_some(&streaming),
-        (!unbounded).then_some(model_call::Deadline {
-            after: MATERIAL_CALL_BUDGET,
-            message: "Learning material generation timed out. Try again.",
-        }),
-        "The requested learning material does not fit in this model's context window. Choose fewer or shorter sources.",
-    )
-    .await?;
-    tracing::info!(
-        stage = ?progress.map(|value| value.snapshot().stage),
-        input_tokens = response.input_tokens,
-        output_tokens = response.output_tokens,
-        finish_reason = %response.finish_reason,
-        "Learning model request completed"
-    );
-    reject_incomplete_finish_reason(&response.finish_reason)?;
-    Ok(response.text)
 }
 
 /// Whether `prompt` and the answer's reservation fit the model's window.

@@ -35,6 +35,18 @@ const MAX_TERMS: usize = 16;
 /// cannot use the trigram index and would only widen the query for nothing.
 const TRIGRAM_MIN_CHARS: usize = 3;
 
+/// `bm25()` weight of a chunk's `header` column (its context prefix) relative
+/// to `content` at 1.0, in both chunk indexes and for every lexical reader.
+///
+/// FTS5 adds column-weighted term counts and normalises by the whole row, so
+/// 1.0 ranks exactly as prefix and body concatenated in one column did. On the
+/// v3 fixture a title or heading word was worth more than that: 2.0 raised the
+/// keyword branch alone from nDCG@5 0.673 to 0.684 (paired 95% CI +0.001 to
+/// +0.022), with recall flat from 1.5 to 6, while the fused hybrid ranking did
+/// not move. Weight 0, the header ignored, cost the keyword branch 3.8 points
+/// of recall. See `evals/retrieval/2026-10-12-RERANKER-FTS-HEADER-FUSION.md`.
+pub const HEADER_BM25_WEIGHT: f64 = 2.0;
+
 /// Which chunk index a normalized query has to run against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FtsIndex {

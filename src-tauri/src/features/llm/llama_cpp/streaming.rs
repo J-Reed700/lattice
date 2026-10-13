@@ -21,6 +21,39 @@ pub(crate) struct Decoder {
     /// Probabilities for the first public answer token. Hidden reasoning
     /// probabilities cannot be used as confidence in a factual verdict.
     first_logprobs: Option<Value>,
+    /// The server's account of the request, from its final frame.
+    timings: Option<ServerTimings>,
+}
+
+/// What llama-server reports about one request's work in the `timings`
+/// object of its final frame. The cached share of the prompt is what shows
+/// whether a conversation's prefix survived from the previous round.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct ServerTimings {
+    /// Prompt tokens reused from the slot's KV cache (`cache_n`).
+    pub cached_prompt_tokens: u64,
+    /// Prompt tokens the server had to evaluate (`prompt_n`).
+    pub evaluated_prompt_tokens: u64,
+    /// Milliseconds spent evaluating them (`prompt_ms`).
+    pub prompt_ms: f64,
+    /// Tokens generated (`predicted_n`).
+    pub generated_tokens: u64,
+    /// Generation speed (`predicted_per_second`).
+    pub generated_per_second: f64,
+}
+
+impl ServerTimings {
+    fn from_value(timings: &Value) -> Option<Self> {
+        let count = |key: &str| timings.get(key).and_then(Value::as_u64);
+        let rate = |key: &str| timings.get(key).and_then(Value::as_f64).unwrap_or_default();
+        Some(Self {
+            cached_prompt_tokens: count("cache_n").unwrap_or_default(),
+            evaluated_prompt_tokens: count("prompt_n")?,
+            prompt_ms: rate("prompt_ms"),
+            generated_tokens: count("predicted_n")?,
+            generated_per_second: rate("predicted_per_second"),
+        })
+    }
 }
 
 /// The server's own label for a failure: its status code and error type.
@@ -80,6 +113,9 @@ impl Decoder {
     pub fn take_reasoning_delta(&mut self) -> String {
         std::mem::take(&mut self.reasoning_delta)
     }
+    pub fn timings(&self) -> Option<ServerTimings> {
+        self.timings
+    }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         self.received_bytes = self.received_bytes.saturating_add(bytes.len());
         if self.received_bytes > 16 * 1024 * 1024 {
@@ -118,6 +154,9 @@ impl Decoder {
             }
             if let Some(usage) = event.get("usage").filter(|value| value.is_object()) {
                 self.usage = usage.clone();
+            }
+            if let Some(timings) = event.get("timings").and_then(ServerTimings::from_value) {
+                self.timings = Some(timings);
             }
             if let Some(choice) = event
                 .get("choices")

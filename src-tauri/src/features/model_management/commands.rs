@@ -354,7 +354,48 @@ async fn fetch_downloadable_hf_models(
     query: &str,
     limit: usize,
 ) -> Result<Vec<DownloadableHfModel>> {
-    fetch_hf_models(container, query, limit, true).await
+    let mut models = fetch_hf_models(container, query, limit, true).await?;
+    merge_curated_chat_models(&mut models, query);
+    Ok(models)
+}
+
+/// Put the catalog's chat entries into a Hugging Face listing.
+///
+/// A row for a catalog repository becomes the catalog entry, keeping the
+/// repository's download and like counts: the entry's memory comes from the
+/// GGUF header rather than `1.5 x file size`, its download is checked against
+/// a pinned digest, and it is the id first run installs, so the catalog and
+/// first run never offer the same file twice. Entries the search matched but
+/// Hugging Face did not return are added, so a 22 GB model outside the top
+/// results is still one click away.
+fn merge_curated_chat_models(models: &mut Vec<DownloadableHfModel>, query: &str) {
+    use crate::domain::models::curated::{curated_chat_models_matching, get_curated_llm_models};
+
+    let catalog = get_curated_llm_models();
+    let mut unlisted = curated_chat_models_matching(query);
+    for entry in models.iter_mut() {
+        let Some(repo) = entry.model.model_id.as_deref() else {
+            continue;
+        };
+        let Some(replacement) = catalog.iter().find(|model| {
+            model
+                .model_id
+                .as_deref()
+                .is_some_and(|catalog_repo| catalog_repo.eq_ignore_ascii_case(repo))
+        }) else {
+            continue;
+        };
+        unlisted.retain(|model| model.id != replacement.id);
+        entry.model = replacement.clone();
+    }
+    models.extend(unlisted.into_iter().map(|model| DownloadableHfModel {
+        model,
+        downloads: 0,
+        likes: 0,
+    }));
+    // Two rows of one catalog repository would now share an id.
+    let mut seen = HashSet::new();
+    models.retain(|entry| seen.insert(entry.model.id.clone()));
 }
 
 async fn fetch_hf_models(
@@ -505,6 +546,78 @@ mod tests {
         assert!(result.is_err());
     }
 
+    fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
+        let mut model = crate::domain::models::curated::get_curated_llm_models()
+            .into_iter()
+            .next()
+            .expect("catalog has entries");
+        model.id = format!("hf::{repo}::{file}");
+        model.model_id = Some(repo.into());
+        model.default_filename = Some(file.into());
+        model.files.clear();
+        model.minimum_ram_gb = 99.0;
+        DownloadableHfModel {
+            model,
+            downloads,
+            likes: 7,
+        }
+    }
+
+    #[test]
+    fn a_catalog_repository_row_becomes_the_catalog_entry() {
+        let mut models = vec![
+            hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
+            hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
+        ];
+        merge_curated_chat_models(&mut models, "qwen3.5 9b");
+
+        let catalog: Vec<_> = models
+            .iter()
+            .filter(|entry| entry.model.id.starts_with("qwen3.5-9b"))
+            .collect();
+        // The plain 9B replaced its Hugging Face row; the MTP build matched the
+        // search too and was added.
+        assert_eq!(catalog.len(), 2);
+        let plain = catalog
+            .iter()
+            .find(|entry| entry.model.id == "qwen3.5-9b-q4_k_m")
+            .expect("plain 9B");
+        assert_eq!(plain.downloads, 1_000, "keeps the repository's popularity");
+        assert_eq!(plain.likes, 7);
+        assert!(
+            plain.model.minimum_ram_gb < 10.0,
+            "catalog memory, not the guess"
+        );
+        assert!(models
+            .iter()
+            .any(|entry| entry.model.id == "hf::someone/Other-GGUF::Other-Q4_K_M.gguf"));
+        let ids: HashSet<_> = models.iter().map(|entry| entry.model.id.clone()).collect();
+        assert_eq!(ids.len(), models.len(), "no row twice");
+    }
+
+    #[test]
+    fn the_catalog_overview_lists_every_chat_entry_once() {
+        let mut models = vec![hf_row(
+            "unsloth/Qwen3.6-35B-A3B-GGUF",
+            "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            50,
+        )];
+        merge_curated_chat_models(&mut models, "gguf");
+        let catalog = crate::domain::models::curated::get_curated_llm_models();
+        assert_eq!(models.len(), catalog.len());
+        for model in catalog {
+            assert_eq!(
+                models
+                    .iter()
+                    .filter(|entry| entry.model.id == model.id)
+                    .count(),
+                1,
+                "{}",
+                model.id
+            );
+        }
+    }
+
     #[test]
     fn test_map_cpu_architecture() {
         let arch = map_cpu_architecture();
@@ -600,7 +713,17 @@ pub async fn search_model_catalog(
         .collect();
     let external_models: Vec<_> = discovered_models
         .into_iter()
-        .map(|entry| (entry.model, ModelSource::External))
+        .map(|entry| {
+            let source =
+                if crate::domain::models::curated::get_model_category_by_id(&entry.model.id)
+                    .is_some()
+                {
+                    ModelSource::Curated
+                } else {
+                    ModelSource::External
+                };
+            (entry.model, source)
+        })
         .collect();
 
     let catalog_service = ModelCatalogService::new();
@@ -650,7 +773,17 @@ pub async fn get_model_variants(
         .get_model_variants(&repo_id)
         .await?
         .into_iter()
-        .map(|metadata| metadata.to_domain_model().map(Into::into))
+        .map(|metadata| {
+            // The catalog's own file keeps its catalog id and figures, so
+            // picking it here is the same download first run makes.
+            let curated = metadata.preferred_filename.as_deref().and_then(|file| {
+                crate::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
+            });
+            match curated {
+                Some(model) => Ok(model.into()),
+                None => metadata.to_domain_model().map(Into::into),
+            }
+        })
         .collect()
 }
 

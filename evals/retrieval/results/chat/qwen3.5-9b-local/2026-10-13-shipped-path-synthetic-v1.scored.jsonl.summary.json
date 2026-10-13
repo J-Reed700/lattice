@@ -1,0 +1,151 @@
+{
+  "queries": 38,
+  "expected_queries": 38,
+  "coverage": 1.0,
+  "reviewed_queries": 0,
+  "review_coverage": 0.0,
+  "answer_accuracy": null,
+  "answer_accuracy_95ci": null,
+  "mechanical_pass_rate": 0.5526315789473685,
+  "mean_latency_ms": 19202.71052631579,
+  "p95_latency_ms": 43316,
+  "failed_query_ids": [],
+  "unreviewed_query_ids": [
+    "retry-transient-errors",
+    "do-not-retry-auth",
+    "write-timeout-safety",
+    "ordinary-backup-retention",
+    "finance-backup-retention",
+    "design-hourly-restore",
+    "provider-secret-location",
+    "settings-export-secrets",
+    "annual-first-purchase-refund",
+    "annual-renewal-refund",
+    "historical-refund-window",
+    "enterprise-refund-request",
+    "aurora-production-owner",
+    "aurora-release-blocker",
+    "aurora-pilot-coordinator",
+    "orion-table-extraction",
+    "current-mileage-rate",
+    "old-mileage-rate",
+    "accessible-travel-exception",
+    "spanish-weekend",
+    "french-friday-hours",
+    "japanese-hours-english-query",
+    "enterprise-weekend-emergency",
+    "deleted-content-lifecycle",
+    "deletion-under-hold",
+    "embedding-same-dimensions",
+    "failed-model-migration",
+    "reranking-order",
+    "current-import-endpoint",
+    "deprecated-import-event",
+    "strategic-invoice-due-date",
+    "enterprise-availability-credit",
+    "severity-one-definition",
+    "west-annex-recovery-phrase",
+    "unanswerable-home-phone",
+    "unanswerable-office-wifi",
+    "unanswerable-orion-budget",
+    "unanswerable-japanese-holiday-calendar"
+  ],
+  "citations_aligned": 38,
+  "by_dimension_mechanical": {
+    "current versus superseded policy": {
+      "passed": 5,
+      "total": 7,
+      "rate": 0.7142857142857143,
+      "wilson95": [
+        0.35893445183261935,
+        0.9177810759959433
+      ]
+    },
+    "exact identifiers and numeric distinctions": {
+      "passed": 7,
+      "total": 13,
+      "rate": 0.5384615384615384,
+      "wilson95": [
+        0.29143795714506004,
+        0.7679393219046169
+      ]
+    },
+    "graded and multi-document relevance": {
+      "passed": 9,
+      "total": 15,
+      "rate": 0.6,
+      "wilson95": [
+        0.357468301206246,
+        0.8017550385865841
+      ]
+    },
+    "long-context tail facts": {
+      "passed": 1,
+      "total": 1,
+      "rate": 1.0,
+      "wilson95": [
+        0.20654931437723745,
+        1
+      ]
+    },
+    "multilingual and cross-lingual retrieval": {
+      "passed": 2,
+      "total": 4,
+      "rate": 0.5,
+      "wilson95": [
+        0.15003898915214947,
+        0.8499610108478506
+      ]
+    },
+    "near-duplicate distractors": {
+      "passed": 3,
+      "total": 8,
+      "rate": 0.375,
+      "wilson95": [
+        0.13684428582359742,
+        0.6942576053973727
+      ]
+    },
+    "negation and exception handling": {
+      "passed": 7,
+      "total": 12,
+      "rate": 0.5833333333333334,
+      "wilson95": [
+        0.31951131254954973,
+        0.8067396863412435
+      ]
+    },
+    "semantic paraphrase": {
+      "passed": 2,
+      "total": 5,
+      "rate": 0.4,
+      "wilson95": [
+        0.11762077423264783,
+        0.769275718723987
+      ]
+    },
+    "unanswerable questions": {
+      "passed": 1,
+      "total": 4,
+      "rate": 0.25,
+      "wilson95": [
+        0.04558726080970055,
+        0.6993581574175981
+      ]
+    }
+  },
+  "timing_ms": {
+    "answered_ms": {
+      "median": 19792.5,
+      "p95": 43316
+    },
+    "retrieval_ms": {
+      "median": 4696,
+      "p95": 8475
+    },
+    "generation_ms": {
+      "median": 12984,
+      "p95": 25695
+    }
+  }
+}

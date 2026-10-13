@@ -517,6 +517,94 @@ async fn test_settings_file_version() {
     assert_eq!(settings_file.version, SETTINGS_VERSION);
 }
 
+/// A version-1 document still on the old compressed default moves to full
+/// precision; one that chose its own compression keeps it.
+#[tokio::test]
+async fn version_one_compression_default_migrates_to_full_precision() {
+    for (dims, expected) in [
+        (256, VectorIndexCompressionModeDto::None),
+        (512, VectorIndexCompressionModeDto::Truncated),
+    ] {
+        let temp_dir = TempDir::new().unwrap();
+        let mut settings = SettingsDto::default();
+        settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
+        settings.search.vector_index_compression.dims = dims;
+        let stored = SettingsFile {
+            version: 1,
+            settings,
+        };
+        fs::write(
+            temp_dir.path().join(SETTINGS_FILE_NAME),
+            serde_json::to_string(&stored).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let migrated = repo.get_all().await.unwrap();
+        assert_eq!(migrated.search.vector_index_compression.mode, expected);
+        assert_eq!(migrated.search.vector_index_compression.dims, dims);
+
+        let content = fs::read_to_string(temp_dir.path().join(SETTINGS_FILE_NAME))
+            .await
+            .unwrap();
+        let rewritten: SettingsFile = serde_json::from_str(&content).unwrap();
+        assert_eq!(rewritten.version, SETTINGS_VERSION);
+    }
+}
+
+/// A version-1 document still on the old answer sampling defaults moves to the
+/// card profile value by value; values someone tuned keep their numbers.
+#[tokio::test]
+async fn version_one_sampling_defaults_migrate_to_the_card_profile() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut settings = SettingsDto::default();
+    settings.llm.temperature = 0.4;
+    settings.llm.top_p = 0.9;
+    settings.llm.top_k = 40;
+    settings.llm.repeat_penalty = 1.15;
+    let mut stored = serde_json::to_value(SettingsFile {
+        version: 1,
+        settings,
+    })
+    .unwrap();
+    // Version 1 had no presence penalty.
+    stored["settings"]["llm"]
+        .as_object_mut()
+        .unwrap()
+        .remove("presencePenalty");
+    fs::write(
+        temp_dir.path().join(SETTINGS_FILE_NAME),
+        serde_json::to_string(&stored).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+    let llm = repo.get_all().await.unwrap().llm;
+    assert_eq!(
+        (
+            llm.temperature,
+            llm.top_p,
+            llm.top_k,
+            llm.repeat_penalty,
+            llm.presence_penalty
+        ),
+        (0.4, 0.8, 20, 1.15, 1.5)
+    );
+
+    let content = fs::read_to_string(temp_dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    let rewritten: SettingsFile = serde_json::from_str(&content).unwrap();
+    assert_eq!(rewritten.version, SETTINGS_VERSION);
+    assert_eq!(rewritten.settings.llm.top_k, 20);
+}
+
 /// The dims are remembered while the mode is `none`, so validation only
 /// reads them when truncation is actually on. Rejecting a remembered value
 /// nothing consumes would make the whole settings document unsaveable.

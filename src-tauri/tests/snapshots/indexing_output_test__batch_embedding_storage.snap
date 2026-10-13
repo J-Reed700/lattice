@@ -1,6 +1,6 @@
 ---
 source: tests/indexing_output_test.rs
-assertion_line: 252
+assertion_line: 173
 expression: batch_data
 ---
 {
@@ -31,6 +31,6 @@ expression: batch_data
       ]
     }
   ],
-  "processing_time_ms": 450,
-  "total_count": 3
+  "total_count": 3,
+  "processing_time_ms": 450
 }
