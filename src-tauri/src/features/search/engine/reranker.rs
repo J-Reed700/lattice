@@ -1,6 +1,9 @@
 //! # Cross-Encoder Reranker (Candle)
 //!
-//! Uses Candle on CPU with cross-encoder/ms-marco-MiniLM-L-6-v2.
+//! [`load_reranker`] reads a checkpoint's `config.json` and loads either a
+//! BERT sequence classifier (cross-encoder/ms-marco-MiniLM-L-6-v2, below) or
+//! a Qwen3 yes/no reranker ([`Qwen3RerankerService`]). The app downloads
+//! Qwen/Qwen3-Reranker-0.6B; both run on the platform accelerator.
 //!
 //! ## Why we changed both runtime and model
 //!

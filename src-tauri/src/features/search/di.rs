@@ -282,7 +282,9 @@ pub async fn build_with_compression(
     let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
         as Arc<dyn SearchEnrichmentServiceTrait>;
     let reranker = Arc::new(LazyReranker::new(
-        models_path.join("reranker").join("model.safetensors"),
+        models_path
+            .join(crate::shared::constants::RERANKER_MODEL_DIR)
+            .join("model.safetensors"),
     )) as Arc<dyn Reranker>;
 
     let dynamic_embedding =

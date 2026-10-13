@@ -19,7 +19,7 @@ pub async fn search_bm25(
             "SELECT
                 fts.chunk_id,
                 c.document_id,
-                bm25(chunks_fts) as score,
+                bm25(chunks_fts, 0.0, 1.0, ?) as score,
                 d.file_name as filename,
                 d.mime_type,
                 d.size_bytes,
@@ -32,6 +32,7 @@ pub async fn search_bm25(
              ORDER BY score
              LIMIT ?",
         )
+        .bind(crate::features::search::engine::fts_query::HEADER_BM25_WEIGHT)
         .bind(&query_string)
         .bind(limit as i64)
         .fetch_all(conn)
@@ -103,10 +104,10 @@ pub async fn optimize_index(conn: &mut SqliteConnection) -> Result<(), AppError>
 }
 
 pub async fn rebuild_index(conn: &mut SqliteConnection) -> Result<(), AppError> {
-    // Rebuild both chunk indexes from the same expression the insert trigger
-    // uses. Indexing the raw `content` here instead would quietly drop every
-    // chunk's `[Document: … | Section: …]` prefix from the lexical branch,
-    // which is exactly the text a title or section query matches on.
+    // Rebuild both chunk indexes from the same columns the insert trigger
+    // writes. Leaving `header` out here would quietly drop every chunk's
+    // context prefix from the lexical branch, which is exactly the text a
+    // title or section query matches on.
     query_with_heavy_timeout(|| async {
         let mut tx = conn.begin().await?;
         sqlx::query("DELETE FROM chunks_fts")
@@ -116,14 +117,14 @@ pub async fn rebuild_index(conn: &mut SqliteConnection) -> Result<(), AppError> 
             .execute(&mut *tx)
             .await?;
         sqlx::query(
-            "INSERT INTO chunks_fts(chunk_id, content) \
-             SELECT id, COALESCE(contextualized_content, content) FROM text_chunks",
+            "INSERT INTO chunks_fts(chunk_id, content, header) \
+             SELECT id, content, context_prefix FROM text_chunks",
         )
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO chunks_trigram(chunk_id, content) \
-             SELECT id, COALESCE(contextualized_content, content) FROM text_chunks",
+            "INSERT INTO chunks_trigram(chunk_id, content, header) \
+             SELECT id, content, context_prefix FROM text_chunks",
         )
         .execute(&mut *tx)
         .await?;
@@ -180,23 +181,36 @@ mod tests {
         assert_eq!(trigram_rows, 1);
     }
 
-    /// Both indexes must hold the contextualized text, which is what the
-    /// insert trigger writes and what the search services rank.
+    /// Both indexes must hold the context prefix in their `header` column,
+    /// which is what the insert trigger writes and what the search services
+    /// rank a title or section query against.
     #[tokio::test]
-    async fn rebuild_indexes_the_contextualized_text() {
+    async fn rebuild_indexes_the_context_prefix() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query("INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES ('doc', '/manual.pdf', 'manual.pdf', 1, CURRENT_TIMESTAMP, 'checksum')")
             .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO text_chunks (id, document_id, content, contextualized_content, chunk_index) \
-             VALUES ('chunk', 'doc', 'examination', '[Document: Patent manual] examination', 0)",
+            "INSERT INTO text_chunks \
+             (id, document_id, content, contextualized_content, context_prefix, chunk_index) \
+             VALUES ('chunk', 'doc', 'examination', \
+                     'Patent manual\n\nexamination', 'Patent manual\n\n', 0)",
         )
         .execute(&pool)
         .await
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("DELETE FROM chunks_fts")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
         rebuild_index(&mut conn).await.unwrap();
         assert_eq!(search_bm25(&mut conn, "patent", 10).await.unwrap().len(), 1);
+        let header: String =
+            sqlx::query_scalar("SELECT header FROM chunks_trigram WHERE chunk_id = 'chunk'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(header, "Patent manual\n\n");
     }
 }
