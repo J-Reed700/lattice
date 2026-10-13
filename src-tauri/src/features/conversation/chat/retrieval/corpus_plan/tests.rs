@@ -479,6 +479,7 @@ async fn live_corpus_retrieval_and_answer() {
         crate::features::conversation::chat::SearchFlags {
             force_kb_search: true,
             force_web_search: false,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,

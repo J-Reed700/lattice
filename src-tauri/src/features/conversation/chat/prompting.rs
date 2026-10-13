@@ -636,6 +636,7 @@ mod thin_evidence_tests {
         SearchFlags {
             force_kb_search: false,
             force_web_search: false,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,
@@ -791,6 +792,7 @@ mod empty_vault_tests {
         SearchFlags {
             force_kb_search: false,
             force_web_search: false,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,
@@ -880,6 +882,7 @@ mod attachment_prompt_tests {
         SearchFlags {
             force_kb_search: false,
             force_web_search: true,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: true,
             force_followup_mode: false,
@@ -1000,6 +1003,7 @@ mod deep_research_prompt_tests {
         SearchFlags {
             force_kb_search: false,
             force_web_search: true,
+            web_fallback: false,
             force_wiki_search: false,
             deep_research_mode: true,
             force_followup_mode: false,

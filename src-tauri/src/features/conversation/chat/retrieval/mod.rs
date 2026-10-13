@@ -62,8 +62,8 @@ use self::keyword::{extract_phrase_terms, normalize_keyword_token, tokenize_keyw
 use self::overlap::tokenize_overlap_terms;
 use self::pipeline::run_retrieval_pipeline as run_retrieval_pipeline_impl;
 use self::policy::{
-    empty_search_response, kb_can_run_alongside_external, should_execute_external_lookup,
-    should_use_external_as_fallback,
+    empty_search_response, intent_web_fallback, kb_can_run_alongside_external,
+    should_execute_external_lookup, should_use_external_as_fallback, WebSearchReason,
 };
 use self::rerank::apply_rerank_stage as apply_rerank_stage_impl;
 use self::source_citations::{
@@ -247,7 +247,7 @@ impl RetrievalPlan {
         search_flags: SearchFlags,
     ) -> Self {
         let mut route_action = router_decision.action.clone();
-        if search_flags.force_web_search {
+        if search_flags.web_planned() {
             route_action = RouterAction::NewSearch;
         }
         if route_action == RouterAction::Clarify && router_decision.recent_doc_meta.is_none() {
@@ -256,7 +256,7 @@ impl RetrievalPlan {
 
         let short_circuit_response = if route_action == RouterAction::Clarify
             && !search_flags.force_kb_search
-            && !search_flags.force_web_search
+            && !search_flags.web_planned()
             && router_decision.recent_doc_meta.is_some()
         {
             Some(build_router_clarify_response(
@@ -271,18 +271,19 @@ impl RetrievalPlan {
 
         Self {
             route_action: route_action.clone(),
-            // Web adds to the vault; it never replaces it. The intent
-            // classifier sets `force_web_search` whenever a question looks
-            // current, and reading that as "skip the library" answered
-            // questions the user's own documents covered from the web alone.
-            // A closed-book turn never reaches this plan.
+            // Web adds to the vault; it never replaces it. A web search the
+            // user asked for runs beside the vault search. One the intent
+            // step guessed at (`web_fallback`) runs after it, and only when
+            // the vault falls short, so the vault has to be searched here or
+            // the fallback has nothing to go by. A closed-book turn never
+            // reaches this plan.
             should_search_kb: search_flags.force_kb_search
-                || ((router_decision.router_may_search || search_flags.force_web_search)
+                || ((router_decision.router_may_search || search_flags.web_planned())
                     && matches!(
                         route_action,
                         RouterAction::NewSearch | RouterAction::UseLastDocument
                     )),
-            should_search_web: search_flags.force_web_search,
+            should_search_web: search_flags.web_planned(),
             should_search_wiki: search_flags.force_wiki_search,
             short_circuit_response,
         }

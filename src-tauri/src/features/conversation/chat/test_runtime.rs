@@ -14,11 +14,23 @@ use std::sync::{Arc, Mutex};
 
 const UNUSED: &str = "not provided to the test";
 
+/// A library a turn can search: the records retrieval reads, and the search
+/// over them. Document and chunk lookups for citations answer from empty
+/// in-memory stores, so a passage is cited under its search title.
+#[derive(Clone)]
+pub(super) struct TestVault {
+    pub(super) records: Arc<dyn ChatRecords>,
+    pub(super) search: Arc<dyn crate::features::search::trait_def::LibrarySearchTrait>,
+}
+
 #[derive(Clone)]
 pub(super) struct FakeRuntime {
     pub(super) llm: Option<Arc<dyn LLMPort>>,
     pub(super) tools: Option<Arc<dyn ChatTools>>,
     pub(super) jobs: Option<Arc<JobRuntime>>,
+    /// The library retrieval searches. Without one, a turn that reaches the
+    /// vault finds no scope and searches nothing.
+    pub(super) vault: Option<TestVault>,
     /// One service for the whole test, so what a turn saves can be read back.
     pub(super) conversations: Arc<MockConversationService>,
     /// The `answer_thinking` setting the turn reads.
@@ -31,6 +43,7 @@ impl Default for FakeRuntime {
             llm: None,
             tools: None,
             jobs: None,
+            vault: None,
             conversations: Arc::new(MockConversationService::new()),
             answer_thinking: false,
         }
@@ -74,12 +87,17 @@ impl ChatStorage for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn document_repository(&self) -> Arc<dyn crate::application::ports::DocumentRepository> {
-        unreachable!("{UNUSED}")
+        assert!(self.vault.is_some(), "{UNUSED}");
+        Arc::new(crate::domain::repositories::mocks::DddMockDocumentRepository::new())
     }
     fn chunk_repository(&self) -> Arc<dyn crate::application::ports::ChunkRepositoryPort> {
-        unreachable!("{UNUSED}")
+        assert!(self.vault.is_some(), "{UNUSED}");
+        Arc::new(crate::domain::repositories::mocks::MockChunkRepository::new())
     }
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
+        if let Some(vault) = &self.vault {
+            return Arc::clone(&vault.records);
+        }
         // Never queried unless the model calls a history tool.
         Arc::new(ConversationRepository::new(
             sqlx::sqlite::SqlitePoolOptions::new()
@@ -114,7 +132,7 @@ impl ChatRetrieval for FakeRuntime {
         self.tools.clone().unwrap_or_else(|| Arc::new(NoTools))
     }
     fn library_search(&self) -> Arc<dyn crate::features::search::trait_def::LibrarySearchTrait> {
-        unreachable!("{UNUSED}")
+        Arc::clone(&self.vault.as_ref().expect(UNUSED).search)
     }
     fn page_reader(&self) -> Arc<dyn PageReader> {
         unreachable!("{UNUSED}")
