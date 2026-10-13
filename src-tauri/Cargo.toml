@@ -220,6 +220,15 @@ candle-transformers = { version = "=0.10.2", features = ["metal"] }
 # Drains the Objective-C objects Candle's Metal dispatches autorelease
 # (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
 objc = "0.2"
+# OCR page rendering (features/ocr/render). CoreGraphics rasterizes every PDF
+# image codec a scan can use (CCITT, JBIG2, JPX), which no pure-Rust crate in
+# the tree does; both bindings and `png` were already in Cargo.lock.
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFURL", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std", "CGAffineTransform", "CGBitmapContext", "CGColorSpace", "CGContext",
+    "CGImage", "CGPDFDocument", "CGPDFPage",
+] }
+png = "0.18"
 
 
 [target.'cfg(windows)'.dependencies]

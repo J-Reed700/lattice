@@ -483,10 +483,11 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
 pub struct IndexingModule {
     indexing: crate::features::indexing::di::IndexingDi,
     web: crate::features::web::di::WebDi,
-    /// Page OCR for scanned PDFs. `NoopOcr` until a vision adapter exists:
-    /// scanned pages are reported in `ExtractedContent::needs_ocr` and the
-    /// rest of every document is still indexed. Swap this one binding for a
-    /// real provider to turn OCR on everywhere it is consumed.
+    /// Page OCR for scanned PDFs: the bundled `llama-server` with the
+    /// catalog OCR model, started only when a scanned page needs it. Until
+    /// that model is downloaded it answers `NotConfigured` like `NoopOcr`:
+    /// scanned pages stay in `ExtractedContent::needs_ocr` and the rest of
+    /// every document is still indexed.
     ocr: Arc<dyn crate::application::ports::OcrPort>,
 }
 
@@ -507,17 +508,19 @@ impl IndexingModule {
             Arc::clone(&model_provider),
             Arc::clone(&vector_search),
         )?;
+        let ocr = crate::features::ocr::di::build(Arc::new(
+            crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
+                db_pool.clone(),
+            ),
+        ));
         let indexing = crate::features::indexing::di::build(
             db_pool.clone(),
             model_provider,
             vector_search,
             web.web_archive.clone(),
+            Arc::clone(&ocr),
         )?;
-        Ok(Self {
-            indexing,
-            web,
-            ocr: Arc::new(crate::application::ports::NoopOcr),
-        })
+        Ok(Self { indexing, web, ocr })
     }
 
     // Indexing use case getters
@@ -546,8 +549,7 @@ impl IndexingModule {
         &self.indexing.transcription
     }
 
-    /// Page OCR for scanned PDFs. Hand this to
-    /// `ContentExtractor::with_ocr` once a vision adapter replaces `NoopOcr`.
+    /// Page OCR for scanned PDFs, the same port the indexer's extractor uses.
     pub fn ocr_port(&self) -> &Arc<dyn crate::application::ports::OcrPort> {
         &self.ocr
     }
