@@ -74,7 +74,8 @@ pub enum ThinkingOverrideDto {
 }
 
 /// Tokens a multi-token-prediction head drafts per step when the user turns
-/// it on: llama-server's own default.
+/// it on: llama-server's own default, and the fastest measured on Qwen 3.5 9B
+/// (1.55x decode, 1.83x while thinking; N=2, 4 and 6 were slower, track G).
 pub const DEFAULT_MTP_DRAFT_N_MAX: u32 = 3;
 
 /// More drafted tokens than any published MTP head predicts well; past this a

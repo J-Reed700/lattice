@@ -359,11 +359,13 @@ const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         license: "Apache-2.0",
         mtp_draft: false,
     },
-    // The same weights plus one MTP block (`qwen35.nextn_predict_layers = 1`,
-    // 33 blocks), whose full-attention cache is counted here. Unsloth's
-    // template for this build differs from the plain 9B's: thinking is ON
-    // unless `enable_thinking: false`, and up to two leading system or
-    // developer messages are merged instead of raising.
+    // A separate quantization, not the plain 9B file plus a block: 75 of the
+    // 427 shared tensors are quantized differently. It adds one MTP block,
+    // `blk.32.nextn` (`qwen35.nextn_predict_layers = 1`, 33 blocks), whose
+    // full-attention cache is counted here. Unsloth's template for this build
+    // differs from the plain 9B's: thinking is ON unless
+    // `enable_thinking: false`, and up to two leading system or developer
+    // messages are merged instead of raising.
     CuratedChatModel {
         id: "qwen3.5-9b-mtp-q4_k_m",
         name: "Qwen 3.5 9B (MTP)",
