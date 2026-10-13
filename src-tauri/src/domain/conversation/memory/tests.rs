@@ -1083,7 +1083,88 @@ fn an_unknown_stored_schema_is_not_read_as_empty_memory() {
         transcript_revision: 1,
         active_items: vec![item("i1", MemoryKind::Constraint, 1, "Do not deploy")],
         summary: None,
+        summary_through_sequence: None,
         latest_sequence: 1,
     };
     assert!(!snapshot.is_usable());
+}
+
+#[test]
+fn redaction_cuts_only_suppressions_that_still_apply_and_never_panics() {
+    let content = "Locker 4471, café code 9930, done.";
+    let digest = compute_digest(content);
+    let at = |needle: &str| content.find(needle).unwrap() as i64;
+    let span = |start: i64, end: i64, digest: &str| SuppressedSpan {
+        message_id: "m1".into(),
+        start_byte: start,
+        end_byte: end,
+        content_digest: digest.into(),
+    };
+    let redact = |spans: &[SuppressedSpan]| {
+        let refs: Vec<&SuppressedSpan> = spans.iter().collect();
+        redact_suppressed(content, &refs).into_owned()
+    };
+    let code = at("4471");
+    let accent = at("é");
+
+    // Nothing to apply leaves the text as it is.
+    assert_eq!(redact(&[]), content);
+
+    // Overlapping and touching ranges merge into one marker.
+    assert_eq!(
+        redact(&[
+            span(code, code + 2, &digest),
+            span(code + 1, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code 9930, done."
+    );
+    assert_eq!(
+        redact(&[
+            span(code, code + 2, &digest),
+            span(code + 2, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code 9930, done."
+    );
+    // Separate ranges, given out of order, each get a marker.
+    assert_eq!(
+        redact(&[
+            span(at("9930"), at("9930") + 4, &digest),
+            span(code, code + 4, &digest),
+        ]),
+        "Locker [forgotten], café code [forgotten], done."
+    );
+
+    // A range inside a character widens to cover all of it, at either end.
+    assert_eq!(
+        redact(&[span(accent + 1, accent + 2, &digest)]),
+        "Locker 4471, caf[forgotten] code 9930, done."
+    );
+    assert_eq!(
+        redact(&[span(at("café"), accent + 1, &digest)]),
+        "Locker 4471, [forgotten] code 9930, done."
+    );
+
+    // Recorded against other text: the offsets mean nothing here.
+    assert_eq!(
+        redact(&[span(code, code + 4, &compute_digest("other text"))]),
+        content
+    );
+
+    // Out of range is clamped to the text, or ignored when nothing is left.
+    let len = content.len() as i64;
+    assert_eq!(
+        redact(&[span(at(", done"), len + 50, &digest)]),
+        "Locker 4471, café code 9930[forgotten]"
+    );
+    assert_eq!(
+        redact(&[span(-5, at(" 4471"), &digest)]),
+        "[forgotten] 4471, café code 9930, done."
+    );
+    assert_eq!(redact(&[span(len + 1, len + 9, &digest)]), content);
+    assert_eq!(
+        redact(&[span(code + 4, code, &digest)]),
+        content,
+        "inverted"
+    );
+    assert_eq!(redact(&[span(i64::MIN, i64::MAX, &digest)]), "[forgotten]");
 }

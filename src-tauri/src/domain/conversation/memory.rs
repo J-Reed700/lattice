@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 
 mod apply;
 mod patch;
+mod redaction;
 mod validation;
 
 pub use apply::{apply_patch, MemoryCommit, SemanticVerdict};
@@ -40,6 +41,7 @@ pub use patch::{
     MemoryPatch, MemoryValidationError, ProposedEvidence, ProposedItem, ProposedTransition,
     ValidatedAddition, ValidatedPatch, ValidatedTransition, ValidatedTransitionTarget,
 };
+pub use redaction::{redact_suppressed, SuppressedSpan, FORGOTTEN_MARKER};
 pub use validation::{parse_patch, validate_patch, SourceIndex};
 
 /// Version of the persisted memory layout. Bump when a stored shape changes in
@@ -613,6 +615,15 @@ pub struct MemorySnapshot {
     pub active_items: Vec<MemoryItem>,
     /// Working summary text, if a compaction has produced one.
     pub summary: Option<String>,
+    /// Sequence of the message the summary was folded through (its
+    /// `up_to_message_id`). `None` when there is no summary, or when its
+    /// boundary cannot be placed.
+    ///
+    /// Normally the summary ends at the watermark. A delete or a user
+    /// correction can drop the summary while the ledger stays usable, and
+    /// source between this point and the watermark is then covered by
+    /// extraction but by no summary until it is folded again.
+    pub summary_through_sequence: Option<i64>,
     /// Sequence of the newest message in the transcript.
     pub latest_sequence: i64,
 }

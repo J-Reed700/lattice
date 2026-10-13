@@ -26,6 +26,11 @@
 //! and a work cap of 256 messages or 1 MiB of source per attempt. Hitting the
 //! work cap returns [`CompactionStatus::Partial`] with the sequence to resume
 //! from. It never skips the remainder (§7.5).
+//!
+//! A delete or a user correction can drop the working summary while the ledger
+//! and its watermark stand. A run then folds the source between the summary's
+//! boundary and the watermark back in — summary only, never re-extracted —
+//! a bounded slice at a time, resuming from wherever the last summary ended.
 
 pub mod extract;
 pub mod prompts;
@@ -79,6 +84,10 @@ pub const MAX_SOURCE_MESSAGES_PER_ATTEMPT: usize = 256;
 
 /// Source bytes processed in one foreground attempt.
 pub const MAX_SOURCE_BYTES_PER_ATTEMPT: usize = 1024 * 1024;
+
+/// Source bytes one attempt folds back into a dropped summary: two fold steps,
+/// so a refold adds at most a couple of summariser calls to the run it rides on.
+pub const MAX_REFOLD_BYTES_PER_ATTEMPT: usize = 2 * summarize::MAX_FOLD_BYTES;
 
 /// Complete turns kept out of the compacted prefix (§7.2). The current pending
 /// user message is retained on top of these.
@@ -374,6 +383,11 @@ pub struct CompactionConfig {
     /// Work cap for one attempt (§7.5).
     pub max_source_messages_per_attempt: usize,
     pub max_source_bytes_per_attempt: usize,
+    /// Source bytes one attempt may fold back into a summary that a delete or a
+    /// user correction dropped. Smaller than the work cap on purpose: the
+    /// refold rides on a run that must still fit its deadline, and its
+    /// progress is durable, so a long backlog is caught up across runs.
+    pub max_refold_bytes_per_attempt: usize,
     pub segment_max_bytes: usize,
     pub segment_overlap_chars: usize,
     pub max_segments_per_batch: usize,
@@ -390,6 +404,7 @@ impl Default for CompactionConfig {
             source_read_limits: SourceReadLimits::DEFAULT,
             max_source_messages_per_attempt: MAX_SOURCE_MESSAGES_PER_ATTEMPT,
             max_source_bytes_per_attempt: MAX_SOURCE_BYTES_PER_ATTEMPT,
+            max_refold_bytes_per_attempt: MAX_REFOLD_BYTES_PER_ATTEMPT,
             segment_max_bytes: segment::SEGMENT_MAX_BYTES,
             segment_overlap_chars: segment::SEGMENT_OVERLAP_CHARS,
             max_segments_per_batch: segment::MAX_SEGMENTS_PER_BATCH,

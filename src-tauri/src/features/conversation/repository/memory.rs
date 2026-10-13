@@ -27,7 +27,7 @@ use crate::application::ports::conversation_memory::{
 use crate::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, SourceMessage, SourceRole,
-    MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS, MEMORY_SCHEMA_VERSION,
+    SuppressedSpan, MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS, MEMORY_SCHEMA_VERSION,
 };
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
@@ -291,8 +291,21 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory evidence: {}", e)))?;
 
-        let summary: Option<String> = sqlx::query_scalar(
-            "SELECT summary_text FROM conversation_summaries WHERE conversation_id = ?",
+        // The summary's boundary comes back with it, in this same read: the
+        // compaction job compares it with the watermark to find source the
+        // ledger covers but no summary does. Sequence zero is the placeholder of
+        // paths that predate memory, not a position, so it reads as unknown.
+        #[derive(sqlx::FromRow)]
+        struct SummaryRow {
+            summary_text: String,
+            through_sequence: Option<i64>,
+        }
+        let summary = sqlx::query_as::<_, SummaryRow>(
+            "SELECT s.summary_text, NULLIF(m.sequence, 0) AS through_sequence \
+             FROM conversation_summaries s \
+             LEFT JOIN conversation_messages m \
+               ON m.id = s.up_to_message_id AND m.conversation_id = s.conversation_id \
+             WHERE s.conversation_id = ?",
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
@@ -315,7 +328,8 @@ impl ConversationRepository {
             state,
             transcript_revision: conversation.transcript_revision,
             active_items: assemble_items(item_rows, evidence_rows)?,
-            summary,
+            summary_through_sequence: summary.as_ref().and_then(|row| row.through_sequence),
+            summary: summary.map(|row| row.summary_text),
             latest_sequence,
         })
     }
@@ -540,6 +554,50 @@ impl ConversationRepository {
                         .unwrap_or(SourceRole::User),
                     text,
                 }
+            })
+            .collect())
+    }
+
+    /// Forgotten spans in `message_ids`, in one query however many there are.
+    ///
+    /// Scoped through the message's conversation, since a suppression row
+    /// names only a message. Returned as stored: whether one still applies is
+    /// the redaction's digest check, not this read's.
+    pub async fn memory_suppressed_spans(
+        &self,
+        conversation_id: &str,
+        message_ids: &[String],
+    ) -> Result<Vec<SuppressedSpan>> {
+        if message_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            message_id: String,
+            start_byte: i64,
+            end_byte: i64,
+            content_digest: String,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT s.message_id, s.start_byte, s.end_byte, s.content_digest \
+             FROM conversation_memory_suppressions s \
+             JOIN conversation_messages m ON m.id = s.message_id \
+             WHERE m.conversation_id = ? \
+               AND s.message_id IN (SELECT value FROM json_each(?)) \
+             ORDER BY s.message_id, s.start_byte",
+        )
+        .bind(conversation_id)
+        .bind(serde_json::to_string(message_ids)?)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to read memory suppressions: {}", e)))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SuppressedSpan {
+                message_id: row.message_id,
+                start_byte: row.start_byte,
+                end_byte: row.end_byte,
+                content_digest: row.content_digest,
             })
             .collect())
     }

@@ -19,6 +19,7 @@
 
 use crate::domain::conversation::memory::{
     ConversationMemoryState, MemoryCommit, MemoryId, MemorySnapshot, SourceMessage, SourceRole,
+    SuppressedSpan,
 };
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -287,6 +288,18 @@ pub trait ConversationMemoryPort: Send + Sync {
         spans: &[SourceSpanRef],
         limits: SourceReadLimits,
     ) -> Result<Vec<ResolvedSpan>>;
+
+    /// The user's forgotten spans in these messages, scoped to the
+    /// conversation, in one read.
+    ///
+    /// Every summary fold redacts through this, so forgotten text never
+    /// reaches the summariser. Deliberately without a default: an adapter that
+    /// skipped it would bring forgotten values back without any error.
+    async fn suppressed_spans(
+        &self,
+        conversation_id: &str,
+        message_ids: &[String],
+    ) -> Result<Vec<SuppressedSpan>>;
 
     /// Apply a validated candidate under `preconditions`, or fail without
     /// writing anything.
