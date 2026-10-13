@@ -348,7 +348,7 @@ impl SettingsRepository {
         if settings.llm.router.enabled && settings.llm.router.model.trim().is_empty() {
             result.add_error(
                 "llm",
-                "router.model cannot be empty; configure a small router model (e.g. Phi-3.5 Mini or TinyLlama)"
+                "router.model cannot be empty; configure a small router model (e.g. Qwen 3.5 4B)"
                     .to_string(),
             );
         }

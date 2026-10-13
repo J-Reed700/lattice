@@ -73,7 +73,7 @@ fn higher_ranked_document_evidence_is_kept_over_lower() {
 #[test]
 fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_of_metadata() {
     let builder = assembler();
-    let recent = vec![
+    let recent = [
         message(
             7,
             SourceRole::User,
@@ -93,10 +93,13 @@ fn final_overflow_eviction_reports_source_sequences_and_keeps_user_prefixes_out_
             .collect(),
         last: render::FinalUserMessage::new(QUESTION, day()),
     };
-    let mut accounting = ContextAccounting::default();
-    accounting.total_input = builder.measure(&layout, 0);
+    let total_input = builder.measure(&layout, 0);
     let oldest_cost = builder.count_input(&render::render_recent(&recent[0]));
-    accounting.input_budget = accounting.total_input - oldest_cost;
+    let mut accounting = ContextAccounting {
+        total_input,
+        input_budget: total_input - oldest_cost,
+        ..Default::default()
+    };
 
     let evicted = builder.evict_until_fits(&mut layout, &mut accounting, 0);
     assert_eq!(

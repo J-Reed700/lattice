@@ -101,7 +101,7 @@ export function createVaultAPIMock() {
       },
       router: {
         enabled: true,
-        model: 'phi-3.5-mini-instruct-q4_k_m',
+        model: 'qwen3.5-4b-q4_k_m',
         timeoutMs: 350,
         maxTokens: 120,
         temperature: 0.1,

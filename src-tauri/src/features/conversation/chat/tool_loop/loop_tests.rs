@@ -4,7 +4,9 @@
 use super::final_round::FINAL_ROUND_INSTRUCTION;
 use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
-use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse, ToolChoice};
+use crate::application::ports::llm_port::{
+    CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
+};
 use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation;
 use crate::features::conversation::chat::ports::ChatTools;
@@ -249,6 +251,17 @@ async fn run(
         tools: Some(web.clone()),
         ..FakeRuntime::default()
     };
+    run_on(runtime, model, tools, input_budget, rounds, request_id).await
+}
+
+async fn run_on(
+    runtime: FakeRuntime,
+    model: &Arc<Model>,
+    tools: &[ToolDefinition],
+    input_budget: usize,
+    rounds: usize,
+    request_id: &str,
+) -> Run {
     let conv_service: Arc<dyn ConversationServiceTrait> = runtime.conversations.clone();
     let llm: Arc<dyn LLMPort> = model.clone();
     let sink: ChatEventSink = Arc::new(|_| Ok(()));
@@ -371,6 +384,44 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
         requests[1].input.last(),
         Some(CompletionInput::ToolResult { .. })
     ));
+    // Thinking is off unless the user turns it on.
+    assert!(requests
+        .iter()
+        .all(|request| request.thinking == ThinkingMode::Off));
+}
+
+/// With tools in the prompt and calls forbidden, Qwen3.5-9B thinking wrote
+/// its call as text and answered nothing. A thinking answer gets no tools.
+#[tokio::test]
+async fn a_thinking_answer_is_asked_for_without_tools() {
+    let model = Model::new([
+        search("s1", "bridge opening"),
+        CompletionResponse::from_text("It opened in 1932 [1]."),
+    ]);
+    let web = Web::with_delays(&[]);
+    let runtime = FakeRuntime {
+        tools: Some(web.clone()),
+        answer_thinking: true,
+        ..FakeRuntime::default()
+    };
+    let run = run_on(
+        runtime,
+        &model,
+        &[tool("web_search")],
+        ROOMY,
+        2,
+        "thinking-answer",
+    )
+    .await;
+
+    assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].thinking, ThinkingMode::Off, "a tool round");
+    assert!(requests[1].tools.is_empty());
+    assert_eq!(requests[1].tool_choice, None);
+    assert_eq!(requests[1].thinking, ThinkingMode::On);
+    assert!(last_text(&requests[1]).ends_with(FINAL_ROUND_INSTRUCTION));
 }
 
 #[tokio::test]
@@ -455,7 +506,7 @@ async fn a_retry_that_calls_again_ends_as_an_empty_answer_always_has() {
     )
     .await;
 
-    let error = run.outcome.err().expect("no answer was written");
+    let error = run.outcome.expect_err("no answer was written");
     assert!(error.to_string().contains("no answer"), "{error}");
     assert_eq!(model.requests().len(), 3, "one retry, no more");
 }
@@ -603,7 +654,7 @@ async fn stop_ends_a_round_of_reads_without_waiting_for_them() {
     .expect("stop ends the round, not the time budget");
     cancellation::finish_turn(request_id);
 
-    let error = run.outcome.err().expect("a stopped turn has no answer");
+    let error = run.outcome.expect_err("a stopped turn has no answer");
     assert!(cancellation::is_cancellation(&error), "{error}");
     let reads: Vec<_> = run
         .steps

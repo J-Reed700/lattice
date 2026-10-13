@@ -187,8 +187,9 @@ pub(super) async fn run_tool_bounded<T>(
 /// it begins. A second read of the same page waits for the first, so it is
 /// answered from memory exactly as it would have been one call at a time.
 fn batch_end(calls: &[RequestedCall], start: usize) -> usize {
-    if !runs_alongside_others(canonical_tool_name(&calls[start].name)) {
-        return start + 1;
+    match calls.get(start) {
+        Some(first) if runs_alongside_others(canonical_tool_name(&first.name)) => {}
+        _ => return start + 1,
     }
     let mut pages = HashSet::new();
     let mut end = start;
@@ -282,13 +283,12 @@ impl<'a> ToolCalls<'a> {
         // What this batch's earlier calls may still add, counted at their
         // full allowance since none has come back yet.
         let mut reserved = 0;
-        for index in batch {
+        for (index, call) in calls.iter().enumerate().take(batch.end).skip(batch.start) {
             if self.scope.cancel.is_cancelled() {
                 emit_cancelled_stream(self.scope.sink, self.scope.conv_id, self.scope.request_id);
                 return Err(cancelled_error());
             }
-            let plan =
-                self.prepare_call(&calls[index], input, reserved, calls.len() - index, timings);
+            let plan = self.prepare_call(call, input, reserved, calls.len() - index, timings);
             reserved += plan.reserved_chars();
             planned.push(plan);
         }

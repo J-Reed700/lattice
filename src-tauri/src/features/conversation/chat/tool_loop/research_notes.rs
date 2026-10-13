@@ -25,7 +25,7 @@
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
 use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, SamplingOverride, ToolChoice,
+    CompletionInput, CompletionRequest, SamplingOverride, ThinkingMode, ToolChoice,
 };
 use crate::application::ports::LLMPort;
 use crate::features::conversation::chat::cancellation::cancelled_error;
@@ -133,7 +133,8 @@ pub(super) async fn condense(
     let Some(span) = condensable_span(&request.input, loop_start) else {
         return Ok(None);
     };
-    let chars_before = request.input[span.clone()].iter().map(result_chars).sum();
+    let condensable = request.input.get(span.clone()).unwrap_or_default();
+    let chars_before = condensable.iter().map(result_chars).sum();
     let step = recorder.begin_guarded(
         TurnStepKind::Generate,
         "Condensing what it has read",
@@ -162,7 +163,8 @@ pub(super) async fn condense(
         cancel: request.cancel.clone(),
         cache_key: request.cache_key.clone(),
         time_budget: Some(remaining),
-        // integration: thinking = ThinkingMode::Off (track A)
+        // A transcription: thinking would only spend the round's time.
+        thinking: ThinkingMode::Off,
         ..Default::default()
     };
     let completion = timeout(remaining, llm.complete(&notes_request));
@@ -198,7 +200,10 @@ pub(super) async fn condense(
         step.failed(Some("The notes saved no room".into()));
         return Ok(None);
     }
-    let result_ids = request.input[span.clone()]
+    let result_ids = request
+        .input
+        .get(span.clone())
+        .unwrap_or_default()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::ToolResult { id, .. } => Some(id.clone()),

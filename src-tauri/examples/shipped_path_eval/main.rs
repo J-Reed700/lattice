@@ -317,7 +317,9 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     eprintln!(
         "wrote {} ({} failed)",
         args.out.display(),
-        run["failed"].as_array().map_or(0, Vec::len)
+        run.get("failed")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len)
     );
     Ok(())
 }

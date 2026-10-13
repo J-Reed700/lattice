@@ -21,7 +21,7 @@
 //! that request pays the prefill, but the turn gets its answer.
 
 use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ToolChoice,
+    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
 };
 use serde_json::Value;
 
@@ -38,12 +38,23 @@ pub(super) fn ask_for_answer(request: &mut CompletionRequest) {
     say_last(&mut request.input, FINAL_ROUND_INSTRUCTION);
 }
 
+/// The answering round when the answer may think: the same instruction, and
+/// no tools in the prompt at all. Measured on Qwen3.5-9B, thinking with the
+/// tools kept and calls forbidden wrote the call as text and answered
+/// nothing, so a thinking answer pays the prefill instead.
+pub(super) fn ask_for_answer_without_tools(request: &mut CompletionRequest) {
+    say_last(&mut request.input, FINAL_ROUND_INSTRUCTION);
+    request.tools.clear();
+    // Nothing is offered, so there is nothing to choose.
+    request.tool_choice = None;
+}
+
 /// The one retry after a last round that wrote only calls: no tools in the
 /// prompt at all, and a firmer instruction in place of the first.
 pub(super) fn insist_on_answer(request: &mut CompletionRequest) {
     // With no tools offered, a default that turns thinking on for tool-free
     // rounds would bring back the reply this retry exists to replace.
-    // integration: thinking = ThinkingMode::Off (track A)
+    request.thinking = ThinkingMode::Off;
     request.tools.clear();
     // Nothing is offered, so there is nothing to choose; some providers
     // refuse a choice that names no tools.
@@ -337,6 +348,19 @@ mod tests {
     }
 
     #[test]
+    fn a_thinking_answer_round_sends_no_tools() {
+        let mut request = request_with_a_tool();
+        ask_for_answer_without_tools(&mut request);
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+        assert_eq!(request.input.len(), 2, "no new message");
+        assert!(matches!(request.input.last(),
+            Some(CompletionInput::ToolResult { output, .. })
+                if output.ends_with(FINAL_ROUND_INSTRUCTION)));
+        assert_eq!(ThinkingMode::for_answer(true, &request), ThinkingMode::On);
+    }
+
+    #[test]
     fn the_retry_sends_no_tools_and_replaces_the_instruction() {
         for mut request in [
             request_with_a_tool(),
@@ -353,6 +377,7 @@ mod tests {
             insist_on_answer(&mut request);
             assert!(request.tools.is_empty());
             assert_eq!(request.tool_choice, None);
+            assert_eq!(request.thinking, ThinkingMode::Off);
             assert_eq!(request.input.len(), before, "replaced, not stacked");
             let last = json_of(request.input.last().unwrap()).to_string();
             assert!(last.contains("Do not call any tools"), "{last}");

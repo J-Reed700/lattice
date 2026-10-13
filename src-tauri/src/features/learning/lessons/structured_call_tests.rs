@@ -145,7 +145,7 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
             ("user", ANSWER_STEP),
         ]
     );
-    let sampling = structured.sampling.clone().unwrap_or_default();
+    let sampling = structured.sampling.unwrap_or_default();
     assert_eq!(sampling.temperature, Some(0.0));
     assert_eq!(sampling.top_k, Some(1));
     for request in [draft, structured] {

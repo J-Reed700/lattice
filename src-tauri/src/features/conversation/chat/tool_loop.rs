@@ -11,7 +11,7 @@ mod research_notes;
 mod scoped_document_tools;
 mod tool_sources;
 
-use crate::application::ports::llm_port::CompletionInput;
+use crate::application::ports::llm_port::{CompletionInput, ThinkingMode};
 use crate::application::ports::ToolDefinition;
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::qa::dto::SourceDto;
@@ -243,6 +243,13 @@ pub(super) async fn run_agentic_tool_loop(
         ..Default::default()
     };
     let cancellation_error = super::cancellation::cancelled_error;
+    // Whether the user lets the answer think. A round that can still call a
+    // tool never does (see `ThinkingMode`).
+    let answer_thinking = container
+        .settings()
+        .await
+        .map(|settings| settings.llm.answer_thinking)
+        .unwrap_or(false);
     let window = window_chars(input_budget, llm.chars_per_token());
     // The schemas ride along with every round and take room like any message.
     let tool_schema_chars = tools_ref.map_or(0, |tools| tool_schema_text(tools).chars().count());
@@ -333,8 +340,15 @@ pub(super) async fn run_agentic_tool_loop(
                 iteration,
                 window_full, "Last tool round: asking for the answer with calls forbidden"
             );
-            final_round::ask_for_answer(&mut native_request);
+            if answer_thinking {
+                // Thinking with the tools still in the prompt wrote the call
+                // as text and answered nothing, so this answer has none.
+                final_round::ask_for_answer_without_tools(&mut native_request);
+            } else {
+                final_round::ask_for_answer(&mut native_request);
+            }
         }
+        native_request.thinking = ThinkingMode::for_answer(answer_thinking, &native_request);
         if turn_cancel.is_cancelled() {
             emit_cancelled_stream(sink, conv_id, request_id);
             return Err(cancellation_error());

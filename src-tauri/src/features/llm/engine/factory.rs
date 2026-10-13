@@ -222,8 +222,9 @@ async fn create_local_llm_sidecar(
     if let Some(requested) = server.context_window {
         config = config.with_context_override(requested, &capabilities, resident_bytes);
     }
-    // Whether this GGUF can draft (`config.mtp_capable`) is the model
-    // catalog's to say; until it does, the choice is carried and unused.
+    // Whether this GGUF can draft is the model catalog's to say; the user's
+    // choice only applies to a model that can.
+    config.mtp_capable = crate::domain::models::curated::chat_model_uses_mtp_draft(model_path);
     config.speculative_decoding = server.speculative_decoding;
 
     if n_gpu_layers >= 0 {
