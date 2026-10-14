@@ -1366,7 +1366,7 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
 
     let llm = LlamaCppLlm::new(&settings(server.uri()))
         .unwrap()
-        .schedule()
+        .schedule(&SchedulerRegistry::default())
         .await;
     assert!(llm.counts_tokens_exactly());
     assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);

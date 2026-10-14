@@ -5,7 +5,9 @@ use crate::application::contracts::settings::LLMSettingsDto;
 use crate::application::ports::LLMPort;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::llm::engine::factory::LocalServerOptions;
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
+use crate::features::llm::scheduler::SchedulerRegistry;
 use crate::shared::error::{AppError, Result};
 
 /// A bundled llama-server that cannot execute is an install problem, not a
@@ -32,9 +34,31 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
 /// The stamp is what allows recovery without a restart: a re-downloaded or
 /// repaired file has a different size or mtime, so it is a different key and
 /// gets a fresh attempt.
-static UNLOADABLE_ARTIFACTS: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+#[derive(Default)]
+pub(crate) struct UnloadableArtifacts {
+    known: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, (ArtifactStamp, String)>>,
+}
+
+/// What every model load in one app shares: the per-backend schedulers, the
+/// artifacts known not to start, and the probe of the devices a local server
+/// can offload to. The container owns one and hands it to each loader, so two
+/// containers never share any of it.
+#[derive(Clone, Default)]
+pub(crate) struct LlmRuntime {
+    pub(crate) schedulers: Arc<SchedulerRegistry>,
+    pub(crate) unloadable: Arc<UnloadableArtifacts>,
+    pub(crate) devices: Arc<BackendDevices>,
+}
+
+impl LlmRuntime {
+    /// The runtime for an app whose device probe is `devices`.
+    pub(crate) fn new(devices: Arc<BackendDevices>) -> Self {
+        Self {
+            devices,
+            ..Self::default()
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct ArtifactStamp {
@@ -50,58 +74,76 @@ fn artifact_stamp(path: &std::path::Path) -> Option<ArtifactStamp> {
     })
 }
 
-/// Preserve the failure as well as avoiding another expensive load. Returning
-/// `None` from the loader means no model was selected, which makes warmup claim
-/// success and hides the reason the selected utility model is not being used.
-fn known_load_failure(path: &std::path::Path) -> Option<String> {
-    let stamp = artifact_stamp(path)?;
-    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    match known.get(path) {
-        Some((recorded, error)) if *recorded == stamp => Some(error.clone()),
-        // The file changed since it failed. Drop the stale entry so the new
-        // bytes are judged on their own.
-        Some(_) => {
-            known.remove(path);
-            None
+impl UnloadableArtifacts {
+    /// Preserve the failure as well as avoiding another expensive load.
+    /// Returning `None` from the loader means no model was selected, which
+    /// makes warmup claim success and hides the reason the selected utility
+    /// model is not being used.
+    fn known_failure(&self, path: &std::path::Path) -> Option<String> {
+        let stamp = artifact_stamp(path)?;
+        let mut known = match self.known.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match known.get(path) {
+            Some((recorded, error)) if *recorded == stamp => Some(error.clone()),
+            // The file changed since it failed. Drop the stale entry so the new
+            // bytes are judged on their own.
+            Some(_) => {
+                known.remove(path);
+                None
+            }
+            None => None,
         }
-        None => None,
     }
-}
 
-fn remember_unloadable(path: &std::path::Path, error: String) {
-    let Some(stamp) = artifact_stamp(path) else {
-        return;
-    };
-    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    known.insert(path.to_path_buf(), (stamp, error));
+    fn remember(&self, path: &std::path::Path, error: String) {
+        let Some(stamp) = artifact_stamp(path) else {
+            return;
+        };
+        let mut known = match self.known.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        known.insert(path.to_path_buf(), (stamp, error));
+    }
 }
 
 pub(crate) struct ModelLoader {
     downloaded_models: Arc<DownloadedModelRepository>,
     app_handle: Option<tauri::AppHandle>,
+    runtime: LlmRuntime,
 }
 
 impl ModelLoader {
     pub(crate) fn new(
         downloaded_models: Arc<DownloadedModelRepository>,
         app_handle: Option<tauri::AppHandle>,
+        runtime: LlmRuntime,
     ) -> Self {
         Self {
             downloaded_models,
             app_handle,
+            runtime,
         }
+    }
+
+    async fn create_llm(
+        &self,
+        config: crate::features::llm::engine::factory::LLMConfig,
+    ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
+        crate::features::llm::engine::factory::create_llm(
+            config,
+            &self.runtime.schedulers,
+            &self.runtime.devices,
+        )
+        .await
     }
 
     pub(crate) async fn load(&self, settings: &LLMSettingsDto) -> Result<Arc<dyn LLMPort>> {
         if settings.provider == crate::application::contracts::settings::LLMProvider::Llamacpp {
             return Ok(crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?
-                .schedule()
+                .schedule(&self.runtime.schedulers)
                 .await);
         }
         if matches!(
@@ -125,7 +167,8 @@ impl ModelLoader {
             .ok_or_else(|| {
                 AppError::InvalidConfig(format!("Configure the {name} API key in Chat settings"))
             })?;
-            return Ok(crate::features::llm::cloud::CloudLlm::new(settings, key)?.schedule());
+            return Ok(crate::features::llm::cloud::CloudLlm::new(settings, key)?
+                .schedule(&self.runtime.schedulers));
         }
         let config = Self::generation_config_from_settings(settings);
         crate::application::services::model_selection::select_model(
@@ -151,7 +194,7 @@ impl ModelLoader {
         }
         let llm = crate::features::llm::llama_cpp::LlamaCppLlm::new(settings)?;
         if llm.is_ready().await? {
-            Ok(Some(llm.schedule().await))
+            Ok(Some(llm.schedule(&self.runtime.schedulers).await))
         } else {
             Ok(None)
         }
@@ -243,7 +286,7 @@ impl ModelLoader {
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::features::llm::engine::factory::{create_llm, LLMConfig};
+        use crate::features::llm::engine::factory::LLMConfig;
 
         let maybe_model = self.downloaded_models.find_by_model_id(model_id).await?;
 
@@ -278,7 +321,7 @@ impl ModelLoader {
             server,
         };
 
-        match create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
             Err(e) => Err(unusable_sidecar(&e).unwrap_or_else(|| {
                 AppError::ModelLoadFailed(format!(
@@ -322,7 +365,7 @@ impl ModelLoader {
             )));
         }
 
-        if let Some(error) = known_load_failure(&model_path) {
+        if let Some(error) = self.runtime.unloadable.known_failure(&model_path) {
             tracing::debug!(
                 model_id = %model_id,
                 path = %model_path.display(),
@@ -345,7 +388,7 @@ impl ModelLoader {
             "Loading utility LLM"
         );
 
-        match crate::features::llm::engine::factory::create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
             Err(e) => match unusable_sidecar(&e) {
                 // Surfaced as an error so warmup reports it on the model's
@@ -371,7 +414,7 @@ impl ModelLoader {
                          utility model or update Lattice's local model engine.",
                         active.model_name()
                     );
-                    remember_unloadable(&model_path, error.clone());
+                    self.runtime.unloadable.remember(&model_path, error.clone());
                     tracing::warn!(
                         model_id = %model_id,
                         path = %model_path.display(),
@@ -445,7 +488,7 @@ impl ModelLoader {
         generation_config: crate::features::llm::engine::GenerationConfig,
         server: LocalServerOptions,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
-        use crate::features::llm::engine::factory::{create_llm, LLMConfig};
+        use crate::features::llm::engine::factory::LLMConfig;
 
         let active_model = match self.downloaded_models.get_active_chat_model().await {
             Ok(Some(model)) => model,
@@ -491,7 +534,7 @@ impl ModelLoader {
             server,
         };
 
-        match create_llm(llm_config).await {
+        match self.create_llm(llm_config).await {
             Ok(llm) => {
                 tracing::info!(
                     "✅ Successfully loaded active model: {}",
@@ -554,7 +597,15 @@ impl ModelLoader {
         );
 
         // Try to create Ollama client (includes health check)
-        match create_ollama_llm(&endpoint, &model, auth_header, generation_config).await {
+        match create_ollama_llm(
+            &endpoint,
+            &model,
+            auth_header,
+            generation_config,
+            &self.runtime.schedulers,
+        )
+        .await
+        {
             Ok(llm) => {
                 tracing::info!("✅ Successfully connected to Ollama server");
                 Ok(llm)
@@ -600,7 +651,15 @@ impl ModelLoader {
             model
         );
 
-        match create_ollama_llm(&endpoint, model, auth_header, generation_config).await {
+        match create_ollama_llm(
+            &endpoint,
+            model,
+            auth_header,
+            generation_config,
+            &self.runtime.schedulers,
+        )
+        .await
+        {
             Ok(llm) => {
                 tracing::info!("✅ Successfully connected to Ollama router model");
                 Ok(llm)
@@ -649,17 +708,18 @@ mod tests {
         let path = dir.path().join("model.gguf");
         std::fs::write(&path, b"broken").expect("write");
 
-        assert_eq!(known_load_failure(&path), None);
-        remember_unloadable(&path, "unsupported architecture".into());
+        let unloadable = UnloadableArtifacts::default();
+        assert_eq!(unloadable.known_failure(&path), None);
+        unloadable.remember(&path, "unsupported architecture".into());
         assert_eq!(
-            known_load_failure(&path).as_deref(),
+            unloadable.known_failure(&path).as_deref(),
             Some("unsupported architecture")
         );
 
         // A repaired or re-downloaded file is different bytes, so the memo
         // must not keep a working model from ever being tried again.
         std::fs::write(&path, b"repaired and longer").expect("rewrite");
-        assert_eq!(known_load_failure(&path), None);
+        assert_eq!(unloadable.known_failure(&path), None);
     }
 
     #[tokio::test]
@@ -680,8 +740,13 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
-        remember_unloadable(
+        let runtime = LlmRuntime::default();
+        let loader = ModelLoader::new(
+            Arc::new(DownloadedModelRepository::new(pool)),
+            None,
+            runtime.clone(),
+        );
+        runtime.unloadable.remember(
             &path,
             "This engine does not support the architecture".into(),
         );
@@ -768,7 +833,11 @@ mod tests {
             let pool = sqlx::sqlite::SqlitePoolOptions::new()
                 .connect_lazy("sqlite::memory:")
                 .unwrap();
-            let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+            let loader = ModelLoader::new(
+                Arc::new(DownloadedModelRepository::new(pool)),
+                None,
+                LlmRuntime::default(),
+            );
             let settings = LLMSettingsDto {
                 provider,
                 ollama_url: server.uri(),
@@ -832,7 +901,11 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        let loader = ModelLoader::new(
+            Arc::new(DownloadedModelRepository::new(pool)),
+            None,
+            LlmRuntime::default(),
+        );
         let settings = LLMSettingsDto {
             provider: LLMProvider::Auto,
             ollama_url: server.uri(),
@@ -883,7 +956,11 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        let loader = ModelLoader::new(
+            Arc::new(DownloadedModelRepository::new(pool)),
+            None,
+            LlmRuntime::default(),
+        );
         let settings = LLMSettingsDto {
             provider: LLMProvider::Ollama,
             ollama_url: server.uri(),
@@ -913,7 +990,11 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        let loader = ModelLoader::new(
+            Arc::new(DownloadedModelRepository::new(pool)),
+            None,
+            LlmRuntime::default(),
+        );
         let settings = LLMSettingsDto {
             provider: crate::application::contracts::settings::LLMProvider::Ollama,
             ollama_url: String::new(),

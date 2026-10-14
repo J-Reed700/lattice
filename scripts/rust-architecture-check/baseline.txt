@@ -11,6 +11,10 @@
 # and commit the smaller file. Do not add lines to get a change through: fix
 # the dependency, or mark a deliberate detached task with a
 # `// raw-spawn: <reason>` comment directly above the statement or its fn.
+# State a static holds belongs in a value the composition root builds and
+# passes on; only a derived constant or a hook the process owns by nature
+# (a panic hook, an OS callback target) may stay global, marked with a
+# `// global-state: <reason>` comment directly above the static.
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
@@ -19,6 +23,8 @@
 #   container-import <file> interfaces::di                the DI Container outside plugin, command,
 #                                                         DI, desktop, setup and interfaces files
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
+#   global-state <file> <static>                          statics that hold mutable or lazily
+#                                                         built state, unless a derived constant
 
 infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::indexing 1
 infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::transcription 3
@@ -41,7 +47,6 @@ feature-edge features::backup features::settings 2
 feature-edge features::backup features::vault 2
 feature-edge features::batch features::indexing 4
 feature-edge features::batch features::web 2
-feature-edge features::cache features::search 1
 feature-edge features::compare features::search 1
 feature-edge features::conversation features::daily_notes 1
 feature-edge features::conversation features::embedding 3
@@ -59,7 +64,7 @@ feature-edge features::daily_notes features::qa 6
 feature-edge features::embedding features::download 2
 feature-edge features::explorer features::function_calling 4
 feature-edge features::explorer features::search 3
-feature-edge features::file features::indexing 8
+feature-edge features::file features::indexing 7
 feature-edge features::file features::recent 2
 feature-edge features::file features::tags 2
 feature-edge features::file features::web 2
@@ -71,8 +76,7 @@ feature-edge features::function_calling features::web 1
 feature-edge features::health features::llm 1
 feature-edge features::indexing features::embedding 14
 feature-edge features::indexing features::mentions 1
-feature-edge features::indexing features::search 7
-feature-edge features::indexing features::summaries 2
+feature-edge features::indexing features::search 1
 feature-edge features::indexing features::transcription 1
 feature-edge features::initialization features::download 1
 feature-edge features::learning features::daily_notes 5
@@ -94,3 +98,12 @@ feature-edge features::vault features::daily_notes 4
 feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
+
+global-state features/conversation/chat/retrieval/corpus_plan/health.rs PLANNER_HEALTH 1
+global-state features/learning/runtime/embedded_runtime.rs GUEST_SLOTS 1
+global-state features/learning/runtime/lab_runner.rs PYTHON_WARMUP 1
+global-state features/learning/runtime/python_runtime.rs BUNDLE_VALID 1
+global-state features/learning/runtime/python_runtime.rs RUNTIME_ROOT 1
+global-state features/vault/watcher.rs RESCAN_LOCK 1
+global-state infrastructure/audit/mod.rs GLOBAL_AUDIT_LOGGER 1
+global-state shared/runtime/background.rs REGISTRY 1

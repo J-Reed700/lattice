@@ -43,10 +43,6 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
             setup::renderer_shutdown::install(app.handle())?;
 
-            // Lets a page that refuses the HTTP client be read in a hidden
-            // window of the app's own browser engine.
-            lattice::features::web::services::browser_reader::install(app.handle().clone());
-
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via
             // `app.try_state::<SidecarRegistry>()` when starting a

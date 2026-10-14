@@ -15,11 +15,14 @@ use tracing_appender::rolling;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Global handle to the OTEL tracer provider, used for graceful shutdown.
+// global-state: the tracing subscriber is installed process-wide, so the
+// provider behind it lives as long as the process.
 static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
 /// Worker guards for the background log writers, owned for the process so
 /// `shutdown_tracing` can flush them. Leaking them instead truncates the log at
 /// exit, and the tail is exactly where a stall or a timeout shows up.
+// global-state: the guards of the process-wide subscriber's writers.
 static WRITER_GUARDS: OnceLock<Mutex<Vec<WorkerGuard>>> = OnceLock::new();
 
 /// Check whether OpenTelemetry export is enabled via environment.

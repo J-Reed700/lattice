@@ -2557,7 +2557,7 @@ async clearCache() : Promise<Result<null, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton statistics
+ * Reads the statistics of the app's query cache, which the container holds
  */
 async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
     try {
@@ -2631,7 +2631,7 @@ async getCacheStats() : Promise<Result<SearchCacheStats, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton metrics
+ * Reads the metrics of the app's query cache, which the container holds
  */
 async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
     try {
@@ -2698,7 +2698,7 @@ async getCacheMetrics() : Promise<Result<CacheMetrics, AppError>> {
  *
  * # Architecture
  *
- * Direct accessor to global QUERY_CACHE singleton
+ * Clears the app's query cache, which the container holds
  */
 async clearSearchCache() : Promise<Result<null, AppError>> {
     try {

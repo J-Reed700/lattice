@@ -13,7 +13,8 @@
 //! - `crate::features::search::mapper::SearchMapper`
 //! - `crate::features::search::use_cases` — hybrid/semantic/file/recency
 //! - `crate::features::search::commands` — Tauri command handlers
-//! - `crate::features::search::query_cache::QUERY_CACHE` — query result cache
+//! - `crate::features::search::query_cache::QueryCache` — query result cache,
+//!   one per app, held by the container
 //! - `crate::features::search::plugin::init()` — Tauri plugin (directory-shaped)
 //!
 //! - `crate::features::search::engine` — retrieval engine (USearch +

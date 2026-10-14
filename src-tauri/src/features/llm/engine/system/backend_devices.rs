@@ -157,26 +157,40 @@ fn parse_mib(field: &str) -> Option<u64> {
     }
 }
 
-/// Probed once per process: enumeration costs a backend init, and the set of
-/// installed GPUs does not change while the app runs.
-static DEVICES: OnceCell<Vec<BackendDevice>> = OnceCell::const_new();
-
-/// Ask the sidecar what it can run on, caching the answer.
+/// What the sidecar reported it can run on, probed once per app: enumeration
+/// costs a backend init, and the set of installed GPUs does not change while
+/// the app runs.
 ///
-/// An empty slice means the probe ran and found nothing, or could not run at
-/// all; both leave the caller on its fallback path rather than asserting a
-/// machine has no GPU.
-pub async fn detect_backend_devices(app: &AppHandle) -> &'static [BackendDevice] {
-    DEVICES
-        .get_or_init(|| async { probe(app).await.unwrap_or_default() })
-        .await
-        .as_slice()
+/// The container owns one. The model loads and the startup preflight probe
+/// through it; the system-info adapter, which has no `AppHandle`, reads what
+/// they found.
+#[derive(Debug, Default)]
+pub struct BackendDevices {
+    probed: OnceCell<Vec<BackendDevice>>,
 }
 
-/// The cached answer for callers with no `AppHandle`. `None` means nothing has
-/// probed yet, which is different from "no devices".
-pub fn cached_backend_devices() -> Option<&'static [BackendDevice]> {
-    DEVICES.get().map(Vec::as_slice)
+impl BackendDevices {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask the sidecar what it can run on, caching the answer.
+    ///
+    /// An empty slice means the probe ran and found nothing, or could not run
+    /// at all; both leave the caller on its fallback path rather than asserting
+    /// a machine has no GPU.
+    pub async fn detect(&self, app: &AppHandle) -> &[BackendDevice] {
+        self.probed
+            .get_or_init(|| async { probe(app).await.unwrap_or_default() })
+            .await
+            .as_slice()
+    }
+
+    /// The cached answer for callers with no `AppHandle`. `None` means nothing
+    /// has probed yet, which is different from "no devices".
+    pub fn cached(&self) -> Option<&[BackendDevice]> {
+        self.probed.get().map(Vec::as_slice)
+    }
 }
 
 async fn probe(app: &AppHandle) -> Option<Vec<BackendDevice>> {

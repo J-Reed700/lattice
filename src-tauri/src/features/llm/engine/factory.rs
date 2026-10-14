@@ -13,7 +13,7 @@
 //!     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 //! };
 //!
-//! let llm = create_llm(config).await?;
+//! let llm = create_llm(config, &schedulers, &devices).await?;
 //! ```
 
 use async_trait::async_trait;
@@ -29,11 +29,12 @@ use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
 use crate::features::llm::engine::sidecar_manager::SpeculativeDecoding;
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
-use crate::features::llm::scheduler::{ollama_scheduler, ScheduledLlm};
+use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
 use crate::shared::error::AppError;
 use crate::shared::error::Result;
 
@@ -108,6 +109,8 @@ impl LocalServerOptions {
 /// # Arguments
 ///
 /// * `config` - LLM configuration specifying backend and parameters
+/// * `schedulers` - The app's per-backend schedulers the client queues behind
+/// * `devices` - The app's probe of the devices a local server can offload to
 ///
 /// # Returns
 ///
@@ -128,12 +131,16 @@ impl LocalServerOptions {
 ///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 /// };
 ///
-/// match create_llm(config).await {
+/// match create_llm(config, &schedulers, &devices).await {
 ///     Ok(llm) => println!("LLM ready: {}", llm.model_name()),
 ///     Err(e) => eprintln!("Failed to create LLM: {}", e),
 /// }
 /// ```
-pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
+pub(crate) async fn create_llm(
+    config: LLMConfig,
+    schedulers: &SchedulerRegistry,
+    devices: &BackendDevices,
+) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     match config {
         LLMConfig::Local {
             model_path,
@@ -151,15 +158,32 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
                         .to_string(),
                 )
             })?;
-            create_local_llm_sidecar(&app, &model_path, n_gpu_layers, generation_config, server)
-                .await
+            create_local_llm_sidecar(
+                &app,
+                &model_path,
+                n_gpu_layers,
+                generation_config,
+                server,
+                schedulers,
+                devices,
+            )
+            .await
         }
         LLMConfig::Ollama {
             endpoint,
             model,
             auth_header,
             generation_config,
-        } => create_ollama_llm(&endpoint, &model, auth_header, generation_config).await,
+        } => {
+            create_ollama_llm(
+                &endpoint,
+                &model,
+                auth_header,
+                generation_config,
+                schedulers,
+            )
+            .await
+        }
     }
 }
 
@@ -181,6 +205,8 @@ async fn create_local_llm_sidecar(
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
     server: LocalServerOptions,
+    schedulers: &SchedulerRegistry,
+    devices: &BackendDevices,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
@@ -207,7 +233,7 @@ async fn create_local_llm_sidecar(
         )));
     }
 
-    let capabilities = detect_capabilities_with_app(app).await;
+    let capabilities = detect_capabilities_with_app(app, devices).await;
     tracing::info!(
         "Detected system capabilities for sidecar: {}",
         capabilities.summary()
@@ -280,15 +306,16 @@ async fn create_local_llm_sidecar(
         ?model_thinking,
         "Local LLM (sidecar) ready"
     );
-    Ok(llm.schedule().await)
+    Ok(llm.schedule(schedulers).await)
 }
 
 /// Create an Ollama LLM client.
-pub async fn create_ollama_llm(
+pub(crate) async fn create_ollama_llm(
     endpoint: &str,
     model: &str,
     auth_header: Option<(String, String)>,
     generation_config: GenerationConfig,
+    schedulers: &SchedulerRegistry,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
 
@@ -320,7 +347,7 @@ pub async fn create_ollama_llm(
     }
 
     info!("Ollama LLM client created successfully");
-    let scheduler = ollama_scheduler(
+    let scheduler = schedulers.ollama(
         endpoint,
         crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
     );
@@ -781,7 +808,12 @@ mod tests {
             server: LocalServerOptions::default(),
         };
 
-        let result = create_llm(config).await;
+        let result = create_llm(
+            config,
+            &SchedulerRegistry::default(),
+            &BackendDevices::default(),
+        )
+        .await;
         assert!(result.is_err());
     }
 }

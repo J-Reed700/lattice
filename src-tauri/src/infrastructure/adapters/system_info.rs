@@ -26,7 +26,7 @@
 //! use lattice::application::ports::SystemInfoPort;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let adapter = SystemInfoAdapter::new();
+//! let adapter = SystemInfoAdapter::new(Default::default());
 //! let info = adapter.get_system_info().await?;
 //!
 //! println!("RAM: {} GB", info.total_ram_gb);
@@ -36,9 +36,11 @@
 //! ```
 
 use crate::application::ports::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
+use crate::features::llm::engine::system::BackendDevices;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use std::process::Command;
+use std::sync::Arc;
 use sysinfo::System;
 
 /// Infrastructure adapter for system information detection.
@@ -47,13 +49,17 @@ use sysinfo::System;
 /// with platform-specific APIs for GPU information.
 pub struct SystemInfoAdapter {
     system: parking_lot::Mutex<System>,
+    /// The sidecar's device list, once the app has probed it.
+    backend_devices: Arc<BackendDevices>,
 }
 
 impl SystemInfoAdapter {
-    /// Create a new system information adapter.
-    pub fn new() -> Self {
+    /// Create a new system information adapter that reads the app's device
+    /// probe, `backend_devices`, whenever that has run.
+    pub fn new(backend_devices: Arc<BackendDevices>) -> Self {
         Self {
             system: parking_lot::Mutex::new(System::new_all()),
+            backend_devices,
         }
     }
 
@@ -71,17 +77,19 @@ impl SystemInfoAdapter {
         if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
             return None;
         }
-        if let Some(gpu) = Self::gpu_from_sidecar_probe() {
+        if let Some(gpu) = self.gpu_from_sidecar_probe() {
             return Some(gpu);
         }
         self.detect_gpu_platform()
     }
 
     /// The cached `--list-devices` answer, if anything has probed yet.
-    fn gpu_from_sidecar_probe() -> Option<GpuInfo> {
-        use crate::features::llm::engine::system::{cached_backend_devices, GPUVendor};
+    fn gpu_from_sidecar_probe(&self) -> Option<GpuInfo> {
+        use crate::features::llm::engine::system::GPUVendor;
 
-        let device = cached_backend_devices()?
+        let device = self
+            .backend_devices
+            .cached()?
             .iter()
             .filter(|device| device.is_accelerator())
             .max_by_key(|device| device.total_mib)?;
@@ -303,12 +311,6 @@ impl SystemInfoAdapter {
     }
 }
 
-impl Default for SystemInfoAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[async_trait]
 impl SystemInfoPort for SystemInfoAdapter {
     async fn get_system_info(&self) -> Result<SystemInfo, AppError> {
@@ -349,12 +351,14 @@ mod tests {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     #[test]
     fn intel_mac_does_not_advertise_gpu_inference() {
-        assert!(SystemInfoAdapter::new().detect_gpu_info().is_none());
+        assert!(SystemInfoAdapter::new(Arc::default())
+            .detect_gpu_info()
+            .is_none());
     }
 
     #[tokio::test]
     async fn test_adapter_returns_valid_info() {
-        let adapter = SystemInfoAdapter::new();
+        let adapter = SystemInfoAdapter::new(Arc::default());
         let info = adapter.get_system_info().await.unwrap();
 
         // Basic sanity checks
@@ -365,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adapter_multiple_calls() {
-        let adapter = SystemInfoAdapter::new();
+        let adapter = SystemInfoAdapter::new(Arc::default());
 
         let info1 = adapter.get_system_info().await.unwrap();
         let info2 = adapter.get_system_info().await.unwrap();

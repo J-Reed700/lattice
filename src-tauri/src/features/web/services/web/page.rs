@@ -326,7 +326,15 @@ impl WebService {
         if max_chars != MAX_FETCHED_PAGE_CHARS {
             return None;
         }
-        match browser_reader::read(url, browser_reader::DEFAULT_READ_TIMEOUT).await {
+        let read = match self.browser.get() {
+            Some(browser) => {
+                browser
+                    .read(url, browser_reader::DEFAULT_READ_TIMEOUT)
+                    .await
+            }
+            None => Err(browser_reader::unavailable()),
+        };
+        match read {
             Ok(page) if !page.text.trim().is_empty() => {
                 // The browser follows redirects the HTTP client never saw.
                 if page.final_url != url && validate_url_resolved(&page.final_url).await.is_err() {

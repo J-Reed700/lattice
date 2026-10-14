@@ -83,7 +83,7 @@ impl FolderIndexManager {
                 .store
                 .set_meta(
                     store::META_LAST_OPENED,
-                    &store::next_open_stamp().to_string(),
+                    &self.open_stamps.next().to_string(),
                 )
                 .await?;
             index.store.counts(&prefix).await

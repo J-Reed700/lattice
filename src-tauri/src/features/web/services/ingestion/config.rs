@@ -67,6 +67,7 @@ pub struct WebIngestionServiceBuilder {
     index_storage: Option<Arc<dyn IndexStorageTrait>>,
     tokenizer: Option<Arc<Tokenizer>>,
     vector_search: Option<Arc<dyn crate::application::ports::VectorSearchPort>>,
+    query_cache: Option<Arc<dyn crate::application::ports::SearchResultCachePort>>,
     config: WebIngestionConfig,
 }
 
@@ -79,6 +80,7 @@ impl WebIngestionServiceBuilder {
             index_storage: None,
             tokenizer: None,
             vector_search: None,
+            query_cache: None,
             config: WebIngestionConfig::default(),
         }
     }
@@ -115,6 +117,16 @@ impl WebIngestionServiceBuilder {
         value: Arc<dyn crate::application::ports::VectorSearchPort>,
     ) -> Self {
         self.vector_search = Some(value);
+        self
+    }
+
+    /// The search cache an imported article makes stale, the same instance
+    /// the search commands read.
+    pub fn query_cache(
+        mut self,
+        value: Arc<dyn crate::application::ports::SearchResultCachePort>,
+    ) -> Self {
+        self.query_cache = Some(value);
         self
     }
 
@@ -215,7 +227,11 @@ impl WebIngestionServiceBuilder {
             tokenizer,
             self.config,
         )
-        .map(|service| service.with_vector_search(self.vector_search))
+        .map(|service| {
+            service
+                .with_vector_search(self.vector_search)
+                .with_query_cache(self.query_cache)
+        })
     }
 }
 

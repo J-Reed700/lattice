@@ -6,7 +6,8 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::application::ports::{
-    DocumentRepository, DocumentRepositoryPort, FileStoragePort, FileSystemPort,
+    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
+    FileSystemPort,
 };
 use crate::features::file::repository::{
     CitingConversationsRepositoryPort, SqliteCitingConversationsRepository,
@@ -41,6 +42,7 @@ pub fn build(
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
     db_pool: SqlitePool,
+    preview_extractor: Arc<dyn ContentExtractionPort>,
 ) -> FileDi {
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
@@ -73,6 +75,7 @@ pub fn build(
         read_file_content_use_case: Arc::new(ReadFileContentUseCase::new(
             file_storage.clone(),
             file_access_config.clone(),
+            preview_extractor,
         )),
         read_file_bytes_use_case: Arc::new(ReadFileBytesUseCase::new(
             file_storage,

@@ -28,8 +28,11 @@ pub struct CloudLlm {
 impl CloudLlm {
     /// Behind the provider's shared scheduler, so every role on one provider
     /// queues in one place.
-    pub(crate) fn schedule(self) -> std::sync::Arc<dyn LLMPort> {
-        let scheduler = crate::features::llm::scheduler::cloud_scheduler(self.provider_name());
+    pub(crate) fn schedule(
+        self,
+        schedulers: &crate::features::llm::scheduler::SchedulerRegistry,
+    ) -> std::sync::Arc<dyn LLMPort> {
+        let scheduler = schedulers.cloud(self.provider_name());
         let output_limit = self.max_tokens;
         std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
             std::sync::Arc::new(self),

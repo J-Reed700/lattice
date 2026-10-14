@@ -217,12 +217,15 @@ impl SpawnedChild {
         // It executed, so whatever a stale preflight says about this build is
         // out of date — including an `Unusable` verdict reached from a bare
         // signal, which is what a jetsam kill looks like.
+        let registry = app.try_state::<SidecarRegistry>();
         if invalidate_preflight {
-            preflight_cache().forget(binary);
+            if let Some(registry) = &registry {
+                registry.preflight.forget(binary);
+            }
         }
 
         let child = Arc::new(SyncMutex::new(Some(child)));
-        let registration = match app.try_state::<SidecarRegistry>() {
+        let registration = match registry {
             Some(registry) => match registry.register(&child, endpoint) {
                 Some(id) => Some(Registration {
                     app: app.clone(),

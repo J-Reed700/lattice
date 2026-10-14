@@ -36,6 +36,7 @@ pub fn build(
     model_dir: &Path,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn crate::application::ports::VectorSearchPort>,
+    query_cache: Arc<dyn crate::application::ports::SearchResultCachePort>,
 ) -> Result<WebDi> {
     let web_capture_service =
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
@@ -63,6 +64,7 @@ pub fn build(
             .index_storage(index_storage)
             .tokenizer(tokenizer)
             .vector_search(vector_search)
+            .query_cache(query_cache)
             .build()?,
     ) as Arc<dyn WebIngestionServiceTrait>;
 

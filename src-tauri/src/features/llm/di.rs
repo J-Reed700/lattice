@@ -1,5 +1,6 @@
 //! LLM / model-management feature dependency injection.
 
+use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::loading::ModelLoader;
 use std::sync::Arc;
 
@@ -64,6 +65,7 @@ pub async fn build(
     db_conn: Arc<DatabaseConnection>,
     data_dir: PathBuf,
     credentials: Arc<dyn CredentialsPort>,
+    backend_devices: Arc<BackendDevices>,
 ) -> Result<LlmDi> {
     // Model catalog (HuggingFace + SQLite cache)
     let downloaded_model_repo = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
@@ -72,7 +74,7 @@ pub async fn build(
     let model_catalog_cache = Arc::new(ModelCacheAdapter::new(db_pool.clone(), huggingface).await?);
     let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
 
-    let system_info = Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>;
+    let system_info = Arc::new(SystemInfoAdapter::new(backend_devices)) as Arc<dyn SystemInfoPort>;
 
     // Download wiring
     let download_repository = Arc::new(SqliteDownloadRepository::new(db_conn));
@@ -153,7 +155,11 @@ impl Container {
     }
 
     fn model_loader(&self) -> ModelLoader {
-        ModelLoader::new(self.ai.downloaded_model_repo().clone(), self.app_handle())
+        ModelLoader::new(
+            self.ai.downloaded_model_repo().clone(),
+            self.app_handle(),
+            self.llm_runtime.clone(),
+        )
     }
 
     async fn load_llm_with_fallback(&self) -> Result<Arc<dyn LLMPort>> {
@@ -340,7 +346,10 @@ impl Container {
     /// run on this machine.
     pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
         use tauri::Manager;
-        crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(&app_handle);
+        crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(
+            &app_handle,
+            Arc::clone(&self.llm_runtime.devices),
+        );
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
             let cancel = crate::shared::runtime::background::cancellation_token();

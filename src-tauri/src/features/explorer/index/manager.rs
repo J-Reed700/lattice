@@ -25,7 +25,7 @@
 
 use super::build::{self, BuildRequest, LiveIndex};
 use super::run::{Limits, StatusCell, StatusSink};
-use super::store::{self, FolderStore, IndexEntry, TooLarge};
+use super::store::{self, FolderStore, IndexEntry, OpenStamps, TooLarge};
 use crate::application::ports::EmbeddingPort;
 use crate::shared::{
     runtime::jobs::{JobRecord, JobRuntime, NewJob},
@@ -113,6 +113,8 @@ pub struct FolderIndexManager {
     live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
     /// Where the open folder's status goes when the watcher updates it.
     folder_changes: parking_lot::Mutex<Option<StatusSink>>,
+    /// Stamps each opened folder, which the folders list orders by.
+    open_stamps: OpenStamps,
     me: Weak<FolderIndexManager>,
 }
 
@@ -164,6 +166,7 @@ impl FolderIndexManager {
             first: parking_lot::Mutex::new(None),
             live: tokio::sync::Mutex::new(HashMap::new()),
             folder_changes: parking_lot::Mutex::new(None),
+            open_stamps: OpenStamps::default(),
             me: me.clone(),
         })
     }

@@ -90,8 +90,7 @@ use crate::features::settings::use_cases::{
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 
-// (Cache: no use cases — commands operate on the global QUERY_CACHE
-// singleton directly.)
+// (Cache: no use cases — commands operate on the container's query cache.)
 
 // Application Use Cases - Backup
 use crate::features::backup::use_cases::{
@@ -498,6 +497,7 @@ impl IndexingModule {
         core: Arc<CoreModule>,
         model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
+        shared: crate::features::indexing::di::IndexingShared,
     ) -> crate::shared::error::Result<Self> {
         let model_dir = core.data_dir().join("models");
         // Web first: deletion routes archived articles back through the very
@@ -507,6 +507,7 @@ impl IndexingModule {
             &model_dir,
             Arc::clone(&model_provider),
             Arc::clone(&vector_search),
+            Arc::clone(&shared.query_cache),
         )?;
         let ocr = crate::features::ocr::di::build(Arc::new(
             crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
@@ -519,6 +520,7 @@ impl IndexingModule {
             vector_search,
             web.web_archive.clone(),
             Arc::clone(&ocr),
+            shared,
         )?;
         Ok(Self { indexing, web, ocr })
     }
@@ -636,6 +638,7 @@ impl AIModule {
         model_provider: Arc<dyn LoadedChatModelPort>,
         _llm_endpoint: &str,
         _llm_model: &str,
+        backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
     ) -> crate::shared::error::Result<Self> {
         let conversation = crate::features::conversation::di::build(db_pool.clone());
         let llm = crate::features::llm::di::build(
@@ -643,6 +646,7 @@ impl AIModule {
             core.db_conn().clone(),
             core.data_dir().clone(),
             core.credentials().clone(),
+            backend_devices,
         )
         .await?;
         let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
@@ -905,8 +909,11 @@ impl FileOpsModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
+        extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
     ) -> crate::shared::error::Result<Self> {
+        use crate::features::indexing::engine::extraction::ContentExtractor;
         use crate::features::tags::service::TagService;
+        use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
         use crate::infrastructure::file_system::file_storage::SecureFileStorage;
         use crate::infrastructure::file_system::FileSystemAdapter;
         use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
@@ -925,6 +932,16 @@ impl FileOpsModule {
         let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
         let library = Arc::new(SqliteFileLibrary::new(db_pool.clone()));
+        // Previews of PDFs and office files parse under the same worker bound
+        // as indexing, which builds its extractor from the same workers.
+        let preview_extractor = Arc::new(
+            ContentExtractionAdapter::new().with_extractor(
+                ContentExtractor::with_max_size(
+                    crate::features::file::use_cases::read_content::MAX_FILE_SIZE_BYTES,
+                )
+                .with_workers(extraction_workers),
+            ),
+        );
         let file = crate::features::file::di::build(
             document_repo.clone(),
             file_system,
@@ -933,6 +950,7 @@ impl FileOpsModule {
             file_access_config,
             vault_path,
             db_pool,
+            preview_extractor,
         );
         let extraction = crate::features::extraction::di::build(
             document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
@@ -1002,9 +1020,8 @@ impl FileOpsModule {
 
 /// System module for application-wide operations
 ///
-/// Cache used to live here as a feature DI; it has been removed because
-/// Tauri commands operate on the global `QUERY_CACHE` singleton
-/// directly (no DI needed).
+/// The cache feature has no DI of its own: its commands operate on the query
+/// cache the container holds.
 #[derive(Clone)]
 pub struct SystemModule {
     settings: crate::features::settings::di::SettingsDi,
@@ -1030,6 +1047,7 @@ impl SystemModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
+        backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
     ) -> crate::shared::error::Result<Self> {
         use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
@@ -1057,7 +1075,8 @@ impl SystemModule {
             stats: crate::features::stats::di::build(db_pool),
             initialization,
             model_manager,
-            system_info: Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>,
+            system_info: Arc::new(SystemInfoAdapter::new(backend_devices))
+                as Arc<dyn SystemInfoPort>,
         })
     }
 
@@ -1109,8 +1128,7 @@ impl SystemModule {
         &self.settings.settings_repo
     }
 
-    // (Cache: no use cases — commands operate on the global QUERY_CACHE
-    // singleton directly.)
+    // (Cache: no use cases — commands operate on the container's query cache.)
 
     // Backup use case getters
     pub fn create_backup_use_case(&self) -> &Arc<CreateBackupUseCase> {

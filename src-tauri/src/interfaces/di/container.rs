@@ -145,6 +145,18 @@ pub struct Container {
     pub(crate) practical_run_registry:
         Arc<crate::features::learning::practical_runs::PracticalRunRegistry>,
 
+    /// The one search result cache: the search commands read it and every
+    /// indexer invalidates it, so all of them must reach the same instance.
+    pub(crate) query_cache: Arc<crate::features::search::query_cache::QueryCache>,
+
+    /// The summary tier's trigger and open indexes. Indexing reports to the
+    /// trigger; registration installs and clears its hook.
+    pub(crate) summary_tier: Arc<crate::features::summaries::di::SummaryTier>,
+
+    /// What every model load shares: the per-backend schedulers, the
+    /// artifacts known not to start, and the sidecar's device probe.
+    pub(crate) llm_runtime: crate::features::llm::loading::LlmRuntime,
+
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
     /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
@@ -187,6 +199,16 @@ impl Container {
         let utility_llm_cache = Arc::new(ModelCache::new());
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
+        // State more than one feature reaches. Each is built once, here, and
+        // handed to whatever uses it, so every user shares the one instance.
+        let query_cache = Arc::new(crate::features::search::query_cache::QueryCache::for_search());
+        let summary_tier = Arc::new(crate::features::summaries::di::SummaryTier::new());
+        let extraction_workers =
+            crate::features::indexing::engine::extraction::ExtractionWorkers::new();
+        let backend_devices = Arc::new(crate::features::llm::engine::system::BackendDevices::new());
+        let llm_runtime =
+            crate::features::llm::loading::LlmRuntime::new(Arc::clone(&backend_devices));
+
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
@@ -198,8 +220,14 @@ impl Container {
 
         // Each module builds its own dependencies. Stack frames are independent.
 
-        let system =
-            Arc::new(super::modules::SystemModule::new(db_pool.clone(), core.clone()).await?);
+        let system = Arc::new(
+            super::modules::SystemModule::new(
+                db_pool.clone(),
+                core.clone(),
+                Arc::clone(&backend_devices),
+            )
+            .await?,
+        );
         tracing::debug!("SystemModule initialized");
 
         let search = Arc::new(
@@ -216,8 +244,14 @@ impl Container {
             Arc::new(super::modules::LibraryModule::new(db_pool.clone(), core.clone()).await?);
         tracing::debug!("LibraryModule initialized");
 
-        let file_ops =
-            Arc::new(super::modules::FileOpsModule::new(db_pool.clone(), core.clone()).await?);
+        let file_ops = Arc::new(
+            super::modules::FileOpsModule::new(
+                db_pool.clone(),
+                core.clone(),
+                extraction_workers.clone(),
+            )
+            .await?,
+        );
         tracing::debug!("FileOpsModule initialized");
 
         let ai = Arc::new(
@@ -227,6 +261,7 @@ impl Container {
                 llm_cache.clone(),
                 llm_endpoint,
                 llm_model,
+                backend_devices,
             )
             .await?,
         );
@@ -238,6 +273,11 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 search.vector_search().clone(),
+                crate::features::indexing::di::IndexingShared {
+                    query_cache: query_cache.clone(),
+                    index_observer: summary_tier.trigger().clone(),
+                    extraction_workers,
+                },
             )
             .await?,
         );
@@ -355,6 +395,9 @@ impl Container {
             outline_run_registry,
             draft_run_registry,
             practical_run_registry,
+            query_cache,
+            summary_tier,
+            llm_runtime,
             folder_index: None,
             app_handle: None,
         })
@@ -364,6 +407,11 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        // A page that refuses the HTTP client is read in a hidden window of
+        // the app's own browser engine, which exists only from here on.
+        self.web_service.attach_browser(Arc::new(
+            crate::features::web::services::browser_reader::BrowserReader::new(handle.clone()),
+        ));
         // The vault writer starts before the container exists, so its corpus
         // sink is installed here, once the indexing pipeline is built. Until
         // then — and in tests that skip this step — the writer defers its

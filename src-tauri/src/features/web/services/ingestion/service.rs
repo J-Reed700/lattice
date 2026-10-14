@@ -1,7 +1,7 @@
 //! The `WebIngestionService` type and its end-to-end ingestion workflow.
 
 use super::{WebIngestionConfig, WebIngestionServiceBuilder};
-use crate::application::ports::VectorSearchPort;
+use crate::application::ports::{SearchResultCachePort, VectorSearchPort};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::use_cases::index_file::{
     publish_chunks_to_live_index, PublishedChunk,
@@ -71,6 +71,8 @@ pub struct WebIngestionService {
     pub(super) config: WebIngestionConfig,
     /// Live vector index; see [`WebIngestionServiceBuilder::vector_search`].
     pub(super) vector_search: Option<Arc<dyn VectorSearchPort>>,
+    /// Search cache; see [`WebIngestionServiceBuilder::query_cache`].
+    pub(super) query_cache: Option<Arc<dyn SearchResultCachePort>>,
 }
 
 impl WebIngestionService {
@@ -98,6 +100,7 @@ impl WebIngestionService {
             tokenizer,
             config: WebIngestionConfig::default(),
             vector_search: None,
+            query_cache: None,
         }
     }
 
@@ -125,6 +128,7 @@ impl WebIngestionService {
             tokenizer,
             config,
             vector_search: None,
+            query_cache: None,
         })
     }
 
@@ -133,6 +137,14 @@ impl WebIngestionService {
         vector_search: Option<Arc<dyn VectorSearchPort>>,
     ) -> Self {
         self.vector_search = vector_search;
+        self
+    }
+
+    pub(super) fn with_query_cache(
+        mut self,
+        query_cache: Option<Arc<dyn SearchResultCachePort>>,
+    ) -> Self {
+        self.query_cache = query_cache;
         self
     }
 }
@@ -228,7 +240,13 @@ impl WebIngestionServiceTrait for WebIngestionService {
                     embedding,
                 })
                 .collect();
-            publish_chunks_to_live_index(search, &stored_doc_id, published).await?;
+            publish_chunks_to_live_index(
+                search,
+                self.query_cache.as_deref(),
+                &stored_doc_id,
+                published,
+            )
+            .await?;
         }
 
         // 7. Return result

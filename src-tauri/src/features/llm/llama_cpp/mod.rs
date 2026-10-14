@@ -14,6 +14,7 @@ use crate::application::{
 };
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::GenerationConfig;
+use crate::features::llm::scheduler::SchedulerRegistry;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -200,12 +201,12 @@ impl LlamaCppLlm {
     ///
     /// A bundled server carries its scheduler on its process handle, sized
     /// from `/props` slots over the `--ctx-size` it was launched with. A
-    /// remote one is keyed by URL and sized from `/props` alone; one that does
-    /// not answer it gets one slot and no pinning.
-    pub(crate) async fn schedule(self) -> Arc<dyn LLMPort> {
+    /// remote one is keyed by URL in `schedulers` and sized from `/props`
+    /// alone; one that does not answer it gets one slot and no pinning.
+    pub(crate) async fn schedule(self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
-            llama_server_capacity, remote_llama_cpp_scheduler, BackendCapacity, InferenceScheduler,
-            ScheduledLlm, ServerTokenizer,
+            llama_server_capacity, BackendCapacity, InferenceScheduler, ScheduledLlm,
+            ServerTokenizer,
         };
         let (scheduler, is_llama_server) = match &self.process {
             Some(process) => {
@@ -233,12 +234,9 @@ impl LlamaCppLlm {
                 (scheduler, true)
             }
             None => {
-                remote_llama_cpp_scheduler(
-                    &self.client,
-                    self.server_root(),
-                    self.config.context_window,
-                )
-                .await
+                schedulers
+                    .remote_llama_cpp(&self.client, self.server_root(), self.config.context_window)
+                    .await
             }
         };
         let tokenizer =

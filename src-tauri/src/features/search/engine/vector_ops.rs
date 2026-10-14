@@ -22,6 +22,7 @@ fn dimensions_match(a: &[f32], b: &[f32]) -> bool {
 
     #[cfg(debug_assertions)]
     {
+        // global-state: says this once per process, as the log is process-wide.
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!(
@@ -171,6 +172,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
         // Log once on first use (in debug builds)
         #[cfg(debug_assertions)]
         {
+            // global-state: says this once per process, as the log is process-wide.
             static LOGGED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -189,6 +191,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
         // Log fallback reason (in debug builds)
         #[cfg(debug_assertions)]
         {
+            // global-state: says this once per process, as the log is process-wide.
             static LOGGED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -298,6 +301,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
         // Log once on first use (in debug builds)
         #[cfg(debug_assertions)]
         {
+            // global-state: says this once per process, as the log is process-wide.
             static LOGGED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -317,6 +321,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
         // This branch should rarely execute on aarch64 since NEON is standard
         #[cfg(debug_assertions)]
         {
+            // global-state: says this once per process, as the log is process-wide.
             static LOGGED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -335,6 +340,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
     // Log architecture info (in debug builds)
     #[cfg(debug_assertions)]
     {
+        // global-state: says this once per process, as the log is process-wide.
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::debug!("No SIMD support for current architecture, using naive implementation");

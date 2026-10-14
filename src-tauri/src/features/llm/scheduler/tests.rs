@@ -347,7 +347,8 @@ async fn backends_without_slots_send_no_slot() {
 /// requests at once. The scheduler is that bound now.
 #[tokio::test]
 async fn an_ollama_backend_runs_no_more_than_its_configured_concurrency() {
-    let scheduler = registry::ollama_scheduler("http://ollama.test:11434", 2);
+    let schedulers = registry::SchedulerRegistry::default();
+    let scheduler = schedulers.ollama("http://ollama.test:11434", 2);
     let first = scheduler
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
@@ -364,7 +365,7 @@ async fn an_ollama_backend_runs_no_more_than_its_configured_concurrency() {
     assert!(third.is_err(), "a third request waits for a slot");
     drop((first, second));
 
-    let same = registry::ollama_scheduler("http://ollama.test:11434", 2);
+    let same = schedulers.ollama("http://ollama.test:11434", 2);
     assert!(
         Arc::ptr_eq(&scheduler, &same),
         "every role on one endpoint queues in one place"
