@@ -7,7 +7,7 @@ use crate::features::learning::{
 };
 use crate::shared::{
     error::{AppError, Result},
-    runtime::background,
+    runtime::background::BackgroundTasks,
 };
 use std::{
     collections::HashMap,
@@ -68,6 +68,7 @@ impl Drop for ActiveRun {
 pub async fn start_run(
     repo: &LearningPracticalRepository,
     runs: &PracticalRunRegistry,
+    background: &BackgroundTasks,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
 ) -> Result<LearningPracticalRunDto> {
@@ -77,9 +78,10 @@ pub async fn start_run(
         request.clone(),
         payload_hash.to_owned(),
     );
-    let task =
-        background::spawn(async move { execute_run(&repo, &runs, &request, &hash).await })
-            .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
+    let shutdown = background.token();
+    let task = background
+        .spawn(async move { execute_run(&repo, &runs, &request, &hash, &shutdown).await })
+        .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
     task.await
         .map_err(|error| AppError::InternalError(format!("Practical runner stopped: {error}")))?
 }
@@ -126,6 +128,7 @@ async fn execute_run(
     runs: &PracticalRunRegistry,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
+    shutdown: &CancellationToken,
 ) -> Result<LearningPracticalRunDto> {
     let Some(prepared) = repo.prepare_run(request, payload_hash).await? else {
         return repo.run(&request.run_id).await;
@@ -153,7 +156,7 @@ async fn execute_run(
         repo.finish_run(&prepared, result).await?;
         return repo.run(&request.run_id).await;
     }
-    let token = background::cancellation_token().child_token();
+    let token = shutdown.child_token();
     let _registration = runs.register(&request.run_id, token.clone())?;
     // A cancellation may have committed between run creation and registry
     // registration. Never launch a container for a terminal run.

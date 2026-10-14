@@ -303,10 +303,11 @@ pub(super) async fn collect_preflight(
 pub fn spawn_binary_preflight(
     app: &AppHandle,
     devices: Arc<crate::features::llm::engine::system::BackendDevices>,
+    background: &crate::shared::runtime::background::BackgroundTasks,
 ) {
     let app = app.clone();
-    let cancellation = crate::shared::runtime::background::cancellation_token();
-    let _ = crate::shared::runtime::background::spawn(async move {
+    let cancellation = background.token();
+    let _ = background.spawn(async move {
         for &binary in SidecarBinary::bundled() {
             tokio::select! {
                 biased;

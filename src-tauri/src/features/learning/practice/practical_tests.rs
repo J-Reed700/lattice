@@ -121,6 +121,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let (pool, program_id, lesson_id, _) = fixture().await?;
     let repository = LearningPracticalRepository::new(pool.clone());
     let runs = crate::features::learning::practical_runs::PracticalRunRegistry::new();
+    let background = crate::shared::runtime::background::BackgroundTasks::default();
     let request = GenerateLearningPracticalActivityRequestDto {
         operation_id: id(),
         activity_id: id(),
@@ -181,6 +182,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         crate::features::learning::practical_runs::start_run(
             &repository,
             &runs,
+            &background,
             &run,
             "builtin-wrong"
         )
@@ -199,6 +201,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let passed = crate::features::learning::practical_runs::start_run(
         &repository,
         &runs,
+        &background,
         &run,
         "builtin-right",
     )
@@ -212,6 +215,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         crate::features::learning::practical_runs::start_run(
             &repository,
             &runs,
+            &background,
             &run,
             "builtin-right"
         )
@@ -236,6 +240,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     assert!(crate::features::learning::practical_runs::start_run(
         &repository,
         &runs,
+        &background,
         &run,
         "replace-checks"
     )
@@ -266,6 +271,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         crate::features::learning::practical_runs::start_run(
             &repository,
             &runs,
+            &background,
             &run,
             "old-runtime"
         )

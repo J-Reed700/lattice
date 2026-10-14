@@ -50,6 +50,7 @@ pub async fn open(data_dir: &Path, settings: &SettingsDto) -> Res<Container> {
         &settings.llm.ollama_url,
         &settings.llm.model,
         data_dir.to_path_buf(),
+        Arc::default(),
     )
     .await?;
     Ok(container)

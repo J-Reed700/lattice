@@ -394,8 +394,9 @@ fn spawn_memory_indexing(
     conversation_id: String,
     memories: Vec<MemoryToIndex>,
 ) {
-    let cancel = crate::shared::runtime::background::cancellation_token();
-    crate::shared::runtime::background::spawn(async move {
+    let background = container.background();
+    let cancel = background.token();
+    background.spawn(async move {
         let loaded = tokio::select! {
             biased;
             _ = cancel.cancelled() => return,

@@ -168,6 +168,7 @@ pub(super) fn new_api_token() -> String {
 /// After that signal, the drain keeps running for stderr capture
 /// even though the caller has moved on.
 pub(super) fn spawn_event_drain(
+    background: &crate::shared::runtime::background::BackgroundTasks,
     rx: Receiver<CommandEvent>,
     endpoint: String,
     child_arc: Arc<SyncMutex<Option<CommandChild>>>,
@@ -176,7 +177,7 @@ pub(super) fn spawn_event_drain(
 ) -> tokio::sync::oneshot::Receiver<Result<(), StartupEnd>> {
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
 
-    let _ = crate::shared::runtime::background::spawn(async move {
+    let _ = background.spawn(async move {
         let mut rx = rx;
         let mut ready_tx = Some(ready_tx);
 

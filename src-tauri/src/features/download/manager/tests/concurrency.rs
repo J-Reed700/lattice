@@ -55,8 +55,13 @@ async fn test_download_queue_respects_limits() -> Result<(), Box<dyn std::error:
         }),
     );
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root())
-        .with_max_concurrent(2);
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    )
+    .with_max_concurrent(2);
 
     let mut download_ids = Vec::new();
     for i in 0..4 {
@@ -140,8 +145,13 @@ async fn test_concurrent_downloads_isolated() -> Result<(), Box<dyn std::error::
         );
     }
 
-    let manager = DownloadManagerService::new(repository.clone(), mock_engine.clone(), temp_root())
-        .with_max_concurrent(5);
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        mock_engine.clone(),
+        temp_root(),
+        Arc::default(),
+    )
+    .with_max_concurrent(5);
 
     let mut download_ids = Vec::new();
     for i in 0..3 {

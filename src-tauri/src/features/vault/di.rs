@@ -48,6 +48,7 @@ impl Container {
             vault_root,
             self.vault_write_suppression.clone(),
             app_handle,
+            std::sync::Arc::clone(self.core.background()),
         )
         .await
     }

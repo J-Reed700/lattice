@@ -20,8 +20,12 @@ async fn retry_rejects_active_transfer_before_deleting_its_file() {
     tokio::fs::write(&path, b"partial transfer").await.unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager =
-        DownloadManagerService::new(repository.clone(), engine, directory.path().to_path_buf());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine,
+        directory.path().to_path_buf(),
+        Arc::default(),
+    );
     let mut session = DownloadSession::new(
         "active".into(),
         "https://example.com/active.bin".into(),
@@ -44,7 +48,12 @@ async fn retry_rejects_active_transfer_before_deleting_its_file() {
 async fn test_start_download() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -91,8 +100,13 @@ async fn batch_is_fully_registered_before_first_started_event(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root())
-        .with_max_concurrent(1);
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    )
+    .with_max_concurrent(1);
 
     let mut items = Vec::new();
     for index in 1..=3 {
@@ -138,7 +152,12 @@ async fn batch_is_fully_registered_before_first_started_event(
 async fn test_pause_and_resume() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -210,7 +229,12 @@ async fn test_pause_and_resume() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_cancel_download() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -273,7 +297,8 @@ async fn terminal_download_actions_are_idempotent() -> Result<(), Box<dyn std::e
 
     let repository = Arc::new(MockDownloadRepository::new().with_session(session));
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine, temp_root());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine, temp_root(), Arc::default());
 
     manager.pause_download("completed-download").await?;
     manager.cancel_download("completed-download").await?;
@@ -292,7 +317,7 @@ async fn test_delete_download_is_idempotent_for_missing_session(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository, engine, temp_root());
+    let manager = DownloadManagerService::new(repository, engine, temp_root(), Arc::default());
 
     manager
         .delete_download("39c9b184-43c9-4af5-aec8-f1ffc7e6226e")
@@ -305,7 +330,12 @@ async fn test_delete_download_is_idempotent_for_missing_session(
 async fn test_list_downloads() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
 
     engine.set_file_size("https://example.com/file1.bin", Some(1000));
     engine.set_file_size("https://example.com/file2.bin", Some(2000));
@@ -380,7 +410,12 @@ async fn a_new_download_supersedes_a_dead_session_for_the_same_file(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        temp_root(),
+        Arc::default(),
+    );
     let url = "https://example.com/superseded.bin";
     let destination = temp_file("superseded.bin");
     engine.set_file_size(url, Some(1000));

@@ -351,6 +351,7 @@ mod tests {
             "http://localhost:11434",
             "llama3.1:8b",
             temp_dir.path().to_path_buf(),
+            std::sync::Arc::default(),
         )
         .await
         .unwrap();

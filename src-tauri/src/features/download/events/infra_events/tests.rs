@@ -107,6 +107,7 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
             repository.clone(),
             engine.clone(),
             dir.path().to_path_buf(),
+            Arc::default(),
         )
         .with_max_concurrent(1);
         let mut events = manager.subscribe_to_events().write().await.take().unwrap();

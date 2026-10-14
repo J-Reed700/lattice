@@ -2,10 +2,12 @@
 //! before the database closes; critical writes are never detached by aborting
 //! their parent future during shutdown.
 use std::future::Future;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+/// The scope background work runs in. App setup builds one and hands it to
+/// every service and command that spawns work; a test builds its own.
 #[derive(Default)]
 pub struct BackgroundTasks {
     admission: Mutex<bool>,
@@ -13,18 +15,7 @@ pub struct BackgroundTasks {
     cancel: CancellationToken,
 }
 
-fn registry() -> &'static Mutex<Weak<BackgroundTasks>> {
-    static REGISTRY: OnceLock<Mutex<Weak<BackgroundTasks>>> = OnceLock::new();
-    REGISTRY.get_or_init(Mutex::default)
-}
-
 impl BackgroundTasks {
-    pub fn install() -> Arc<Self> {
-        let tasks = Arc::new(Self::default());
-        *registry().lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&tasks);
-        tasks
-    }
-
     pub fn token(&self) -> CancellationToken {
         self.cancel.clone()
     }
@@ -55,29 +46,6 @@ impl BackgroundTasks {
 impl Drop for BackgroundTasks {
     fn drop(&mut self) {
         self.cancel.cancel();
-    }
-}
-
-fn current() -> Option<Arc<BackgroundTasks>> {
-    registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .upgrade()
-}
-
-pub fn cancellation_token() -> CancellationToken {
-    current().map(|tasks| tasks.token()).unwrap_or_default()
-}
-
-/// Standalone service tests can run without installing an application scope.
-pub fn spawn<F>(future: F) -> Option<JoinHandle<F::Output>>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    match current() {
-        Some(tasks) => tasks.spawn(future),
-        None => Some(tokio::spawn(future)),
     }
 }
 

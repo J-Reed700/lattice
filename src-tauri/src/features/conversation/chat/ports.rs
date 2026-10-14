@@ -359,6 +359,10 @@ pub trait ChatJobs: Send + Sync {
     /// the job that runs a turn answers the command that sent it — and a test
     /// process never answers the app's commands.
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters>;
+    /// The app's background scope: work a turn leaves running after it
+    /// answers — memory indexing, consolidation, the grounding check — runs
+    /// in it, so shutdown stops and joins it.
+    fn background(&self) -> Arc<crate::shared::runtime::background::BackgroundTasks>;
 }
 
 /// The stop button: the process-wide registry of in-flight turns, so a stop

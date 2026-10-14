@@ -272,7 +272,12 @@ impl SpawnedChild {
         endpoint: &str,
         probe_timeout: Duration,
     ) -> Option<(Vec<u8>, Vec<u8>)> {
-        let cancellation = crate::shared::runtime::background::cancellation_token();
+        // A host that never managed a background scope has no shutdown to
+        // stop the probe for.
+        let cancellation = app
+            .try_state::<Arc<crate::shared::runtime::background::BackgroundTasks>>()
+            .map(|tasks| tasks.token())
+            .unwrap_or_default();
         if cancellation.is_cancelled() {
             return None;
         }

@@ -31,6 +31,7 @@ use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
+use crate::shared::runtime::background::BackgroundTasks;
 
 /// Whether the learned sparse branch joins the fusion.
 ///
@@ -61,6 +62,7 @@ pub async fn build(
     models_path: std::path::PathBuf,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     active_embedding_dimension: Option<usize>,
+    background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
     // Defaults: the historical uncompressed, chunk-first index. The composition
     // root (`src/interfaces/di/modules.rs`) reads the user's settings and calls
@@ -73,6 +75,7 @@ pub async fn build(
         active_embedding_dimension,
         VectorIndexCompression::None,
         EmbeddingStrategy::default(),
+        background,
     )
     .await
 }
@@ -98,6 +101,7 @@ pub async fn build_with_compression(
     active_embedding_dimension: Option<usize>,
     compression: VectorIndexCompression,
     strategy: EmbeddingStrategy,
+    background: Arc<BackgroundTasks>,
 ) -> Result<SearchDi> {
     let repository =
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
@@ -245,7 +249,7 @@ pub async fn build_with_compression(
             dimension,
             usearch_index_path.clone(),
         ));
-        crate::shared::runtime::background::spawn(Arc::clone(&persistence).run());
+        background.spawn(Arc::clone(&persistence).run(background.token()));
         index_persistence = Some(persistence);
     }
 
@@ -268,6 +272,7 @@ pub async fn build_with_compression(
             usearch_index_path,
             compression,
             index_persistence,
+            background,
         ),
     );
     let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;

@@ -141,6 +141,7 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
             Arc::new(StateRuntime { app: app.clone() }),
         )),
         container.db_pool().clone(),
+        container.core.background(),
     );
     tracing::info!(%identity, "Summary tier enabled");
     Ok(())

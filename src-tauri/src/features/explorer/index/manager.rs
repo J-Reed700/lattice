@@ -28,7 +28,10 @@ use super::run::{Limits, StatusCell, StatusSink};
 use super::store::{self, FolderStore, IndexEntry, OpenStamps, TooLarge};
 use crate::application::ports::EmbeddingPort;
 use crate::shared::{
-    runtime::jobs::{JobRecord, JobRuntime, NewJob},
+    runtime::{
+        background::BackgroundTasks,
+        jobs::{JobRecord, JobRuntime, NewJob},
+    },
     Result,
 };
 use async_trait::async_trait;
@@ -106,6 +109,8 @@ pub struct FolderIndexManager {
     config: ManagerConfig,
     pub(super) embedders: Arc<dyn EmbedderSource>,
     pub(super) jobs: Arc<JobRuntime>,
+    /// Where each open folder's watcher runs, so shutdown stops it.
+    background: Arc<BackgroundTasks>,
     open: tokio::sync::Mutex<Option<OpenFolder>>,
     view: Arc<parking_lot::Mutex<Option<OpenView>>>,
     /// The open folder's build, which runs before any other.
@@ -156,11 +161,13 @@ impl FolderIndexManager {
         config: ManagerConfig,
         embedders: Arc<dyn EmbedderSource>,
         jobs: Arc<JobRuntime>,
+        background: Arc<BackgroundTasks>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             config,
             embedders,
             jobs,
+            background,
             open: tokio::sync::Mutex::new(None),
             view: Arc::default(),
             first: parking_lot::Mutex::new(None),

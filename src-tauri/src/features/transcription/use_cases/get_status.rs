@@ -59,6 +59,7 @@ mod tests {
         let pool = empty_pool().await;
         let port = Arc::new(WhisperTranscriptionService::new(
             DownloadedModelRepository::new(pool),
+            Arc::default(),
         )) as Arc<dyn TranscriptionPort>;
 
         let status = GetTranscriptionStatusUseCase::new(port)

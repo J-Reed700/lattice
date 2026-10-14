@@ -197,6 +197,7 @@ impl Container {
         llm_endpoint: &str,
         llm_model: &str,
         data_dir: PathBuf,
+        background: Arc<crate::shared::runtime::background::BackgroundTasks>,
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
@@ -218,8 +219,13 @@ impl Container {
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
-            super::modules::CoreModule::new(db_pool.clone(), db_conn.clone(), data_dir.clone())
-                .await?,
+            super::modules::CoreModule::new(
+                db_pool.clone(),
+                db_conn.clone(),
+                data_dir.clone(),
+                background,
+            )
+            .await?,
         );
 
         tracing::debug!("CoreModule initialized");
@@ -350,6 +356,7 @@ impl Container {
             Arc::clone(system.get_settings_use_case()),
             vault_write_suppression.clone(),
             core.db_pool().clone(),
+            core.background(),
         );
 
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
@@ -452,6 +459,7 @@ impl Container {
             self.core.db_pool().clone(),
             handle.clone(),
             self.vault_write_suppression.clone(),
+            Arc::clone(self.core.background()),
         );
 
         let events = handle.clone();
@@ -471,6 +479,7 @@ impl Container {
                     handle.clone(),
                 )),
                 Arc::clone(&self.jobs),
+                Arc::clone(self.core.background()),
             ),
         );
 

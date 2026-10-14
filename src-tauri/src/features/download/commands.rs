@@ -633,6 +633,7 @@ mod tests {
             repository,
             engine,
             allowed_root,
+            Arc::default(),
         ));
         DownloadCommandState::new(manager)
     }

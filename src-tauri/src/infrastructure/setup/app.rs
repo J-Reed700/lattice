@@ -93,6 +93,7 @@ async fn create_container(
     ollama_endpoint: String,
     ollama_model: String,
     app_handle: tauri::AppHandle,
+    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
 ) -> Result<crate::interfaces::di::Container, AppError> {
     use crate::interfaces::di::Container;
 
@@ -118,6 +119,7 @@ async fn create_container(
         &ollama_endpoint,
         &ollama_model,
         data_dir,
+        background,
     )
     .await
     .map(|c| c.with_app_handle(app_handle))
@@ -180,9 +182,9 @@ pub fn initialize_app(app: &mut tauri::App) {
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
 async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), StartupFailure> {
-    let background = crate::shared::runtime::background::BackgroundTasks::install();
+    let background = Arc::new(crate::shared::runtime::background::BackgroundTasks::default());
     let shutdown_token = background.token();
-    app_handle.manage(background);
+    app_handle.manage(Arc::clone(&background));
     app_handle.manage(shutdown_token.clone());
     let app_dir = super::setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
 
@@ -196,6 +198,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let model_dir_for_init = model_dir.clone();
 
     let app_handle_for_container = app_handle.clone();
+    let background_for_container = Arc::clone(&background);
 
     let container = async move {
         // Sequential initialization with clear error propagation
@@ -237,6 +240,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             ollama_endpoint,
             ollama_model,
             app_handle_for_container,
+            background_for_container,
         )
         .await?;
 
@@ -258,7 +262,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // the SQLite insert trigger independently enforces the hard row cap.
     let audit_pool = container.db_pool().clone();
     let audit_shutdown = shutdown_token.clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         let mut prune_tick = tokio::time::interval_at(
             tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 60 * 60),
             std::time::Duration::from_secs(24 * 60 * 60),
@@ -313,7 +317,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     );
 
     let model_dir_for_cleanup = model_dir.clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::{
             reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
         };
@@ -358,7 +362,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // A question the last run quit under would show as in flight for good;
     // fail it so it can be retried.
     let turns_pool = container.db_pool().clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::reconcile_stuck_turns;
         match reconcile_stuck_turns(&turns_pool).await {
             Ok(count) if count > 0 => {
@@ -374,7 +378,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // A grounding check the last run quit under would show "Checking…" for
     // good; mark it not checked before the first conversation loads.
     let verification_pool = container.db_pool().clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         use crate::infrastructure::services::startup_reconciliation::reconcile_interrupted_verifications;
         match reconcile_interrupted_verifications(&verification_pool).await {
             Ok(count) if count > 0 => {
@@ -392,7 +396,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // the files. Without this they stay on disk forever and get packed into
     // every backup.
     let library_gc = container.library_gc();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         match library_gc.sweep().await {
             Ok(report) => tracing::info!(
                 removed = report.removed,
@@ -417,7 +421,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // on the next startup.
     let orphan_scope = container.document_scope();
     let orphan_delete = container.delete_document_use_case();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         let orphans = match orphan_scope.orphaned_conversation_owned_documents().await {
             Ok(ids) => ids,
             Err(error) => {
@@ -514,7 +518,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // steady-state operation are unlikely. Refactoring the bridge to
     // be restartable is a separate task.
     let bridge_cancel = shutdown_token.clone();
-    let bridge_handle = crate::shared::runtime::background::spawn(async move {
+    let bridge_handle = background.spawn(async move {
         event_bridge.start(bridge_cancel).await;
     });
     app_handle.manage(super::background_workers::BackgroundWorkers::new(
@@ -526,7 +530,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // event channel would otherwise deadlock the consumer on its own sends.
     let queue_manager = download_manager.clone();
     let queue_cancel = shutdown_token.clone();
-    crate::shared::runtime::background::spawn(async move {
+    background.spawn(async move {
         loop {
             tokio::select! {
                 biased;

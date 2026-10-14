@@ -1,12 +1,14 @@
 //! The full vault rescan, and the guard that stops it deleting notes when the vault looks half-synced.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::timestamps::parse_db_timestamp;
+use crate::shared::runtime::background::BackgroundTasks;
 
 use super::{
     emit_note_imported, import_one, DailyNotesRepository, WriteSuppressionRegistry, RESCAN_LOCK,
@@ -19,6 +21,7 @@ pub async fn rescan_vault(
     vault_root: PathBuf,
     suppression: WriteSuppressionRegistry,
     app_handle: tauri::AppHandle,
+    background: Arc<BackgroundTasks>,
 ) -> Result<RescanSummary> {
     let notes_dir = vault_root.join("notes");
     // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
@@ -40,6 +43,7 @@ pub async fn rescan_vault(
         pool: db_pool.clone(),
         run_id: run_id.clone(),
         active: true,
+        background,
     };
 
     // repository-barrier-allow: rescan enumerates the configured vault resource.
@@ -291,6 +295,8 @@ struct RescanMembershipGuard {
     pool: SqlitePool,
     run_id: String,
     active: bool,
+    /// Where the release runs when the guard drops mid-scan.
+    background: Arc<BackgroundTasks>,
 }
 
 impl Drop for RescanMembershipGuard {
@@ -300,7 +306,7 @@ impl Drop for RescanMembershipGuard {
         }
         let pool = self.pool.clone();
         let run_id = self.run_id.clone();
-        let _ = crate::shared::runtime::background::spawn(async move {
+        let _ = self.background.spawn(async move {
             let _ = crate::features::vault::repository::finish_rescan(&pool, &run_id).await;
         });
     }

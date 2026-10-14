@@ -282,6 +282,9 @@ impl ChatJobs for Container {
     fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
         Arc::clone(&self.research_waiters)
     }
+    fn background(&self) -> Arc<crate::shared::runtime::background::BackgroundTasks> {
+        Arc::clone(self.core.background())
+    }
 }
 
 impl ChatCancellation for Container {

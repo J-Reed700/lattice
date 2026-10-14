@@ -163,6 +163,7 @@ async fn start_background_verification(
                 warn!(%error, "Failed to emit a finished grounding check");
             }
         }),
+        background: container.background(),
     }
     .spawn()
     .await;

@@ -207,7 +207,8 @@ impl Rig {
                 events.lock().push(status);
             }
         });
-        let manager = FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs);
+        let manager =
+            FolderIndexManager::new(config, Arc::new(Source(embedder)), jobs, Arc::default());
         manager.register().await.unwrap();
         manager
     }

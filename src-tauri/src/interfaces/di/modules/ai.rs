@@ -59,6 +59,7 @@ impl AIModule {
             core.data_dir().clone(),
             core.credentials().clone(),
             backend_devices,
+            Arc::clone(core.background()),
         )
         .await?;
         let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);

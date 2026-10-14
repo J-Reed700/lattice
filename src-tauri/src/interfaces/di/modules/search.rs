@@ -58,6 +58,7 @@ impl SearchModule {
             active_dim,
             compression,
             embedding_strategy,
+            Arc::clone(core.background()),
         )
         .await?;
         Ok(Self {

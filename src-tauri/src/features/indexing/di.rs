@@ -72,6 +72,7 @@ pub fn build(
     web_archive: Arc<dyn ArticleArchive>,
     ocr: Arc<dyn OcrPort>,
     shared: IndexingShared,
+    background: Arc<crate::shared::runtime::background::BackgroundTasks>,
 ) -> Result<IndexingDi> {
     let IndexingShared {
         query_cache,
@@ -98,7 +99,7 @@ pub fn build(
     ) as Arc<dyn crate::application::ports::SparseTermStorePort>;
     // Build the transcription port once and share the same Arc with the
     // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
-    let transcription = crate::features::transcription::di::build(db_pool).port;
+    let transcription = crate::features::transcription::di::build(db_pool, background).port;
     // Import and re-index share this adapter, so both read scanned pages.
     let content_extractor = Arc::new(
         ContentExtractionAdapter::with_transcription(transcription.clone())

@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::features::daily_notes::repository::{DailyNotesRepository, VaultNoteUpsert};
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use crate::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
 
@@ -70,8 +71,10 @@ pub fn start_vault_watcher(
     db_pool: SqlitePool,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
+    background: Arc<BackgroundTasks>,
 ) {
-    crate::shared::runtime::background::spawn(async move {
+    let scope = Arc::clone(&background);
+    scope.spawn(async move {
         let settings = match settings_uc.execute().await {
             Ok(s) => s,
             Err(e) => {
@@ -123,7 +126,7 @@ pub fn start_vault_watcher(
             }
         };
 
-        run_watcher(vault_root, db_pool, app_handle, suppression).await;
+        run_watcher(vault_root, db_pool, app_handle, suppression, background).await;
     });
 }
 
@@ -132,6 +135,7 @@ async fn run_watcher(
     db_pool: SqlitePool,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
+    background: Arc<BackgroundTasks>,
 ) {
     // Queue paths, never arbitrarily large callback batches. Overflow is a
     // request to reconcile the directory; it cannot silently lose an edit.
@@ -194,7 +198,7 @@ async fn run_watcher(
         "vault watcher started"
     );
 
-    let cancel = crate::shared::runtime::background::cancellation_token();
+    let cancel = background.token();
     loop {
         tokio::select! {
             biased;
@@ -223,6 +227,7 @@ async fn run_watcher(
                 vault_root.clone(),
                 suppression.clone(),
                 app_handle.clone(),
+                Arc::clone(&background),
             )
             .await
             {

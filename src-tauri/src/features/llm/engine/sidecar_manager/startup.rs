@@ -256,6 +256,16 @@ impl SidecarManager {
             config.context_size,
         );
 
+        // The drain below runs in the app's background scope, so shutdown
+        // joins it. A host without one cannot supervise a server.
+        let Some(background) =
+            app.try_state::<Arc<crate::shared::runtime::background::BackgroundTasks>>()
+        else {
+            return Err(AttemptError::fatal(
+                "No background scope is managed; the sidecar cannot be supervised".into(),
+            ));
+        };
+
         // 5. Spawn via tauri-plugin-shell. `.sidecar()` looks the binary
         //    up next to the app executable. A failure here (missing file,
         //    no execute permission, wrong executable format) means the
@@ -273,6 +283,7 @@ impl SidecarManager {
         let tail = Arc::new(SyncMutex::new(OutputTail::default()));
         let signals = Arc::new(StartupSignals::default());
         let ready_rx = spawn_event_drain(
+            &background,
             rx,
             endpoint.clone(),
             spawned.child(),
