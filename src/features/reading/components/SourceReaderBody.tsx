@@ -20,6 +20,7 @@ import { useFileContent } from '@/features/reading/hooks/useFileContent';
 import { PASSAGE_REFERENCES_QUERY_KEY } from '@/features/reading/hooks/usePassageReferencesQuery';
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
+import { ReaderPageToggle, WebPageSnapshotView, useWebPageMode } from '@/features/reading/snapshot';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
@@ -175,6 +176,10 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
   /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  // A frozen copy belongs to a conversation, so the Page view needs one.
+  const snapshotConversationId = showsWebArticle && openableUrl ? activeConversationId : null;
+  const snapshotUrl = snapshotConversationId ? openableUrl : null;
+  const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
   // highlighter would both be fighting it.
@@ -568,7 +573,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     }
 
     if (showsWebArticle) {
-      return (
+      const reader = (
         <WebArticleView
           url={openableUrl}
           source={source}
@@ -607,6 +612,33 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             ) : null
           }
         />
+      );
+      if (!snapshotConversationId || !snapshotUrl) return reader;
+      // Until the lookup answers, the default (Page if a frozen copy exists) is unknown.
+      if (webPageMode.isResolving) return <div aria-busy="true" className="h-full" />;
+      const toggle = (
+        <ReaderPageToggle
+          mode={webPageMode.mode}
+          onChange={webPageMode.setMode}
+          marked={occurrence !== null && occurrence !== undefined}
+        />
+      );
+      if (webPageMode.mode === 'page') {
+        return (
+          <WebPageSnapshotView
+            conversationId={snapshotConversationId}
+            url={snapshotUrl}
+            compact={isCompact}
+            toggle={toggle}
+            onShowReader={() => webPageMode.setMode('reader')}
+          />
+        );
+      }
+      return (
+        <div className="flex h-full min-h-0 flex-col gap-3">
+          <div className="flex shrink-0 items-center">{toggle}</div>
+          <div className="min-h-0 flex-1">{reader}</div>
+        </div>
       );
     }
 

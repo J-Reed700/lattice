@@ -63,6 +63,7 @@ mod providers;
 mod results;
 
 pub(crate) use address_guard::is_blocked_ip;
+pub(crate) use address_guard::validate_url_resolved;
 use address_guard::{
     check_url_host, redirect_policy, refuse_blocked_addresses, PublicOnlyResolver,
 };
@@ -194,12 +195,7 @@ impl WebService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
-        let client = stealth::stealth_client_builder()
-            .timeout(timeout)
-            .redirect(redirect_policy())
-            .dns_resolver(Arc::new(PublicOnlyResolver::new(stealth::proxy_hosts())))
-            .build()
-            .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
+        let client = build_public_client(timeout)?;
 
         Ok(Self {
             client,
@@ -216,6 +212,28 @@ impl WebService {
     pub fn attach_browser(&self, browser: Arc<BrowserReader>) {
         let _ = self.browser.set(browser);
     }
+}
+
+/// The one client for reading public web pages, with the default request
+/// timeout: stealth headers and cookies, the private-address redirect policy
+/// and the public-only resolver. The snapshot engine fetches through it.
+pub(crate) fn public_web_client() -> Result<Client> {
+    build_public_client(WEB_REQUEST_TIMEOUT)
+}
+
+/// The single builder behind [`WebService`] and [`public_web_client`].
+fn build_public_client(timeout: Duration) -> Result<Client> {
+    stealth::stealth_client_builder()
+        .timeout(timeout)
+        .redirect(redirect_policy())
+        .dns_resolver(Arc::new(PublicOnlyResolver::new(stealth::proxy_hosts())))
+        .build()
+        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+}
+
+/// Parse `url` and accept only `http`/`https`: the same check page reads use.
+pub(crate) fn fetchable_url(url: &str) -> Result<url::Url> {
+    parse_fetchable_url(url)
 }
 
 #[async_trait]

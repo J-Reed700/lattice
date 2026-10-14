@@ -3776,6 +3776,39 @@ async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The frozen copy of `url` in this conversation, if one was ever requested.
+ */
+async getWebPageSnapshot(conversationId: string, url: string) : Promise<Result<WebPageSnapshotDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|get_web_page_snapshot", { conversationId, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Capture a frozen copy now, or try a failed one again.
+ */
+async captureWebPageSnapshot(conversationId: string, url: string) : Promise<Result<WebPageSnapshotDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|capture_web_page_snapshot", { conversationId, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every frozen copy this conversation has.
+ */
+async listWebPageSnapshots(conversationId: string) : Promise<Result<WebPageSnapshotDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|list_web_page_snapshots", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -8583,6 +8616,28 @@ fetchedAt: string;
  * True when this came out of the page cache rather than off the network.
  */
 fromCache: boolean }
+/**
+ * Payload of [`CHANGED_EVENT`].
+ */
+export type WebPageSnapshotChangedEvent = { conversationId: string; url: string; snapshot: WebPageSnapshotDto }
+export type WebPageSnapshotDto = { id: string; conversationId: string; requestedUrl: string; finalUrl: string | null; normalizedUrl: string; title: string | null; status: WebPageSnapshotStatus;
+/**
+ * "http" | "browser"
+ */
+method: string | null; capturedAt: string | null; byteSize: number | null; sha256: string | null; resourceCount: number; missingResourceCount: number; partial: boolean; partialReasons: string[]; errorCode: string | null; errorMessage: string | null; faviconDataUrl: string | null;
+/**
+ * While pending.
+ */
+progressMessage: string | null;
+/**
+ * Ready rows: whether the file's hash was re-checked when this DTO was built.
+ */
+verified: boolean | null }
+/**
+ * Payload of [`LINK_EVENT`].
+ */
+export type WebPageSnapshotLinkEvent = { snapshotId: string; url: string }
+export type WebPageSnapshotStatus = "pending" | "ready" | "failed"
 /**
  * Page evidence captured for a web citation, independent of the live site.
  */

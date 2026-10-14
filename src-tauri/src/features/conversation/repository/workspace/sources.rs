@@ -1,4 +1,5 @@
 use super::*;
+use crate::shared::http::normalize_web_source_url;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationLinkedDocumentRow {
@@ -21,9 +22,6 @@ struct ConversationWebSourceRow {
     excerpt: Option<String>,
     relevance_score: Option<f32>,
     added_at: String,
-}
-fn normalize_web_source_url(url: &str) -> String {
-    url.trim().to_ascii_lowercase()
 }
 
 impl ConversationRepository {

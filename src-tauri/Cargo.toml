@@ -171,6 +171,7 @@ url = "2.5"
 html5ever = "0.26"
 ego-tree = "0.6"
 select = "0.6"
+lol_html = "3"
 # Keep the reader and learner engine on one native QuickJS ABI. The vendored
 # upstream wrapper is unchanged except for its rquickjs dependency; see README.
 readability-js = { path = "vendor/readability-js" }

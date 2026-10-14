@@ -118,7 +118,7 @@ async fn resolve_public(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
 
 /// The full check for a URL this service is about to request: scheme, host
 /// and every address the host resolves to.
-pub(super) async fn validate_url_resolved(url: &str) -> Result<()> {
+pub(crate) async fn validate_url_resolved(url: &str) -> Result<()> {
     let parsed = parse_fetchable_url(url)?;
     if let Some(domain) = check_url_host(&parsed)? {
         let port = parsed.port_or_known_default().unwrap_or(443);
@@ -131,7 +131,7 @@ pub(super) async fn validate_url_resolved(url: &str) -> Result<()> {
 /// Follow a redirect only to an http(s) URL whose host is not local. A hop
 /// to a name is resolved, and refused if private, by [`PublicOnlyResolver`]
 /// before anything connects.
-pub(super) fn redirect_policy() -> reqwest::redirect::Policy {
+pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= MAX_REDIRECTS {
             return attempt.error(format!("too many redirects (over {MAX_REDIRECTS})"));
@@ -151,13 +151,13 @@ pub(super) fn redirect_policy() -> reqwest::redirect::Policy {
 /// The web client's DNS resolver: an address in a blocked range fails the
 /// lookup, so neither the first request nor any redirect hop can connect to
 /// one, and the connector uses exactly the addresses checked here.
-pub(super) struct PublicOnlyResolver {
+pub(crate) struct PublicOnlyResolver {
     /// Configured proxies, which may legitimately live on this machine.
     exempt_hosts: HashSet<String>,
 }
 
 impl PublicOnlyResolver {
-    pub(super) fn new(exempt_hosts: Vec<String>) -> Self {
+    pub(crate) fn new(exempt_hosts: Vec<String>) -> Self {
         Self {
             exempt_hosts: exempt_hosts.into_iter().collect(),
         }

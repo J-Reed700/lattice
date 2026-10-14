@@ -17,6 +17,14 @@ pub fn identity(input: &str) -> String {
     parsed.to_string()
 }
 
+/// The key a conversation files a cited web page under, in both the text
+/// snapshot (`conversation_web_sources.normalized_url`) and the frozen copy
+/// (`web_page_snapshots.normalized_url`): trimmed and lowercased, nothing
+/// else, so the two tables always agree on which page is which.
+pub fn normalize_web_source_url(url: &str) -> String {
+    url.trim().to_ascii_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::identity;

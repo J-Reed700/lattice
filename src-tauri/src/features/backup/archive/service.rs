@@ -689,6 +689,14 @@ mod tests {
             .join("an-article-abc123");
         std::fs::create_dir_all(&article_dir).unwrap();
         std::fs::write(article_dir.join("page.html"), b"<html>snapshot</html>").unwrap();
+        // A frozen page copy, beside the web archive as in `~/.lattice`.
+        let web_snapshots_root = source.path().join("web-snapshots");
+        std::fs::create_dir_all(&web_snapshots_root).unwrap();
+        std::fs::write(
+            web_snapshots_root.join("0123456789abcdef0123456789abcdef.html"),
+            b"<html>frozen</html>",
+        )
+        .unwrap();
 
         let db_path = app_data.join("lattice.db");
         let pool = seeded_pool(&db_path, 3).await;
@@ -850,6 +858,17 @@ mod tests {
             .unwrap(),
             b"<html>snapshot</html>",
             "saved web articles must come back with the documents that point at them"
+        );
+        assert_eq!(
+            std::fs::read(
+                target
+                    .path()
+                    .join("web-snapshots")
+                    .join("0123456789abcdef0123456789abcdef.html")
+            )
+            .unwrap(),
+            b"<html>frozen</html>",
+            "frozen web snapshots must come back beside the web archive"
         );
         // The source library keeps everything: a backup is not a sweep.
         assert!(files_root.join(ORPHAN_BLOB).join("ghost.pdf").exists());

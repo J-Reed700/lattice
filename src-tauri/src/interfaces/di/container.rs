@@ -118,6 +118,9 @@ pub struct Container {
     /// plugin setup; shutdown closes and drains it before the database closes.
     pub(crate) jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
 
+    /// Frozen copies of cited web pages; its captures run on `jobs`.
+    pub(crate) web_page_snapshots: Arc<crate::features::web::snapshots::WebPageSnapshotService>,
+
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
     /// through; `None` in test fixtures.
@@ -358,6 +361,10 @@ impl Container {
             });
 
         let jobs = crate::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+        let web_page_snapshots = crate::features::web::di::build_page_snapshots(
+            core.db_pool().clone(),
+            Arc::clone(&jobs),
+        )?;
 
         let turn_cancellation = Arc::new(
             crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
@@ -390,6 +397,7 @@ impl Container {
             vault_write_suppression,
             settings_side_effects,
             jobs,
+            web_page_snapshots,
             turn_cancellation,
             research_waiters,
             outline_run_registry,

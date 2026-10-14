@@ -26,6 +26,11 @@ pub fn web_archive_root() -> Result<PathBuf> {
     Ok(lattice_home()?.join("web-archive"))
 }
 
+/// Frozen copies of cited web pages: `~/.lattice/web-snapshots/<id>.html`.
+pub fn web_snapshots_root() -> Result<PathBuf> {
+    Ok(lattice_home()?.join("web-snapshots"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

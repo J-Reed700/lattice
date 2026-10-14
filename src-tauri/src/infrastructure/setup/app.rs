@@ -405,6 +405,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             }
         }
     });
+    // Frozen web snapshots whose rows are gone, and writes a crash cut short.
+    container
+        .web_page_snapshots()
+        .sweep_in_background("startup");
 
     // Collect attachments whose conversation is gone. They are owned by a chat
     // that no longer exists, so they are hidden from the library and reachable
