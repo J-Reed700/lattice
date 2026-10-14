@@ -345,7 +345,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     run_and_confirm(pool, options, model, &job.id, &directory).await
 }
 
-async fn run_and_confirm(
+pub(super) async fn run_and_confirm(
     pool: sqlx::SqlitePool,
     options: sqlx::sqlite::SqliteConnectOptions,
     model: Arc<ObservedModel>,

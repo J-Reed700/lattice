@@ -13,6 +13,8 @@ use crate::features::llm::llama_cpp::LlamaCppLlm;
 
 #[path = "live_small_lesson.rs"]
 mod small;
+#[path = "live_course_e2e.rs"]
+mod course_e2e;
 
 struct ObservedModel {
     inner: LlamaCppLlm,
