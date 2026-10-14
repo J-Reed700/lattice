@@ -107,6 +107,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::preview_learning_pack_import,
             lattice::features::learning::plugin::apply_learning_pack_import,
             lattice::features::learning::plugin::cancel_learning_pack_import_preview,
+            lattice::features::learning::plugin::save_learning_pack_as::<tauri::Wry>,
+            lattice::features::learning::plugin::export_all_learning_packs::<tauri::Wry>,
             lattice::features::learning::plugin::preview_learning_curriculum_revision,
             lattice::features::learning::plugin::accept_learning_curriculum_revision,
             lattice::features::learning::plugin::discard_learning_curriculum_revision,

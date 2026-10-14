@@ -1,5 +1,6 @@
 //! Identifier rewriting for a pack imported as a copy: every imported ID is
 //! given a fresh one, and every reference follows it.
+use super::evidence_tables::LearningEvidenceSnapshot;
 use super::*;
 
 pub(super) fn map_evidence_ids(

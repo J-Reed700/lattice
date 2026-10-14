@@ -379,6 +379,8 @@
     "learning:allow-preview-learning-pack-import",
     "learning:allow-apply-learning-pack-import",
     "learning:allow-cancel-learning-pack-import-preview",
+    "learning:allow-save-learning-pack-as",
+    "learning:allow-export-all-learning-packs",
     "learning:allow-save-learning-runtime-profile",
     "learning:allow-get-learning-runtime-catalog",
     "learning:allow-prepare-learning-runtime-preset",
