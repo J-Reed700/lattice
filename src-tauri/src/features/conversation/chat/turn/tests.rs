@@ -175,6 +175,7 @@ async fn each_turn_decides_its_own_web_fallback() {
         "intent-fallback-turn-1",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let flags = classify::classify_turn(&runtime, &first, None).await;
@@ -187,6 +188,7 @@ async fn each_turn_decides_its_own_web_fallback() {
         "intent-fallback-turn-2",
         llm.clone(),
         runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
     )
     .unwrap();
     let flags = classify::classify_turn(&runtime, &second, None).await;
