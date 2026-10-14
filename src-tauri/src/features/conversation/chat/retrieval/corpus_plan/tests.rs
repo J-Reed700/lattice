@@ -1,8 +1,12 @@
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use crate::application::ports::LLMPort;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::use_cases::HybridSearchUseCase;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn exact_references_keep_subsections_and_deduplicate_before_the_budget() {

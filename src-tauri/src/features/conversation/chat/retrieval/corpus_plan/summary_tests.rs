@@ -2,7 +2,10 @@
 //! shown, and who gets to choose the opening documents.
 
 use super::*;
-use crate::application::ports::llm_port::CompletionResponse;
+use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use crate::application::ports::LLMPort;
+use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 /// Replays one canned plan and records what it was asked.
 struct SummaryPlannerStub {

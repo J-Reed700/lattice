@@ -10,7 +10,8 @@
 //!
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
-//! never read.
+//! never read. File length is the exception: it reads every `.rs` file below
+//! the root and skips test-only files by name.
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -33,13 +34,15 @@ pub const FEATURE_CYCLE: &str = "feature-cycle";
 pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
 pub const GLOBAL_STATE: &str = "global-state";
-const RULES: [&str; 6] = [
+pub const FILE_LENGTH: &str = "file-length";
+const RULES: [&str; 7] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
     CONTAINER_IMPORT,
     RAW_SPAWN,
     GLOBAL_STATE,
+    FILE_LENGTH,
 ];
 
 const RAW_SPAWNS: [&[&str]; 4] = [
@@ -72,6 +75,10 @@ const IMMUTABLE_PAYLOADS: [&str; 10] = [
     "BTreeSet",
 ];
 
+/// Lines a source file may have, counted like `wc -l`. Test-only files
+/// (`tests.rs`, `*_tests.rs`, anything under a `tests/` directory) may be longer.
+const MAX_LINES: usize = 800;
+
 const HEADER: &str = "\
 # Architecture ratchet baseline, read by scripts/rust-architecture-check.
 #
@@ -90,6 +97,8 @@ const HEADER: &str = "\
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
 # `// global-state: <reason>` comment directly above the static.
+# Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
+# then split it by responsibility.
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
@@ -100,6 +109,8 @@ const HEADER: &str = "\
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
+#   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
+#                                                         *_tests.rs and files under tests/
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -315,10 +326,58 @@ fn path_attribute(attrs: &[Attribute]) -> Option<String> {
 
 pub fn findings(root: &Path) -> Result<Vec<Finding>, Error> {
     let (files, modules) = production_files(root)?;
-    Ok(files
+    let mut found: Vec<Finding> = files
         .iter()
         .flat_map(|file| file_findings(file, &modules))
-        .collect())
+        .collect();
+    found.extend(length_findings(root)?);
+    Ok(found)
+}
+
+/// Every `.rs` file below the root that is too long. Unlike the other rules
+/// this reads files from disk rather than following `mod` declarations, so a
+/// file no module reaches still counts.
+pub fn length_findings(root: &Path) -> Result<Vec<Finding>, Error> {
+    let mut found = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let mut entries = fs::read_dir(&directory)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let relative = path
+                    .strip_prefix(root)?
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if !test_only_file(&relative) {
+                    found.extend(file_length(&relative, &fs::read_to_string(&path)?));
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Test-only by name: `tests.rs`, `*_tests.rs`, or a file under `tests/`.
+fn test_only_file(relative: &str) -> bool {
+    let mut parts = relative.rsplit('/');
+    let name = parts.next().unwrap_or_default();
+    name == "tests.rs" || name.ends_with("_tests.rs") || parts.any(|part| part == "tests")
+}
+
+/// One finding when a non-test file has more than `MAX_LINES` lines.
+pub fn file_length(relative: &str, source: &str) -> Option<Finding> {
+    let lines = source.matches('\n').count();
+    (lines > MAX_LINES && !test_only_file(relative)).then(|| Finding {
+        key: Key::new(FILE_LENGTH, relative, format!("max-{MAX_LINES}-lines")),
+        location: format!("{relative} ({lines} lines)"),
+    })
 }
 
 /// A path the file names, resolved to the library crate where possible.
@@ -1510,6 +1569,72 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             ),
             vec!["WARNED features/x.rs:12", "PENDING features/x.rs:16"]
         );
+    }
+
+    fn too_long(relative: &str, lines: usize) -> Vec<String> {
+        file_length(relative, &"fn f() {}\n".repeat(lines))
+            .into_iter()
+            .map(|finding| {
+                format!(
+                    "{} {} {}",
+                    finding.key.rule, finding.key.subject, finding.key.target
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_over_800_lines_is_found_and_one_at_800_is_not() {
+        assert_eq!(
+            too_long("features/x.rs", 801),
+            vec!["file-length features/x.rs max-800-lines"]
+        );
+        assert!(too_long("features/x.rs", 800).is_empty());
+        let finding = file_length("x.rs", &"\n".repeat(801)).unwrap();
+        assert_eq!(
+            counts(&[finding]).into_values().collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn test_only_files_may_be_any_length() {
+        for relative in [
+            "features/x/tests.rs",
+            "tests.rs",
+            "features/x/loop_tests.rs",
+            "features/x/tests/fixtures.rs",
+            "features/x/tests/cases/long.rs",
+        ] {
+            assert!(too_long(relative, 2000).is_empty(), "{relative}");
+        }
+        assert_eq!(too_long("features/x/contests.rs", 801).len(), 1);
+        assert_eq!(too_long("features/tests_support.rs", 801).len(), 1);
+    }
+
+    #[test]
+    fn length_walk_reads_every_rust_file_below_the_root() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "lattice-ratchet-length-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("unreached/tests")).unwrap();
+        let long = "\n".repeat(801);
+        fs::write(root.join("unreached/orphan.rs"), &long).unwrap();
+        fs::write(root.join("unreached/tests/case.rs"), &long).unwrap();
+        fs::write(root.join("unreached/notes.txt"), &long).unwrap();
+        fs::write(root.join("short.rs"), "\n".repeat(800)).unwrap();
+        let found: Vec<_> = length_findings(&root)
+            .unwrap()
+            .into_iter()
+            .map(|finding| finding.location)
+            .collect();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, vec!["unreached/orphan.rs (801 lines)"]);
     }
 
     #[test]

@@ -80,7 +80,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
   'src/features/files/components/Ingest/LibraryFilePicker.tsx',
   'src/features/files/components/IngestHub/IngestHub.tsx',
   'src/features/journal/components/EntryFromConversation.tsx',
-  'src/features/journal/components/JournalWorkspace.tsx',
   'src/features/model/components/FirstRun/FirstRunGate.tsx',
   'src/features/model/components/FirstRun/ModelSetupModal.tsx',
   'src/features/palette/components/CommandPalette/CommandPalette.tsx',
@@ -96,7 +95,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [
   'src/features/settings/components/AITab/LlamaCppConnection.tsx',
   'src/features/settings/components/AITab/ModelsTab.tsx',
   'src/features/settings/components/AITab/ToolsTab.tsx',
-  'src/features/settings/components/BackupSection.tsx',
   'src/features/settings/components/IndexingTab.tsx',
   'src/features/settings/components/ModelCatalog/ModelVariantPicker.tsx',
   'src/features/settings/components/ModelCatalog/startModelDownload.ts',
@@ -112,7 +110,6 @@ const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/files/components/FileBrowser/FileBrowser.tsx',
   'src/features/files/components/Ingest/ImportHistory.tsx',
   'src/features/journal/components/JournalPickerMenu.tsx',
-  'src/features/journal/components/JournalWorkspace.tsx',
   'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
   'src/features/reading/components/SourceReaderBody.tsx',
   'src/features/settings/components/AITab/ModelsTab.tsx',
@@ -124,6 +121,12 @@ const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
 ], (text) =>
   /\bfrom\s+['"]@tauri-apps\/plugin-|\bimport\(\s*['"]@tauri-apps\/plugin-/.test(text) ||
   /import\s*\{[^}]*\bconvertFileSrc\b[^}]*\}\s*from\s*['"]@tauri-apps\/api\/core['"]/.test(text));
+
+// Source files over the line limit when the rule arrived. Do not add to this
+// list: split the file, then delete its entry.
+const MAX_LINES_ALLOWLIST = ratchet('MAX_LINES_ALLOWLIST', [
+  'src/features/reading/components/SourceReaderBody.tsx',
+], (text) => text.replace(/\n$/, '').split('\n').length > 800);
 
 export default [
   // Ignore patterns (migrated from .eslintignore)
@@ -475,6 +478,16 @@ export default [
     ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...VIEW_NATIVE_ALLOWLIST],
     rules: {
       'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS],
+    },
+  },
+
+  // A source file stays under 800 lines; past that, split it by
+  // responsibility. MAX_LINES_ALLOWLIST holds the files that predate the rule.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/**/__tests__/**', 'src/lib/bindings.ts', ...MAX_LINES_ALLOWLIST],
+    rules: {
+      'max-lines': ['error', { max: 800 }],
     },
   },
 

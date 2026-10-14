@@ -2,7 +2,10 @@
 
 #![cfg(test)]
 
+use super::chat::CURATED_CHAT_MODELS;
 use super::*;
+use crate::domain::models::selection::{ModelFormat, PerformanceTier};
+use std::path::Path;
 
 #[test]
 fn test_llm_models_count() {

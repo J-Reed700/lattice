@@ -15,6 +15,8 @@
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
 # `// global-state: <reason>` comment directly above the static.
+# Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
+# then split it by responsibility.
 #
 #   infrastructure-imports-feature <file> features::<b>   infrastructure naming crate::features
 #   feature-edge <features::a> <features::b>              references from one feature into another
@@ -25,6 +27,8 @@
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
+#   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
+#                                                         *_tests.rs and files under tests/
 
 infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::indexing 1
 infrastructure-imports-feature infrastructure/adapters/content_extraction_adapter.rs features::transcription 3
@@ -107,3 +111,7 @@ global-state features/learning/runtime/python_runtime.rs RUNTIME_ROOT 1
 global-state features/vault/watcher.rs RESCAN_LOCK 1
 global-state infrastructure/audit/mod.rs GLOBAL_AUDIT_LOGGER 1
 global-state shared/runtime/background.rs REGISTRY 1
+
+file-length features/backup/archive/restore.rs max-800-lines 1
+file-length features/backup/archive/service.rs max-800-lines 1
+file-length interfaces/di/container.rs max-800-lines 1
