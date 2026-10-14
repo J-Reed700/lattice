@@ -11,7 +11,7 @@ use crate::application::ports::conversation_memory::{
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
 use crate::domain::conversation::memory::{
-    ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage,
+    ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan,
 };
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -71,6 +71,19 @@ impl ConversationMemoryPort for ConversationRepository {
     ) -> Result<Vec<ResolvedSpan>> {
         self.read_memory_source_spans(conversation_id, spans, limits)
             .await
+    }
+
+    async fn suppressed_spans(
+        &self,
+        conversation_id: &str,
+        message_ids: &[String],
+    ) -> Result<Vec<SuppressedSpan>> {
+        self.memory_suppressed_spans(conversation_id, message_ids)
+            .await
+    }
+
+    async fn forgotten_labels(&self, conversation_id: &str, limit: usize) -> Result<Vec<String>> {
+        self.memory_forgotten_labels(conversation_id, limit).await
     }
 
     async fn commit_memory(

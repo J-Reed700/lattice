@@ -69,6 +69,7 @@ fn snapshot(items: Vec<MemoryItem>, summary: Option<&str>, watermark: i64) -> Me
         transcript_revision: 11,
         active_items: items,
         summary: summary.map(str::to_owned),
+        summary_through_sequence: summary.map(|_| watermark),
         latest_sequence: watermark,
     }
 }
