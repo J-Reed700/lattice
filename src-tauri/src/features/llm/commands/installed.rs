@@ -235,7 +235,7 @@ pub async fn get_model_path(
 /// Permanently removes a model file from local storage, including all associated
 /// metadata and tokenizer data. This operation cannot be undone - the model will
 /// need to be re-downloaded to use it again. Protected by rate limiting to prevent
-/// accidental mass deletion and logged for audit compliance.
+/// accidental mass deletion.
 ///
 /// # Arguments
 ///
@@ -293,8 +293,7 @@ pub async fn get_model_path(
 /// 2. **Model Validation**: Verify model ID exists in catalog
 /// 3. **Download Check**: Confirm model is actually downloaded
 /// 4. **File Deletion**: Remove model files and metadata
-/// 5. **Audit Logging**: Log deletion for compliance (CWE-778)
-/// 6. **Cache Invalidation**: Clear any cached model references
+/// 5. **Cache Invalidation**: Clear any cached model references
 ///
 /// **Files Deleted**:
 /// - Primary model file (e.g., `model.gguf`)
@@ -311,7 +310,6 @@ pub async fn get_model_path(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Max 10 deletions per hour to prevent abuse
-/// - **Audit Logging (CWE-778)**: All deletions logged with model ID and result
 /// - **Path Validation**: Only deletes files in safe model directory (CWE-22)
 /// - **Confirmation Required**: Frontend should confirm before calling
 ///
@@ -347,7 +345,6 @@ pub async fn get_model_path(
 /// Thin controller with cross-cutting concerns:
 /// 1. **Rate Limiting**: Applied before execution
 /// 2. **Use Case Execution**: DeleteModelUseCase handles business logic
-/// 3. **Audit Logging**: Applied after successful execution
 ///
 /// # Command Flow
 ///
@@ -355,8 +352,7 @@ pub async fn get_model_path(
 /// 2. Get use case from container
 /// 3. Create request DTO with model ID
 /// 4. Execute deletion (validate, check existence, delete files)
-/// 5. Log audit event (success)
-/// 6. Return DeleteModelResponseDto with freed space
+/// 5. Return DeleteModelResponseDto with freed space
 ///
 /// # Warning
 ///
@@ -381,17 +377,6 @@ pub async fn delete_model(
         model_id: model_id.clone(),
     };
     let response = use_case.execute(request).await?;
-
-    // Audit logging
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::ModelDeleted,
-        &model_id,
-        "model_type" => "llm"
-    )
-    .await
-    .ok();
 
     Ok(response)
 }

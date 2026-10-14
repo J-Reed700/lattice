@@ -23,20 +23,11 @@ pub async fn set_active_chat_model_impl(
 
     let validated_model_id = input_validator.validate_model_name(model_id)?;
 
-    let logger = get_audit_logger();
     let use_case = SetActiveChatModelUseCase::new(repository);
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
             info!(model_id = %validated_model_id, "Active chat model set");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_chat_model",
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
 
             // Invalidate LLM cache
             container.invalidate_llm_cache();
@@ -45,15 +36,6 @@ pub async fn set_active_chat_model_impl(
         }
         Err(e) => {
             error!(error = %e, model_id = %validated_model_id, "Failed to set active chat model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_chat_model",
-                format!("Failed: {}", e),
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
             Err(e)
         }
     }
@@ -74,20 +56,11 @@ pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), A
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    let logger = get_audit_logger();
     let use_case = ClearActiveChatModelUseCase::new(repository);
 
     match use_case.execute().await {
         Ok(()) => {
             info!("Active chat model cleared");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_chat_model",
-                "action" => "cleared"
-            )
-            .await
-            .ok();
 
             container.invalidate_llm_cache();
             info!("LLM cache invalidated after clearing active model");
@@ -95,14 +68,6 @@ pub async fn clear_active_chat_model_impl(container: &Container) -> Result<(), A
         }
         Err(e) => {
             error!(error = %e, "Failed to clear active chat model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_chat_model",
-                format!("Failed to clear: {}", e)
-            )
-            .await
-            .ok();
             Err(e)
         }
     }
@@ -123,32 +88,15 @@ pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    let logger = get_audit_logger();
     let use_case = ClearActiveEmbeddingModelUseCase::new(repository);
 
     match use_case.execute().await {
         Ok(()) => {
             info!("Active embedding model cleared");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_embedding_model",
-                "action" => "cleared"
-            )
-            .await
-            .ok();
             Ok(())
         }
         Err(e) => {
             error!(error = %e, "Failed to clear active embedding model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_embedding_model",
-                format!("Failed to clear: {}", e)
-            )
-            .await
-            .ok();
             Err(e)
         }
     }
@@ -240,20 +188,11 @@ pub async fn set_active_utility_model_impl(
 
     let validated_model_id = input_validator.validate_model_name(model_id)?;
 
-    let logger = get_audit_logger();
     let use_case = SetActiveUtilityModelUseCase::new(repository);
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {
             info!(model_id = %validated_model_id, "Active utility model set");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_utility_model",
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
 
             // The utility LLM has its own cache (distinct from chat).
             // Invalidate so the next HyDE/router call rebuilds against
@@ -264,15 +203,6 @@ pub async fn set_active_utility_model_impl(
         }
         Err(e) => {
             error!(error = %e, model_id = %validated_model_id, "Failed to set active utility model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_utility_model",
-                format!("Failed: {}", e),
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
             Err(e)
         }
     }
@@ -290,20 +220,11 @@ pub async fn clear_active_utility_model_impl(container: &Container) -> Result<()
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    let logger = get_audit_logger();
     let use_case = SetActiveUtilityModelUseCase::new(repository);
 
     match use_case.clear().await {
         Ok(()) => {
             info!("Active utility model cleared");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_utility_model",
-                "action" => "cleared"
-            )
-            .await
-            .ok();
 
             container.invalidate_utility_llm_cache();
             info!("Utility LLM cache invalidated after clearing utility model");
@@ -311,14 +232,6 @@ pub async fn clear_active_utility_model_impl(container: &Container) -> Result<()
         }
         Err(e) => {
             error!(error = %e, "Failed to clear active utility model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_utility_model",
-                format!("Failed to clear: {}", e)
-            )
-            .await
-            .ok();
             Err(e)
         }
     }
@@ -349,7 +262,6 @@ pub async fn set_active_embedding_model_impl(
 
     let validated_model_id = input_validator.validate_model_name(model_id)?;
 
-    let logger = get_audit_logger();
     let use_case = SetActiveEmbeddingModelUseCase::new(repository);
 
     let candidate = container
@@ -368,7 +280,7 @@ pub async fn set_active_embedding_model_impl(
                 "Select a downloaded embedding model".to_owned(),
             ))
         }
-        Err(e) => return Err(embedding_activation_failed(&validated_model_id, e).await),
+        Err(e) => return Err(embedding_activation_failed(&validated_model_id, e)),
     };
     let load_identity = identity.clone();
     let model = task::spawn_blocking(move || {
@@ -387,34 +299,17 @@ pub async fn set_active_embedding_model_impl(
     {
         Ok(()) => {
             info!(model_id = %validated_model_id, "Active embedding model set");
-            audit_success!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_embedding_model",
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
 
             container.invalidate_embedding_cache();
             info!("Embedding cache invalidated - new model will be loaded on next access");
             Ok(())
         }
-        Err(e) => Err(embedding_activation_failed(&validated_model_id, e).await),
+        Err(e) => Err(embedding_activation_failed(&validated_model_id, e)),
     }
 }
 
-/// Log and audit a rejected embedding activation; returns the command error.
-async fn embedding_activation_failed(model_id: &str, e: AppError) -> AppError {
+/// Log a rejected embedding activation; returns the command error.
+fn embedding_activation_failed(model_id: &str, e: AppError) -> AppError {
     error!(error = %e, model_id = %model_id, "Failed to set active embedding model");
-    audit_failure!(
-        get_audit_logger(),
-        AuditAction::ModelSetActive,
-        "active_embedding_model",
-        format!("Failed: {}", e),
-        "model_id" => model_id
-    )
-    .await
-    .ok();
     e
 }

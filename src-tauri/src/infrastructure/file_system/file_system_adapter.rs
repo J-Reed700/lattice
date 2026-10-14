@@ -15,7 +15,6 @@
 //! - All file paths are validated before use
 //! - Uses secure system APIs (no shell execution with user input)
 //! - Prevents directory traversal attacks
-//! - Audits all file access operations
 
 use crate::application::ports::FileSystemPort;
 use crate::shared::error::AppError;

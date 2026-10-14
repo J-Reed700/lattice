@@ -73,7 +73,7 @@ pub use application::{
 pub mod infrastructure;
 
 pub use infrastructure::{
-    audit, extraction, file_system, ml, observability, persistence, security, services,
+    extraction, file_system, ml, observability, persistence, security, services,
 };
 
 /// Shared IPC adapters and dependency injection.

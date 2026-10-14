@@ -1,6 +1,5 @@
 //! `restore_backup`: replaces the live database with a stored snapshot.
 
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::fs::confinement::confine_to_root;
@@ -54,7 +53,6 @@ use std::path::PathBuf;
 /// # Security
 ///
 /// - **Path Validation (CWE-22)**: ValidatedFilePath prevents directory traversal attacks
-/// - **Audit Logging (CWE-778)**: All restore operations logged to audit trail
 /// - **No Rate Limiting**: Critical recovery operation (not rate limited)
 ///
 /// # Use Cases
@@ -86,7 +84,6 @@ use std::path::PathBuf;
 /// 1. Path validation via ValidatedFilePath (CWE-22)
 /// 2. File existence check via tokio::fs
 /// 3. Database restore operation
-/// 4. Audit logging via AuditLogger (CWE-778)
 ///
 /// # Command Flow
 ///
@@ -94,16 +91,13 @@ use std::path::PathBuf;
 /// 2. Check backup file exists asynchronously
 /// 3. Validate backup file format
 /// 4. Replace current database with backup
-/// 5. Log audit event (success/failure with path)
-/// 6. Return success
+/// 5. Return success
 ///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn restore_backup_impl(
     backup_path: String,
     container: &Container,
 ) -> Result<(), AppError> {
-    let audit_logger = get_audit_logger();
-
     let validated_path = ValidatedFilePath::new(PathBuf::from(&backup_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid backup path: {}", e)))?;
 
@@ -122,36 +116,8 @@ pub async fn restore_backup_impl(
         ))
     })?;
 
-    let backup_path_str = confined_path.to_string_lossy().to_string();
-
     let use_case = container.system.restore_backup_use_case();
     let result = use_case.execute(confined_path).await;
-
-    // Audit the outcome
-    match &result {
-        Ok(_) => {
-            let event = AuditEvent::new(AuditAction::BackupRestored, AuditResult::success())
-                .with_resource_id(&backup_path_str)
-                .with_metadata("operation", "restore_backup")
-                .with_metadata("backup_type", "database");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::BackupRestored,
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&backup_path_str)
-            .with_metadata("operation", "restore_backup");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
 
     result.map(|_| ())
 }

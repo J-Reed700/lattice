@@ -3,7 +3,7 @@
 //! Thin controllers for managing LLM conversations and conversational question-answering.
 //! Conversations maintain context across multiple Q&A interactions, enabling follow-up
 //! questions and contextual understanding. These commands follow Domain-Driven Design
-//! principles with cross-cutting concerns (rate limiting, validation, audit logging)
+//! principles with cross-cutting concerns (rate limiting, validation)
 //! and business logic delegation to ConversationService.
 //!
 //! # Architecture
@@ -12,7 +12,6 @@
 //! - **Rate limiting**: Protect against resource exhaustion
 //! - **Input validation**: Sanitize and validate user inputs (XSS prevention)
 //! - **Service delegation**: Business logic in ConversationService
-//! - **Audit logging**: Track security-sensitive operations
 //!
 //! # Conversational Q&A Pattern
 //!
@@ -29,16 +28,13 @@
 //! 2. Input validation
 //! 3. Get service from container
 //! 4. Delegate to service
-//! 5. Audit logging (for important operations)
-//! 6. Return result
+//! 5. Return result
 
 use crate::domain::Conversation;
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;
-use tracing::warn;
 
 mod delete;
 mod messages;
@@ -112,7 +108,6 @@ pub use space::create_conversation_space_impl;
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents conversation spam
 /// - **Input Validation**: Title sanitized to prevent XSS attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation creation for compliance
 ///
 /// # System Prompts
 ///
@@ -136,15 +131,13 @@ pub use space::create_conversation_space_impl;
 /// 1. Applies rate limiting
 /// 2. Validates and sanitizes title input
 /// 3. Delegates to `ConversationService.create_conversation()`
-/// 4. Logs audit event
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Input validation (title sanitization)
 /// 3. Execute ConversationService.create_conversation()
-/// 4. Log audit event (conversation created)
-/// 5. Return conversation metadata
+/// 4. Return conversation metadata
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn create_conversation_impl(
@@ -174,17 +167,6 @@ pub async fn create_conversation_impl(
     let conversation = service
         .create_conversation(sanitized_title, model_name, system_prompt)
         .await?;
-
-    // 4. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(conversation.id.to_string())
-        .with_metadata("operation", "create_conversation")
-        .with_metadata("title", &conversation.title);
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(conversation)
 }

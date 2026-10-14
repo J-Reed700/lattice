@@ -76,7 +76,6 @@ use crate::shared::error::{AppError, Result};
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents tag spam and resource exhaustion
 /// - **Input Validation**: Tag name length checked (1-100 characters)
-/// - **Audit Logging (CWE-778)**: Logs tag creation with tag ID and name
 /// - **Uniqueness Enforcement**: Duplicate tag names rejected
 ///
 /// # Tag Naming Rules
@@ -99,15 +98,13 @@ use crate::shared::error::{AppError, Result};
 /// 1. Applies rate limiting
 /// 2. Validates tag name length
 /// 3. Delegates to `CreateTagUseCase` (business logic + uniqueness check)
-/// 4. Logs audit event with tag ID and name
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Input validation (tag name 1-100 characters)
 /// 3. Execute CreateTagUseCase (uniqueness check, database insert)
-/// 4. Log audit event (tag created)
-/// 5. Return created tag with ID
+/// 4. Return created tag with ID
 ///
 /// # Use Cases
 ///
@@ -137,17 +134,6 @@ pub async fn create_tag_ddd(
 
     let use_case = container.create_tag_use_case();
     let response = use_case.execute(request).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::TagCreated,
-        response.tag.id(),
-        "tag_name" => response.tag.name()
-    )
-    .await
-    .ok();
 
     Ok(response)
 }
@@ -214,7 +200,6 @@ pub async fn create_tag_ddd(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents excessive update operations
-/// - **Audit Logging (CWE-778)**: Logs tag updates with tag ID
 /// - **Uniqueness Enforcement**: New names checked for conflicts
 ///
 /// # DDD Architecture
@@ -222,14 +207,12 @@ pub async fn create_tag_ddd(
 /// This command is a **thin controller** that:
 /// 1. Applies rate limiting
 /// 2. Delegates to `UpdateTagUseCase` (validation, uniqueness check, update)
-/// 3. Logs audit event
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Execute UpdateTagUseCase (find tag, check uniqueness if name changed, update)
-/// 3. Log audit event (tag updated)
-/// 4. Return updated tag
+/// 3. Return updated tag
 pub async fn update_tag_ddd(
     container: State<'_, Container>,
     request: UpdateTagRequestDto,
@@ -245,16 +228,6 @@ pub async fn update_tag_ddd(
 
     let use_case = container.update_tag_use_case();
     let response = use_case.execute(request.clone()).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::TagUpdated,
-        request.id.as_str()
-    )
-    .await
-    .ok();
 
     Ok(response)
 }
@@ -302,7 +275,6 @@ pub async fn update_tag_ddd(
 /// # Security
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents mass deletion abuse
-/// - **Audit Logging (CWE-778)**: Logs tag deletions for compliance
 ///
 /// # Side Effects
 ///
@@ -315,14 +287,12 @@ pub async fn update_tag_ddd(
 /// This command is a **thin controller** that:
 /// 1. Applies rate limiting
 /// 2. Delegates to `DeleteTagUseCase` (cascade deletion logic)
-/// 3. Logs audit event
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Execute DeleteTagUseCase (find tag, remove from documents, delete tag)
-/// 3. Log audit event (tag deleted)
-/// 4. Return success
+/// 3. Return success
 pub async fn delete_tag_ddd(
     container: State<'_, Container>,
     request: DeleteTagRequestDto,
@@ -338,16 +308,6 @@ pub async fn delete_tag_ddd(
 
     let use_case = container.delete_tag_use_case();
     use_case.execute(request.clone()).await?;
-
-    // Audit
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::TagDeleted,
-        request.tag_id.as_str()
-    )
-    .await
-    .ok();
 
     Ok(())
 }

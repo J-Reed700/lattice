@@ -19,7 +19,7 @@ not a claim that each target is comprehensive):
 | Indexing and extraction | `indexing_output_test`, `extractor_integration_test`, `test_metadata_extraction_integration`, `test_embedding_persistence_integration`, `article_extraction_demo` |
 | Downloads | `download_manager_tests`, `download_progress_tests`, `download_redirect_test`, `download_engine_validation_test`, `test_download_helpers` |
 | Commands and plugins | `plugins_tests` (includes `tests/plugins/`) |
-| Security and audit | `security_audit_logging_test`, `security_rate_limiting_test`, `native_keyring_backend_test`, `audit_events_test` |
+| Security | `security_rate_limiting_test`, `native_keyring_backend_test` |
 | Lifecycle | `background_lifecycle_test`, `shutdown_tests`, `panic_hook_test`, `sidecar_guard_test` |
 | Repositories and services | `tag_repository_test` |
 | LLM | `inference_unit_tests` (includes `tests/inference_helpers/`) |

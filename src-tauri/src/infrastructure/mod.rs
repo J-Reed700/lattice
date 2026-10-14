@@ -5,13 +5,12 @@
 //! - `ml`: shared model caching and embedding exports
 //! - `persistence`: SQLite setup, migrations, and cross-feature repositories
 //! - `setup`: startup, background workers, and shutdown
-//! - Other named modules own filesystem, security, audit, and observability work.
+//! - Other named modules own filesystem, security, and observability work.
 //!
 //! Feature-specific loaders and repositories belong with their owning feature.
 //! Domain and application modules depend on ports rather than these drivers.
 
 pub mod adapters;
-pub mod audit;
 pub mod crash;
 mod error_conversions;
 pub mod events;

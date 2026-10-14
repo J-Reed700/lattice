@@ -22,7 +22,6 @@ use std::sync::Arc;
 ///
 /// - Path validation prevents directory traversal (CWE-22)
 /// - Uses secure system APIs via FileSystemPort (prevents CWE-78)
-/// - Audits file access for security monitoring
 pub struct OpenFileUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,

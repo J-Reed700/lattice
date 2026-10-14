@@ -6,7 +6,6 @@ use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
 
 use super::enrichment::enrich_hybrid_results;
-use super::searches::audit_search;
 
 /// Lift recently updated documents by `recency_weight`, then re-sort. A
 /// result whose document carries no readable `updated_at` keeps its score.
@@ -103,6 +102,5 @@ pub async fn search_with_recency_impl(
     let mut search_results = enrich_hybrid_results(response.results, enrichment_service).await?;
     boost_recent(&mut search_results, recency_weight, max_age_days);
 
-    audit_search(&options.query, search_results.len(), false).await?;
     Ok(search_results)
 }

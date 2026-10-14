@@ -25,7 +25,6 @@ use std::sync::Arc;
 ///
 /// - Path validation prevents directory traversal (CWE-22)
 /// - Uses secure system commands via FileSystemPort (prevents CWE-78)
-/// - Audits file access for security monitoring
 pub struct ShowInFolderUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,
@@ -78,7 +77,7 @@ impl ShowInFolderUseCase {
             )));
         }
 
-        // Show file in folder (secure, audited)
+        // Show file in folder (secure)
         self.file_system.show_in_folder(&validated_path).await?;
 
         Ok(FileOperationSuccessDto {

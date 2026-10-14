@@ -3,10 +3,8 @@ use crate::features::file::dto::{
     OpenFileRequestDto, OpenFileResponseDto, ReadFileBytesRequestDto, ReadFileContentRequestDto,
     ShowInFolderRequestDto,
 };
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
-use std::sync::Arc;
 use tauri::State;
 
 pub use crate::application::contracts::file_library::{IndexedFolder, IndexingActivity};
@@ -34,13 +32,10 @@ pub use crate::application::contracts::file_library::{IndexedFolder, IndexingAct
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks (50 file operations per minute)
 /// - **Path Validation (CWE-22)**: Validates path to prevent directory traversal attacks
 /// - **Command Injection Prevention (CWE-78)**: Uses `opener` crate with platform-specific APIs that don't invoke shell
-/// - **Audit Logging (CWE-778)**: Logs all file open attempts with success/failure status
 pub async fn open_file_impl(
     container: &Container,
     path: String,
 ) -> Result<OpenFileResponseDto, AppError> {
-    let audit_logger = get_audit_logger();
-
     // SECURITY: Rate limiting to prevent DoS (CWE-770)
     container
         .security_context()
@@ -51,43 +46,8 @@ pub async fn open_file_impl(
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
     let use_case = container.open_file_use_case();
-    let request = OpenFileRequestDto { path: path.clone() };
-    let result = use_case.execute(request).await;
-
-    match &result {
-        Ok(response) => {
-            let mut event = AuditEvent::new(
-                AuditAction::Custom("file_open".to_string()),
-                AuditResult::success(),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "open_file")
-            .with_metadata("action", response.action.clone())
-            .with_metadata("file_type", format!("{:?}", response.file_type));
-
-            if let Some(title) = &response.title {
-                event = event.with_metadata("title", title);
-            }
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("file_open".to_string()),
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "open_file");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
-
-    result
+    let request = OpenFileRequestDto { path };
+    use_case.execute(request).await
 }
 
 /// Legacy Tauri shim - Opens a file in the system's default application or returns internal rendering info
@@ -155,13 +115,10 @@ pub async fn open_file(
 /// - **Rate Limiting (CWE-770)**: Prevents DoS attacks (50 file operations per minute)
 /// - **Path Validation (CWE-22)**: Resolves and validates full path before opening
 /// - **Command Injection Prevention (CWE-78)**: Uses `opener` crate with safe platform APIs
-/// - **Audit Logging (CWE-778)**: Logs file access with ID and resolved path
 pub async fn open_file_by_id_impl(
     container: &Container,
     file_id: String,
 ) -> Result<OpenFileResponseDto, AppError> {
-    let audit_logger = get_audit_logger();
-
     // SECURITY: Rate limiting to prevent DoS (CWE-770)
     container
         .security_context()
@@ -173,45 +130,9 @@ pub async fn open_file_by_id_impl(
 
     let use_case = container.open_file_by_id_use_case();
     let request = OpenFileByIdRequestDto {
-        document_id: file_id.clone(),
+        document_id: file_id,
     };
-    let result = use_case.execute(request).await;
-
-    match &result {
-        Ok(response) => {
-            let mut event = AuditEvent::new(
-                AuditAction::Custom("file_open".to_string()),
-                AuditResult::success(),
-            )
-            .with_resource_id(&file_id)
-            .with_metadata("operation", "open_file_by_id")
-            .with_metadata("path", response.content_path.clone())
-            .with_metadata("action", response.action.clone())
-            .with_metadata("file_type", format!("{:?}", response.file_type));
-
-            if let Some(title) = &response.title {
-                event = event.with_metadata("title", title);
-            }
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("file_open".to_string()),
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&file_id)
-            .with_metadata("operation", "open_file_by_id");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-    }
-
-    result
+    use_case.execute(request).await
 }
 
 /// Legacy Tauri shim - Opens a file by database ID in the system's default application or returns internal rendering info
@@ -279,66 +200,31 @@ pub async fn open_file_by_id(
 ///
 /// # Security
 ///
-/// - **Audit Logging (CWE-778)**: Logs all path access attempts with document ID
 /// - **TOCTOU Prevention**: Validates file exists on disk before returning path
 ///
 /// # Command Flow
 ///
 /// 1. Query database for file_path using document ID (from documents table)
 /// 2. Verify file exists on disk
-/// 3. Log audit event with document ID and resolved path
-/// 4. Return absolute path
+/// 3. Return absolute path
 pub async fn get_file_path_by_id(
     file_id: String,
     container: State<'_, Container>,
 ) -> Result<String, AppError> {
-    let audit_logger = get_audit_logger();
-
     let use_case = container.get_file_path_by_id_use_case();
     let request = GetFilePathByIdRequestDto {
-        document_id: file_id.clone(),
+        document_id: file_id,
     };
     let response = use_case.execute(request).await?;
 
-    let result = if response.exists {
+    if response.exists {
         Ok(response.path)
     } else {
         Err(AppError::NotFound(format!(
             "File not found on disk: {}",
             response.path
         )))
-    };
-
-    // Audit the outcome
-    match &result {
-        Ok(path) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("file_path_access".to_string()),
-                AuditResult::success(),
-            )
-            .with_resource_id(&file_id)
-            .with_metadata("operation", "get_file_path")
-            .with_metadata("path", path);
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("file_path_access".to_string()),
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&file_id)
-            .with_metadata("operation", "get_file_path");
-
-            if let Err(e) = audit_logger.log(event).await {
-                tracing::warn!("Failed to write audit log: {}", e);
-            }
-        }
     }
-
-    result
 }
 
 /// Retrieves all folders currently being watched for indexing
@@ -461,7 +347,6 @@ pub async fn get_indexing_activities(
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
 /// - File size limited to 10MB to prevent DoS (CWE-770)
-/// - Audit logging for security monitoring (CWE-778)
 ///
 /// # Arguments
 /// - `container`: Service container with security context
@@ -473,46 +358,9 @@ pub async fn read_file_content_impl(
     container: &Container,
     path: String,
 ) -> Result<String, AppError> {
-    let audit_logger = get_audit_logger();
-
     let use_case = container.read_file_content_use_case();
-    let request = ReadFileContentRequestDto { path: path.clone() };
+    let request = ReadFileContentRequestDto { path };
     let result = use_case.execute(request).await;
-
-    match &result {
-        Ok(dto) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("read_file_content".to_string()),
-                AuditResult::success(),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "read_file_content")
-            .with_metadata("file_size", dto.size_bytes.to_string().as_str())
-            .with_metadata("content_length", dto.content.len().to_string().as_str());
-
-            let logger = Arc::clone(&audit_logger);
-            container.core.background().spawn(async move {
-                if let Err(e) = logger.log(event).await {
-                    tracing::warn!("Failed to write audit log: {}", e);
-                }
-            });
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("read_file_content".to_string()),
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "read_file_content");
-
-            let logger = Arc::clone(&audit_logger);
-            container.core.background().spawn(async move {
-                if let Err(e) = logger.log(event).await {
-                    tracing::warn!("Failed to write audit log: {}", e);
-                }
-            });
-        }
-    }
 
     match result {
         Ok(dto) => Ok(dto.content),
@@ -529,7 +377,6 @@ pub async fn read_file_content_impl(
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
 /// - File size limited to prevent DoS (CWE-770)
-/// - Audit logging for security monitoring (CWE-778)
 ///
 /// # Arguments
 /// - `container`: Service container with security context
@@ -541,45 +388,9 @@ pub async fn read_file_bytes_impl(
     container: &Container,
     path: String,
 ) -> Result<Vec<u8>, AppError> {
-    let audit_logger = get_audit_logger();
-
     let use_case = container.read_file_bytes_use_case();
-    let request = ReadFileBytesRequestDto { path: path.clone() };
+    let request = ReadFileBytesRequestDto { path };
     let result = use_case.execute(request).await;
-
-    match &result {
-        Ok(bytes) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("read_file_bytes".to_string()),
-                AuditResult::success(),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "read_file_bytes")
-            .with_metadata("file_size", bytes.len().to_string().as_str());
-
-            let logger = Arc::clone(&audit_logger);
-            container.core.background().spawn(async move {
-                if let Err(e) = logger.log(event).await {
-                    tracing::warn!("Failed to write audit log: {}", e);
-                }
-            });
-        }
-        Err(e) => {
-            let event = AuditEvent::new(
-                AuditAction::Custom("read_file_bytes".to_string()),
-                AuditResult::failure(e.to_string()),
-            )
-            .with_resource_id(&path)
-            .with_metadata("operation", "read_file_bytes");
-
-            let logger = Arc::clone(&audit_logger);
-            container.core.background().spawn(async move {
-                if let Err(e) = logger.log(event).await {
-                    tracing::warn!("Failed to write audit log: {}", e);
-                }
-            });
-        }
-    }
 
     match result {
         Ok(bytes) => Ok(bytes),

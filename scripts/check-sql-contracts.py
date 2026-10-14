@@ -41,7 +41,7 @@ def main():
         " installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         " success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL)"
     )
-    # Some repositories initialize optional cache/audit tables on demand.
+    # Some repositories initialize optional cache tables on demand.
     # Use their actual DDL rather than a second hand-written schema.
     for row in rows:
         if row['sql'].strip().startswith('CREATE TABLE IF NOT EXISTS'):

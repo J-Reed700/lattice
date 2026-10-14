@@ -1,10 +1,8 @@
 //! Renaming a conversation.
 
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;
-use tracing::warn;
 
 /// Renames a conversation with a new title
 ///
@@ -63,7 +61,6 @@ use tracing::warn;
 ///
 /// - **Rate Limiting (CWE-770)**: Prevents rename spam
 /// - **Input Validation**: Title sanitized to prevent XSS attacks
-/// - **Audit Logging (CWE-778)**: Logs conversation title changes for compliance
 ///
 /// # Use Cases
 ///
@@ -99,15 +96,13 @@ use tracing::warn;
 /// 1. Applies rate limiting
 /// 2. Validates and sanitizes title input (XSS prevention)
 /// 3. Delegates to `ConversationService.rename_conversation()`
-/// 4. Logs audit event with new title
 ///
 /// # Command Flow
 ///
 /// 1. Rate limiting check
 /// 2. Input validation (sanitize title, prevent XSS)
 /// 3. Execute ConversationService.rename_conversation()
-/// 4. Log audit event (conversation renamed, new title)
-/// 5. Return success
+/// 4. Return success
 ///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn rename_conversation_impl(
@@ -136,17 +131,6 @@ pub async fn rename_conversation_impl(
     service
         .rename_conversation(&conversation_id, sanitized_title.clone())
         .await?;
-
-    // 4. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(&conversation_id)
-        .with_metadata("operation", "rename_conversation")
-        .with_metadata("new_title", &sanitized_title);
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
 
     Ok(())
 }

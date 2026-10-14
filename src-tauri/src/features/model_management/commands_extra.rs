@@ -21,10 +21,8 @@ use crate::features::model_management::use_cases::{
 use crate::features::model_management::use_cases::{
     ClearActiveChatModelUseCase, ClearActiveEmbeddingModelUseCase,
 };
-use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
-use crate::{audit_failure, audit_success};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -119,7 +117,6 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
         warn!(error = %e, "External model directory sync failed");
     }
 
-    let logger = get_audit_logger();
     let use_case = GetDownloadedModelsWithMetadataUseCase::new(repository);
 
     match use_case.execute().await {
@@ -129,29 +126,11 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
 
             info!(count = response.len(), "Retrieved downloaded models");
 
-            audit_success!(
-                logger,
-                AuditAction::ModelViewed,
-                "models",
-                "count" => response.len().to_string().as_str()
-            )
-            .await
-            .ok();
-
             serde_json::to_string(&response)
                 .map_err(|e| AppError::Serialization(format!("Failed to serialize models: {}", e)))
         }
         Err(e) => {
             error!(error = %e, "Failed to get downloaded models");
-
-            audit_failure!(
-                logger,
-                AuditAction::ModelViewed,
-                "models",
-                format!("Failed: {}", e)
-            )
-            .await
-            .ok();
 
             Err(e)
         }
@@ -208,34 +187,15 @@ pub async fn delete_downloaded_model_and_file_impl(
         ));
     }
 
-    let logger = get_audit_logger();
     let use_case = DeleteDownloadedModelUseCase::new(repository);
 
     match use_case.execute(model_id, delete_file).await {
         Ok(()) => {
             info!(id = %model_id, file_deleted = delete_file, "Downloaded model deleted");
-            audit_success!(
-                logger,
-                AuditAction::ModelDeleted,
-                "downloaded_model",
-                "id" => model_id,
-                "file_deleted" => delete_file.to_string().as_str()
-            )
-            .await
-            .ok();
             Ok(())
         }
         Err(e) => {
             error!(error = %e, id = %model_id, "Failed to delete downloaded model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelDeleted,
-                "downloaded_model",
-                format!("Failed: {}", e),
-                "id" => model_id
-            )
-            .await
-            .ok();
             Err(e)
         }
     }

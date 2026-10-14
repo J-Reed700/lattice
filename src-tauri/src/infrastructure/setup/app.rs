@@ -203,12 +203,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let container = async move {
         // Sequential initialization with clear error propagation
         let conn = initialize_database_layer(db_path).await?;
-        crate::infrastructure::audit::sinks::sqlite::configure_sqlite_audit_sink(
-            &crate::infrastructure::audit::get_audit_logger(),
-            conn.pool().clone(),
-        )
-        .await
-        .map_err(|error| error.with_context("Failed to initialize local audit persistence"))?;
         let security_context = initialize_security_layer();
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
@@ -257,27 +251,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     }
     .await
     .map_err(StartupFailure::initialization)?;
-
-    // Age retention is enforced at startup and daily while the app is open;
-    // the SQLite insert trigger independently enforces the hard row cap.
-    let audit_pool = container.db_pool().clone();
-    let audit_shutdown = shutdown_token.clone();
-    background.spawn(async move {
-        let mut prune_tick = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 60 * 60),
-            std::time::Duration::from_secs(24 * 60 * 60),
-        );
-        loop {
-            tokio::select! {
-                _ = audit_shutdown.cancelled() => break,
-                _ = prune_tick.tick() => {
-                    if let Err(error) = crate::infrastructure::audit::sinks::sqlite::SqliteAuditSink::prune_expired_from_pool(&audit_pool).await {
-                        tracing::warn!(%error, "Failed to prune expired local audit events");
-                    }
-                }
-            }
-        }
-    });
 
     if let Err(e) = container
         .system

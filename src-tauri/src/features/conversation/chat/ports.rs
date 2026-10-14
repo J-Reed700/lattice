@@ -350,8 +350,8 @@ pub trait ChatPolicy: Send + Sync {
     /// The rate limit a user-initiated delete spends.
     async fn check_delete_rate_limit(&self, name: &str) -> Result<()>;
     /// Remove a conversation and everything it owns — its in-flight turn, its
-    /// attachments, its messages — with an audit line, without spending the
-    /// user delete's rate limit.
+    /// attachments, its messages — without spending the user delete's rate
+    /// limit.
     async fn delete_conversation_unmetered(&self, conversation_id: &str) -> Result<()>;
 }
 

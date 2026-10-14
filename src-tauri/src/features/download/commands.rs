@@ -189,8 +189,6 @@ async fn start_model_download_impl(
     state: &DownloadCommandState,
     request: StartDownloadRequest,
 ) -> Result<String> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .start_rate_limiter
         .check_rate_limit("start_download")
@@ -215,30 +213,10 @@ async fn start_model_download_impl(
         Ok(id) => {
             info!(id = %id, url = %request.url, "Download started");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadStarted,
-                "download",
-                "id" => id.as_str(),
-                "url" => request.url.as_str(),
-                "destination" => request.destination.as_str()
-            )
-            .await
-            .ok();
-
             Ok(id)
         }
         Err(e) => {
             error!(url = %request.url, error = %e, "Failed to start download");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadStarted,
-                "download",
-                format!("Failed to start download: {}", e)
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }
@@ -253,8 +231,6 @@ pub async fn start_model_download(
 }
 
 async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -271,29 +247,10 @@ async fn pause_download_impl(state: &DownloadCommandState, id: String) -> Result
         Ok(_) => {
             info!(id = %id, "Download paused");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadPaused,
-                "download",
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Ok(())
         }
         Err(e) => {
             error!(id = %id, error = %e, "Failed to pause download");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadPaused,
-                "download",
-                format!("Failed to pause download: {}", e),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }
@@ -305,8 +262,6 @@ pub async fn pause_download(state: State<'_, DownloadCommandState>, id: String) 
 }
 
 async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -323,29 +278,10 @@ async fn resume_download_impl(state: &DownloadCommandState, id: String) -> Resul
         Ok(_) => {
             info!(id = %id, "Download resumed");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadResumed,
-                "download",
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Ok(())
         }
         Err(e) => {
             error!(id = %id, error = %e, "Failed to resume download");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadResumed,
-                "download",
-                format!("Failed to resume download: {}", e),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }
@@ -357,8 +293,6 @@ pub async fn resume_download(state: State<'_, DownloadCommandState>, id: String)
 }
 
 async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Result<()> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -375,29 +309,10 @@ async fn cancel_download_impl(state: &DownloadCommandState, id: String) -> Resul
         Ok(_) => {
             info!(id = %id, "Download cancelled");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadCancelled,
-                "download",
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Ok(())
         }
         Err(e) => {
             error!(id = %id, error = %e, "Failed to cancel download");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadCancelled,
-                "download",
-                format!("Failed to cancel download: {}", e),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }
@@ -412,8 +327,6 @@ pub async fn get_download_status(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<Option<DownloadStatusResponse>> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -429,19 +342,7 @@ pub async fn get_download_status(
     match state.manager.get_download_status(&id).await {
         Ok(Some(session)) => Ok(Some(session.into())),
         Ok(None) => Ok(None),
-        Err(e) => {
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DocumentAccessed,
-                "download",
-                format!("Failed to query download: {}", e),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
-            Err(AppError::from(e))
-        }
+        Err(e) => Err(AppError::from(e)),
     }
 }
 
@@ -462,8 +363,6 @@ pub async fn list_downloads(
 
 /// Retry a failed download
 pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
-    let logger = crate::audit::get_audit_logger();
-
     // Rate limiting
     state
         .query_rate_limiter
@@ -482,15 +381,6 @@ pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) 
         Ok(_) => {
             info!(id = %id, "Download retried");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadRetried,
-                "download",
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Ok(())
         }
         Err(e) => {
@@ -504,16 +394,6 @@ pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) 
             };
             error!(id = %id, error = %error, "Failed to retry download");
 
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadRetried,
-                "download",
-                format!("Failed to retry download: {}", error),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Err(error)
         }
     }
@@ -521,8 +401,6 @@ pub async fn retry_download(state: State<'_, DownloadCommandState>, id: String) 
 
 /// Remove a download (works for any state)
 pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String) -> Result<()> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -539,29 +417,10 @@ pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String)
         Ok(_) => {
             info!(id = %id, "Download removed");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadDeleted,
-                "download",
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
-
             Ok(())
         }
         Err(e) => {
             error!(id = %id, error = %e, "Failed to remove download");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadDeleted,
-                "download",
-                format!("Failed to remove download: {}", e),
-                "id" => id.as_str()
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }
@@ -570,8 +429,6 @@ pub async fn remove_download(state: State<'_, DownloadCommandState>, id: String)
 
 /// Clear all completed downloads
 pub async fn clear_completed_downloads(state: State<'_, DownloadCommandState>) -> Result<usize> {
-    let logger = crate::audit::get_audit_logger();
-
     state
         .query_rate_limiter
         .check_rate_limit("query")
@@ -582,28 +439,10 @@ pub async fn clear_completed_downloads(state: State<'_, DownloadCommandState>) -
         Ok(count) => {
             info!(count = %count, "Completed downloads cleared");
 
-            crate::audit_success!(
-                logger,
-                crate::audit::AuditAction::DownloadsCleared,
-                "downloads",
-                "count" => count.to_string().as_str()
-            )
-            .await
-            .ok();
-
             Ok(count)
         }
         Err(e) => {
             error!(error = %e, "Failed to clear completed downloads");
-
-            crate::audit_failure!(
-                logger,
-                crate::audit::AuditAction::DownloadsCleared,
-                "downloads",
-                format!("Failed to clear downloads: {}", e)
-            )
-            .await
-            .ok();
 
             Err(AppError::from(e))
         }

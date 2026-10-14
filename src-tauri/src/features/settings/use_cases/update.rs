@@ -2,7 +2,6 @@ use crate::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
 use crate::features::settings::dto::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::infrastructure::security::InputValidator;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
@@ -36,10 +35,6 @@ impl UpdateSettingsUseCase {
         validate_security_constraints(&request)?;
 
         let previous = self.repository.get_all().await.ok();
-        let previous_ollama_url = previous
-            .as_ref()
-            .map(|s| s.llm.ollama_url.clone())
-            .unwrap_or_default();
         let previous_vault_enabled = previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
 
         // Pre-flight vault writability on enable flip.
@@ -67,18 +62,6 @@ impl UpdateSettingsUseCase {
         // `repository.update()` already persisted, under its write lock.
         // Saving again here re-ran the whole write outside that lock, which
         // widened the window for a concurrent update to be lost.
-
-        if updated_settings.llm.ollama_url != previous_ollama_url {
-            let event = AuditEvent::new(AuditAction::ConfigChanged, AuditResult::success())
-                .with_resource_id("settings.llm.ollama_url")
-                .with_metadata("operation", "update_settings")
-                .with_metadata("ollama_url", &updated_settings.llm.ollama_url)
-                .with_metadata("previous_ollama_url", &previous_ollama_url);
-
-            if let Err(e) = get_audit_logger().log(event).await {
-                tracing::warn!("Failed to write audit log for settings update: {}", e);
-            }
-        }
 
         // Side effects after persist. Best-effort — failures don't roll
         // back already-committed settings.

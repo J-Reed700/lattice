@@ -10,7 +10,7 @@
 //! - **Context Window Management**: one budget from the context assembler for
 //!   the prompt's every pool and the generation reservation
 //! - **Auto-titling**: Generates conversation titles from first message
-//! - **Security**: Rate limiting, input validation, audit logging
+//! - **Security**: Rate limiting, input validation
 //!
 //! # Usage
 //!

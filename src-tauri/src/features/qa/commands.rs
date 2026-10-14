@@ -37,16 +37,5 @@ pub async fn check_llm_health(
         backend: "rust-ddd".to_string(),
     };
 
-    // 4. Audit logging
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::QuestionAnswered,
-        "llm_health_check",
-        "available" => if is_ready { "true" } else { "false" }
-    )
-    .await
-    .ok();
-
     Ok(health_response)
 }

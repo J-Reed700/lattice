@@ -14,7 +14,6 @@
 //! - **Update Source**: GitHub releases (via API)
 //! - **Check Frequency**: User-initiated or periodic background checks
 //! - **Update Mechanism**: User downloads and installs manually
-//! - **Audit Logging**: All update checks logged for security compliance
 //!
 //! # Known Limitations
 //!
@@ -36,8 +35,7 @@ use tauri::State;
 /// Checks for available application updates
 ///
 /// Queries GitHub releases API to determine if a newer version is available. Returns
-/// update information including version, download URL, and release notes. Audit logged
-/// for security compliance.
+/// update information including version, download URL, and release notes.
 ///
 /// # Arguments
 ///
@@ -99,7 +97,6 @@ use tauri::State;
 ///
 /// # Security
 ///
-/// **Audit Logging (CWE-778)**: All update checks logged with availability status
 ///
 /// **⚠️ Rate Limiting Disabled**: Currently commented out (TODO)
 /// - **Risk**: No protection against update check spam
@@ -137,17 +134,6 @@ pub async fn check_for_updates(container: State<'_, Container>) -> Result<Update
 
     // 3. Execute use case
     let update_info = use_case.execute().await?;
-
-    // 4. Audit logging (CWE-778 compliance)
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::UpdateChecked,
-        "updates",
-        "available" => update_info.available.to_string()
-    )
-    .await
-    .ok();
 
     Ok(update_info)
 }
@@ -255,16 +241,6 @@ pub async fn check_for_updates_impl(container: &Container) -> Result<UpdateInfoD
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
     let use_case = container.check_for_updates_use_case();
     let update_info = use_case.execute().await?;
-
-    let logger = crate::audit::get_audit_logger();
-    crate::audit_success!(
-        logger,
-        crate::audit::AuditAction::UpdateChecked,
-        "updates",
-        "available" => update_info.available.to_string()
-    )
-    .await
-    .ok();
 
     Ok(update_info)
 }

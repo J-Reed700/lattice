@@ -1404,7 +1404,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks via excessive searches
  * - **Input Validation**: Sanitizes query to prevent injection attacks
- * - **Audit Logging (CWE-778)**: Logs all searches with result count and cache status
  * - **Access Tracking**: Records document access asynchronously for usage analytics
  *
  * # Search Modes
@@ -1431,7 +1430,6 @@ async getModelCatalogStats() : Promise<Result<ModelCatalogStats, AppError>> {
  * 7. Enrich results with document metadata and snippets
  * 8. Store results in cache for future requests
  * 9. Track document access asynchronously
- * 10. Log audit event with query and result count
  */
 async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchResponse, ApiError>> {
     try {
@@ -1479,7 +1477,6 @@ async searchDocuments(options: SearchOptions) : Promise<Result<EnhancedSearchRes
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Performance
  *
@@ -1563,7 +1560,6 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * # Security
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
- * - **Audit Logging (CWE-778)**: Logs similarity searches with chunk ID
  *
  * # Algorithm
  *
@@ -1591,8 +1587,7 @@ async hybridSearch(args: HybridSearchArgs) : Promise<Result<SearchResultDto[], A
  * 6. Filter out source chunk
  * 7. Take top `limit` results
  * 8. Enrich with metadata
- * 9. Log audit event with "similar:{chunk_id}" query
- * 10. Return similar documents
+ * 9. Return similar documents
  */
 async findSimilar(chunkId: string, limit: number | null) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1672,7 +1667,6 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  *
  * - **Rate Limiting (CWE-770)**: Prevents DoS attacks
  * - **Input Validation**: Sanitizes query, validates recency_weight ∈ [0, 1], validates max_age_days > 0
- * - **Audit Logging (CWE-778)**: Logs searches with result count
  *
  * # Recency Scoring
  *
@@ -1710,8 +1704,7 @@ async findSimilarDocuments(documentId: string, limit: number | null) : Promise<R
  * 6. Run the library search orchestrator
  * 7. Enrich results with metadata
  * 8. Boost recently updated documents
- * 9. Log audit event
- * 10. Return time-boosted results
+ * 9. Return time-boosted results
  */
 async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchResultDto[], AppError>> {
     try {
@@ -1744,7 +1737,6 @@ async searchWithRecency(options: RecencySearchOptions) : Promise<Result<SearchRe
  *
  * - Rate limiting applied once for the batch
  * - Each query validated individually
- * - Audit logged as batch operation
  *
  * ## Example
  *
