@@ -1,6 +1,6 @@
 //! Owns practical runtime execution and filesystem cleanup outside persistence.
 use crate::features::learning::{
-    embedded_runtime,
+    embedded_runtime::BuiltinRuntimes,
     lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus},
     practical_dto::*,
     practical_repository::{LearningPracticalRepository, PreparedExecution, RunCleanup},
@@ -69,18 +69,22 @@ pub async fn start_run(
     repo: &LearningPracticalRepository,
     runs: &PracticalRunRegistry,
     background: &BackgroundTasks,
+    runtimes: &BuiltinRuntimes,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
 ) -> Result<LearningPracticalRunDto> {
-    let (repo, runs, request, hash) = (
+    let (repo, runs, runtimes, request, hash) = (
         repo.clone(),
         runs.clone(),
+        runtimes.clone(),
         request.clone(),
         payload_hash.to_owned(),
     );
     let shutdown = background.token();
     let task = background
-        .spawn(async move { execute_run(&repo, &runs, &request, &hash, &shutdown).await })
+        .spawn(
+            async move { execute_run(&repo, &runs, &runtimes, &request, &hash, &shutdown).await },
+        )
         .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
     task.await
         .map_err(|error| AppError::InternalError(format!("Practical runner stopped: {error}")))?
@@ -126,6 +130,7 @@ async fn cleanup_orphan(run: RunCleanup, active: bool) -> Result<()> {
 async fn execute_run(
     repo: &LearningPracticalRepository,
     runs: &PracticalRunRegistry,
+    runtimes: &BuiltinRuntimes,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
     shutdown: &CancellationToken,
@@ -140,7 +145,7 @@ async fn execute_run(
             },
             PreparedExecution::Builtin {spec, version} if version != spec.runtime.version() =>
                 Some("The activity's built-in runtime version is no longer available. Generate a new activity to use the current runtime.".into()),
-            PreparedExecution::Builtin {spec, ..} => embedded_runtime::capabilities().into_iter()
+            PreparedExecution::Builtin {spec, ..} => runtimes.capabilities().into_iter()
                 .find(|capability| capability.id == spec.runtime && !capability.available)
                 .map(|capability| capability.reason.unwrap_or_else(|| "The built-in runtime is unavailable.".into())),
         };
@@ -168,9 +173,7 @@ async fn execute_run(
     let mut ownership_marker_created = false;
     let outcome = async {
         match &prepared.execution {
-            PreparedExecution::Builtin { spec, .. } => {
-                embedded_runtime::execute_builtin_lab(spec.clone(), token).await
-            }
+            PreparedExecution::Builtin { spec, .. } => runtimes.execute(spec.clone(), token).await,
             PreparedExecution::Container { engine, spec } => {
                 if let Some(parent) = root.parent() {
                     std::fs::create_dir_all(parent)?;

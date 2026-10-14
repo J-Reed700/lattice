@@ -156,6 +156,12 @@ impl AIModule {
         &self.conversation.handoffs_in_flight
     }
 
+    pub(crate) fn planner_health(
+        &self,
+    ) -> &Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        &self.conversation.planner_health
+    }
+
     pub fn conversation_memory(
         &self,
     ) -> &Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {

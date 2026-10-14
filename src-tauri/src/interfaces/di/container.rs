@@ -104,6 +104,9 @@ pub struct Container {
     /// Shared by writer + watcher for loop suppression.
     pub(crate) vault_write_suppression: crate::features::vault::watcher::WriteSuppressionRegistry,
 
+    /// Shared by the watcher and the rescan command, so full rescans never overlap.
+    pub(crate) vault_rescan_lock: crate::features::vault::watcher::RescanLock,
+
     /// Settings side-effects port (audit P0-3 fix). Built post-AI-module
     /// so it has access to the LLM cache + router LLM cache + function
     /// executor. Injected into freshly-constructed
@@ -407,6 +410,7 @@ impl Container {
             embedding_runtime,
             vault_writer,
             vault_write_suppression,
+            vault_rescan_lock: Default::default(),
             settings_side_effects,
             jobs,
             web_page_snapshots,
@@ -460,6 +464,7 @@ impl Container {
             handle.clone(),
             self.vault_write_suppression.clone(),
             Arc::clone(self.core.background()),
+            self.vault_rescan_lock.clone(),
         );
 
         let events = handle.clone();

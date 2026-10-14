@@ -9,6 +9,7 @@ use crate::application::services::claim_verification::{
 #[cfg(test)]
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::shared::error::{AppError, Result};
 use futures::{FutureExt, StreamExt, TryStreamExt};
@@ -395,7 +396,14 @@ async fn verify(
     sources: &[LearningSourceDto],
 ) -> Result<LessonVerificationReport> {
     let references = ReferenceCollection::lexical(sources)?;
-    verify_with_references(llm, candidate, &references, &mut ClaimChecks::default()).await
+    verify_with_references(
+        llm,
+        &BuiltinRuntimes::for_tests(),
+        candidate,
+        &references,
+        &mut ClaimChecks::default(),
+    )
+    .await
 }
 
 /// The publication path requires both source entailment and an independent
@@ -503,6 +511,7 @@ pub(in crate::features::learning) async fn live_coverage_fixture(
 
 async fn verify_with_references(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     candidate: &Value,
     references: &ReferenceCollection<'_>,
     checks: &mut ClaimChecks,
@@ -581,7 +590,7 @@ async fn verify_with_references(
         crate::features::learning::lesson_progress::Phase::Examples,
         "Checking executable examples",
     );
-    let executions = execution::observe(candidate).await?;
+    let executions = execution::observe(runtimes, candidate).await?;
     check_evidence(
         llm, candidate, references, inventory, coverage, executions, checks,
     )

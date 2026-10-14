@@ -451,11 +451,13 @@ mod review_resume_tests;
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
     let mut model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let lesson = candidate(GOOD);
     let mut sources = vec![source()];
     let mut checks = ClaimChecks::default();
     let first = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -469,6 +471,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     sources.push(unrelated);
     let expanded = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -484,6 +487,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = true;
     let failed = verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -498,6 +502,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = false;
     verify_with_references(
         &model,
+        &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -511,6 +516,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 
     let edited = verify_with_references(
         &model,
+        &runtimes,
         &candidate(BAD),
         &ReferenceCollection::lexical(&sources)?,
         &mut checks,
@@ -524,6 +530,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 #[tokio::test]
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
     let model = Model::new();
+    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut lesson = candidate(GOOD);
@@ -532,11 +539,13 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         .unwrap()
         .push(candidate(BAD)["blocks"][0].clone());
     let mut checks = ClaimChecks::default();
-    let first = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let first =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 2);
     assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
     lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired = verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    let repaired =
+        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert!(repaired.issues.is_empty());
     assert_eq!(
         *model.judge_calls.lock().unwrap(),
@@ -549,7 +558,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         "{} Additional wording.",
         lesson["blocks"][0]["body"].as_str().unwrap()
     ));
-    verify_with_references(&model, &lesson, &references, &mut checks).await?;
+    verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 3);
     Ok(())
 }
@@ -1621,13 +1630,15 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
 
 #[tokio::test]
 async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let good = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nconsole.log(2 + 3);\n```"}]});
-    let observed = execution::observe(&good).await?;
+    let observed = execution::observe(&runtimes, &good).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains('5'));
     let bad = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nthrow new Error('broken example');\n```"}]});
-    assert!(!execution::observe(&bad).await?[0].passed());
+    assert!(!execution::observe(&runtimes, &bad).await?[0].passed());
     assert!(execution::observe(
+        &runtimes,
         &json!({"blocks":[{"kind":"worked_example","body":"```python\nprint(1)"}]})
     )
     .await
@@ -1637,6 +1648,7 @@ async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run()
 
 #[tokio::test]
 async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let model=ScriptedModel {outputs:Mutex::new(vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
     let tree = "project/\n└── main.rs\n";
@@ -1651,17 +1663,18 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
             "Directory tree:\n```text\n{tree}```\nRunnable example:\n```javascript\n{code}```\n"
         )
     );
-    let observed = execution::observe(&corrected).await?;
+    let observed = execution::observe(&runtimes, &corrected).await?;
     assert_eq!(observed.len(), 1);
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains(" a  b "));
     let titled = json!({"blocks":[{"kind":"worked_example","body":"```javascript title=example.js\nconsole.log(42);\n```"}]});
-    assert!(execution::observe(&titled).await?[0].passed());
+    assert!(execution::observe(&runtimes, &titled).await?[0].passed());
     Ok(())
 }
 
 #[tokio::test]
 async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
+    let runtimes = BuiltinRuntimes::for_tests();
     use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
     let lesson = json!({"blocks":[{"kind":"worked_example","body":"```\nconsole.log(42);\n```"}],"questions":[]});
     for response in [
@@ -1677,7 +1690,7 @@ async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
             .await
             .is_err());
     }
-    assert!(execution::observe(&lesson).await.is_err());
+    assert!(execution::observe(&runtimes, &lesson).await.is_err());
 }
 
 struct TypedModel {
@@ -2103,11 +2116,12 @@ pub(crate) async fn install_source(
 
 #[tokio::test]
 async fn unsupported_languages_are_disclosed_and_csv_fixture_is_test_only() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
     let rust = json!({"blocks":[{"kind":"worked_example","body":"```rust\nfn main() {}\n```"}]});
-    assert!(execution::observe(&rust).await?.is_empty());
+    assert!(execution::observe(&runtimes, &rust).await?.is_empty());
     assert_eq!(execution::unexecuted_languages(&rust), vec!["rust"]);
     let csv = json!({"blocks":[{"kind":"worked_example","body":format!("```python\n{}\n```", include_str!("csv_reference.py"))}]});
-    let observed = execution::observe(&csv).await?;
+    let observed = execution::observe(&runtimes, &csv).await?;
     assert!(observed[0].passed());
     assert!(observed[0].evidence().contains("header_whitespace"));
     Ok(())

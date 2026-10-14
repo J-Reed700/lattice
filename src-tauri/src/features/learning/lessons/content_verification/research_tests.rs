@@ -534,6 +534,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     };
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let (_, report) = run(
         pool,
         program.summary.id,
@@ -544,6 +545,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
         })),
         super::super::verify_and_repair_with_references(
             &llm,
+            &runtimes,
             "{}",
             &json!({"type":"object"}),
             candidate.to_string(),

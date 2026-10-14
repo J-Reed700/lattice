@@ -821,6 +821,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     let source_pool = pool.clone();
     let web_dir = tempfile::tempdir()?;
     let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),

@@ -13,6 +13,7 @@ use crate::features::learning::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningQuestionDto,
     PreparedLearningLesson,
 };
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::lessons::structured_call::{
     complete_reasoned_json, CallKind, ReasonFirst,
 };
@@ -135,17 +136,20 @@ fn lesson_prompt(
 /// assessment kind; correct indexes and explanations remain internal keys.
 pub async fn prepare_lesson(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
 ) -> Result<PreparedLearningLesson> {
     let references = crate::features::learning::reference_collection::ReferenceCollection::lexical(
         &program.sources,
     )?;
-    prepare_lesson_with_references(llm, program, lesson, &references).await
+    prepare_lesson_with_references(llm, runtimes, program, lesson, &references).await
 }
 
+/// `runtimes` runs the lesson's worked examples while it is verified.
 pub async fn prepare_lesson_with_references(
     llm: &dyn LLMPort,
+    runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
     references: &crate::features::learning::reference_collection::ReferenceCollection<'_>,
@@ -325,6 +329,7 @@ pub async fn prepare_lesson_with_references(
     let (raw, report) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
+            runtimes,
             &prompt,
             &lesson_schema(sources.len()),
             raw,

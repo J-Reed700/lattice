@@ -324,6 +324,9 @@ pub trait ChatRetrieval: Send + Sync {
     async fn summary_search(
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>>;
+    /// How much prompt the corpus planner can take in time, learned across
+    /// every turn this runtime runs — and never shared with a test's runtime.
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth>;
 }
 
 #[async_trait]

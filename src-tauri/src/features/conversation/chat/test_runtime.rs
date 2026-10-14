@@ -43,6 +43,9 @@ pub(super) struct FakeRuntime {
     /// One background scope per test, so work a turn leaves running stays in
     /// its own test.
     pub(super) background: Arc<crate::shared::runtime::background::BackgroundTasks>,
+    /// One planner health per test, so a planner timeout in one test never
+    /// shrinks another's prompt.
+    pub(super) planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
     /// The `answer_thinking` setting the turn reads.
     pub(super) answer_thinking: bool,
 }
@@ -60,6 +63,7 @@ impl Default for FakeRuntime {
             ),
             research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
             background: Arc::default(),
+            planner_health: Arc::default(),
             answer_thinking: false,
         }
     }
@@ -176,6 +180,9 @@ impl ChatRetrieval for FakeRuntime {
         &self,
     ) -> Option<Arc<dyn crate::features::summaries::search::SummarySearchPort>> {
         None
+    }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(&self.planner_health)
     }
 }
 

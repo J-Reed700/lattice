@@ -23,6 +23,7 @@ mod planner;
 mod prompt;
 mod shortlist;
 
+pub(crate) use health::PlannerHealth;
 pub(super) use health::PlannerTurn;
 pub(in crate::features::conversation::chat) use library_search::fused_search;
 use library_search::section_identifiers;

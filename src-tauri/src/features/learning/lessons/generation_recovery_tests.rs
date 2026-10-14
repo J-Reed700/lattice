@@ -42,6 +42,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         let pool = crate::features::learning::tests::pool().await.unwrap();
         let (repo, job) = repository_tests::queued_job(&pool).await;
         let worker = LessonGenerationWorker {
+            runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
             pool: pool.clone(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })

@@ -122,6 +122,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let repository = LearningPracticalRepository::new(pool.clone());
     let runs = crate::features::learning::practical_runs::PracticalRunRegistry::new();
     let background = crate::shared::runtime::background::BackgroundTasks::default();
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     let request = GenerateLearningPracticalActivityRequestDto {
         operation_id: id(),
         activity_id: id(),
@@ -147,10 +148,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let workspace = repository
         .save_generated_activity(&request, &activity, "fixture-model", "builtin-create")
         .await?
-        .with_capabilities(
-            crate::features::learning::embedded_runtime::capabilities(),
-            Vec::new(),
-        );
+        .with_capabilities(runtimes.capabilities(), Vec::new());
     let saved = workspace
         .activities
         .first()
@@ -183,6 +181,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
             &repository,
             &runs,
             &background,
+            &runtimes,
             &run,
             "builtin-wrong"
         )
@@ -202,6 +201,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         &repository,
         &runs,
         &background,
+        &runtimes,
         &run,
         "builtin-right",
     )
@@ -216,6 +216,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
             &repository,
             &runs,
             &background,
+            &runtimes,
             &run,
             "builtin-right"
         )
@@ -226,10 +227,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let reopened = LearningPracticalRepository::new(pool.clone())
         .workspace(&program_id)
         .await?
-        .with_capabilities(
-            crate::features::learning::embedded_runtime::capabilities(),
-            Vec::new(),
-        );
+        .with_capabilities(runtimes.capabilities(), Vec::new());
     assert_eq!(reopened.runs.len(), 2);
     run.operation_id = id();
     run.run_id = id();
@@ -241,6 +239,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         &repository,
         &runs,
         &background,
+        &runtimes,
         &run,
         "replace-checks"
     )
@@ -258,10 +257,10 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     // a different embedded interpreter. Saved attempts remain readable.
     sqlx::query("UPDATE learning_practical_activities SET builtin_runtime_version='previous-runtime-v1' WHERE id=?")
         .bind(&request.activity_id).execute(&pool).await.map_err(db)?;
-    let older = repository.workspace(&program_id).await?.with_capabilities(
-        crate::features::learning::embedded_runtime::capabilities(),
-        Vec::new(),
-    );
+    let older = repository
+        .workspace(&program_id)
+        .await?
+        .with_capabilities(runtimes.capabilities(), Vec::new());
     assert!(!older.activities[0].runtime_available);
     assert_eq!(older.runs.len(), 2);
     run.operation_id = id();
@@ -272,6 +271,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
             &repository,
             &runs,
             &background,
+            &runtimes,
             &run,
             "old-runtime"
         )
@@ -368,11 +368,12 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
     let programs = LearningRepository::new(pool.clone());
     let repository = LearningPracticalRepository::new(pool.clone());
     let (request, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
 
-    let workspace = repository.workspace(&program_id).await?.with_capabilities(
-        crate::features::learning::embedded_runtime::capabilities(),
-        Vec::new(),
-    );
+    let workspace = repository
+        .workspace(&program_id)
+        .await?
+        .with_capabilities(runtimes.capabilities(), Vec::new());
     let saved = workspace
         .activities
         .iter()
@@ -395,10 +396,7 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
     let replay = repository
         .save_generated_activity(&request, &generated(), "fixture-model", "activity-payload")
         .await?
-        .with_capabilities(
-            crate::features::learning::embedded_runtime::capabilities(),
-            Vec::new(),
-        );
+        .with_capabilities(runtimes.capabilities(), Vec::new());
     assert_eq!(replay.activities.len(), 1);
     assert!(repository
         .save_generated_activity(&request, &generated(), "fixture-model", "different-payload")

@@ -357,6 +357,7 @@ async fn run_and_confirm(
     let live = model.clone();
     let web_dir = tempfile::tempdir()?;
     let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = live.clone();

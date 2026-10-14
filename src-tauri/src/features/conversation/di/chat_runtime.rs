@@ -151,6 +151,9 @@ impl ChatRetrieval for Container {
             .await
             .map(|search| search as Arc<dyn crate::features::summaries::search::SummarySearchPort>)
     }
+    fn planner_health(&self) -> Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {
+        Arc::clone(self.ai.planner_health())
+    }
 }
 
 #[async_trait]
