@@ -47,28 +47,30 @@ fn dominant_result_terms(
 /// returns whatever the outcome holds so far, and the caller — which re-checks
 /// the flag the moment this returns — turns that into the cancellation error
 /// without ever reading it.
-// This orchestration boundary exposes the complete per-turn retrieval configuration.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    request_id: &str,
-    validated_message: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    router_settings: &RouterSettingsDto,
+    turn: ChatTurn<'_>,
+    settings: &SettingsDto,
     router_decision: &RouterDecisionOutcome,
     search_flags: SearchFlags,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
-    highlight_terms: &[String],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
-    tool_output_settings: &ToolOutputSettingsDto,
-    search_settings: &SearchSettingsDto,
-    focus: &crate::features::conversation::chat::focus::FocusScope,
-    recorder: &TurnRecorder,
 ) -> RetrievalPipelineOutcome {
     let retrieval_start = Instant::now();
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        request_id,
+        message: validated_message,
+        llm,
+        highlight_terms,
+        recorder,
+        ..
+    } = turn;
+    let router_settings = &settings.llm.router;
+    let tool_output_settings = &settings.llm.tool_output;
+    let search_settings = &settings.search;
 
     let mut outcome = RetrievalPipelineOutcome {
         short_circuit_response: None,
@@ -190,18 +192,12 @@ pub(super) async fn run_retrieval_pipeline(
         let kb_search_limit = derive_kb_search_limit(tool_output_settings, tuning);
         let kb_outcome = run_kb_retrieval(
             container,
-            conv_service,
-            conversation_id,
-            validated_message,
-            llm,
+            turn,
             search_flags,
-            highlight_terms,
             kb_search_limit,
             search_settings.enable_reranking,
             search_settings.similarity_threshold,
             tuning,
-            focus,
-            recorder,
             &turn_cancellation.turn_token(request_id),
         )
         .await;

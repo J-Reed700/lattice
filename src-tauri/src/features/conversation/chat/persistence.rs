@@ -4,7 +4,7 @@ use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-use super::{ChatResponse, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
+use super::{ChatResponse, ChatTurn, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
 
 #[derive(Debug, Clone)]
 struct MemoryToIndex {
@@ -13,7 +13,6 @@ struct MemoryToIndex {
     content: String,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn persist_user_message_pending(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
@@ -57,24 +56,42 @@ pub(super) async fn persist_user_message_pending(
     Ok((user_msg.id, message_tokens))
 }
 
-// Turn finalization deliberately keeps its persisted inputs explicit at this boundary.
-#[allow(clippy::too_many_arguments)]
+/// The answer as it is saved: its text, the sources it cites, and what the
+/// message's metadata carries beside them.
+pub(super) struct FinishedAnswer {
+    pub(super) response: String,
+    pub(super) sources: Vec<SourceDto>,
+    pub(super) verification: Option<serde_json::Value>,
+    pub(super) memory_usage: Option<serde_json::Value>,
+    pub(super) retrieval_trace: Option<RetrievalTraceDto>,
+    pub(super) turn_record: Option<TurnRecordDto>,
+}
+
+/// Save `answer` against the question saved as `user_message_id`, and return
+/// the turn's response with the answer's message id.
 pub(super) async fn finalize_successful_turn(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
+    turn: ChatTurn<'_>,
     user_message_id: &str,
-    user_message: &str,
-    assistant_response: String,
-    context_len: usize,
-    mut sources: Vec<SourceDto>,
-    verification_metadata: Option<serde_json::Value>,
-    memory_usage: Option<serde_json::Value>,
-    retrieval_trace: Option<RetrievalTraceDto>,
-    turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    context_len: usize,
+    answer: FinishedAnswer,
 ) -> Result<(ChatResponse, String)> {
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        message: user_message,
+        llm,
+        ..
+    } = turn;
+    let FinishedAnswer {
+        response: assistant_response,
+        mut sources,
+        verification: verification_metadata,
+        memory_usage,
+        retrieval_trace,
+        turn_record,
+    } = answer;
     super::source_snapshots::attach_cited_web_snapshots(
         container,
         conversation_id,

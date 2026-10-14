@@ -20,7 +20,7 @@ use crate::application::ports::{LLMPort, SettingsSideEffectsPort};
 use crate::features::embedding::runtime::EmbeddingRuntime;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::function_calling::executor::FunctionExecutor;
+use crate::features::function_calling::executor::{FunctionExecutor, FunctionExecutorServices};
 use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools,
 };
@@ -281,18 +281,20 @@ impl Container {
         let web_service = Arc::new(WebService::new(core.data_dir())?);
 
         let function_executor = Arc::new(FunctionExecutor::new_with_custom_tools(
-            function_registry.clone(),
-            embedding_service,
-            search.search_service().clone(),
-            search.bm25_search_service().clone(),
-            search.hybrid_search_use_case().clone(),
-            search.document_repo().clone(),
-            indexing.chunk_repository().clone(),
-            library.tag_service().clone(),
-            library.favorites_repo().clone(),
-            library.recent_docs_repo().clone(),
-            indexing.file_storage().clone(),
-            web_service.clone(),
+            FunctionExecutorServices {
+                registry: function_registry.clone(),
+                embedding_service,
+                search_service: search.search_service().clone(),
+                bm25_service: search.bm25_search_service().clone(),
+                hybrid_search: search.hybrid_search_use_case().clone(),
+                document_repository: search.document_repo().clone(),
+                chunk_repository: indexing.chunk_repository().clone(),
+                tag_service: library.tag_service().clone(),
+                favorites_repository: library.favorites_repo().clone(),
+                recent_documents_repository: library.recent_docs_repo().clone(),
+                file_storage: indexing.file_storage().clone(),
+                web_service: web_service.clone(),
+            },
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 

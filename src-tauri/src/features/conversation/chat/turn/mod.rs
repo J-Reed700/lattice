@@ -69,7 +69,6 @@ pub(super) struct TurnRequest {
 /// - **Rate Limiting (CWE-770)**: 10 requests per minute
 /// - **Input Validation**: Message length and content validation
 /// - **Audit Logging (CWE-778)**: Logs chat interactions with context size
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,

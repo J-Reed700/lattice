@@ -201,7 +201,6 @@ arrived and could not be read — do not claim no file was attached.\n",
 /// even share of what is left, so the first attachment cannot starve the last.
 /// Unused budget rolls forward: two short files and one long one leave the long
 /// one nearly everything.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn build_turn_attachments(
     container: &dyn ChatStorage,
     conv_service: &Arc<dyn ConversationServiceTrait>,

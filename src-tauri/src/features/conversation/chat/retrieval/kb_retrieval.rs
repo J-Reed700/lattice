@@ -6,33 +6,34 @@ use tracing::{info, warn};
 
 use crate::application::contracts::search::CorpusDocument;
 use crate::domain::qa::hyde::QueryType;
-use crate::features::conversation::chat::focus::FocusScope;
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
+use crate::features::conversation::chat::turn_record::TurnStepKind;
+use crate::features::conversation::chat::ChatTurn;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::search::use_cases::RerankOptions;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
 
-// Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_kb_retrieval(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
-    _llm: &Arc<dyn crate::application::ports::LLMPort>,
+    turn: ChatTurn<'_>,
     search_flags: super::SearchFlags,
-    highlight_terms: &[String],
     kb_search_limit: usize,
     enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
-    focus: &FocusScope,
-    recorder: &TurnRecorder,
     // The turn's stop button, which the planner's model calls carry.
     cancel: &tokio_util::sync::CancellationToken,
 ) -> super::KbRetrievalOutcome {
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        message: validated_message,
+        highlight_terms,
+        focus,
+        recorder,
+        ..
+    } = turn;
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
 
@@ -310,9 +311,7 @@ pub(super) async fn run_kb_retrieval(
         };
         let retry = corrective_pass(
             container,
-            conv_service,
-            conversation_id,
-            validated_message,
+            turn,
             repository.as_ref(),
             &catalog,
             &scope,
@@ -507,7 +506,6 @@ fn top_result_titles(results: &[SearchResultDto]) -> Vec<String> {
 
 /// The planner's plan for the first pass, or the local plan when the planner
 /// should not be asked or does not answer.
-#[allow(clippy::too_many_arguments)]
 async fn planned(
     container: &dyn ChatRuntime,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -579,12 +577,9 @@ async fn shortlist_candidates(
 /// The one replanned retry. Returns `None` whenever it cannot improve on the
 /// first pass — no planner, a plan that only repeats failed queries, or a
 /// failed search — so the caller keeps the evidence it already has.
-#[allow(clippy::too_many_arguments)]
 async fn corrective_pass(
     container: &dyn ChatRuntime,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    validated_message: &str,
+    turn: ChatTurn<'_>,
     repository: &dyn ChatRecords,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
@@ -593,6 +588,7 @@ async fn corrective_pass(
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<(SearchResponseDto, Vec<String>)> {
+    let validated_message = turn.message;
     let Ok(Some(utility)) = (container.utility_llm_loader())().await else {
         info!("Corrective retrieval skipped: no utility planner is available");
         return None;
@@ -602,8 +598,8 @@ async fn corrective_pass(
         return None;
     }
     let history = super::build_hyde_context_window_for_conversation(
-        conv_service,
-        conversation_id,
+        turn.conv_service,
+        turn.conversation_id,
         validated_message,
     )
     .await;

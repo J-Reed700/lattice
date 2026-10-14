@@ -8,7 +8,6 @@ impl ConversationRepository {
     /// existence check and write atomic with conversation/message deletion.
     /// A deleted, moved, or edited source selects no row and returns `0`; real
     /// database failures remain errors for the caller to log.
-    #[allow(clippy::too_many_arguments)]
     pub async fn persist_memory_vector(
         &self,
         conversation_id: &str,

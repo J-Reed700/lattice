@@ -504,7 +504,6 @@ fn is_window_overflow(error: &AppError) -> bool {
     error.to_string().contains("exceed_context_size")
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn plan_with(
     llm: &dyn LLMPort,
     question: &str,

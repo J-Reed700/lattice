@@ -16,7 +16,6 @@ pub fn app_event_sink<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> super::Cha
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     runtime: &dyn ChatRuntime,
     conversation_id: Option<String>,

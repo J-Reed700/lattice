@@ -94,6 +94,7 @@ use self::cancellation::TurnCancellationRegistry;
 use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
+    FinishedAnswer,
 };
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
@@ -152,6 +153,22 @@ impl Drop for TurnCancellationGuard {
     fn drop(&mut self) {
         self.cancellation.finish_turn(&self.request_id);
     }
+}
+
+/// One turn as retrieval, the tool loop and persistence read it: the
+/// conversation and request it belongs to, the question, the model answering
+/// it, and the focus and recorder every search and tool call goes through.
+#[derive(Clone, Copy)]
+struct ChatTurn<'a> {
+    conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &'a str,
+    request_id: &'a str,
+    /// The user's message, validated.
+    message: &'a str,
+    llm: &'a Arc<dyn crate::application::ports::LLMPort>,
+    highlight_terms: &'a [String],
+    focus: &'a FocusScope,
+    recorder: &'a TurnRecorder,
 }
 
 mod dto;

@@ -39,6 +39,20 @@ pub(super) struct PreparedTurn {
 }
 
 impl PreparedTurn {
+    /// The turn as retrieval, the tool loop and persistence read it.
+    pub(super) fn chat_turn(&self) -> ChatTurn<'_> {
+        ChatTurn {
+            conv_service: &self.conv_service,
+            conversation_id: &self.conv_id,
+            request_id: &self.turn_id,
+            message: &self.message,
+            llm: &self.llm,
+            highlight_terms: &self.highlight_terms,
+            focus: &self.focus,
+            recorder: &self.recorder,
+        }
+    }
+
     pub(super) fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
         self._guard.turn_token()
     }
@@ -57,7 +71,6 @@ pub(super) fn cancelled() -> AppError {
 }
 
 /// `parent` is the stop of the job running the turn, if one is.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_turn(
     container: &dyn ChatRuntime,
     conversation_id: Option<String>,

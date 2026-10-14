@@ -28,8 +28,6 @@ pub(super) struct Generation<'r> {
 
 /// Run one generation. `hold_back_calls` keeps calls written into the text
 /// out of the bubble: on a round that may not call tools they are never run.
-// One round's inputs, each borrowed from the turn; a struct would only rename them.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate<'r>(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
