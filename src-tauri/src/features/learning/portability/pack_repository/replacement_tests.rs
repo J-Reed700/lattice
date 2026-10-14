@@ -29,7 +29,11 @@ async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, S
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
-    let packs = LearningPackRepository::new(pool.clone(), directory.path().join("learning-packs"));
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        directory.path().join("learning-packs"),
+        directory.path().to_path_buf(),
+    );
     let exported = packs
         .export(&ExportLearningPackRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -169,6 +173,41 @@ async fn replacement_rechecks_unportable_state_after_preview() -> Result<()> {
             .title,
         program.summary.title
     );
+    pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn lesson_notes_no_longer_block_a_replacement() -> Result<()> {
+    let (directory, pool, program, preview_id) = setup().await?;
+    let repo = LearningRepository::new(pool.clone());
+    repo.accept(
+        &crate::features::learning::dto::AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        },
+    )
+    .await?;
+    let lesson_id = &program.modules[0].lessons[0].id;
+    repo.ensure_lesson_note(&program.summary.id, lesson_id, "Notes", "Kept")
+        .await?;
+    let mut connection = pool.acquire().await.map_err(db)?;
+    require_recoverable_on(&mut connection, &program.summary.id).await?;
+    let links = snapshot_note_links(&mut connection, &program.summary.id).await?;
+    assert_eq!(links.links.len(), 1);
+    assert!(links.journal_id.is_some());
+    drop(connection);
+    let (tx, backup) = begin_apply(
+        &pool,
+        directory.path(),
+        &preview_id,
+        &program.summary.id,
+        true,
+    )
+    .await?;
+    assert!(backup.is_some());
+    tx.rollback().await.map_err(db)?;
     pool.close().await;
     Ok(())
 }

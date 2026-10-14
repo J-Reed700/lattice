@@ -1,9 +1,9 @@
 //! Read all portable program data from one SQLite snapshot. No file I/O or runtime services.
 use super::{
-    db, invalid, json, now, provenance, snapshot_evidence_tables, source_body_path,
-    CanvasPackSnapshot, PracticalPackSnapshot, PrivateAnswerKey, SourceHistorySnapshot,
-    CANVAS_ENTRY, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY, LESSON_STATE_ENTRY, OUTCOMES_ENTRY,
-    PRACTICAL_ENTRY, PROGRAM_ENTRY,
+    db, evidence_entries, guards, invalid, json, now, provenance, snapshot_evidence_tables,
+    source_body_path, CanvasPackSnapshot, PracticalPackSnapshot, PrivateAnswerKey,
+    SourceHistorySnapshot, ATTEMPTS_ENTRY, EVIDENCE_ENTRY, FOLLOW_UP_ENTRY, KEYS_ENTRY,
+    LESSON_STATE_ENTRY, OUTCOMES_ENTRY, PRACTICAL_ENTRY, PROGRAM_ENTRY,
 };
 use crate::features::learning::{
     pack::{
@@ -19,11 +19,14 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
+/// A user-requested export: refused while the course is still being
+/// generated or before it has an outline another computer could import.
 pub(in crate::features::learning) async fn snapshot(
     pool: &SqlitePool,
     req: &ExportLearningPackRequestDto,
 ) -> Result<LearningPackInput> {
     let mut tx = pool.begin().await.map_err(db)?;
+    guards::require_exportable(&mut tx, &req.program_id).await?;
     let input = snapshot_on(&mut tx, req).await?;
     tx.commit().await.map_err(db)?;
     Ok(input)
@@ -73,7 +76,7 @@ pub(super) async fn snapshot_on(
     });
     if req.include_evidence {
         entries.push(LearningPackEntry {
-            path: "program/attempts.json".into(),
+            path: ATTEMPTS_ENTRY.into(),
             kind: LearningPackEntryKind::Attempt,
             bytes: json(&exported_attempts)?,
         });
@@ -86,11 +89,9 @@ pub(super) async fn snapshot_on(
         bytes: json(&outcomes)?,
     });
     if req.include_evidence {
-        entries.push(LearningPackEntry {
-            path: "evidence/learning-aggregate.json".into(),
-            kind: LearningPackEntryKind::Evidence,
-            bytes: json(&snapshot_evidence_tables(tx, &req.program_id).await?)?,
-        });
+        entries.extend(evidence_entries::encode_evidence(
+            &snapshot_evidence_tables(tx, &req.program_id).await?,
+        )?);
         let evidence=sqlx::query("SELECT id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at,id").bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let rows:Vec<serde_json::Value>=evidence.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"outcomeId":r.get::<Option<String>,_>("outcome_id"),"sourceKind":r.get::<String,_>("source_kind"),"sourceId":r.get::<String,_>("source_id"),"dimension":r.get::<String,_>("dimension"),"result":r.get::<String,_>("result"),"score":r.get::<Option<f64>,_>("score"),"observation":r.get::<String,_>("observation"),"evidenceQuote":r.get::<Option<String>,_>("evidence_quote"),"assistance":r.get::<String,_>("assistance_json"),"observedAt":r.get::<i64,_>("observed_at")})).collect();
         entries.push(LearningPackEntry {
@@ -178,14 +179,10 @@ pub(super) async fn snapshot_on(
         let snapshot_rows=sqlx::query("SELECT id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at FROM learning_canvas_snapshots WHERE program_id=? ORDER BY created_at,id")
             .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         let snapshots:Vec<serde_json::Value>=snapshot_rows.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"canvasId":r.get::<String,_>("canvas_id"),"name":r.get::<String,_>("name"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"sceneJson":r.get::<String,_>("scene_json"),"elementCount":r.get::<i64,_>("element_count"),"canvasRevision":r.get::<i64,_>("canvas_revision"),"createdAt":r.get::<i64,_>("created_at")})).collect();
-        entries.push(LearningPackEntry {
-            path: CANVAS_ENTRY.into(),
-            kind: LearningPackEntryKind::Canvas,
-            bytes: json(&CanvasPackSnapshot {
-                canvases,
-                snapshots,
-            })?,
-        });
+        entries.extend(evidence_entries::encode_canvases(&CanvasPackSnapshot {
+            canvases,
+            snapshots,
+        })?);
     }
     let selector_rows = sqlx::query("SELECT id,source_id,source_version_id,exact_text,prefix_text,suffix_text,start_byte,end_byte,candidate_count,status,created_at FROM learning_source_selectors WHERE program_id=? ORDER BY created_at,id")
             .bind(&req.program_id).fetch_all(&mut *tx).await.map_err(db)?;
@@ -250,6 +247,7 @@ pub(super) async fn snapshot_on(
         }
     }
     Ok(LearningPackInput {
+        schema_version: guards::schema_version(tx).await?,
         pack_id: uuid::Uuid::new_v4().to_string(),
         title: program.summary.title.clone(),
         created_at: now(),
@@ -327,10 +325,14 @@ mod tests {
         assert_eq!(exported.summary.revision, program.summary.revision);
         assert!(!exported.modules[0].lessons[0].completed);
         assert_eq!(state["state"], "outline");
-        assert!(read
-            .entries
-            .iter()
-            .any(|entry| entry.path == "evidence/learning-aggregate.json"));
+        assert_eq!(
+            read.entries
+                .iter()
+                .filter(|entry| entry.path.starts_with("evidence/tables/"))
+                .count(),
+            super::super::EVIDENCE_TABLES.len()
+        );
+        assert!(read.schema_version > 0);
         assert!(read
             .entries
             .iter()
@@ -344,6 +346,70 @@ mod tests {
         let after: LearningProgramDto = serde_json::from_slice(&entry.bytes)?;
         assert_eq!(after.summary.revision, program.summary.revision + 1);
         assert!(after.modules[0].lessons[0].completed);
+        Ok(())
+    }
+
+    fn request(program_id: &str) -> ExportLearningPackRequestDto {
+        ExportLearningPackRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program_id.into(),
+            file_name: "refused.lattice-learning".into(),
+            include_evidence: true,
+            include_practical_artifacts: false,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn export_is_refused_while_a_job_is_preparing_the_course() -> Result<()> {
+        let pool = pool().await?;
+        let program = fixture();
+        LearningRepository::new(pool.clone())
+            .create(&program)
+            .await?;
+        let job = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_total,progress_message,created_at) VALUES(?,'learning_lesson',?,?,'job-hash','pending','{}',1,'Queued',1)")
+            .bind(&job)
+            .bind(&program.summary.id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO learning_jobs(job_id,program_id) VALUES(?,?)")
+            .bind(&job)
+            .bind(&program.summary.id)
+            .execute(&pool)
+            .await?;
+        let error = snapshot(&pool, &request(&program.summary.id))
+            .await
+            .expect_err("a course being generated is not exported");
+        assert!(
+            error.to_string().contains("still being prepared"),
+            "{error}"
+        );
+
+        // A finished job no longer blocks.
+        sqlx::query("UPDATE jobs SET status='failed',finished_at=2 WHERE id=?")
+            .bind(&job)
+            .execute(&pool)
+            .await?;
+        assert!(snapshot(&pool, &request(&program.summary.id)).await.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn export_is_refused_before_the_course_has_modules() -> Result<()> {
+        let pool = pool().await?;
+        let mut program = fixture();
+        program.modules.clear();
+        program.summary.current_lesson_id = None;
+        LearningRepository::new(pool.clone())
+            .create(&program)
+            .await?;
+        let error = snapshot(&pool, &request(&program.summary.id))
+            .await
+            .expect_err("an empty outline cannot be imported elsewhere");
+        assert!(error.to_string().contains("has no modules yet"), "{error}");
         Ok(())
     }
 }
