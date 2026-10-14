@@ -2302,7 +2302,8 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string; request: Record<string, unknown> }> } }).__LATTICE_LEARNING_STATE__;
     return state.packMutationCalls.find((item) => item.command === "save_learning_pack_as")?.request;
   });
-  expect(saved).toMatchObject({ includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false });
+  expect(saved).toMatchObject({ options: { includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false } });
+  expect(saved).not.toHaveProperty("fileName");
   // Moving the course back: the file is this course, so a move finds it already here.
   await portability.getByRole("button", { name: "Choose a course file…" }).click();
   const preview = portability.getByRole("heading", { name: "Reasoning from field observations", exact: true });
@@ -2401,7 +2402,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { packMutationCalls: Array<{ command: string; request: Record<string, unknown> }> } }).__LATTICE_LEARNING_STATE__;
     return state.packMutationCalls.find((item) => item.command === "export_all_learning_packs")?.request;
   });
-  expect(exportAllRequest).toMatchObject({ operationId: expect.any(String), includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false });
+  expect(exportAllRequest).toMatchObject({ operationId: expect.any(String), options: { includeEvidence: true, includePracticalArtifacts: true, includeSourceBodies: false, sourceBodyRedistributionConfirmed: false } });
 
   if (width === 390) {
     const overflow = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);

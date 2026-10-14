@@ -13,6 +13,7 @@ import type {
   ExportAllLearningPacksResultDto,
   LearningPackChangeDto,
   LearningPackConflictDto,
+  LearningPackExportNoticeDto,
   LearningPackExportDto,
   LearningPackImportResultDto,
   LearningPackPreviewStatus,
@@ -522,8 +523,8 @@ export async function installLearningStudioBackend(page: Page) {
         importPreviews: [],
         imports: [],
         sourceWorkspace,
-        exportNotice: { activeJob: false, notebookNoteCount: 1, practicalDraftCount: 0 },
-      } as { programId: string; exportNotice: { activeJob: boolean; notebookNoteCount: number; practicalDraftCount: number }; exports: Fixture<LearningPackExportDto>[]; importPreviews: Array<{ id: string; status: LearningPackPreviewStatus; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: Fixture<LearningPackChangeDto>[] }>; imports: Fixture<LearningPackImportResultDto>[]; sourceWorkspace: SourceWorkspace },
+        exportNotice: { staysBehind: [{ kind: "notebook_notes", count: 1 }], blockers: [] },
+      } as { programId: string; exportNotice: LearningPackExportNoticeDto; exports: Fixture<LearningPackExportDto>[]; importPreviews: Array<{ id: string; status: LearningPackPreviewStatus; manifest: { rootSha256: string }; canApply: boolean; decidedAt: number | null; changes: Fixture<LearningPackChangeDto>[] }>; imports: Fixture<LearningPackImportResultDto>[]; sourceWorkspace: SourceWorkspace },
       recallV2Workspace: {
         programId: program.summary.id,
         cards: [],
@@ -2337,12 +2338,11 @@ export async function installLearningStudioBackend(page: Page) {
         // a move (merge_safe) finds it already here, and replace proceeds.
         const alreadyHere = request.conflictPolicy === "merge_safe";
         const existing = {
-          entityKind: "program",
-          incomingId: program.summary.id,
-          incomingTitle: program.summary.title,
+          kind: "program",
           existingId: program.summary.id,
           existingTitle: program.summary.title,
-          resolution: "blocked",
+          reason: null,
+          clearsWith: ["replace_after_backup", "create_copy"],
         } satisfies LearningPackConflictDto;
         const preview = {
           id: String(request.previewId),
@@ -2439,7 +2439,8 @@ export async function installLearningStudioBackend(page: Page) {
         const exported = {
           id: `export-e2e-${state.portabilityWorkspace.exports.length + 1}`,
           programId: String(request.programId),
-          destinationPath: `/Downloads/${String(request.fileName)}.lattice-learning`,
+          // Rust names the file from the course title; the request carries no name.
+          destinationPath: `/Downloads/${program.summary.title}.lattice-learning`,
           manifest: {
             format: "lattice-learning",
             version: 4,
@@ -2454,14 +2455,14 @@ export async function installLearningStudioBackend(page: Page) {
           createdAt: Date.now(),
         };
         state.portabilityWorkspace.exports.unshift(exported);
-        return { cancelled: false, export: exported };
+        return { outcome: "saved" as const, export: exported };
       },
       export_all_learning_packs: (args) => {
         const command = 'export_all_learning_packs';
         const request = getRequest<Record<string, unknown>>(args);
         state.packMutationCalls.push({ command, request });
         return {
-          cancelled: false,
+          outcome: "exported",
           destinationDir: "/Downloads/Lattice courses",
           exported: [{ programId: program.summary.id, title: program.summary.title, path: `/Downloads/Lattice courses/${program.summary.title}.lattice-learning` }],
           failed: [{ programId: "program-draft-e2e", title: "Statistics draft", error: "This course is still being prepared. Export or replace it after its lessons finish generating." }],
