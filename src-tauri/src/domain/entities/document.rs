@@ -19,6 +19,7 @@ mod classification;
 mod factory;
 
 pub use classification::{Category, DocumentStatus, Language};
+pub use factory::StoredDocument;
 
 /// Document entity (aggregate root for document-related operations).
 ///

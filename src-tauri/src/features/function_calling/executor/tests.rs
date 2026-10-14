@@ -290,20 +290,20 @@ async fn test_execute_unknown_function() {
     let favorites_repository = Arc::new(MockFavoritesRepository::new());
     let recent_documents_repository = Arc::new(MockRecentDocumentsRepository::new());
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web as Arc<dyn WebServiceTrait>,
-    );
+        web_service: web as Arc<dyn WebServiceTrait>,
+    });
 
     let call = FunctionCall::new("call_123", "unknown_function", serde_json::json!({}));
 
@@ -346,20 +346,20 @@ async fn test_validate_arguments() {
     let file_storage = Arc::new(MockFileStoragePort) as Arc<dyn FileStoragePort>;
     let web = Arc::new(MockWebService::new());
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web as Arc<dyn WebServiceTrait>,
-    );
+        web_service: web as Arc<dyn WebServiceTrait>,
+    });
 
     // Valid arguments
     let valid = json!({"required_param": "value"});
@@ -454,20 +454,22 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     }
     let favorites = Arc::new(FavoritesRepository::new(pool.clone()));
     let recent = Arc::new(RecentDocumentsRepository::new(pool));
-    let executor = FunctionExecutor::new(
-        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
-        Arc::new(MockEmbeddingService::default()),
-        Arc::new(MockSearchService::new()),
-        Arc::new(MockBM25Search::new()),
-        empty_hybrid_search(),
-        documents,
-        Arc::new(MockChunkRepository::new()),
-        Arc::new(MockTagService::new()),
-        favorites.clone(),
-        recent.clone(),
-        Arc::new(MockFileStoragePort),
-        Arc::new(MockWebService::new()),
-    );
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::new(
+            crate::features::function_calling::registry::init_function_registry().unwrap(),
+        ),
+        embedding_service: Arc::new(MockEmbeddingService::default()),
+        search_service: Arc::new(MockSearchService::new()),
+        bm25_service: Arc::new(MockBM25Search::new()),
+        hybrid_search: empty_hybrid_search(),
+        document_repository: documents,
+        chunk_repository: Arc::new(MockChunkRepository::new()),
+        tag_service: Arc::new(MockTagService::new()),
+        favorites_repository: favorites.clone(),
+        recent_documents_repository: recent.clone(),
+        file_storage: Arc::new(MockFileStoragePort),
+        web_service: Arc::new(MockWebService::new()),
+    });
     let list = |args| {
         let executor = &executor;
         async move {
@@ -562,20 +564,20 @@ async fn test_get_document_supports_internal_pagination() {
         content: "A".repeat(2500),
     }) as Arc<dyn FileStoragePort>;
 
-    let executor = FunctionExecutor::new(
-        registry as Arc<dyn FunctionRegistryTrait>,
-        embedding as Arc<dyn EmbeddingServiceTrait>,
-        search as Arc<dyn SearchServiceTrait>,
-        bm25 as Arc<dyn BM25SearchTrait>,
-        hybrid,
-        doc_repo,
-        chunk_repo,
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: registry as Arc<dyn FunctionRegistryTrait>,
+        embedding_service: embedding as Arc<dyn EmbeddingServiceTrait>,
+        search_service: search as Arc<dyn SearchServiceTrait>,
+        bm25_service: bm25 as Arc<dyn BM25SearchTrait>,
+        hybrid_search: hybrid,
+        document_repository: doc_repo,
+        chunk_repository: chunk_repo,
         tag_service,
         favorites_repository,
         recent_documents_repository,
         file_storage,
-        web,
-    );
+        web_service: web,
+    });
 
     let call = FunctionCall::new(
         "call_get_doc",
@@ -647,20 +649,22 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
     );
-    let executor = FunctionExecutor::new(
-        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
-        Arc::new(MockEmbeddingService::default()),
-        Arc::new(MockSearchService::new()),
-        Arc::new(MockBM25Search::new()),
-        search,
-        documents,
-        Arc::new(MockChunkRepository::new()),
-        Arc::new(MockTagService::new()),
-        Arc::new(MockFavoritesRepository::new()),
-        Arc::new(MockRecentDocumentsRepository::new()),
-        Arc::new(MockFileStoragePort),
-        Arc::new(MockWebService::new()),
-    );
+    let executor = FunctionExecutor::new(FunctionExecutorServices {
+        registry: Arc::new(
+            crate::features::function_calling::registry::init_function_registry().unwrap(),
+        ),
+        embedding_service: Arc::new(MockEmbeddingService::default()),
+        search_service: Arc::new(MockSearchService::new()),
+        bm25_service: Arc::new(MockBM25Search::new()),
+        hybrid_search: search,
+        document_repository: documents,
+        chunk_repository: Arc::new(MockChunkRepository::new()),
+        tag_service: Arc::new(MockTagService::new()),
+        favorites_repository: Arc::new(MockFavoritesRepository::new()),
+        recent_documents_repository: Arc::new(MockRecentDocumentsRepository::new()),
+        file_storage: Arc::new(MockFileStoragePort),
+        web_service: Arc::new(MockWebService::new()),
+    });
 
     let result = executor
         .execute(FunctionCall::new(

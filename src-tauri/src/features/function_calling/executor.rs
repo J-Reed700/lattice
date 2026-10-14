@@ -115,23 +115,39 @@ pub struct FunctionExecutor {
     http_client: Client,
 }
 
+/// The registry, services and repositories the built-in tools run against.
+pub struct FunctionExecutorServices {
+    pub registry: Arc<dyn FunctionRegistryTrait>,
+    pub embedding_service: Arc<dyn EmbeddingServiceTrait>,
+    pub search_service: Arc<dyn SearchServiceTrait>,
+    pub bm25_service: Arc<dyn BM25SearchTrait>,
+    pub hybrid_search: Arc<HybridSearchUseCase>,
+    pub document_repository: Arc<dyn DocumentRepository>,
+    pub chunk_repository: Arc<dyn ChunkRepositoryPort>,
+    pub tag_service: Arc<dyn TagServiceTrait>,
+    pub favorites_repository: Arc<dyn FavoritesRepositoryPort>,
+    pub recent_documents_repository: Arc<dyn RecentDocumentsRepositoryPort>,
+    pub file_storage: Arc<dyn FileStoragePort>,
+    pub web_service: Arc<dyn WebServiceTrait>,
+}
+
 impl FunctionExecutor {
-    /// Create a new function executor
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        registry: Arc<dyn FunctionRegistryTrait>,
-        embedding_service: Arc<dyn EmbeddingServiceTrait>,
-        search_service: Arc<dyn SearchServiceTrait>,
-        bm25_service: Arc<dyn BM25SearchTrait>,
-        hybrid_search: Arc<HybridSearchUseCase>,
-        document_repository: Arc<dyn DocumentRepository>,
-        chunk_repository: Arc<dyn ChunkRepositoryPort>,
-        tag_service: Arc<dyn TagServiceTrait>,
-        favorites_repository: Arc<dyn FavoritesRepositoryPort>,
-        recent_documents_repository: Arc<dyn RecentDocumentsRepositoryPort>,
-        file_storage: Arc<dyn FileStoragePort>,
-        web_service: Arc<dyn WebServiceTrait>,
-    ) -> Self {
+    /// Create a new function executor with no custom tools
+    pub fn new(services: FunctionExecutorServices) -> Self {
+        let FunctionExecutorServices {
+            registry,
+            embedding_service,
+            search_service,
+            bm25_service,
+            hybrid_search,
+            document_repository,
+            chunk_repository,
+            tag_service,
+            favorites_repository,
+            recent_documents_repository,
+            file_storage,
+            web_service,
+        } = services;
         Self::new_with_custom_tools(
             registry,
             embedding_service,

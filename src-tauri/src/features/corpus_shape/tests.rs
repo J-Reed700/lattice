@@ -107,26 +107,26 @@ fn make_document(id: &str, file_name: &str) -> Document {
     .unwrap();
     let checksum = ChecksumFactory::from_bytes(file_name.as_bytes()).unwrap();
     let now = Utc::now();
-    Document::with_id(
-        crate::shared::types::DocumentId::from(id.to_string()),
-        path,
-        file_name.to_string(),
-        None,
-        "text/plain".to_string(),
-        1024,
-        now,
-        now,
+    Document::with_id(crate::domain::entities::document::StoredDocument {
+        id: crate::shared::types::DocumentId::from(id.to_string()),
+        file_path: path,
+        file_name: file_name.to_string(),
+        file_type: None,
+        mime_type: "text/plain".to_string(),
+        size_bytes: 1024,
+        modified_at: now,
+        indexed_at: now,
         checksum,
-        crate::domain::entities::document::DocumentStatus::Indexed,
-        None,
-        crate::domain::entities::document::Language::default(),
-        crate::domain::entities::document::Category::default(),
-        0.5,
-        0,
-        None,
-        0,
-        String::new(),
-    )
+        status: crate::domain::entities::document::DocumentStatus::Indexed,
+        error_message: None,
+        language: crate::domain::entities::document::Language::default(),
+        category: crate::domain::entities::document::Category::default(),
+        quality_score: 0.5,
+        access_count: 0,
+        last_accessed_at: None,
+        word_count: 0,
+        content: String::new(),
+    })
 }
 
 /// Seed the 3-blob synthetic lattice: 15 docs per blob + 3 stragglers.
