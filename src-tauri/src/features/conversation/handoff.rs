@@ -7,7 +7,6 @@
 use super::branching_dto::{
     ContinueInNewConversationRequestDto, ContinueInNewConversationResponseDto,
 };
-use super::commands as conversation;
 use super::memory::MAX_FORGOTTEN_LABELS;
 use crate::application::ports::conversation_memory::ConversationMemoryPort;
 use crate::application::ports::llm_port::{
@@ -19,8 +18,7 @@ use crate::application::services::grounded_generation::{
 };
 use crate::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
 use crate::domain::conversation::ConversationMessage;
-use crate::features::conversation::repository::ConversationRepository;
-use crate::interfaces::di::Container;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -282,25 +280,27 @@ pub struct HandoffsInFlight(std::sync::Mutex<HashSet<String>>);
 
 /// A claimed conversation. The guard releases its id on drop, so an error or
 /// a panic cannot leave a conversation locked.
-struct InFlight {
+struct HandoffClaim {
     set: Arc<HandoffsInFlight>,
     id: String,
 }
 
-impl InFlight {
-    fn claim(set: &Arc<HandoffsInFlight>, id: &str) -> Option<Self> {
+impl HandoffsInFlight {
+    /// Claim a conversation for summarizing, or `None` when one is already
+    /// running. The returned guard releases the claim on drop.
+    fn claim(set: &Arc<HandoffsInFlight>, id: &str) -> Option<HandoffClaim> {
         let mut running = set
             .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        running.insert(id.to_string()).then(|| Self {
+        running.insert(id.to_string()).then(|| HandoffClaim {
             set: Arc::clone(set),
             id: id.to_string(),
         })
     }
 }
 
-impl Drop for InFlight {
+impl Drop for HandoffClaim {
     fn drop(&mut self) {
         self.set
             .0
@@ -312,10 +312,13 @@ impl Drop for InFlight {
 
 pub async fn continue_in_new_conversation_impl(
     request: ContinueInNewConversationRequestDto,
-    container: &Container,
+    runtime: &dyn ChatRuntime,
 ) -> Result<ContinueInNewConversationResponseDto, ApiError> {
     let source_id = request.conversation_id.trim().to_string();
-    let source = conversation::get_conversation_impl(container, source_id.clone())
+    let branches = runtime.conversation_branches();
+    let aggregate = runtime
+        .conversation_service()
+        .get_conversation(&source_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| {
@@ -324,11 +327,10 @@ pub async fn continue_in_new_conversation_impl(
                 source_id
             )))
         })?;
-    let messages = conversation::get_conversation_messages_impl(container, source_id.clone())
-        .await
-        .map_err(ApiError::from)?;
+    let source_title = aggregate.title().to_string();
+    let messages = aggregate.messages().to_vec();
     let forgotten = Forgotten::read(
-        container.conversation_memory().as_ref(),
+        runtime.conversation_memory().as_ref(),
         &source_id,
         &messages,
     )
@@ -345,7 +347,7 @@ pub async fn continue_in_new_conversation_impl(
     // One summary per conversation at a time. A second click, or a click after
     // a page reload lost the first one's spinner, would otherwise start a
     // parallel run and open a second copy.
-    let _running = match InFlight::claim(&container.handoffs_in_flight(), &source_id) {
+    let _running = match HandoffsInFlight::claim(&runtime.handoffs_in_flight(), &source_id) {
         Some(guard) => guard,
         None => {
             return Err(ApiError::from(AppError::InvalidState(
@@ -357,14 +359,14 @@ pub async fn continue_in_new_conversation_impl(
     // Straight to the model, as compaction does: no conversation, retrieval,
     // tools or streaming. Running it as a chat turn created visible scratch
     // chats and let the turn reach for tools.
-    let llm = container.get_or_load_llm().await.map_err(ApiError::from)?;
+    let llm = runtime.get_or_load_llm().await.map_err(ApiError::from)?;
     // The whole transcript in one call when the window holds it; otherwise it
     // is noted part by part, each part as much as the window holds, and the
     // notes are merged.
     let whole_room = grounded_generation::evidence_room(
         llm.as_ref(),
         &summary_request(
-            handoff_task(&source.title, false),
+            handoff_task(&source_title, false),
             &forgotten,
             Vec::new(),
             &source_id,
@@ -381,7 +383,7 @@ pub async fn continue_in_new_conversation_impl(
         let part_room = grounded_generation::evidence_room(
             llm.as_ref(),
             &summary_request(
-                notes_task(&source.title, usize::MAX, usize::MAX),
+                notes_task(&source_title, usize::MAX, usize::MAX),
                 &forgotten,
                 Vec::new(),
                 &source_id,
@@ -429,7 +431,7 @@ pub async fn continue_in_new_conversation_impl(
         let transcript = parts.into_iter().flatten().collect();
         ask(
             summary_request(
-                handoff_task(&source.title, false),
+                handoff_task(&source_title, false),
                 &forgotten,
                 transcript,
                 &source_id,
@@ -443,7 +445,7 @@ pub async fn continue_in_new_conversation_impl(
             notes.push(
                 ask(
                     summary_request(
-                        notes_task(&source.title, index + 1, total),
+                        notes_task(&source_title, index + 1, total),
                         &forgotten,
                         part,
                         &source_id,
@@ -461,7 +463,7 @@ pub async fn continue_in_new_conversation_impl(
         };
         ask(
             summary_request(
-                handoff_task(&source.title, true),
+                handoff_task(&source_title, true),
                 &forgotten,
                 vec![material],
                 &source_id,
@@ -472,17 +474,17 @@ pub async fn continue_in_new_conversation_impl(
     };
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let new_title = truncate_chars(&format!("{} · continued", source.title), TITLE_CHAR_LIMIT);
+    let new_title = truncate_chars(&format!("{} · continued", source_title), TITLE_CHAR_LIMIT);
     let metadata = serde_json::json!({
-        "continuedFrom": { "conversationId": source_id, "title": source.title },
+        "continuedFrom": { "conversationId": source_id, "title": source_title },
     })
     .to_string();
 
-    let repo = ConversationRepository::new(container.db_pool().clone());
-    repo.create_continuation(&source_id, &new_id, &new_title, &summary, &metadata)
+    branches
+        .create_continuation(&source_id, &new_id, &new_title, &summary, &metadata)
         .await
         .map_err(ApiError::from)?;
-    let created = repo
+    let created = branches
         .find_by_id(&new_id)
         .await
         .map_err(ApiError::from)?
@@ -493,7 +495,7 @@ pub async fn continue_in_new_conversation_impl(
         })?;
 
     Ok(ContinueInNewConversationResponseDto {
-        conversation: repo
+        conversation: branches
             .project_conversation(&created)
             .await
             .map_err(ApiError::from)?,
@@ -584,12 +586,12 @@ mod tests {
     #[test]
     fn a_conversation_cannot_be_summarized_twice_at_once() {
         let set = Arc::new(HandoffsInFlight::default());
-        let first = InFlight::claim(&set, "conv-a").unwrap();
-        assert!(InFlight::claim(&set, "conv-a").is_none());
-        assert!(InFlight::claim(&set, "conv-b").is_some());
+        let first = HandoffsInFlight::claim(&set, "conv-a").unwrap();
+        assert!(HandoffsInFlight::claim(&set, "conv-a").is_none());
+        assert!(HandoffsInFlight::claim(&set, "conv-b").is_some());
         drop(first);
         assert!(
-            InFlight::claim(&set, "conv-a").is_some(),
+            HandoffsInFlight::claim(&set, "conv-a").is_some(),
             "released on drop"
         );
     }

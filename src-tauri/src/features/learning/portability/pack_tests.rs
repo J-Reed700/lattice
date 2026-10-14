@@ -31,28 +31,20 @@ fn captured(text: &str) -> CapturedLearningSource {
     }
 }
 
-async fn test_container() -> Result<crate::interfaces::di::Container> {
-    crate::tests::common::setup_test_container().await
-}
-
 async fn export_copy(
     repository: &LearningPackRepository,
-    container: &crate::interfaces::di::Container,
     program_id: &str,
 ) -> Result<(String, String)> {
     let exported = repository
-        .export(
-            container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program_id.into(),
-                file_name: format!("roundtrip-{}.lattice-learning", id()),
-                include_evidence: true,
-                include_practical_artifacts: true,
-                include_source_bodies: true,
-                source_body_redistribution_confirmed: true,
-            },
-        )
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program_id.into(),
+            file_name: format!("roundtrip-{}.lattice-learning", id()),
+            include_evidence: true,
+            include_practical_artifacts: true,
+            include_source_bodies: true,
+            source_body_redistribution_confirmed: true,
+        })
         .await?;
     let path = exported
         .exports
@@ -71,14 +63,11 @@ async fn export_copy(
     let preview_row = preview.import_previews.first().expect("copy preview");
     let target_program_id = preview_row.incoming_program_id.clone();
     repository
-        .apply(
-            container,
-            &ApplyLearningPackImportRequestDto {
-                operation_id: id(),
-                preview_id: preview_row.id.clone(),
-                expected_root_sha256: preview_row.manifest.root_sha256.clone(),
-            },
-        )
+        .apply(&ApplyLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id: preview_row.id.clone(),
+            expected_root_sha256: preview_row.manifest.root_sha256.clone(),
+        })
         .await?;
     Ok((target_program_id, preview_row.id.clone()))
 }
@@ -156,9 +145,9 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         })
         .await?;
 
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let (copy_id, _) = export_copy(&packs, &container, &program.summary.id).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let (copy_id, _) = export_copy(&packs, &program.summary.id).await?;
 
     let imported_lesson: (String, Option<String>) = sqlx::query_as(
         "SELECT curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? AND title=?",
@@ -481,9 +470,9 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .await
         .expect("practical run check");
 
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let (copy_id, _) = export_copy(&packs, &container, program_id).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let (copy_id, _) = export_copy(&packs, program_id).await?;
 
     let imported_form: String =
         sqlx::query_scalar("SELECT f.id FROM learning_assessment_forms f WHERE f.program_id=?")
@@ -664,21 +653,18 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
         .await
         .expect("hidden practical evaluator inserts");
 
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
     let exported = packs
-        .export(
-            &container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program.summary.id.clone(),
-                file_name: format!("preflight-{}.lattice-learning", id()),
-                include_evidence: false,
-                include_practical_artifacts: false,
-                include_source_bodies: false,
-                source_body_redistribution_confirmed: false,
-            },
-        )
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            file_name: format!("preflight-{}.lattice-learning", id()),
+            include_evidence: false,
+            include_practical_artifacts: false,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        })
         .await?;
     let source_path = exported.exports[0].destination_path.clone();
     let source_program_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_programs")
@@ -773,21 +759,18 @@ async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
     let exported = packs
-        .export(
-            &container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program.summary.id.clone(),
-                file_name: format!("replace-source-{}.lattice-learning", id()),
-                include_evidence: false,
-                include_practical_artifacts: false,
-                include_source_bodies: false,
-                source_body_redistribution_confirmed: false,
-            },
-        )
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            file_name: format!("replace-source-{}.lattice-learning", id()),
+            include_evidence: false,
+            include_practical_artifacts: false,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        })
         .await?;
     let preview = packs
         .preview(&PreviewLearningPackImportRequestDto {
@@ -801,14 +784,11 @@ async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
     assert!(preview.can_apply);
     let preview_id = preview.id.clone();
     let applied = packs
-        .apply(
-            &container,
-            &ApplyLearningPackImportRequestDto {
-                operation_id: id(),
-                preview_id: preview_id.clone(),
-                expected_root_sha256: preview.manifest.root_sha256.clone(),
-            },
-        )
+        .apply(&ApplyLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id: preview_id.clone(),
+            expected_root_sha256: preview.manifest.root_sha256.clone(),
+        })
         .await?;
     let import = applied
         .imports
@@ -825,9 +805,8 @@ async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
                 .destination_path
                 .ends_with(&format!("backup-{backup_id}.lattice-learning"))
     }));
-    let backup_path = container
-        .core
-        .data_dir()
+    let backup_path = workspace
+        .path()
         .join("learning-packs")
         .join(format!("backup-{backup_id}.lattice-learning"));
     let backup_bytes = tokio::fs::read(&backup_path)

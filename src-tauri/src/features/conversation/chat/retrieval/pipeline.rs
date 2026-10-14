@@ -1,5 +1,4 @@
 use super::*;
-use crate::features::conversation::chat::cancellation::{is_cancel_requested, turn_token};
 use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
 use crate::features::conversation::chat::turn_record::{
     TurnRecorder, TurnStepKind, TurnStepLinkDto,
@@ -136,7 +135,8 @@ pub(super) async fn run_retrieval_pipeline(
 
     let tuning = &search_settings.retrieval_tuning;
     // The embedding and utility models may both have been cold.
-    if is_cancel_requested(request_id) {
+    let turn_cancellation = container.turn_cancellation();
+    if turn_cancellation.is_cancel_requested(request_id) {
         return outcome;
     }
 
@@ -169,6 +169,7 @@ pub(super) async fn run_retrieval_pipeline(
 
     let external = ExternalLookup {
         container,
+        cancellation: &turn_cancellation,
         conv_service,
         conversation_id,
         request_id,
@@ -201,7 +202,7 @@ pub(super) async fn run_retrieval_pipeline(
             tuning,
             focus,
             recorder,
-            &turn_token(request_id),
+            &turn_cancellation.turn_token(request_id),
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
@@ -209,7 +210,7 @@ pub(super) async fn run_retrieval_pipeline(
 
     // The phase below is the long one — KB retrieval with its corrective
     // retries, and wiki/web lookups over the network.
-    if is_cancel_requested(request_id) {
+    if turn_cancellation.is_cancel_requested(request_id) {
         return outcome;
     }
 
@@ -335,7 +336,7 @@ pub(super) async fn run_retrieval_pipeline(
         );
     }
 
-    if is_cancel_requested(request_id) {
+    if turn_cancellation.is_cancel_requested(request_id) {
         return outcome;
     }
 
@@ -452,6 +453,8 @@ const DEEP_RESEARCH_PAGE_MULTIPLIER: usize = 2;
 
 struct ExternalLookup<'a> {
     container: &'a dyn ChatRuntime,
+    /// The turn's stop button, resolved once from the runtime above.
+    cancellation: &'a crate::features::conversation::chat::cancellation::TurnCancellationRegistry,
     conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &'a str,
     request_id: &'a str,
@@ -525,7 +528,7 @@ impl ExternalLookup<'_> {
         // local) when set, not the chat LLM. See utility_llm resolution above.
         let hyde_service =
             crate::features::search::hyde::HyDEService::new(Arc::clone(self.utility_llm))
-                .with_cancellation(turn_token(self.request_id));
+                .with_cancellation(self.cancellation.turn_token(self.request_id));
         let hyde_context = if interpret || search_web {
             let conversation = build_hyde_context_window_for_conversation(
                 self.conv_service,
@@ -975,7 +978,7 @@ impl ExternalLookup<'_> {
         // Reading pages is the slowest thing the external phase does. A stop
         // press that landed during the search itself should not buy the user
         // another round of network fetches.
-        if is_cancel_requested(self.request_id) {
+        if self.cancellation.is_cancel_requested(self.request_id) {
             debug!("Turn cancelled before page fetching — keeping snippets only");
             return (outcomes, memory);
         }
@@ -992,7 +995,7 @@ impl ExternalLookup<'_> {
             if short_by == 0 || next >= results.len() {
                 break;
             }
-            if wave > 0 && is_cancel_requested(self.request_id) {
+            if wave > 0 && self.cancellation.is_cancel_requested(self.request_id) {
                 break;
             }
             let batch: Vec<(usize, String)> = results

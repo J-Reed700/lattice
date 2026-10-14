@@ -4,6 +4,7 @@
 //! read it belong to this feature and are registered from here.
 
 use crate::features::embedding::loading::EmbeddingLoader;
+use crate::features::embedding::runtime::ActiveEmbedding;
 use std::sync::Arc;
 
 use crate::application::ports::EmbeddingPort;
@@ -14,9 +15,7 @@ use crate::shared::error::Result;
 impl Container {
     /// Get a ready cached model or load through the embedding lifecycle.
     pub async fn get_or_load_embedding(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        self.embedding_runtime
-            .get_or_load(|| self.load_embedding_with_fallback())
-            .await
+        self.active_embedding().get_or_load().await
     }
 
     /// Force reload and clear the failure cooldown after active-model changes.
@@ -24,15 +23,19 @@ impl Container {
         self.embedding_runtime.invalidate();
     }
 
-    async fn load_embedding_with_fallback(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        EmbeddingLoader {
-            downloaded_models: self.ai.downloaded_model_repo().clone(),
-            security: self.core.security_context().clone(),
-            index: self.search.runtime_index(),
-            pool: self.db_pool().clone(),
-            strategy: self.search.embedding_strategy(),
-        }
-        .load()
-        .await
+    /// The shared embedding runtime and the loader it falls back to, as one
+    /// value: what `get_or_load_embedding` uses, for a holder that must not
+    /// keep the container itself.
+    pub(crate) fn active_embedding(&self) -> ActiveEmbedding {
+        ActiveEmbedding::new(
+            Arc::clone(&self.embedding_runtime),
+            EmbeddingLoader {
+                downloaded_models: self.ai.downloaded_model_repo().clone(),
+                security: self.core.security_context().clone(),
+                index: self.search.runtime_index(),
+                pool: self.db_pool().clone(),
+                strategy: self.search.embedding_strategy(),
+            },
+        )
     }
 }

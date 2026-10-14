@@ -99,8 +99,10 @@ fn lesson_response() -> serde_json::Value {
 async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -115,6 +117,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     assert!(draft.sources.is_empty());
     let accepted = service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -345,8 +348,10 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
 
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -354,6 +359,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     .await?;
     let accepted = service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -674,8 +680,10 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
     };
     let pool = crate::features::learning::tests::pool().await?;
     let repository = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repository,
+        &drafts,
         &outline(2, 2),
         request(LearningCourseDepth::Focused),
         vec![],
@@ -683,6 +691,7 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
     .await?;
     let program = service::accept(
         &repository,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -793,9 +802,12 @@ async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_c
     grounded
         .source_urls
         .push("https://example.com/reference".into());
-    assert!(service::generate(&repo, &outline(4, 3), grounded, vec![])
-        .await
-        .is_err());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    assert!(
+        service::generate(&repo, &drafts, &outline(4, 3), grounded, vec![])
+            .await
+            .is_err()
+    );
     assert!(repo.list().await?.is_empty());
     Ok(())
 }
@@ -854,8 +866,10 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
     };
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
+        &drafts,
         &outline(4, 3),
         request(LearningCourseDepth::Course),
         vec![],
@@ -863,6 +877,7 @@ async fn topic_checkpoint_can_be_generated_and_persisted_without_sources() -> Re
     .await?;
     service::accept(
         &repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: draft.summary.id.clone(),
             expected_revision: draft.summary.revision,
@@ -1100,9 +1115,11 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
         delays: std::sync::Mutex::new(vec![700, 700, 700, 700].into()),
     };
     let progress = crate::features::learning::outline_progress::OutlineProgress::default();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = progress
         .run(service::generate_with_references_and_progress(
             &repo,
+            &drafts,
             &model,
             request(LearningCourseDepth::Course),
             vec![],
@@ -1193,8 +1210,10 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     };
     let mut request = request(LearningCourseDepth::Course);
     request.goal = "Learn how a randomized comparison isolates an intervention".into();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = service::generate_with_references(
         &repo,
+        &drafts,
         &model,
         request,
         vec![preview.clone()],
@@ -1239,6 +1258,7 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     };
     let saved = service::generate_with_references(
         &rejected_repo,
+        &drafts,
         &unchanged,
         crate::features::learning::lessons::course_generation_tests::request(
             LearningCourseDepth::Course,
@@ -1256,6 +1276,7 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     assert_eq!(rejected_repo.list().await?.len(), 1);
     assert!(service::accept(
         &rejected_repo,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: saved.summary.id.clone(),
             expected_revision: saved.summary.revision,
@@ -1291,6 +1312,7 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     };
     let fixed = crate::features::learning::outline_draft::repair_saved(
         &reopened,
+        &drafts,
         &repair,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: saved.summary.id.clone(),
@@ -1313,6 +1335,7 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     assert!(fixed.summary.revision > saved.summary.revision);
     assert!(crate::features::learning::outline_draft::repair_saved(
         &reopened,
+        &drafts,
         &repair,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: saved.summary.id.clone(),
@@ -1325,6 +1348,7 @@ async fn outline_quotes_use_full_captures_and_cannot_bypass_validation() -> Resu
     .is_err());
     service::accept(
         &reopened,
+        &drafts,
         AcceptLearningProgramRequestDto {
             program_id: fixed.summary.id.clone(),
             expected_revision: fixed.summary.revision,
@@ -1363,8 +1387,15 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
         prompts: std::sync::Mutex::new(vec![]),
     };
     // The fourth request fails. A previous module's correction must survive.
-    let saved =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let saved = service::generate(
+        &repo,
+        &drafts,
+        &model,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
     assert_eq!(
         saved.outline_review.as_ref().unwrap().status,
         LearningOutlineReviewStatus::Unchecked
@@ -1398,7 +1429,7 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
 
 #[tokio::test]
 async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() -> Result<()> {
-    use crate::features::learning::outline_progress::{OutlineProgress, OutlineRun};
+    use crate::features::learning::outline_progress::{OutlineProgress, OutlineRunRegistry};
     struct WaitingModel {
         draft: String,
         entered: std::sync::Arc<tokio::sync::Notify>,
@@ -1444,17 +1475,21 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         entered: entered.clone(),
     };
     let id = uuid::Uuid::new_v4().to_string();
-    let run = OutlineRun::register(Some(id.clone()), |_| {})?;
+    let registry = OutlineRunRegistry::new();
+    let run = registry.register(Some(id.clone()), |_| {})?;
     let task_repo = repo.clone();
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let task_drafts = drafts.clone();
     let task = tokio::spawn(async move {
-        run.0
+        run.progress
             .run(service::generate_with_references_and_progress(
                 &task_repo,
+                &task_drafts,
                 &model,
                 request(LearningCourseDepth::Course),
                 vec![],
                 &[],
-                &run.0,
+                &run.progress,
                 None,
             ))
             .await
@@ -1463,7 +1498,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         .await
         .unwrap();
     let saved = repo.list().await?.pop().unwrap();
-    assert!(crate::features::learning::outline_progress::cancel(&id));
+    assert!(registry.cancel(&id));
     assert!(task.await.unwrap().is_err());
     let reopened = LearningRepository::new(pool);
     let saved = reopened.get(&saved.id).await?;
@@ -1477,6 +1512,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
     };
     let resumed = crate::features::learning::outline_draft::repair_saved(
         &reopened,
+        &drafts,
         &model,
         &crate::features::learning::outline_draft::RepairLearningOutlineRequestDto {
             program_id: saved.summary.id,
@@ -1523,8 +1559,15 @@ async fn outline_automatic_repair_continues_while_findings_decrease() -> Result<
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    let saved =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let saved = service::generate(
+        &repo,
+        &drafts,
+        &model,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
     assert_eq!(
         saved.outline_review.as_ref().unwrap().status,
         crate::features::learning::outline_draft::LearningOutlineReviewStatus::Passed
@@ -1556,8 +1599,15 @@ async fn outline_research_saves_full_pages_and_never_uses_snippets_or_truncated_
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    let mut program =
-        service::generate(&repo, &model, request(LearningCourseDepth::Course), vec![]).await?;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let mut program = service::generate(
+        &repo,
+        &drafts,
+        &model,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
     let mut draft = repo.outline_draft(&program.summary.id).await?.unwrap();
     let web = MockWebService::new();
     let url = "https://example.org/full-reference";
@@ -1733,18 +1783,19 @@ async fn live_outline_generation_and_save() -> Result<()> {
     let repo = LearningRepository::new(pool);
     let start = std::time::Instant::now();
     let last_stage = std::sync::Mutex::new((None, 0));
-    let run =
-        crate::features::learning::outline_progress::OutlineRun::register(None, move |update| {
-            let mut last = last_stage.lock().unwrap();
-            if last.0 != Some(update.stage) || update.elapsed_seconds >= last.1 + 30 {
-                println!(
-                    "Live outline: {:?} at {}s, {} response characters",
-                    update.stage, update.elapsed_seconds, update.response_characters
-                );
-                *last = (Some(update.stage), update.elapsed_seconds);
-            }
-        })?;
-    let progress = &run.0;
+    let registry = crate::features::learning::outline_progress::OutlineRunRegistry::new();
+    let run = registry.register(None, move |update| {
+        let mut last = last_stage.lock().unwrap();
+        if last.0 != Some(update.stage) || update.elapsed_seconds >= last.1 + 30 {
+            println!(
+                "Live outline: {:?} at {}s, {} response characters",
+                update.stage, update.elapsed_seconds, update.response_characters
+            );
+            *last = (Some(update.stage), update.elapsed_seconds);
+        }
+    })?;
+    let progress = &run.progress;
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
     let program = progress
         .run(async {
             progress
@@ -1774,6 +1825,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
             progress.model(client.model_name());
             service::generate_with_references_and_progress(
                 &repo,
+                &drafts,
                 &client,
                 request,
                 sources,

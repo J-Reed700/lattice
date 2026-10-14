@@ -33,6 +33,13 @@ pub(super) struct FakeRuntime {
     pub(super) vault: Option<TestVault>,
     /// One service for the whole test, so what a turn saves can be read back.
     pub(super) conversations: Arc<MockConversationService>,
+    /// One registry per test, so a stop press lands on the map the turn
+    /// registered with — and never on another test's.
+    pub(super) turn_cancellation:
+        Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry>,
+    /// One map per test, so a research job answers the command of its own
+    /// test — and never another test's.
+    pub(super) research_waiters: Arc<crate::features::conversation::chat::ResearchWaiters>,
     /// The `answer_thinking` setting the turn reads.
     pub(super) answer_thinking: bool,
 }
@@ -45,6 +52,10 @@ impl Default for FakeRuntime {
             jobs: None,
             vault: None,
             conversations: Arc::new(MockConversationService::new()),
+            turn_cancellation: Arc::new(
+                crate::features::conversation::chat::cancellation::TurnCancellationRegistry::new(),
+            ),
+            research_waiters: Arc::new(crate::features::conversation::chat::ResearchWaiters::new()),
             answer_thinking: false,
         }
     }
@@ -57,6 +68,9 @@ impl ChatModels for FakeRuntime {
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         unreachable!("{UNUSED}")
+    }
+    async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
+        Ok(None)
     }
     fn utility_llm_loader(&self) -> crate::application::ports::llm_port::OptionalLlmLoader {
         Arc::new(|| Box::pin(async { Ok(None) }))
@@ -104,6 +118,23 @@ impl ChatStorage for FakeRuntime {
                 .connect_lazy("sqlite::memory:")
                 .unwrap(),
         ))
+    }
+    fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
+        unreachable!("{UNUSED}")
+    }
+    fn conversation_memory(
+        &self,
+    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+        unreachable!("{UNUSED}")
+    }
+    fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots> {
+        unreachable!("{UNUSED}")
+    }
+    fn handoffs_in_flight(&self) -> Arc<crate::features::conversation::handoff::HandoffsInFlight> {
+        unreachable!("{UNUSED}")
+    }
+    fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
+        unreachable!("{UNUSED}")
     }
     async fn explorer_turn(
         &self,
@@ -171,11 +202,55 @@ impl ChatPolicy for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn consolidate_after_turn(&self, _id: String) {}
+    async fn check_read_rate_limit(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn check_delete_rate_limit(&self, _name: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn delete_conversation_unmetered(&self, _conversation_id: &str) -> Result<()> {
+        unreachable!("{UNUSED}")
+    }
 }
 
 impl ChatJobs for FakeRuntime {
     fn jobs(&self) -> Arc<JobRuntime> {
         Arc::clone(self.jobs.as_ref().expect(UNUSED))
+    }
+    fn research_waiters(&self) -> Arc<crate::features::conversation::chat::ResearchWaiters> {
+        Arc::clone(&self.research_waiters)
+    }
+}
+
+impl ChatCancellation for FakeRuntime {
+    fn turn_cancellation(
+        &self,
+    ) -> Arc<crate::features::conversation::chat::cancellation::TurnCancellationRegistry> {
+        Arc::clone(&self.turn_cancellation)
+    }
+}
+
+#[async_trait::async_trait]
+impl SynthesisEntries for FakeRuntime {
+    async fn references_created_since(
+        &self,
+        _cutoff: &str,
+        _limit: i64,
+    ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
+        unreachable!("{UNUSED}")
+    }
+    async fn notes_in_range(
+        &self,
+        _start_date: &str,
+        _end_date: &str,
+    ) -> Result<Vec<StoredJournalPage>> {
+        unreachable!("{UNUSED}")
+    }
+    async fn hydrate_note(
+        &self,
+        _page: StoredJournalPage,
+    ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+        unreachable!("{UNUSED}")
     }
 }
 

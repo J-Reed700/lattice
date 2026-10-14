@@ -120,6 +120,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     use crate::features::learning::lab_runtime::LearningLabFile;
     let (pool, program_id, lesson_id, _) = fixture().await?;
     let repository = LearningPracticalRepository::new(pool.clone());
+    let runs = crate::features::learning::practical_runs::PracticalRunRegistry::new();
     let request = GenerateLearningPracticalActivityRequestDto {
         operation_id: id(),
         activity_id: id(),
@@ -177,9 +178,14 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     let unrelated_file = unrelated_workspace.join("user-data.txt");
     std::fs::write(&unrelated_file, "must not be removed by a builtin run")?;
     assert_eq!(
-        crate::features::learning::practical_runs::start_run(&repository, &run, "builtin-wrong")
-            .await?
-            .status,
+        crate::features::learning::practical_runs::start_run(
+            &repository,
+            &runs,
+            &run,
+            "builtin-wrong"
+        )
+        .await?
+        .status,
         LearningPracticalRunStatus::Failed
     );
     assert_eq!(
@@ -190,18 +196,27 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     run.operation_id = id();
     run.run_id = id();
     run.learner_files[0].content = "export const add=(a,b)=>a+b;".into();
-    let passed =
-        crate::features::learning::practical_runs::start_run(&repository, &run, "builtin-right")
-            .await?;
+    let passed = crate::features::learning::practical_runs::start_run(
+        &repository,
+        &runs,
+        &run,
+        "builtin-right",
+    )
+    .await?;
     assert_eq!(passed.status, LearningPracticalRunStatus::Passed);
     assert_eq!(
         passed.builtin_runtime,
         Some(LearningBuiltinRuntime::Javascript)
     );
     assert_eq!(
-        crate::features::learning::practical_runs::start_run(&repository, &run, "builtin-right")
-            .await?
-            .id,
+        crate::features::learning::practical_runs::start_run(
+            &repository,
+            &runs,
+            &run,
+            "builtin-right"
+        )
+        .await?
+        .id,
         passed.id
     );
     let reopened = LearningPracticalRepository::new(pool.clone())
@@ -220,6 +235,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     });
     assert!(crate::features::learning::practical_runs::start_run(
         &repository,
+        &runs,
         &run,
         "replace-checks"
     )
@@ -247,9 +263,14 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     run.run_id = id();
     run.learner_files.pop();
     assert_eq!(
-        crate::features::learning::practical_runs::start_run(&repository, &run, "old-runtime")
-            .await?
-            .status,
+        crate::features::learning::practical_runs::start_run(
+            &repository,
+            &runs,
+            &run,
+            "old-runtime"
+        )
+        .await?
+        .status,
         LearningPracticalRunStatus::RuntimeUnavailable
     );
     assert_eq!(

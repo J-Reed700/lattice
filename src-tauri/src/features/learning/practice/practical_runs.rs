@@ -12,58 +12,87 @@ use crate::shared::{
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{LazyLock, Mutex},
+    sync::{Arc, Mutex},
 };
 use tokio_util::sync::CancellationToken;
 
-static ACTIVE_RUNS: LazyLock<Mutex<HashMap<String, CancellationToken>>> =
-    LazyLock::new(Mutex::default);
-struct ActiveRun(String);
-impl Drop for ActiveRun {
-    fn drop(&mut self) {
-        ACTIVE_RUNS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.0);
+/// The one registry of practical runs executing in this process. Built by the
+/// composition root and handed to the commands that start or cancel a run, so
+/// a cancel press reaches the cancellation token of the run it targets — and a
+/// test never sees a run another test registered.
+#[derive(Clone, Default)]
+pub struct PracticalRunRegistry {
+    active: Arc<Mutex<HashMap<String, CancellationToken>>>,
+}
+
+impl PracticalRunRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, CancellationToken>> {
+        self.active.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn register(&self, id: &str, token: CancellationToken) -> Result<ActiveRun> {
+        let mut active = self.lock();
+        // Do not replace the existing token when rejecting a duplicate runner.
+        if active.contains_key(id) {
+            return Err(AppError::ConcurrentModification {
+                resource: "practical run".into(),
+                details: "This run is already active.".into(),
+            });
+        }
+        active.insert(id.into(), token);
+        Ok(ActiveRun {
+            id: id.into(),
+            registry: self.clone(),
+        })
+    }
+
+    fn token(&self, id: &str) -> Option<CancellationToken> {
+        self.lock().get(id).cloned()
     }
 }
-fn register_run(id: &str, token: CancellationToken) -> Result<ActiveRun> {
-    let mut active = ACTIVE_RUNS.lock().unwrap_or_else(|e| e.into_inner());
-    // Do not replace the existing token when rejecting a duplicate runner.
-    if active.contains_key(id) {
-        return Err(AppError::ConcurrentModification {
-            resource: "practical run".into(),
-            details: "This run is already active.".into(),
-        });
+
+struct ActiveRun {
+    id: String,
+    registry: PracticalRunRegistry,
+}
+impl Drop for ActiveRun {
+    fn drop(&mut self) {
+        self.registry.lock().remove(&self.id);
     }
-    active.insert(id.into(), token);
-    Ok(ActiveRun(id.into()))
 }
 
 pub async fn start_run(
     repo: &LearningPracticalRepository,
+    runs: &PracticalRunRegistry,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
 ) -> Result<LearningPracticalRunDto> {
-    let (repo, request, hash) = (repo.clone(), request.clone(), payload_hash.to_owned());
-    let task = background::spawn(async move { execute_run(&repo, &request, &hash).await })
-        .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
+    let (repo, runs, request, hash) = (
+        repo.clone(),
+        runs.clone(),
+        request.clone(),
+        payload_hash.to_owned(),
+    );
+    let task =
+        background::spawn(async move { execute_run(&repo, &runs, &request, &hash).await })
+            .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
     task.await
         .map_err(|error| AppError::InternalError(format!("Practical runner stopped: {error}")))?
 }
 
 pub async fn cancel_run(
     repo: &LearningPracticalRepository,
+    runs: &PracticalRunRegistry,
     request: &CancelLearningPracticalRunRequestDto,
     payload_hash: &str,
 ) -> Result<LearningPracticalRunDto> {
     let result = repo.cancel_run(request, payload_hash).await?;
     if result.status == LearningPracticalRunStatus::Cancelled {
-        let active = ACTIVE_RUNS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&request.run_id)
-            .cloned();
+        let active = runs.token(&request.run_id);
         if let Some(token) = &active {
             token.cancel();
         }
@@ -94,6 +123,7 @@ async fn cleanup_orphan(run: RunCleanup, active: bool) -> Result<()> {
 
 async fn execute_run(
     repo: &LearningPracticalRepository,
+    runs: &PracticalRunRegistry,
     request: &StartLearningPracticalRunRequestDto,
     payload_hash: &str,
 ) -> Result<LearningPracticalRunDto> {
@@ -124,7 +154,7 @@ async fn execute_run(
         return repo.run(&request.run_id).await;
     }
     let token = background::cancellation_token().child_token();
-    let _registration = register_run(&request.run_id, token.clone())?;
+    let _registration = runs.register(&request.run_id, token.clone())?;
     // A cancellation may have committed between run creation and registry
     // registration. Never launch a container for a terminal run.
     if repo.run(&request.run_id).await?.status != LearningPracticalRunStatus::Running {
@@ -235,13 +265,14 @@ mod tests {
 
     #[test]
     fn duplicate_registration_preserves_the_running_cancellation_token() {
+        let runs = PracticalRunRegistry::new();
         let id = uuid::Uuid::new_v4().to_string();
         let original = CancellationToken::new();
-        let guard = register_run(&id, original.clone()).unwrap();
-        assert!(register_run(&id, CancellationToken::new()).is_err());
-        ACTIVE_RUNS.lock().unwrap().get(&id).unwrap().cancel();
+        let guard = runs.register(&id, original.clone()).unwrap();
+        assert!(runs.register(&id, CancellationToken::new()).is_err());
+        runs.token(&id).unwrap().cancel();
         assert!(original.is_cancelled());
         drop(guard);
-        assert!(!ACTIVE_RUNS.lock().unwrap().contains_key(&id));
+        assert!(runs.token(&id).is_none());
     }
 }

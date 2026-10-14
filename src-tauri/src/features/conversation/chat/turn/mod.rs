@@ -93,8 +93,10 @@ pub(super) async fn run_turn(
                 warn!(%error, conversation_id = conv_id.as_str(), "Could not stop a research job");
                 false
             });
-        let cancelled =
-            cancel_generation_for_conversation(&conv_id, request_id.as_deref()) || research;
+        let cancelled = container
+            .turn_cancellation()
+            .request_cancel(&conv_id, request_id.as_deref())
+            || research;
         return Ok(ChatResponse {
             conversation_id: conv_id,
             message: if cancelled {

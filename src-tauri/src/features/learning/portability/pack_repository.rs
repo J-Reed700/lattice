@@ -327,9 +327,6 @@ async fn insert_evidence_snapshot(
     }
     Ok(())
 }
-fn managed_dir(container: &crate::interfaces::di::Container) -> PathBuf {
-    container.core.data_dir().join("learning-packs")
-}
 fn safe_filename(name: &str) -> Result<&str> {
     let n = name.trim();
     if n.is_empty()
@@ -345,10 +342,9 @@ fn safe_filename(name: &str) -> Result<&str> {
     }
     Ok(n)
 }
-async fn managed_path(container: &crate::interfaces::di::Container, name: &str) -> Result<PathBuf> {
-    let root = managed_dir(container);
-    tokio::fs::create_dir_all(&root).await.map_err(io_error)?;
-    let root = tokio::fs::canonicalize(&root).await.map_err(io_error)?;
+async fn managed_path(managed: &Path, name: &str) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(managed).await.map_err(io_error)?;
+    let root = tokio::fs::canonicalize(managed).await.map_err(io_error)?;
     let file = safe_filename(name)?;
     let file = if file.to_lowercase().ends_with(".lattice-learning") {
         file.to_owned()
@@ -567,10 +563,15 @@ async fn record_joined_id_conflict(
 #[derive(Clone)]
 pub struct LearningPackRepository {
     pool: SqlitePool,
+    /// App-owned directory where exported packs are written and replacement
+    /// backups are kept. The container is deliberately not threaded through
+    /// the repository: the feature owns its storage location and the DI
+    /// layer supplies it once at construction.
+    managed_dir: PathBuf,
 }
 impl LearningPackRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, managed_dir: PathBuf) -> Self {
+        Self { pool, managed_dir }
     }
 
     async fn require_replace_is_recoverable(&self, program_id: &str) -> Result<()> {
@@ -620,7 +621,6 @@ impl LearningPackRepository {
 
     pub async fn export(
         &self,
-        container: &crate::interfaces::di::Container,
         req: &ExportLearningPackRequestDto,
     ) -> Result<LearningPortabilityWorkspaceDto> {
         validate_uuid(&req.operation_id, "operation")?;
@@ -636,7 +636,7 @@ impl LearningPackRepository {
         }
         let snapshot = export::snapshot(&self.pool, req).await?;
         let manifest_bytes = encode_learning_pack(snapshot)?;
-        let path = managed_path(container, &req.file_name).await?;
+        let path = managed_path(&self.managed_dir, &req.file_name).await?;
         atomic_write(&path, &manifest_bytes).await?;
         let decoded = decode_learning_pack(&manifest_bytes)?;
         let id = uuid::Uuid::new_v4().to_string();
@@ -1149,7 +1149,6 @@ impl LearningPackRepository {
     }
     pub async fn apply(
         &self,
-        container: &crate::interfaces::di::Container,
         req: &ApplyLearningPackImportRequestDto,
     ) -> Result<LearningPortabilityWorkspaceDto> {
         validate_uuid(&req.operation_id, "operation")?;
@@ -1388,7 +1387,7 @@ impl LearningPackRepository {
         // Background saves either precede that snapshot or wait for completion.
         let (mut tx, backup_record) = replacement::begin_apply(
             &self.pool,
-            container,
+            &self.managed_dir,
             &req.preview_id,
             &target_id,
             policy == LearningPackConflictPolicy::ReplaceAfterBackup,

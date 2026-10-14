@@ -14,11 +14,11 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::application::ports::LLMPort;
+use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::memory::{
     CompactionConfig, CompactionJob, CompactionRequest, CompactionTrigger, TokenCounter,
     COMPACTION_DEADLINE,
 };
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 
 /// Messages kept raw when a request names no number.
@@ -33,10 +33,10 @@ pub const KEEP_RECENT_MIN: i64 = 2;
 /// The caller decides whether missing compaction is blocking: a turn may
 /// continue without it only if all unprocessed source still fits in its prompt.
 pub async fn build_job(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     keep_recent_messages: Option<i64>,
 ) -> Result<Option<CompactionJob>> {
-    let utility = match container.get_or_load_utility_llm().await {
+    let utility = match runtime.get_or_load_utility_llm().await {
         Ok(utility) => utility,
         Err(AppError::ModelLoadFailed(error)) => {
             tracing::warn!(%error, "Utility model failed to load; using the chat model for compaction");
@@ -49,7 +49,7 @@ pub async fn build_job(
     // prompt, so both the counter and the budget come from that model rather than
     // the utility one. Recomputed per call because switching model changes both,
     // and a stale budget accepts a summary the next turn cannot carry.
-    let continuation_llm = container.get_or_load_llm().await?;
+    let continuation_llm = runtime.get_or_load_llm().await?;
     let utility_llm = utility.unwrap_or_else(|| Arc::clone(&continuation_llm));
     let count_tokens: TokenCounter = {
         let llm = Arc::clone(&continuation_llm);
@@ -59,7 +59,7 @@ pub async fn build_job(
     let deadline = compaction_deadline_for(utility_llm.provider_name());
 
     Ok(Some(CompactionJob::with_slots(
-        container.conversation_memory(),
+        runtime.conversation_memory(),
         utility_llm,
         count_tokens,
         CompactionConfig {
@@ -70,7 +70,7 @@ pub async fn build_job(
                 .max(KEEP_RECENT_MIN) as usize,
             ..Default::default()
         },
-        container.compaction_slots(),
+        runtime.compaction_slots(),
     )))
 }
 
@@ -140,11 +140,11 @@ fn summary_pool(model: &str, context_tokens: usize, fixed: usize) -> usize {
 /// generation from using the incomplete pre-compaction plan. `cancel` is the
 /// turn's stop button.
 pub async fn compact_for_turn(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     conversation_id: &str,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let job = build_job(container, None).await?.ok_or_else(|| {
+    let job = build_job(runtime, None).await?.ok_or_else(|| {
         AppError::ServiceNotAvailable(
             "No utility model is available to compact this conversation.".into(),
         )
@@ -187,23 +187,17 @@ pub async fn compact_for_turn(
 /// interactive work. The conversation's compaction slot coalesces queued
 /// requests through the durable watermark: a consolidation waiting behind
 /// another of the same conversation finds nothing left to do.
-pub fn consolidate_after_turn(container: Container, conversation_id: String) {
+pub fn consolidate_after_turn(runtime: Arc<dyn ChatRuntime>, conversation_id: String) {
     let cancel = crate::shared::runtime::background::cancellation_token();
     crate::shared::runtime::background::spawn(async move {
         let result: Result<()> = async {
-            if !container
-                .get_settings_use_case()
-                .execute()
-                .await?
-                .llm
-                .bounded_conversation_memory
-            {
+            if !runtime.settings().await?.llm.bounded_conversation_memory {
                 return Ok(());
             }
             let built = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Ok(()),
-                result = build_job(&container, None) => result,
+                result = build_job(&*runtime, None) => result,
             };
             let job = built?.ok_or_else(|| {
                 AppError::ServiceNotAvailable(
@@ -224,7 +218,7 @@ pub fn consolidate_after_turn(container: Container, conversation_id: String) {
         .await;
         if let Err(error) = result {
             tracing::warn!(conversation_id, %error, "Memory consolidation deferred; answer remains saved");
-            let _ = container
+            let _ = runtime
                 .conversation_memory()
                 .record_memory_error(&conversation_id, "maintenance_deferred")
                 .await;

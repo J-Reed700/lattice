@@ -6,13 +6,12 @@
 //! merges them into its staged result. A synthesis stopped by a restart
 //! resumes at the first part it had not saved; one that finished while the
 //! app was closed waits, staged, until the renderer saves it.
-use super::chat::ports::ChatPolicy;
+use super::chat::ports::{ChatPolicy, ChatRuntime, SynthesisEntries};
 use super::chat::{run_unwatched_turn, ChatResponse, ToolPreferences};
 use super::commands as conversation;
 use super::dto::CreateConversationRequestDto;
 use super::workspace_dto::*;
 use crate::features::qa::dto::SourceDto;
-use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::runtime::jobs::{
     JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,
@@ -464,7 +463,7 @@ fn sort_entries_by_recency(entries: &mut [JournalSynthesisEntry]) {
 }
 
 async fn select_week_entries(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     max_entries: usize,
 ) -> Result<Vec<JournalSynthesisEntry>> {
     let now = Utc::now();
@@ -472,7 +471,7 @@ async fn select_week_entries(
 
     // (a) Conversations — typed, already ordered updated_at DESC.
     let candidates = conversation::list_conversations_impl(
-        container,
+        runtime,
         Some(WEEK_SYNTHESIS_CANDIDATE_SCAN),
         Some(0),
     )
@@ -488,8 +487,7 @@ async fn select_week_entries(
         }
         let conversation_id = candidate.id.to_string();
         let messages =
-            conversation::get_conversation_messages_impl(container, conversation_id.clone())
-                .await?;
+            conversation::get_conversation_messages_impl(runtime, conversation_id.clone()).await?;
         let transcript = build_synthesis_transcript(&messages);
         let (sources, prompt_messages) = source_keys_by_message(&messages);
         if transcript.is_empty() {
@@ -515,11 +513,9 @@ async fn select_week_entries(
     let cutoff = crate::shared::persistence::timestamps::format_db_timestamp(
         now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS),
     );
-    let references = crate::features::references::repository::PassageReferenceRepository::new(
-        container.db_pool().clone(),
-    )
-    .list_created_since(&cutoff, WEEK_SYNTHESIS_MAX_REFERENCES as i64)
-    .await?;
+    let references = runtime
+        .references_created_since(&cutoff, WEEK_SYNTHESIS_MAX_REFERENCES as i64)
+        .await?;
 
     for record in references {
         let mut lines = vec![format!(
@@ -589,16 +585,24 @@ async fn select_week_entries(
         .format("%Y-%m-%d")
         .to_string();
     let end_date = now.format("%Y-%m-%d").to_string();
-    let notes_repository = crate::features::daily_notes::repository::DailyNotesRepository::new(
-        container.db_pool().clone(),
-    );
-    let conversation_repository =
-        crate::features::conversation::repository::ConversationRepository::new(
-            container.db_pool().clone(),
-        );
-    let notes = notes_repository
-        .list_in_date_range(&start_date, &end_date)
-        .await?;
+    entries.extend(select_week_notes(runtime, &start_date, &end_date).await?);
+
+    sort_entries_by_recency(&mut entries);
+    entries.truncate(max_entries);
+    Ok(entries)
+}
+
+/// The journal pages a week synthesis reads, chosen on their stored rows:
+/// empty pages and earlier week pages are skipped, and the scan stops at
+/// `WEEK_SYNTHESIS_MAX_NOTES`. Only a chosen page is hydrated, so a page the
+/// synthesis passes over is neither rewritten nor able to fail it.
+async fn select_week_notes<E: SynthesisEntries + ?Sized>(
+    store: &E,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<JournalSynthesisEntry>> {
+    let mut entries: Vec<JournalSynthesisEntry> = Vec::new();
+    let notes = store.notes_in_range(start_date, end_date).await?;
 
     let mut used_notes = 0usize;
     for note in notes {
@@ -611,12 +615,7 @@ async fn select_week_entries(
         used_notes += 1;
         // Weekly synthesis can consume an old page before the user opens it.
         // Recover and persist its archived citations at this boundary too.
-        let note = crate::features::daily_notes::commands::hydrate_workspace_note(
-            &notes_repository,
-            &conversation_repository,
-            note,
-        )
-        .await?;
+        let note = store.hydrate_note(note).await?;
         let note_sources = note.sources;
         let note_citation_keys = note_sources
             .iter()
@@ -643,8 +642,6 @@ async fn select_week_entries(
         });
     }
 
-    sort_entries_by_recency(&mut entries);
-    entries.truncate(max_entries);
     Ok(entries)
 }
 
@@ -717,7 +714,7 @@ struct Scratch {
 
 /// Gathers the entries a synthesis reads and plans its parts.
 async fn plan_synthesis(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     request: &SynthesizeJournalEntriesRequestDto,
 ) -> Result<SynthesisPlan> {
     let normalized_scope = normalize_synthesis_scope(request.scope.as_deref());
@@ -742,7 +739,7 @@ async fn plan_synthesis(
     // The "week" scope selects server-side, so it carries no conversation ids.
     // Every other scope still requires an explicit selection.
     let entries = if normalized_scope == "week" {
-        select_week_entries(container, max_entries).await?
+        select_week_entries(runtime, max_entries).await?
     } else {
         if conversation_ids.is_empty() {
             return Err(AppError::InvalidInput(
@@ -757,13 +754,13 @@ async fn plan_synthesis(
         let mut selected = Vec::new();
         for conversation_id in &conversation_ids {
             let conversation =
-                conversation::get_conversation_impl(container, conversation_id.clone()).await?;
+                conversation::get_conversation_impl(runtime, conversation_id.clone()).await?;
             let Some(conversation) = conversation else {
                 continue;
             };
 
             let messages =
-                conversation::get_conversation_messages_impl(container, conversation_id.clone())
+                conversation::get_conversation_messages_impl(runtime, conversation_id.clone())
                     .await?;
             let transcript = build_synthesis_transcript(&messages);
             let (sources, prompt_messages) = source_keys_by_message(&messages);
@@ -843,19 +840,19 @@ pub(crate) trait SynthesisWork: Send + Sync {
 
 /// The app's entries and models.
 struct AppSynthesis {
-    container: Container,
+    runtime: Arc<dyn ChatRuntime>,
 }
 
 #[async_trait]
 impl SynthesisWork for AppSynthesis {
     async fn plan(&self, selection: &SynthesizeJournalEntriesRequestDto) -> Result<SynthesisPlan> {
-        plan_synthesis(&self.container, selection).await
+        plan_synthesis(&*self.runtime, selection).await
     }
 
     async fn open_scratch(&self) -> Result<String> {
-        let llm = self.container.get_or_load_llm().await?;
+        let llm = self.runtime.get_or_load_llm().await?;
         Ok(ChatPolicy::create_conversation(
-            &self.container,
+            &*self.runtime,
             CreateConversationRequestDto {
                 title: "Journal synthesis".to_string(),
                 model_name: llm.model_name().to_string(),
@@ -869,7 +866,7 @@ impl SynthesisWork for AppSynthesis {
 
     async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse> {
         run_unwatched_turn(
-            &self.container,
+            &*self.runtime,
             conversation_id.to_string(),
             prompt.to_string(),
             closed_book(),
@@ -878,8 +875,10 @@ impl SynthesisWork for AppSynthesis {
     }
 
     async fn remove_scratch(&self, conversation_id: String) {
-        if let Err(error) =
-            conversation::delete_conversation_unmetered(&self.container, conversation_id).await
+        if let Err(error) = self
+            .runtime
+            .delete_conversation_unmetered(&conversation_id)
+            .await
         {
             warn!(%error, "Could not remove a synthesis scratch conversation");
         }
@@ -894,8 +893,8 @@ pub struct JournalSynthesisJob {
 }
 
 impl JournalSynthesisJob {
-    pub fn new(container: Container) -> Self {
-        Self::with(Arc::new(AppSynthesis { container }))
+    pub fn new(runtime: Arc<dyn ChatRuntime>) -> Self {
+        Self::with(Arc::new(AppSynthesis { runtime }))
     }
 
     pub(crate) fn with(work: Arc<dyn SynthesisWork>) -> Self {
@@ -1197,6 +1196,7 @@ mod job_tests;
 mod week_scope_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+    use super::super::chat::ports::StoredJournalPage;
     use super::*;
     use chrono::TimeZone;
 
@@ -1261,6 +1261,111 @@ mod week_scope_tests {
         assert!(is_week_synthesis_page("  Week of Aug 25"));
         assert!(!is_week_synthesis_page("Weekly review"));
         assert!(!is_week_synthesis_page("Sep 6"));
+    }
+
+    fn stored_page(id: &str, title: &str, content: &str) -> StoredJournalPage {
+        StoredJournalPage {
+            revision: 0,
+            id: id.to_string(),
+            title: title.to_string(),
+            journal_id: None,
+            content: content.to_string(),
+            linked_document_ids: "[]".to_string(),
+            linked_conversation_ids: "[]".to_string(),
+            highlights_json: "[]".to_string(),
+            sticky_notes_json: "[]".to_string(),
+            conversation_snapshots_json: "[]".to_string(),
+            sources_json: "[]".to_string(),
+            created_at: "2026-09-05T10:00:00.000Z".to_string(),
+            updated_at: "2026-09-05T10:00:00.000Z".to_string(),
+        }
+    }
+
+    /// Journal pages as stored, whose hydration fails for any page the
+    /// synthesis should have passed over and records the ones it used.
+    struct StoredPages {
+        rows: Vec<StoredJournalPage>,
+        hydrated: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl SynthesisEntries for StoredPages {
+        async fn references_created_since(
+            &self,
+            _cutoff: &str,
+            _limit: i64,
+        ) -> Result<Vec<crate::features::references::repository::PassageReferenceRecord>> {
+            unreachable!("only journal pages are read here")
+        }
+
+        async fn notes_in_range(
+            &self,
+            _start_date: &str,
+            _end_date: &str,
+        ) -> Result<Vec<StoredJournalPage>> {
+            Ok(self.rows.clone())
+        }
+
+        async fn hydrate_note(
+            &self,
+            page: StoredJournalPage,
+        ) -> Result<crate::features::daily_notes::dto::WorkspaceNoteDto> {
+            if page.id.starts_with("unused") {
+                return Err(AppError::Database(format!(
+                    "{} was hydrated though the synthesis does not use it",
+                    page.id
+                )));
+            }
+            self.hydrated.lock().unwrap().push(page.id.clone());
+            Ok(crate::features::daily_notes::dto::WorkspaceNoteDto {
+                revision: page.revision,
+                id: page.id,
+                title: page.title,
+                journal_id: page.journal_id,
+                content: page.content,
+                linked_document_ids: Vec::new(),
+                linked_conversation_ids: Vec::new(),
+                highlights: Vec::new(),
+                sticky_notes: Vec::new(),
+                conversation_snapshots: Vec::new(),
+                sources: Vec::new(),
+                created_at: page.created_at,
+                updated_at: page.updated_at,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn week_notes_hydrate_only_the_pages_they_use() {
+        let mut rows = vec![
+            stored_page("unused-empty", "Sep 1", "   "),
+            stored_page("unused-week", "Week of Aug 25", "Last week's synthesis"),
+        ];
+        rows.extend(
+            (0..WEEK_SYNTHESIS_MAX_NOTES)
+                .map(|index| stored_page(&format!("note-{index}"), "Sep 4", "Notes")),
+        );
+        rows.push(stored_page("unused-over-cap", "Sep 5", "One page too many"));
+        let store = StoredPages {
+            rows,
+            hydrated: std::sync::Mutex::default(),
+        };
+
+        let entries = select_week_notes(&store, "2026-08-30", "2026-09-06")
+            .await
+            .expect("a page the synthesis passes over cannot fail it");
+
+        let used: Vec<String> = (0..WEEK_SYNTHESIS_MAX_NOTES)
+            .map(|index| format!("note-{index}"))
+            .collect();
+        assert_eq!(*store.hydrated.lock().unwrap(), used);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.source_id.clone())
+                .collect::<Vec<_>>(),
+            used
+        );
     }
 
     #[test]

@@ -75,29 +75,24 @@ async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
 
 async fn export_without_activity(
     packs: &LearningPackRepository,
-    container: &crate::interfaces::di::Container,
     program: &LearningProgramDto,
 ) -> Result<String> {
     let workspace = packs
-        .export(
-            container,
-            &ExportLearningPackRequestDto {
-                operation_id: id(),
-                program_id: program.summary.id.clone(),
-                file_name: format!("provenance-{}.lattice-learning", id()),
-                include_evidence: false,
-                include_practical_artifacts: false,
-                include_source_bodies: false,
-                source_body_redistribution_confirmed: false,
-            },
-        )
+        .export(&ExportLearningPackRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            file_name: format!("provenance-{}.lattice-learning", id()),
+            include_evidence: false,
+            include_practical_artifacts: false,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        })
         .await?;
     Ok(workspace.exports[0].destination_path.clone())
 }
 
 async fn apply_path(
     packs: &LearningPackRepository,
-    container: &crate::interfaces::di::Container,
     path: String,
     policy: LearningPackConflictPolicy,
 ) -> Result<crate::features::learning::portability_dto::LearningPortabilityWorkspaceDto> {
@@ -112,14 +107,11 @@ async fn apply_path(
     let preview = &workspace.import_previews[0];
     assert!(preview.can_apply);
     packs
-        .apply(
-            container,
-            &ApplyLearningPackImportRequestDto {
-                operation_id: id(),
-                preview_id: preview.id.clone(),
-                expected_root_sha256: preview.manifest.root_sha256.clone(),
-            },
-        )
+        .apply(&ApplyLearningPackImportRequestDto {
+            operation_id: id(),
+            preview_id: preview.id.clone(),
+            expected_root_sha256: preview.manifest.root_sha256.clone(),
+        })
         .await
 }
 
@@ -128,9 +120,9 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
 {
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let (copy_id, _) = export_copy(&packs, &container, &original.summary.id).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let (copy_id, _) = export_copy(&packs, &original.summary.id).await?;
     assert_ne!(copy_id, original.summary.id);
     let copy = LearningRepository::new(pool.clone()).get(&copy_id).await?;
     let copied_lesson = &copy.modules[0].lessons[0];
@@ -195,9 +187,9 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
 ) -> Result<()> {
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let path = export_without_activity(&packs, &container, &original).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let path = export_without_activity(&packs, &original).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&path).await?)?;
     assert!(
         decoded.entries.contains_key(PROVENANCE),
@@ -206,13 +198,7 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
     assert!(!decoded.manifest.privacy.includes_learner_evidence);
     sqlx::query("UPDATE learning_lesson_verifications SET report_json=json_set(report_json,'$.findings[0].reason','Current-only receipt') WHERE program_id=?")
         .bind(&original.summary.id).execute(&pool).await?;
-    let applied = apply_path(
-        &packs,
-        &container,
-        path,
-        LearningPackConflictPolicy::ReplaceAfterBackup,
-    )
-    .await?;
+    let applied = apply_path(&packs, path, LearningPackConflictPolicy::ReplaceAfterBackup).await?;
     let backup_id = applied.imports[0].backup_id.as_ref().unwrap();
     let backup = applied
         .exports
@@ -233,7 +219,6 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
     assert_eq!(restored.teaching_claims[0].reason, "Persistence fixture");
     let recovery = apply_path(
         &packs,
-        &container,
         backup.destination_path.clone(),
         LearningPackConflictPolicy::CreateCopy,
     )
@@ -281,9 +266,9 @@ async fn variant(path: &str, edit: impl FnOnce(&mut LearningPackInput)) -> Resul
 async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() -> Result<()> {
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let path = export_without_activity(&packs, &container, &original).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let path = export_without_activity(&packs, &original).await?;
     for case in 0..6 {
         let changed = variant(&path, |input| {
             if case == 5 {
@@ -345,19 +330,14 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
 async fn failed_provenance_backup_leaves_the_replacement_target_untouched() -> Result<()> {
     let pool = pool().await?;
     let original = ready_course(&pool).await?;
-    let container = test_container().await?;
-    let packs = LearningPackRepository::new(pool.clone());
-    let path = export_without_activity(&packs, &container, &original).await?;
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(pool.clone(), workspace.path().join("learning-packs"));
+    let path = export_without_activity(&packs, &original).await?;
     sqlx::query("UPDATE learning_lesson_verifications SET content_sha256='mismatched-column' WHERE program_id=?")
         .bind(&original.summary.id).execute(&pool).await?;
-    let error = apply_path(
-        &packs,
-        &container,
-        path,
-        LearningPackConflictPolicy::ReplaceAfterBackup,
-    )
-    .await
-    .expect_err("an incomplete backup must block replacement");
+    let error = apply_path(&packs, path, LearningPackConflictPolicy::ReplaceAfterBackup)
+        .await
+        .expect_err("an incomplete backup must block replacement");
     assert!(
         error
             .to_string()

@@ -16,6 +16,21 @@ fn source_library(container: &Container) -> super::source_library::LearningSourc
     super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone())
 }
 
+/// Source-acquisition dependencies, assembled once at the command layer so
+/// the acquisition code never sees the container.
+fn source_deps(container: &Container) -> crate::features::learning::sources::SourceDeps {
+    crate::features::learning::sources::SourceDeps {
+        library: container.library_passages(),
+        web: container.web_service(),
+        web_ingest: container
+            .security_context()
+            .rate_limiters()
+            .web_ingest
+            .clone(),
+        pool: container.db_pool().clone(),
+    }
+}
+
 mod program;
 pub use program::*;
 mod memory;

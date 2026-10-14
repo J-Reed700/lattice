@@ -296,9 +296,15 @@ pub async fn explorer_folder_remove(
     container: State<'_, Container>,
 ) -> Result<u32, ApiError> {
     let manager = index_manager(&container)?;
-    let deleted = folders::remove(container.inner(), &manager, &root, delete_threads)
-        .await
-        .map_err(ApiError::from)?;
+    let deleted = folders::remove(
+        container.db_pool(),
+        container.inner(),
+        &manager,
+        &root,
+        delete_threads,
+    )
+    .await
+    .map_err(ApiError::from)?;
     Ok(u32::try_from(deleted).unwrap_or(u32::MAX))
 }
 

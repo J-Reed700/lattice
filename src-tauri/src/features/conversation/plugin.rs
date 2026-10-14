@@ -733,7 +733,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
                 .await?;
                 jobs.register(
                     synthesis::JOURNAL_SYNTHESIS,
-                    Arc::new(synthesis::JournalSynthesisJob::new(container.clone())),
+                    Arc::new(synthesis::JournalSynthesisJob::new(container.share())),
                     synthesis::synthesis_job_config(),
                 )
                 .await

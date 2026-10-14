@@ -1,9 +1,6 @@
 //! Tauri adapter for the transport-independent turn workflow.
-use super::{ChatResponse, ToolPreferences};
-use crate::{
-    interfaces::di::Container,
-    shared::error::{AppError, Result},
-};
+use super::{ChatResponse, ChatRuntime, ToolPreferences};
+use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tauri::Emitter;
 
@@ -21,7 +18,7 @@ pub fn app_event_sink<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> super::Cha
 
 #[allow(clippy::too_many_arguments)]
 pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
-    container: &Container,
+    runtime: &dyn ChatRuntime,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: Option<ToolPreferences>,
@@ -37,7 +34,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             .map_err(|error| AppError::InvalidState(format!("Frontend disconnected: {error}")))
     });
     super::run_turn(
-        container,
+        runtime,
         conversation_id,
         message,
         tool_preferences,

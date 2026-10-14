@@ -630,29 +630,30 @@ async fn a_tool_that_may_write_runs_alone_and_in_order() {
 #[tokio::test]
 async fn stop_ends_a_round_of_reads_without_waiting_for_them() {
     let request_id = "concurrent-reads-stopped";
-    assert!(cancellation::begin_turn_within(
-        request_id,
-        CONVERSATION,
-        None
-    ));
     let web = Arc::new(Web {
         hang: true,
         ..Web::default()
     });
+    let runtime = FakeRuntime {
+        tools: Some(web.clone()),
+        ..FakeRuntime::default()
+    };
+    let turns = Arc::clone(&runtime.turn_cancellation);
+    assert!(turns.begin_turn_within(request_id, CONVERSATION, None));
     let model = Model::new([reads(&[PAGE_A, PAGE_B, PAGE_C])]);
     let tools = [tool("fetch_url_content")];
     let stop = async {
         while web.in_flight.load(Ordering::SeqCst) < 3 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(cancellation::request_cancel(CONVERSATION, Some(request_id)));
+        assert!(turns.request_cancel(CONVERSATION, Some(request_id)));
     };
     let (run, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(run(&model, &web, &tools, ROOMY, 3, request_id), stop)
+        tokio::join!(run_on(runtime, &model, &tools, ROOMY, 3, request_id), stop)
     })
     .await
     .expect("stop ends the round, not the time budget");
-    cancellation::finish_turn(request_id);
+    turns.finish_turn(request_id);
 
     let error = run.outcome.expect_err("a stopped turn has no answer");
     assert!(cancellation::is_cancellation(&error), "{error}");

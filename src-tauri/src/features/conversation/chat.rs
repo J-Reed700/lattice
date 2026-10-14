@@ -52,7 +52,9 @@ pub use desktop::{app_event_sink, chat_with_conversation_impl};
 pub type ChatEventSink = Arc<dyn Fn(ChatStreamEventDto) -> Result<()> + Send + Sync>;
 
 mod attachments;
-mod cancellation;
+// Crate-visible so the composition root can own the one turn-cancellation
+// registry and hand it to every turn through the chat runtime.
+pub(crate) mod cancellation;
 mod document_text;
 mod fetch_memory;
 mod focus;
@@ -73,7 +75,9 @@ pub(crate) mod source_snapshots;
 mod research_job;
 pub mod retrieval;
 pub mod router;
-pub use research_job::{job_config as research_job_config, DeepResearchJob, DEEP_RESEARCH};
+pub use research_job::{
+    job_config as research_job_config, DeepResearchJob, ResearchWaiters, DEEP_RESEARCH,
+};
 mod tool_loop;
 pub mod turn_record;
 // Public so the claim-checker evaluation harness measures the verifier that
@@ -86,7 +90,7 @@ use self::attachments::{build_turn_attachments, TurnAttachments};
 /// How much of an attachment the web-query rewriter is shown. Enough to name
 /// the subject, small enough that the utility model stays fast.
 const ATTACHMENT_DIGEST_CHARS: usize = 900;
-use self::cancellation::{begin_turn_within, finish_turn, is_cancel_requested};
+use self::cancellation::TurnCancellationRegistry;
 use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
@@ -108,33 +112,45 @@ pub use self::verification::VerificationReadyDto;
 use self::verification::{pending_metadata, BackgroundVerification};
 pub(crate) use crate::features::explorer::prompt::ExplorerTurn;
 
-pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
-    cancellation::request_cancel(conversation_id, request_id)
-}
-
 struct TurnCancellationGuard {
     request_id: String,
+    cancellation: Arc<TurnCancellationRegistry>,
 }
 
 impl TurnCancellationGuard {
     /// `parent` is the stop of the job running the turn, if one is.
     fn start(
+        cancellation: Arc<TurnCancellationRegistry>,
         request_id: String,
         conversation_id: &str,
         parent: Option<&tokio_util::sync::CancellationToken>,
     ) -> Result<Self> {
-        if !begin_turn_within(&request_id, conversation_id, parent) {
+        if !cancellation.begin_turn_within(&request_id, conversation_id, parent) {
             return Err(AppError::InvalidState(
                 "A generation with this request ID is already in flight.".to_string(),
             ));
         }
-        Ok(Self { request_id })
+        Ok(Self {
+            request_id,
+            cancellation,
+        })
+    }
+
+    /// The token a stop press for this turn fires, handed to every model
+    /// request it makes.
+    fn turn_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancellation.turn_token(&self.request_id)
+    }
+
+    /// Whether a stop press has fired for this turn.
+    fn is_cancel_requested(&self) -> bool {
+        self.cancellation.is_cancel_requested(&self.request_id)
     }
 }
 
 impl Drop for TurnCancellationGuard {
     fn drop(&mut self) {
-        finish_turn(&self.request_id);
+        self.cancellation.finish_turn(&self.request_id);
     }
 }
 

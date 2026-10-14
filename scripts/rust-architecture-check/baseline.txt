@@ -43,7 +43,7 @@ feature-edge features::batch features::indexing 4
 feature-edge features::batch features::web 2
 feature-edge features::cache features::search 1
 feature-edge features::compare features::search 1
-feature-edge features::conversation features::daily_notes 2
+feature-edge features::conversation features::daily_notes 1
 feature-edge features::conversation features::embedding 3
 feature-edge features::conversation features::explorer 9
 feature-edge features::conversation features::function_calling 51
@@ -95,7 +95,6 @@ feature-edge features::stats features::tags 3
 feature-edge features::summaries features::search 1
 feature-edge features::transcription features::download 2
 feature-edge features::vault features::daily_notes 4
-feature-edge features::vault features::file 2
 feature-edge features::vault features::settings 2
 feature-edge features::web features::embedding 4
 feature-edge features::web features::indexing 7
@@ -106,17 +105,3 @@ feature-cycle features::daily_notes features::conversation 4
 feature-cycle features::daily_notes features::vault 4
 feature-cycle features::explorer features::conversation 4
 feature-cycle features::vault features::daily_notes 4
-
-container-import features/compare/retrieval.rs interfaces::di 1
-container-import features/compare/use_case.rs interfaces::di 1
-container-import features/conversation/branching.rs interfaces::di 1
-container-import features/conversation/compaction.rs interfaces::di 1
-container-import features/conversation/handoff.rs interfaces::di 1
-container-import features/conversation/starters.rs interfaces::di 1
-container-import features/conversation/synthesis.rs interfaces::di 1
-container-import features/explorer/folders.rs interfaces::di 1
-container-import features/learning/portability/pack_repository.rs interfaces::di 4
-container-import features/learning/portability/pack_repository/replacement.rs interfaces::di 1
-container-import features/learning/references/sources.rs interfaces::di 1
-container-import features/search/reranker_setup.rs interfaces::di 1
-container-import features/vault/writeback.rs interfaces::di 1

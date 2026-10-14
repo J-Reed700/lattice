@@ -222,7 +222,7 @@ pub(super) async fn run_agentic_tool_loop(
     // The stop button as a token. Every round's request carries it, so a stop
     // press takes a request out of the backend's queue, or aborts it while it
     // generates, at once rather than at the next poll.
-    let turn_cancel = super::cancellation::turn_token(request_id);
+    let turn_cancel = container.turn_cancellation().turn_token(request_id);
     let mut native_request = CompletionRequest {
         // Someone is watching this turn; it goes ahead of background work and
         // may take the slot kept free for interactive requests.

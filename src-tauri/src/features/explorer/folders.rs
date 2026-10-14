@@ -10,8 +10,7 @@
 use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
-use crate::features::conversation::commands as conversation_commands;
-use crate::interfaces::di::Container;
+use crate::features::conversation::chat::ports::ChatPolicy;
 use crate::shared::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::SqlitePool;
@@ -219,24 +218,28 @@ pub async fn delete_index(manager: &FolderIndexManager, root: &str) -> Result<()
 /// kept stay bound to the folder and come back if it is added again. Returns
 /// how many threads were deleted.
 pub async fn remove(
-    container: &Container,
+    pool: &SqlitePool,
+    policy: &dyn ChatPolicy,
     manager: &FolderIndexManager,
     root: &str,
     delete_threads: bool,
 ) -> Result<usize> {
-    let pool = container.db_pool();
     let threads = if delete_threads {
         repository::folder_threads(pool, root).await?
     } else {
         Vec::new()
     };
     if !threads.is_empty() {
-        conversation_commands::check_delete_rate_limit(container).await?;
+        policy
+            .check_delete_rate_limit("delete_conversation")
+            .await?;
     }
     manager.delete_index(root).await?;
     let deleted = threads.len();
     for conversation_id in threads {
-        conversation_commands::delete_conversation_unmetered(container, conversation_id).await?;
+        policy
+            .delete_conversation_unmetered(&conversation_id)
+            .await?;
     }
     repository::delete_folder(pool, root).await?;
     info!(root, threads_deleted = deleted, "Explorer folder removed");

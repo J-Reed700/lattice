@@ -59,24 +59,25 @@ pub async fn generate_learning_program(
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     service::validate_request(&request).map_err(ApiError::from)?;
-    let run = crate::features::learning::outline_progress::OutlineRun::register(
-        request_id,
-        move |update| {
+    let run = container
+        .outline_run_registry()
+        .register(request_id, move |update| {
             let _ = on_progress.send(update);
-        },
-    )
-    .map_err(ApiError::from)?;
-    let progress = &run.0;
+        })
+        .map_err(ApiError::from)?;
+    let progress = &run.progress;
     progress
         .run(async {
             progress
                 .stage(crate::features::learning::outline_progress::OutlineStage::ReadingSources);
-            let sources = crate::features::learning::sources::acquire(&container, &request).await?;
+            let deps = source_deps(&container);
+            let sources = crate::features::learning::sources::acquire(&deps, &request).await?;
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
             let llm = container.get_or_load_llm().await?;
             progress.model(llm.model_name());
             service::generate_with_references_and_progress(
                 &LearningRepository::new(container.db_pool().clone()),
+                &container.draft_run_registry(),
                 llm.as_ref(),
                 request,
                 sources.sources,
@@ -105,14 +106,13 @@ pub async fn repair_learning_outline(
             "Invalid program ID".into(),
         ))
     })?;
-    let run = crate::features::learning::outline_progress::OutlineRun::register(
-        request_id,
-        move |update| {
+    let run = container
+        .outline_run_registry()
+        .register(request_id, move |update| {
             let _ = on_progress.send(update);
-        },
-    )
-    .map_err(ApiError::from)?;
-    let progress = &run.0;
+        })
+        .map_err(ApiError::from)?;
+    let progress = &run.progress;
     progress
         .run(async {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
@@ -120,6 +120,7 @@ pub async fn repair_learning_outline(
             progress.model(llm.model_name());
             crate::features::learning::outline_draft::repair_saved(
                 &LearningRepository::new(container.db_pool().clone()),
+                &container.draft_run_registry(),
                 llm.as_ref(),
                 &request,
                 progress,
@@ -133,15 +134,16 @@ pub async fn repair_learning_outline(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_learning_outline(request_id: String) -> Result<bool, ApiError> {
+pub async fn cancel_learning_outline(
+    request_id: String,
+    container: State<'_, Container>,
+) -> Result<bool, ApiError> {
     uuid::Uuid::parse_str(&request_id).map_err(|_| {
         ApiError::from(crate::shared::error::AppError::InvalidInput(
             "Invalid outline request ID".into(),
         ))
     })?;
-    Ok(crate::features::learning::outline_progress::cancel(
-        &request_id,
-    ))
+    Ok(container.outline_run_registry().cancel(&request_id))
 }
 #[tauri::command]
 #[specta::specta]
@@ -151,6 +153,7 @@ pub async fn accept_learning_program(
 ) -> Result<LearningProgramDto, ApiError> {
     service::accept(
         &LearningRepository::new(container.db_pool().clone()),
+        &container.draft_run_registry(),
         request,
     )
     .await

@@ -3,8 +3,9 @@ use super::{
     atomic_write, db, decode_learning_pack, encode_learning_pack, export, hash, invalid,
     json_string, managed_path, now, BackupExportRecord, ExportLearningPackRequestDto,
 };
-use crate::{interfaces::di::Container, shared::error::Result};
+use crate::shared::error::Result;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
+use std::path::Path;
 
 #[cfg(test)]
 #[path = "replacement_tests.rs"]
@@ -12,7 +13,7 @@ mod tests;
 
 pub(super) async fn begin_apply(
     pool: &SqlitePool,
-    container: &Container,
+    managed_dir: &Path,
     preview_id: &str,
     program_id: &str,
     replaces_program: bool,
@@ -33,7 +34,7 @@ pub(super) async fn begin_apply(
         return Err(invalid("Pack preview changed while it was being applied."));
     }
     let backup = if replaces_program {
-        backup_if_present(&mut tx, container, program_id).await?
+        backup_if_present(&mut tx, managed_dir, program_id).await?
     } else {
         None
     };
@@ -70,7 +71,7 @@ pub(super) async fn require_recoverable_on(
 /// rolls back. The durable file is written before any program rows are deleted.
 async fn backup_if_present(
     connection: &mut SqliteConnection,
-    container: &Container,
+    managed_dir: &Path,
     program_id: &str,
 ) -> Result<Option<BackupExportRecord>> {
     let exists = sqlx::query_scalar::<_, i64>("SELECT 1 FROM learning_programs WHERE id=?")
@@ -95,7 +96,7 @@ async fn backup_if_present(
     let snapshot = export::snapshot_on(connection, &request).await?;
     let bytes = encode_learning_pack(snapshot)?;
     let decoded = decode_learning_pack(&bytes)?;
-    let path = managed_path(container, &request.file_name).await?;
+    let path = managed_path(managed_dir, &request.file_name).await?;
     atomic_write(&path, &bytes).await?;
     Ok(Some(BackupExportRecord {
         id,

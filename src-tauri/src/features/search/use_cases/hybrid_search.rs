@@ -292,6 +292,26 @@ impl HybridSearchUseCase {
         self.execute_scoped(request, None, None).await
     }
 
+    /// Run the app's default hybrid search — the same fused request chat and
+    /// the search page send — hard-scoped to `allowed_document_ids`.
+    ///
+    /// A convenience for callers that want the default mode without naming
+    /// the request DTO: the mode and fusion weights are the app's defaults,
+    /// so only the query and the scope vary.
+    pub async fn execute_hybrid_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        allowed_document_ids: Option<&HashSet<String>>,
+    ) -> Result<SearchResponseDto> {
+        self.execute_scoped(
+            SearchRequestDto::hybrid(query, limit),
+            None,
+            allowed_document_ids,
+        )
+        .await
+    }
+
     /// Execute a search under an optional hard scope: a space's memberships
     /// and/or an explicit document allow-list, both applied before the limit.
     ///
