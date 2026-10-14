@@ -332,6 +332,9 @@ fn main() {
                     "fetch_url_preview",
                     "extract_article",
                     "read_web_page",
+                    "get_web_page_snapshot",
+                    "capture_web_page_snapshot",
+                    "list_web_page_snapshots",
                 ]),
             )
             .plugin(

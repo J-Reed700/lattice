@@ -133,6 +133,12 @@ pub trait ChatStorage: Send + Sync {
     fn conversation_memory(
         &self,
     ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;
+    /// Ask for a frozen copy of a cited page (the Page view): saves its row and
+    /// queues its capture job, nothing more. Failures are logged, never
+    /// returned. Test runtimes keep this no-op.
+    async fn ensure_page_snapshot(&self, conversation_id: &str, url: &str) {
+        let _ = (conversation_id, url);
+    }
     /// The per-conversation single-flight slots that keep one conversation
     /// from compacting twice at once. One per process, by construction.
     fn compaction_slots(&self) -> Arc<crate::features::conversation::memory::CompactionSlots>;

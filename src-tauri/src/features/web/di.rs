@@ -76,6 +76,25 @@ pub fn build(
     })
 }
 
+/// The frozen-copy feature: the capture engine behind its trait, the
+/// snapshot directory, and the one job runtime its captures run on.
+pub fn build_page_snapshots(
+    db_pool: SqlitePool,
+    jobs: Arc<crate::shared::runtime::jobs::JobRuntime>,
+) -> Result<Arc<crate::features::web::snapshots::WebPageSnapshotService>> {
+    use crate::features::web::snapshots::{
+        store::SnapshotStore, AppEvents, WebPageSnapshotService,
+    };
+    let capture = crate::features::web::services::snapshot::build_page_capture()?;
+    Ok(Arc::new(WebPageSnapshotService::new(
+        db_pool,
+        SnapshotStore::default_root()?,
+        capture,
+        jobs,
+        Arc::new(AppEvents),
+    )))
+}
+
 /// Minimal BPE tokenizer used when no real tokenizer is available (tests /
 /// first-run before model download). Avoids network fetches and provides
 /// deterministic tokenization.
@@ -137,6 +156,13 @@ impl Container {
     /// that cited it.
     pub fn web_service(&self) -> Arc<crate::features::web::services::web::WebService> {
         Arc::clone(&self.web_service)
+    }
+
+    /// Frozen copies of cited pages: rows, files, capture jobs, the scheme.
+    pub fn web_page_snapshots(
+        &self,
+    ) -> Arc<crate::features::web::snapshots::WebPageSnapshotService> {
+        Arc::clone(&self.web_page_snapshots)
     }
 }
 

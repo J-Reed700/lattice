@@ -28,6 +28,7 @@ pub mod domain;
 pub mod dto;
 pub mod plugin;
 pub mod services;
+pub mod snapshots;
 pub mod traits;
 pub mod use_cases;
 

@@ -449,6 +449,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::fetch_url_preview,
             lattice::features::web::plugin::extract_article,
             lattice::features::web::plugin::read_web_page,
+            lattice::features::web::plugin::get_web_page_snapshot,
+            lattice::features::web::plugin::capture_web_page_snapshot,
+            lattice::features::web::plugin::list_web_page_snapshots,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,
@@ -472,6 +475,9 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        // Event payloads of the frozen web snapshot feature.
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotChangedEvent>()
+        .typ::<lattice::features::web::snapshots::WebPageSnapshotLinkEvent>()
         // Persisted in `metadata.turn` rather than returned by a command, so it
         // reaches no signature on its own and has to be named here.
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()
