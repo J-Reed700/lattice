@@ -13,14 +13,20 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
-// v2 carries durable course provenance. Older importers must reject it rather
-// than silently drop verification history; this reader still accepts v1.
-pub const LEARNING_PACK_VERSION: u32 = 3;
+// v4 stores learner evidence one table per entry and canvases one per entry,
+// and records the database schema that wrote it. Only this version imports:
+// both computers run the same build, which `schema_version` proves.
+pub const LEARNING_PACK_VERSION: u32 = 4;
 const MAX_ENTRIES: usize = 4_096;
-const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
-const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
-const MAX_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+const MIB: usize = 1024 * 1024;
+const MAX_ENTRY_BYTES: usize = 32 * MIB;
+const MAX_TOTAL_BYTES: usize = 256 * MIB;
+const MAX_COMPRESSED_BYTES: usize = 256 * MIB;
 const MANIFEST_PATH: &str = "manifest.json";
+/// One `<table>.json` entry per program-scoped evidence table.
+pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
+/// One `<canvas-id>.json` entry per canvas, with its snapshots.
+pub const CANVAS_PREFIX: &str = "program/canvases/";
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +73,8 @@ pub struct LearningPackManifestEntry {
 pub struct LearningPackManifest {
     pub format: String,
     pub version: u32,
+    /// Highest applied database migration on the exporting computer.
+    pub schema_version: i64,
     pub pack_id: String,
     pub title: String,
     pub created_at: i64,
@@ -74,6 +82,13 @@ pub struct LearningPackManifest {
     pub root_sha256: String,
     pub privacy: LearningPackPrivacyManifest,
     pub entries: Vec<LearningPackManifestEntry>,
+}
+
+/// The two manifest fields every pack version has.
+#[derive(Deserialize)]
+struct ManifestStamp {
+    format: String,
+    version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +100,7 @@ pub struct LearningPackEntry {
 
 #[derive(Debug, Clone)]
 pub struct LearningPackInput {
+    pub schema_version: i64,
     pub pack_id: String,
     pub title: String,
     pub created_at: i64,
@@ -181,6 +197,40 @@ fn validate_manifest_metadata(manifest: &LearningPackManifest) -> Result<()> {
             "A learning-pack creation time is outside its allowed range.",
         ));
     }
+    validate_schema_version(manifest.schema_version)
+}
+
+fn validate_schema_version(schema_version: i64) -> Result<()> {
+    if schema_version <= 0 {
+        return Err(invalid(
+            "A learning pack must name the database schema that wrote it.",
+        ));
+    }
+    Ok(())
+}
+
+/// Entries under a reserved folder carry one kind and sit directly inside it
+/// as `<name>.json`; the importer derives their meaning from the path.
+fn validate_reserved_folder(path: &str, kind: &LearningPackEntryKind) -> Result<()> {
+    for (prefix, required) in [
+        (EVIDENCE_TABLE_PREFIX, LearningPackEntryKind::Evidence),
+        (CANVAS_PREFIX, LearningPackEntryKind::Canvas),
+    ] {
+        let Some(name) = path.strip_prefix(prefix) else {
+            continue;
+        };
+        if kind != &required {
+            return Err(invalid(
+                "A reserved learning-pack path has an invalid entry kind.",
+            ));
+        }
+        let stem = name.strip_suffix(".json").unwrap_or("");
+        if stem.is_empty() || stem.contains('/') {
+            return Err(invalid(
+                "A learning-pack entry in a reserved folder has an invalid name.",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -267,11 +317,10 @@ fn validate_content_policy(
             | "program/outcomes.json"
             | "curriculum/lesson-state.json" => Some(LearningPackEntryKind::Curriculum),
             "program/attempts.json" => Some(LearningPackEntryKind::Attempt),
-            "evidence/learning-aggregate.json"
-            | "evidence/events.json"
-            | "evidence/follow-ups.json" => Some(LearningPackEntryKind::Evidence),
+            "evidence/events.json" | "evidence/follow-ups.json" => {
+                Some(LearningPackEntryKind::Evidence)
+            }
             "practical/artifacts.json" => Some(LearningPackEntryKind::PracticalArtifact),
-            "program/canvases.json" => Some(LearningPackEntryKind::Canvas),
             "sources/library.json" | "sources/selectors.json" | "sources/history.json" => {
                 Some(LearningPackEntryKind::SourceMetadata)
             }
@@ -285,6 +334,7 @@ fn validate_content_policy(
                 "A reserved learning-pack path has an invalid entry kind.",
             ));
         }
+        validate_reserved_folder(path, kind)?;
         if path == "program/answer-keys.json" && kind != &LearningPackEntryKind::Curriculum {
             return Err(invalid("The answer-key entry has an invalid kind."));
         }
@@ -303,8 +353,13 @@ fn validate_content_policy(
     Ok(())
 }
 
-fn root_digest(entries: &[LearningPackManifestEntry]) -> String {
+fn root_digest(schema_version: i64, entries: &[LearningPackManifestEntry]) -> String {
     let mut hasher = Sha256::new();
+    // The schema stamp is part of the checksummed root, like every entry.
+    hasher.update(b"schema");
+    hasher.update([0]);
+    hasher.update(schema_version.to_be_bytes());
+    hasher.update([b'\n']);
     for entry in entries {
         hasher.update(entry.path.as_bytes());
         hasher.update([0]);
@@ -374,6 +429,7 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
             "A learning pack needs a bounded application version.",
         ));
     }
+    validate_schema_version(input.schema_version)?;
     validate_privacy(&input.privacy)?;
     if input.entries.is_empty() || input.entries.len() > MAX_ENTRIES {
         return Err(invalid(format!(
@@ -393,13 +449,17 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
         }
         if entry.bytes.len() > MAX_ENTRY_BYTES {
             return Err(invalid(format!(
-                "Learning-pack entry '{}' exceeds 8 MiB.",
-                entry.path
+                "Learning-pack entry '{}' exceeds {} MiB.",
+                entry.path,
+                MAX_ENTRY_BYTES / MIB
             )));
         }
         total = total.saturating_add(entry.bytes.len());
         if total > MAX_TOTAL_BYTES {
-            return Err(invalid("Learning-pack content exceeds 64 MiB."));
+            return Err(invalid(format!(
+                "Learning-pack content exceeds {} MiB.",
+                MAX_TOTAL_BYTES / MIB
+            )));
         }
         if entry.kind == LearningPackEntryKind::SourceBody
             && !input.privacy.source_body_redistribution_confirmed
@@ -432,11 +492,12 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
     let manifest = LearningPackManifest {
         format: LEARNING_PACK_FORMAT.into(),
         version: LEARNING_PACK_VERSION,
+        schema_version: input.schema_version,
         pack_id: input.pack_id,
         title: input.title.trim().into(),
         created_at: input.created_at,
         application_version: input.application_version.trim().into(),
-        root_sha256: root_digest(&manifest_entries),
+        root_sha256: root_digest(input.schema_version, &manifest_entries),
         privacy: input.privacy,
         entries: manifest_entries,
     };
@@ -457,7 +518,10 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
         .finish()
         .map_err(|error| AppError::Serialization(error.to_string()))?;
     if compressed.len() > MAX_COMPRESSED_BYTES {
-        return Err(invalid("Compressed learning pack exceeds 64 MiB."));
+        return Err(invalid(format!(
+            "Compressed learning pack exceeds {} MiB.",
+            MAX_COMPRESSED_BYTES / MIB
+        )));
     }
     Ok(compressed)
 }
@@ -494,7 +558,10 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
             validate_pack_path(&path)?;
         }
         if entry.size() as usize > MAX_ENTRY_BYTES && path != MANIFEST_PATH {
-            return Err(invalid("A learning-pack entry exceeds 8 MiB."));
+            return Err(invalid(format!(
+                "A learning-pack entry exceeds {} MiB.",
+                MAX_ENTRY_BYTES / MIB
+            )));
         }
         let maximum = if path == MANIFEST_PATH {
             2 * 1024 * 1024
@@ -511,9 +578,10 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
         }
         total = total.saturating_add(bytes.len());
         if total > MAX_TOTAL_BYTES {
-            return Err(invalid(
-                "Decompressed learning-pack content exceeds 64 MiB.",
-            ));
+            return Err(invalid(format!(
+                "Decompressed learning-pack content exceeds {} MiB.",
+                MAX_TOTAL_BYTES / MIB
+            )));
         }
         count += 1;
         if count > MAX_ENTRIES + 1 {
@@ -527,15 +595,18 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
             return Err(invalid("A learning pack contains duplicate paths."));
         }
     }
-    let manifest: LearningPackManifest = serde_json::from_slice(
-        manifest_bytes
-            .as_deref()
-            .ok_or_else(|| invalid("A learning pack has no manifest."))?,
-    )
-    .map_err(|error| AppError::InvalidData(error.to_string()))?;
-    if manifest.format != LEARNING_PACK_FORMAT || manifest.version != LEARNING_PACK_VERSION {
+    let manifest_bytes = manifest_bytes
+        .as_deref()
+        .ok_or_else(|| invalid("A learning pack has no manifest."))?;
+    // Read the version before the rest: an older pack lacks fields this
+    // manifest requires, and should be told it is too old, not malformed.
+    let stamp: ManifestStamp = serde_json::from_slice(manifest_bytes)
+        .map_err(|error| AppError::InvalidData(error.to_string()))?;
+    if stamp.format != LEARNING_PACK_FORMAT || stamp.version != LEARNING_PACK_VERSION {
         return Err(invalid("This learning-pack version is not supported."));
     }
+    let manifest: LearningPackManifest = serde_json::from_slice(manifest_bytes)
+        .map_err(|error| AppError::InvalidData(error.to_string()))?;
     uuid::Uuid::parse_str(&manifest.pack_id)
         .map_err(|_| invalid("The learning-pack manifest has an invalid ID."))?;
     validate_privacy(&manifest.privacy)?;
@@ -547,7 +618,9 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
     }
     let mut sorted = manifest.entries.clone();
     sorted.sort_by(|left, right| left.path.cmp(&right.path));
-    if sorted != manifest.entries || root_digest(&manifest.entries) != manifest.root_sha256 {
+    if sorted != manifest.entries
+        || root_digest(manifest.schema_version, &manifest.entries) != manifest.root_sha256
+    {
         return Err(invalid("The learning-pack root checksum is invalid."));
     }
     let mut seen = HashSet::new();
@@ -592,258 +665,4 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn input() -> LearningPackInput {
-        LearningPackInput {
-            pack_id: "bd02823f-2897-4b67-9610-17b9b3b1baa7".into(),
-            title: "Concurrency foundations".into(),
-            created_at: 1_791_000_000_000,
-            application_version: "1.0.0".into(),
-            privacy: LearningPackPrivacyManifest::default(),
-            entries: vec![
-                LearningPackEntry {
-                    path: "program/program.json".into(),
-                    kind: LearningPackEntryKind::Program,
-                    bytes: br#"{"id":"program-1"}"#.to_vec(),
-                },
-                LearningPackEntry {
-                    path: "sources/source-1.json".into(),
-                    kind: LearningPackEntryKind::SourceMetadata,
-                    bytes: br#"{"title":"Reference"}"#.to_vec(),
-                },
-            ],
-        }
-    }
-
-    fn rearchive(
-        manifest: &LearningPackManifest,
-        entries: &BTreeMap<String, Vec<u8>>,
-    ) -> anyhow::Result<Vec<u8>> {
-        let encoder = zstd::stream::write::Encoder::new(Vec::new(), 1)?;
-        let mut archive = tar::Builder::new(encoder);
-        let bytes = serde_json::to_vec(manifest)?;
-        append_tar_file(&mut archive, MANIFEST_PATH, &bytes)?;
-        for (path, bytes) in entries {
-            append_tar_file(&mut archive, path, bytes)?;
-        }
-        Ok(archive.into_inner()?.finish()?)
-    }
-
-    #[test]
-    fn pack_round_trip_is_deterministic_and_checksummed() -> anyhow::Result<()> {
-        let encoded = encode_learning_pack(input())?;
-        let decoded = decode_learning_pack(&encoded)?;
-        assert_eq!(decoded.manifest.format, LEARNING_PACK_FORMAT);
-        assert_eq!(decoded.manifest.entries.len(), 2);
-        assert_eq!(
-            decoded.entries["program/program.json"],
-            br#"{"id":"program-1"}"#
-        );
-        assert_eq!(encoded, encode_learning_pack(input())?);
-        Ok(())
-    }
-
-    #[test]
-    fn portable_paths_reject_traversal_and_platform_specific_escapes() {
-        for path in [
-            "../outside",
-            "content/../../outside",
-            "/etc/passwd",
-            "C:/Windows/system.ini",
-            "C:\\Windows\\system.ini",
-            "content//file.json",
-            "./file.json",
-            MANIFEST_PATH,
-        ] {
-            assert!(validate_pack_path(path).is_err(), "accepted {path:?}");
-        }
-    }
-
-    #[test]
-    fn privacy_policy_blocks_credentials_chat_and_unlicensed_source_bodies() {
-        for mutate in [
-            |privacy: &mut LearningPackPrivacyManifest| privacy.includes_credentials = true,
-            |privacy: &mut LearningPackPrivacyManifest| privacy.includes_private_chat = true,
-            |privacy: &mut LearningPackPrivacyManifest| privacy.includes_full_source_bodies = true,
-        ] {
-            let mut value = input();
-            mutate(&mut value.privacy);
-            assert!(encode_learning_pack(value).is_err());
-        }
-        let mut value = input();
-        value.entries.push(LearningPackEntry {
-            path: "sources/source-1.txt".into(),
-            kind: LearningPackEntryKind::SourceBody,
-            bytes: b"copyrighted body".to_vec(),
-        });
-        assert!(encode_learning_pack(value).is_err());
-    }
-
-    #[test]
-    fn only_the_current_pack_version_imports() -> anyhow::Result<()> {
-        let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-        assert_eq!(decoded.manifest.version, LEARNING_PACK_VERSION);
-        let mut manifest = decoded.manifest.clone();
-        for unsupported in [0, 1, 2, LEARNING_PACK_VERSION + 1] {
-            manifest.version = unsupported;
-            let error = decode_learning_pack(&rearchive(&manifest, &decoded.entries)?)
-                .expect_err("only the current pack version imports");
-            assert!(error.to_string().contains("version is not supported"));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn tampering_is_detected_before_import() -> anyhow::Result<()> {
-        let encoded = encode_learning_pack(input())?;
-        let decoder = zstd::stream::read::Decoder::new(Cursor::new(&encoded))?;
-        let mut archive = tar::Archive::new(decoder);
-        let mut files = Vec::new();
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?.to_string_lossy().into_owned();
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes)?;
-            if path == "program/program.json" {
-                bytes.extend_from_slice(b"tampered");
-            }
-            files.push((path, bytes));
-        }
-        let encoder = zstd::stream::write::Encoder::new(Vec::new(), 1)?;
-        let mut builder = tar::Builder::new(encoder);
-        for (path, bytes) in files {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(bytes.len() as u64);
-            header.set_mode(0o600);
-            header.set_cksum();
-            builder.append_data(&mut header, path, Cursor::new(bytes))?;
-        }
-        let encoded = builder.into_inner()?.finish()?;
-        assert!(decode_learning_pack(&encoded).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn decode_rejects_privacy_declaration_mismatches() -> anyhow::Result<()> {
-        let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-        let mut manifest = decoded.manifest.clone();
-        manifest.privacy.includes_full_source_bodies = true;
-        manifest.privacy.source_body_redistribution_confirmed = true;
-        assert!(decode_learning_pack(&rearchive(&manifest, &decoded.entries)?).is_err());
-
-        let mut with_body = input();
-        with_body.privacy.includes_full_source_bodies = true;
-        with_body.privacy.source_body_redistribution_confirmed = true;
-        with_body.entries.push(LearningPackEntry {
-            path: format!("sources/bodies/{}.txt", "0".repeat(64)),
-            kind: LearningPackEntryKind::SourceBody,
-            bytes: b"licensed source body".to_vec(),
-        });
-        let decoded = decode_learning_pack(&encode_learning_pack(with_body)?)?;
-        let mut manifest = decoded.manifest.clone();
-        manifest.privacy.includes_full_source_bodies = false;
-        manifest.privacy.source_body_redistribution_confirmed = false;
-        assert!(decode_learning_pack(&rearchive(&manifest, &decoded.entries)?).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn source_body_path_cannot_be_mislabeled_to_hide_privacy() -> anyhow::Result<()> {
-        let mut pack = input();
-        pack.privacy.includes_full_source_bodies = true;
-        pack.privacy.source_body_redistribution_confirmed = true;
-        pack.entries.push(LearningPackEntry {
-            path: format!("sources/bodies/{}.txt", "1".repeat(64)),
-            kind: LearningPackEntryKind::SourceBody,
-            bytes: b"body".to_vec(),
-        });
-        let decoded = decode_learning_pack(&encode_learning_pack(pack)?)?;
-        let mut tampered = decoded.manifest.clone();
-        let body = tampered
-            .entries
-            .iter_mut()
-            .find(|entry| entry.kind == LearningPackEntryKind::SourceBody)
-            .ok_or_else(|| anyhow::anyhow!("source body entry"))?;
-        body.kind = LearningPackEntryKind::SourceMetadata;
-        tampered.root_sha256 = root_digest(&tampered.entries);
-        assert!(decode_learning_pack(&rearchive(&tampered, &decoded.entries)?).is_err());
-
-        let mut mislabeled = input();
-        mislabeled.entries.push(LearningPackEntry {
-            path: format!("sources/bodies/{}.txt", "2".repeat(64)),
-            kind: LearningPackEntryKind::SourceMetadata,
-            bytes: b"body".to_vec(),
-        });
-        assert!(encode_learning_pack(mislabeled).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn reserved_import_paths_require_their_contract_kind() {
-        let mut pack = input();
-        pack.entries.push(LearningPackEntry {
-            path: "sources/library.json".into(),
-            kind: LearningPackEntryKind::Canvas,
-            bytes: b"{}".to_vec(),
-        });
-        assert!(encode_learning_pack(pack).is_err());
-    }
-
-    #[test]
-    fn decode_revalidates_bounded_manifest_metadata() -> anyhow::Result<()> {
-        let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-        let mut oversized_title = decoded.manifest.clone();
-        oversized_title.title = "x".repeat(161);
-        assert!(decode_learning_pack(&rearchive(&oversized_title, &decoded.entries)?).is_err());
-
-        let mut oversized_version = decoded.manifest.clone();
-        oversized_version.application_version = "v".repeat(81);
-        assert!(decode_learning_pack(&rearchive(&oversized_version, &decoded.entries)?).is_err());
-
-        let mut invalid_timestamp = decoded.manifest.clone();
-        invalid_timestamp.created_at =
-            chrono::Utc::now().timestamp_millis() + 500 * 24 * 60 * 60 * 1_000;
-        assert!(decode_learning_pack(&rearchive(&invalid_timestamp, &decoded.entries)?).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn content_privacy_declarations_match_entries_on_encode_and_decode() -> anyhow::Result<()> {
-        let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-        let mut mismatch = decoded.manifest.clone();
-        mismatch.privacy.includes_answer_keys = true;
-        assert!(decode_learning_pack(&rearchive(&mismatch, &decoded.entries)?).is_err());
-
-        let mut hidden = decoded.manifest.clone();
-        hidden.privacy.includes_hidden_evaluators = true;
-        assert!(decode_learning_pack(&rearchive(&hidden, &decoded.entries)?).is_err());
-
-        let mut pack = input();
-        pack.privacy.includes_learner_evidence = true;
-        assert!(encode_learning_pack(pack).is_err());
-
-        let mut pack = input();
-        pack.privacy.includes_practical_artifacts = true;
-        assert!(encode_learning_pack(pack).is_err());
-
-        let mut pack = input();
-        pack.privacy.includes_answer_keys = true;
-        pack.entries.push(LearningPackEntry {
-            path: "program/answer-keys.json".into(),
-            kind: LearningPackEntryKind::Curriculum,
-            bytes: b"[]".to_vec(),
-        });
-        assert!(encode_learning_pack(pack).is_ok());
-
-        let mut pack = input();
-        pack.entries.push(LearningPackEntry {
-            path: "practical/hidden-evaluator.json".into(),
-            kind: LearningPackEntryKind::PracticalArtifact,
-            bytes: b"{}".to_vec(),
-        });
-        assert!(encode_learning_pack(pack).is_err());
-        Ok(())
-    }
-}
+mod tests;
