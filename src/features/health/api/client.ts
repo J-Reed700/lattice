@@ -41,4 +41,12 @@ export const healthApi = {
    */
   getVersion: async (): Promise<ApiResult<string>> =>
     apiCall<string>('get_version'),
+
+  /**
+   * The newest lines of the backend's log file, oldest first, unredacted.
+   *
+   * @param limit - Lines to return (default 300, at most 1000)
+   */
+  getBackendLogs: async (limit?: number): Promise<ApiResult<Wire.BackendLogEntry[]>> =>
+    apiCall<Wire.BackendLogEntry[]>('get_backend_logs', { limit: limit ?? null }),
 };
