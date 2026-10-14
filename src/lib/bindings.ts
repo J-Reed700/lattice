@@ -5673,18 +5673,22 @@ export type ExplorerSearchResultDto = { matches: ExplorerSearchMatchDto[];
  * A bound was hit (results, files, bytes or time), so there may be more.
  */
 truncated: boolean; filesScanned: number }
-export type ExportAllLearningPacksRequestDto = { operationId: string; includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
-export type ExportAllLearningPacksResultDto = {
+export type ExportAllLearningPacksRequestDto = { operationId: string; options: LearningPackExportOptionsDto }
 /**
- * True when the folder dialog was dismissed: nothing written or recorded.
+ * A dismissed folder dialog writes and records nothing; a chosen folder
+ * gets every course that could be exported, and says which could not.
  */
-cancelled: boolean; destinationDir: string | null; exported: ExportedLearningPackDto[]; failed: FailedLearningPackExportDto[] }
+export type ExportAllLearningPacksResultDto = { outcome: "cancelled" } | { outcome: "exported"; destinationDir: string; exported: ExportedLearningPackDto[]; failed: FailedLearningPackExportDto[] }
 export type ExportJsonRequestDto = {
 /**
  * `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
  */
 outputPath?: string | null; pretty: boolean }
-export type ExportLearningPackRequestDto = { operationId: string; programId: string; fileName: string; includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
+/**
+ * One course's export. Rust names the file from the course title; the
+ * renderer never sends a file name.
+ */
+export type ExportLearningPackRequestDto = { operationId: string; programId: string; options: LearningPackExportOptionsDto }
 export type ExportMarkdownRequestDto = {
 /**
  * `None` means the app's exports folder, which is the only place the
@@ -6462,26 +6466,87 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
-export type LearningPackConflictDto = { entityKind: string; incomingId: string; incomingTitle: string; existingId: string; existingTitle: string; resolution: string }
+export type LearningPackConflictDto = { kind: LearningPackConflictKind;
+/**
+ * The local record's ID, when the conflict is about one.
+ */
+existingId: string | null;
+/**
+ * The local record's title, when it has one.
+ */
+existingTitle: string | null;
+/**
+ * The backend's explanation, when the kind alone does not say enough.
+ */
+reason: string | null;
+/**
+ * The policies under which this conflict goes away, most preferred
+ * first. Empty when no choice gets past it.
+ */
+clearsWith: LearningPackConflictPolicy[] }
+/**
+ * Why a preview cannot go ahead, or what it will do with a record that is
+ * already on this computer. The renderer words each kind; `reason` carries
+ * only the backend's own explanation when it has one.
+ */
+export type LearningPackConflictKind =
+/**
+ * The pack was written by a different build of Lattice.
+ */
+"pack_schema" |
+/**
+ * The course itself is already on this computer.
+ */
+"program" |
+/**
+ * The copy here has history no pack can restore, so it cannot be replaced.
+ */
+"program_history" |
+/**
+ * The copy here is still being prepared.
+ */
+"program_jobs" |
+/**
+ * A module another course on this computer owns.
+ */
+"module" |
+/**
+ * A lesson another course on this computer owns.
+ */
+"lesson" |
+/**
+ * A question another course on this computer owns.
+ */
+"question" |
+/**
+ * A submitted assessment another course on this computer owns.
+ */
+"attempt" |
+/**
+ * Any other record another course on this computer owns.
+ */
+"record"
 export type LearningPackConflictPolicy = "create_copy" | "merge_safe" | "replace_after_backup"
 export type LearningPackEntryKind = "program" | "curriculum" | "source_metadata" | "source_excerpt" | "source_body" | "notebook" | "canvas" | "recall" | "attempt" | "evidence" | "practical_activity" | "practical_artifact"
 export type LearningPackExportDto = { id: string; programId: string; destinationPath: string; manifest: LearningPackManifest; createdAt: number }
 /**
- * What an export of this course cannot carry, shown before exporting.
+ * What an export of this course cannot carry, shown before exporting. The
+ * renderer words both lists.
  */
 export type LearningPackExportNoticeDto = {
 /**
- * A pending or running generation job; export and replace wait for it.
+ * Local data the pack leaves on this computer; only kinds that have any.
  */
-activeJob: boolean;
+staysBehind: LearningPackStaysBehindDto[];
 /**
- * Lesson notes, which stay on this computer.
+ * Why an export would be refused right now. The same conflict a replace
+ * preview reports, so one fact has one shape.
  */
-notebookNoteCount: number;
+blockers: LearningPackConflictKind[] }
 /**
- * Unsaved lab drafts, which stay on this computer.
+ * What one export carries. The panel, save-as and export-all share it.
  */
-practicalDraftCount: number }
+export type LearningPackExportOptionsDto = { includeEvidence: boolean; includePracticalArtifacts: boolean; includeSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean }
 export type LearningPackImportPreviewDto = { id: string; sourcePath: string; manifest: LearningPackManifest; incomingProgramId: string; incomingProgramTitle: string; conflictPolicy: LearningPackConflictPolicy; conflicts: LearningPackConflictDto[]; changes: LearningPackChangeDto[]; warnings: string[]; status: LearningPackPreviewStatus; canApply: boolean; createdAt: number; decidedAt: number | null }
 export type LearningPackImportResultDto = { id: string; previewId: string; importedProgramId: string; backupId: string | null; appliedChanges: LearningPackChangeDto[]; importedAt: number }
 export type LearningPackManifest = { format: string; version: number;
@@ -6492,6 +6557,16 @@ schemaVersion: number; packId: string; title: string; createdAt: number; applica
 export type LearningPackManifestEntry = { path: string; kind: LearningPackEntryKind; sha256: string; bytes: number }
 export type LearningPackPreviewStatus = "pending" | "applied" | "cancelled" | "stale"
 export type LearningPackPrivacyManifest = { includesPrivateChat: boolean; includesCredentials: boolean; includesFullSourceBodies: boolean; sourceBodyRedistributionConfirmed: boolean; includesAnswerKeys: boolean; includesHiddenEvaluators: boolean; includesLearnerEvidence: boolean; includesPracticalArtifacts: boolean; omittedItems: string[] }
+export type LearningPackStaysBehindDto = { kind: LearningPackStaysBehindKind; count: number }
+export type LearningPackStaysBehindKind =
+/**
+ * Lesson notes, which live in the user's notebook.
+ */
+"notebook_notes" |
+/**
+ * Unsaved lab drafts.
+ */
+"practical_drafts"
 export type LearningPlanDto = { programId: string;
 /**
  * Concurrency token for program mutations; independent of curriculum revision numbers.
@@ -7384,11 +7459,11 @@ repeatPenalty: number }
 export type SaveLearningAssessmentResponseRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number; response: LearningAssessmentResponse; assistance: string[] }
 export type SaveLearningCanvasRequestDto = { operationId: string; programId: string; canvasId: string; expectedRevision: number; title: string; description: string; sceneJson: JsonValue }
 export type SaveLearningCardDraftRequestDto = { draftId: string | null; programId: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[] }
-export type SaveLearningPackAsResultDto = {
 /**
- * True when the save dialog was dismissed: nothing written or recorded.
+ * A save dialog either names a file or is dismissed; a dismissed dialog
+ * writes and records nothing.
  */
-cancelled: boolean; export: LearningPackExportDto | null }
+export type SaveLearningPackAsResultDto = { outcome: "cancelled" } | { outcome: "saved"; export: LearningPackExportDto }
 export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
