@@ -1,9 +1,10 @@
 use crate::features::learning::{
-    pack_repository::LearningPackRepository,
+    pack_repository::{DestinationPicker, LearningPackRepository},
     portability_dto::{
         ApplyLearningPackImportRequestDto, CreateLearningSourceSelectorRequestDto,
         DeleteLearningSourceRequestDto, ExportLearningPackRequestDto, LearningPackConflictPolicy,
-        PreviewLearningPackImportRequestDto,
+        LearningPackExportDto, LearningPackExportOptionsDto, PreviewLearningPackImportRequestDto,
+        SaveLearningPackAsResultDto,
     },
     recall_repository::LearningRecallRepository,
     repository::LearningRepository,
@@ -30,15 +31,43 @@ pub(super) fn packs(pool: &sqlx::SqlitePool, dir: &std::path::Path) -> LearningP
 }
 
 /// The move defaults: evidence and practical work, no full source bodies.
-pub(super) fn move_request(program_id: &str, file_name: &str) -> ExportLearningPackRequestDto {
+pub(super) fn move_request(program_id: &str) -> ExportLearningPackRequestDto {
     ExportLearningPackRequestDto {
         operation_id: id(),
         program_id: program_id.into(),
-        file_name: file_name.into(),
-        include_evidence: true,
-        include_practical_artifacts: true,
-        include_source_bodies: false,
-        source_body_redistribution_confirmed: false,
+        options: LearningPackExportOptionsDto {
+            include_evidence: true,
+            include_practical_artifacts: true,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        },
+    }
+}
+
+/// Answers every dialog with `0`: a path, or `None` for a dismissed dialog.
+pub(super) struct Picks(pub(super) Option<std::path::PathBuf>);
+
+#[async_trait::async_trait]
+impl DestinationPicker for Picks {
+    async fn pick_file(&self, _suggested_file_name: &str) -> Result<Option<std::path::PathBuf>> {
+        Ok(self.0.clone())
+    }
+    async fn pick_folder(&self) -> Result<Option<std::path::PathBuf>> {
+        Ok(self.0.clone())
+    }
+}
+
+pub(super) fn picks(path: &std::path::Path) -> Picks {
+    Picks(Some(path.to_path_buf()))
+}
+
+/// The export a save-as wrote; a dismissed dialog fails the test.
+pub(super) fn saved(result: SaveLearningPackAsResultDto) -> Result<LearningPackExportDto> {
+    match result {
+        SaveLearningPackAsResultDto::Saved { export } => Ok(*export),
+        SaveLearningPackAsResultDto::Cancelled => Err(
+            crate::shared::error::AppError::InvalidState("the save dialog was dismissed".into()),
+        ),
     }
 }
 
@@ -105,11 +134,12 @@ async fn export_copy(
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
             program_id: program_id.into(),
-            file_name: format!("roundtrip-{}.lattice-learning", id()),
-            include_evidence: true,
-            include_practical_artifacts: true,
-            include_source_bodies: true,
-            source_body_redistribution_confirmed: true,
+            options: LearningPackExportOptionsDto {
+                include_evidence: true,
+                include_practical_artifacts: true,
+                include_source_bodies: true,
+                source_body_redistribution_confirmed: true,
+            },
         })
         .await?;
     let path = exported

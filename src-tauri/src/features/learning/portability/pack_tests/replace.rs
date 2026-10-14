@@ -1,10 +1,11 @@
 //! Replacement previews and backups on one computer.
 use super::id;
+use crate::features::learning::portability_dto::LearningPackExportOptionsDto;
 use crate::features::learning::{
     pack_repository::LearningPackRepository,
     portability_dto::{
         ApplyLearningPackImportRequestDto, CancelLearningPackImportPreviewRequestDto,
-        ExportLearningPackRequestDto, LearningPackConflictPolicy,
+        ExportLearningPackRequestDto, LearningPackConflictKind, LearningPackConflictPolicy,
         PreviewLearningPackImportRequestDto,
     },
     repository::LearningRepository,
@@ -44,11 +45,12 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
             program_id: program.summary.id.clone(),
-            file_name: format!("preflight-{}.lattice-learning", id()),
-            include_evidence: false,
-            include_practical_artifacts: false,
-            include_source_bodies: false,
-            source_body_redistribution_confirmed: false,
+            options: LearningPackExportOptionsDto {
+                include_evidence: false,
+                include_practical_artifacts: false,
+                include_source_bodies: false,
+                source_body_redistribution_confirmed: false,
+            },
         })
         .await?;
     let source_path = exported.exports[0].destination_path.clone();
@@ -74,12 +76,15 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
     let history = blocked_preview
         .conflicts
         .iter()
-        .find(|conflict| conflict.entity_kind == "program_history")
+        .find(|conflict| conflict.kind == LearningPackConflictKind::ProgramHistory)
         .expect("the program history conflict");
-    assert_eq!(history.resolution, "blocked");
     assert_eq!(
-        history.existing_title,
-        "Replace was blocked because the target has hidden practical evaluators that this pack version cannot restore. The existing program was left unchanged."
+        history.clears_with,
+        [LearningPackConflictPolicy::CreateCopy]
+    );
+    assert_eq!(
+        history.reason.as_deref(),
+        Some("Replace was blocked because the target has hidden practical evaluators that this pack version cannot restore. The existing program was left unchanged.")
     );
     let title_after_block: String =
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
@@ -158,11 +163,12 @@ async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
             program_id: program.summary.id.clone(),
-            file_name: format!("replace-source-{}.lattice-learning", id()),
-            include_evidence: false,
-            include_practical_artifacts: false,
-            include_source_bodies: false,
-            source_body_redistribution_confirmed: false,
+            options: LearningPackExportOptionsDto {
+                include_evidence: false,
+                include_practical_artifacts: false,
+                include_source_bodies: false,
+                source_body_redistribution_confirmed: false,
+            },
         })
         .await?;
     let preview = packs

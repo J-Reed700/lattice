@@ -11,8 +11,8 @@ use crate::features::learning::{
     pack::decode_learning_pack,
     pack_repository::LearningPackRepository,
     portability_dto::{
-        ApplyLearningPackImportRequestDto, LearningPackConflictPolicy,
-        LearningPackImportPreviewDto, LearningPortabilityWorkspaceDto,
+        ApplyLearningPackImportRequestDto, LearningPackConflictKind, LearningPackConflictPolicy,
+        LearningPackImportPreviewDto, LearningPackStaysBehindKind, LearningPortabilityWorkspaceDto,
         PreviewLearningPackImportRequestDto,
     },
     repository::LearningRepository,
@@ -235,12 +235,8 @@ async fn studied_course(pool: &SqlitePool) -> Result<String> {
     Ok(id)
 }
 
-async fn export_pack(
-    packs: &LearningPackRepository,
-    program_id: &str,
-    name: &str,
-) -> Result<String> {
-    let workspace = packs.export(&move_request(program_id, name)).await?;
+async fn export_pack(packs: &LearningPackRepository, program_id: &str) -> Result<String> {
+    let workspace = packs.export(&move_request(program_id)).await?;
     Ok(workspace.exports[0].destination_path.clone())
 }
 
@@ -287,9 +283,12 @@ async fn merge_safe_moves_a_studied_course_to_a_fresh_computer_exactly() -> Resu
     let home_dir = tempfile::tempdir()?;
     let home_packs = packs(&home, home_dir.path());
     let notice = home_packs.workspace(&course).await?.export_notice;
-    assert_eq!(notice.notebook_note_count, 1);
-    assert!(!notice.active_job);
-    let pack = export_pack(&home_packs, &course, "Move me").await?;
+    assert!(notice
+        .stays_behind
+        .iter()
+        .any(|item| item.kind == LearningPackStaysBehindKind::NotebookNotes && item.count == 1));
+    assert!(notice.blockers.is_empty());
+    let pack = export_pack(&home_packs, &course).await?;
 
     let fresh = pool().await?;
     assert!(LearningRepository::new(fresh.clone())
@@ -347,7 +346,7 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
             .fetch_one(&home)
             .await?;
     assert!(journal.is_some());
-    let outbound = export_pack(&home_packs, &course, "Outbound").await?;
+    let outbound = export_pack(&home_packs, &course).await?;
 
     // Keep studying on the second computer.
     let away = pool().await?;
@@ -381,19 +380,19 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
     assert_ne!(newer, older);
     assert_eq!(newer.attempts.len(), 3);
     assert_eq!(newer.reviews.len(), 4);
-    let inbound = export_pack(&away_packs, &course, "Inbound").await?;
+    let inbound = export_pack(&away_packs, &course).await?;
 
     // Back home the course already exists: moving it as-is is blocked.
     let request = preview_request(&inbound, LearningPackConflictPolicy::MergeSafe);
     let blocked = home_packs.preview(&request).await?;
     let blocked = preview_for(&blocked, &request);
     assert!(!blocked.can_apply);
-    assert!(blocked
-        .conflicts
-        .iter()
-        .any(|conflict| conflict.entity_kind == "program"
-            && conflict.resolution == "blocked"
-            && conflict.existing_title == title));
+    assert!(blocked.conflicts.iter().any(|conflict| conflict.kind
+        == LearningPackConflictKind::Program
+        && !conflict
+            .clears_with
+            .contains(&LearningPackConflictPolicy::MergeSafe)
+        && conflict.existing_title.as_deref() == Some(&*title)));
 
     let applied = import(
         &home_packs,
@@ -456,18 +455,17 @@ async fn replace_and_export_wait_for_a_pending_generation_job() -> Result<()> {
     let course = studied_course(&home).await?;
     let home_dir = tempfile::tempdir()?;
     let home_packs = packs(&home, home_dir.path());
-    let pack = export_pack(&home_packs, &course, "Before the job").await?;
+    let pack = export_pack(&home_packs, &course).await?;
 
     let job = add_job(&home, &course).await?;
-    assert!(
-        home_packs
-            .workspace(&course)
-            .await?
-            .export_notice
-            .active_job
-    );
+    assert!(home_packs
+        .workspace(&course)
+        .await?
+        .export_notice
+        .blockers
+        .contains(&LearningPackConflictKind::ProgramJobs));
     let refused = home_packs
-        .export(&move_request(&course, "During the job"))
+        .export(&move_request(&course))
         .await
         .expect_err("export waits for the job");
     assert!(
@@ -478,13 +476,9 @@ async fn replace_and_export_wait_for_a_pending_generation_job() -> Result<()> {
     let previewed = home_packs.preview(&request).await?;
     let preview = preview_for(&previewed, &request);
     assert!(!preview.can_apply);
-    assert!(
-        preview
-            .conflicts
-            .iter()
-            .any(|conflict| conflict.entity_kind == "program_jobs"
-                && conflict.resolution == "blocked")
-    );
+    assert!(preview.conflicts.iter().any(|conflict| conflict.kind
+        == LearningPackConflictKind::ProgramJobs
+        && conflict.clears_with == [LearningPackConflictPolicy::CreateCopy]));
 
     // The job finishes; a fresh preview may proceed, but a job queued after
     // it is caught again under the replacement lock.
@@ -529,7 +523,7 @@ async fn a_pack_from_a_different_schema_is_blocked_at_preview() -> Result<()> {
     let course = studied_course(&home).await?;
     let home_dir = tempfile::tempdir()?;
     let home_packs = packs(&home, home_dir.path());
-    let pack = export_pack(&home_packs, &course, "Other build").await?;
+    let pack = export_pack(&home_packs, &course).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&pack).await?)?;
     let other_build = repack(&decoded, |input| input.schema_version += 1)?;
     let other_path = home_dir.path().join("other-build.lattice-learning");
@@ -548,12 +542,19 @@ async fn a_pack_from_a_different_schema_is_blocked_at_preview() -> Result<()> {
         let preview = preview_for(&previewed, &request);
         assert!(!preview.can_apply);
         assert_eq!(preview.conflicts.len(), 1);
-        assert_eq!(preview.conflicts[0].entity_kind, "pack_schema");
-        assert_eq!(preview.conflicts[0].resolution, "blocked");
-        assert_eq!(preview.conflicts[0].incoming_id, course);
+        assert_eq!(
+            preview.conflicts[0].kind,
+            LearningPackConflictKind::PackSchema
+        );
+        assert!(preview.conflicts[0].clears_with.is_empty());
+        // A copy would get a fresh identity; the others keep the pack's.
+        if !policy.remaps_ids() {
+            assert_eq!(preview.incoming_program_id, course);
+        }
         assert!(preview.conflicts[0]
-            .existing_title
-            .contains("different build of Lattice"));
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("different build of Lattice")));
         let error = fresh_packs
             .apply(&ApplyLearningPackImportRequestDto {
                 operation_id: super::id(),

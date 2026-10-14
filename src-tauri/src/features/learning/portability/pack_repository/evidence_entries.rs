@@ -1,44 +1,36 @@
-//! Learner evidence and canvases, one pack entry each, so no single entry has
-//! to hold a learner's whole history. Decoding rebuilds the in-memory
-//! snapshots the importer already understands; the per-table import is
-//! unchanged.
+//! Learner evidence, one pack entry per table, so no single entry has to
+//! hold a learner's whole history. Decoding rebuilds the in-memory snapshot
+//! the table importer understands.
 use super::{
-    invalid, json, parse, value_str, AggregateTableSnapshot, CanvasPackSnapshot,
-    LearningEvidenceSnapshot, EVIDENCE_TABLES,
+    conflicts::IdClaim,
+    entries::{decode, ExportScope, ImportScope, SectionRows},
+    evidence_tables::{
+        insert_evidence_snapshot, snapshot_evidence_tables, AggregateTableSnapshot,
+        LearningEvidenceSnapshot, EVIDENCE_TABLES, MAX_TABLE_ROWS,
+    },
+    invalid, json, parse,
+    remap::map_evidence_ids,
+    validation::validate_aggregate_id_namespaces,
 };
-use crate::features::learning::pack::{
-    DecodedLearningPack, LearningPackEntry, LearningPackEntryKind, CANVAS_PREFIX,
-    EVIDENCE_TABLE_PREFIX,
+use crate::features::learning::{
+    dto::LearningProgramDto,
+    pack::{
+        sections::{PackSection, EVIDENCE_TABLE_PREFIX, OUTCOMES_ENTRY},
+        DecodedLearningPack, LearningPackEntry, LearningPackEntryKind,
+    },
+    portability_dto::LearningPackConflictKind,
 };
 use crate::shared::error::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-/// The most rows one evidence table may carry. Import refuses more, so
-/// export does too: a pack no computer can import is no backup.
-pub(super) const MAX_TABLE_ROWS: usize = 50_000;
+use async_trait::async_trait;
+use sqlx::SqliteConnection;
+use std::collections::{BTreeMap, HashMap};
 
 fn table_path(table: &str) -> String {
     format!("{EVIDENCE_TABLE_PREFIX}{table}.json")
 }
 
-fn canvas_path(canvas_id: &str) -> Result<String> {
-    // The ID becomes a file name: keep it to the characters our IDs use.
-    if canvas_id.is_empty()
-        || canvas_id.len() > 200
-        || !canvas_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return Err(invalid("A canvas ID cannot be used as a pack entry name."));
-    }
-    Ok(format!("{CANVAS_PREFIX}{canvas_id}.json"))
-}
-
 /// One table per entry, in `EVIDENCE_TABLES` order, each within the row cap.
-pub(super) fn encode_evidence(
-    snapshot: &LearningEvidenceSnapshot,
-) -> Result<Vec<LearningPackEntry>> {
+fn encode_evidence(snapshot: &LearningEvidenceSnapshot) -> Result<Vec<LearningPackEntry>> {
     if snapshot.tables.len() != EVIDENCE_TABLES.len()
         || snapshot
             .tables
@@ -74,9 +66,7 @@ pub(super) fn encode_evidence(
 
 /// `None` when the pack carries no learner evidence. When it does, every
 /// table must be present exactly once and nothing else may sit beside them.
-pub(super) fn decode_evidence(
-    pack: &DecodedLearningPack,
-) -> Result<Option<LearningEvidenceSnapshot>> {
+fn decode_evidence(pack: &DecodedLearningPack) -> Result<Option<LearningEvidenceSnapshot>> {
     let entries: BTreeMap<&str, &Vec<u8>> = pack
         .entries
         .iter()
@@ -126,69 +116,105 @@ pub(super) fn decode_evidence(
     Ok(Some(LearningEvidenceSnapshot { tables }))
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CanvasEntry {
-    canvas: serde_json::Value,
-    snapshots: Vec<serde_json::Value>,
+/// Whether the pack carries learner evidence tables. A pack that does
+/// carries all of them, which `decode_evidence` enforces.
+pub(super) fn carries_evidence_tables(pack: &DecodedLearningPack) -> bool {
+    pack.entries
+        .keys()
+        .any(|path| path.starts_with(EVIDENCE_TABLE_PREFIX))
 }
 
-/// One entry per canvas holding the canvas row and its snapshots.
-pub(super) fn encode_canvases(snapshot: &CanvasPackSnapshot) -> Result<Vec<LearningPackEntry>> {
-    let mut grouped: BTreeMap<&str, CanvasEntry> = BTreeMap::new();
-    for canvas in &snapshot.canvases {
-        let id = value_str(canvas, "id")?;
-        let entry = CanvasEntry {
-            canvas: canvas.clone(),
-            snapshots: Vec::new(),
+/// Tables with no `program_id` of their own, owned through the course's
+/// memory deck.
+const DECK_OWNERS: &[(&str, &str)] = &[
+    ("study_decks", "SELECT COALESCE(m.program_id,'') FROM study_decks d LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE d.id=?"),
+    ("study_cards", "SELECT COALESCE(m.program_id,'') FROM study_cards c JOIN study_decks d ON d.id=c.deck_id LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE c.id=?"),
+    ("study_reviews", "SELECT COALESCE(m.program_id,'') FROM study_reviews r JOIN study_cards c ON c.id=r.card_id JOIN study_decks d ON d.id=c.deck_id LEFT JOIN learning_memory m ON m.deck_id=d.id WHERE r.id=?"),
+];
+
+pub(super) struct EvidenceTableRows;
+pub(super) const EVIDENCE_TABLE_ROWS: EvidenceTableRows = EvidenceTableRows;
+
+#[async_trait]
+impl SectionRows for EvidenceTableRows {
+    fn section(&self) -> PackSection {
+        PackSection::EvidenceTables
+    }
+    async fn encode(
+        &self,
+        connection: &mut SqliteConnection,
+        scope: &ExportScope<'_>,
+    ) -> Result<Vec<LearningPackEntry>> {
+        if !scope.options.include_evidence {
+            return Ok(Vec::new());
+        }
+        encode_evidence(&snapshot_evidence_tables(connection, &scope.program.summary.id).await?)
+    }
+    fn claims(
+        &self,
+        pack: &DecodedLearningPack,
+        _program: &LearningProgramDto,
+    ) -> Result<Vec<IdClaim>> {
+        let Some(snapshot) = decode_evidence(pack)? else {
+            return Ok(Vec::new());
         };
-        if grouped.insert(id, entry).is_some() {
-            return Err(invalid("Pack canvases repeat an ID."));
-        }
-    }
-    for row in &snapshot.snapshots {
-        grouped
-            .get_mut(value_str(row, "canvasId")?)
-            .ok_or_else(|| invalid("A canvas snapshot has no canvas in this program."))?
-            .snapshots
-            .push(row.clone());
-    }
-    grouped
-        .into_iter()
-        .map(|(id, entry)| {
-            Ok(LearningPackEntry {
-                path: canvas_path(id)?,
-                kind: LearningPackEntryKind::Canvas,
-                bytes: json(&entry)?,
-            })
-        })
-        .collect()
-}
-
-/// `None` when the pack has no canvases.
-pub(super) fn decode_canvases(pack: &DecodedLearningPack) -> Result<Option<CanvasPackSnapshot>> {
-    let mut snapshot = CanvasPackSnapshot {
-        canvases: Vec::new(),
-        snapshots: Vec::new(),
-    };
-    for (path, bytes) in &pack.entries {
-        if !path.starts_with(CANVAS_PREFIX) {
-            continue;
-        }
-        let entry: CanvasEntry = parse(bytes)?;
-        let id = value_str(&entry.canvas, "id")?;
-        if canvas_path(id)? != *path {
-            return Err(invalid(
-                "Pack canvas entry names a different canvas than its path.",
-            ));
-        }
-        for row in &entry.snapshots {
-            if value_str(row, "canvasId")? != id {
-                return Err(invalid("Pack canvas snapshot belongs to another canvas."));
+        let mut claims = Vec::new();
+        for (table, spec) in snapshot.tables.iter().zip(EVIDENCE_TABLES) {
+            let owned = table.columns.iter().any(|column| column == "program_id");
+            for row in &table.rows {
+                let text = |column: &str| row.get(column).and_then(serde_json::Value::as_str);
+                if owned {
+                    for column in ["id", "operation_id"] {
+                        if let Some(id) = text(column) {
+                            claims.push(IdClaim::column(spec.table, column, id, None));
+                        }
+                    }
+                }
+                if spec.table == "learning_operations" {
+                    if let Some(id) = text("operation_id") {
+                        claims.push(IdClaim::owned_by(
+                            LearningPackConflictKind::Record,
+                            spec.table,
+                            "SELECT COALESCE(program_id,'') FROM learning_operations WHERE operation_id=?",
+                            id,
+                        ));
+                    }
+                } else if !owned {
+                    let owner = DECK_OWNERS.iter().find(|(name, _)| *name == spec.table);
+                    if let (Some((_, owner_sql)), Some(id)) = (owner, text("id")) {
+                        claims.push(IdClaim::owned_by(
+                            LearningPackConflictKind::Record,
+                            spec.table,
+                            owner_sql,
+                            id,
+                        ));
+                    }
+                }
             }
         }
-        snapshot.canvases.push(entry.canvas);
-        snapshot.snapshots.extend(entry.snapshots);
+        Ok(claims)
     }
-    Ok((!snapshot.canvases.is_empty()).then_some(snapshot))
+    fn map_ids(
+        &self,
+        pack: &DecodedLearningPack,
+        program: &LearningProgramDto,
+        ids: &mut HashMap<String, String>,
+    ) -> Result<()> {
+        let Some(snapshot) = decode_evidence(pack)? else {
+            return Ok(());
+        };
+        let outcomes: Vec<serde_json::Value> = decode(pack, OUTCOMES_ENTRY)?.unwrap_or_default();
+        validate_aggregate_id_namespaces(&snapshot, program, &outcomes)?;
+        map_evidence_ids(&snapshot, ids)
+    }
+    async fn insert(
+        &self,
+        connection: &mut SqliteConnection,
+        scope: &ImportScope<'_>,
+    ) -> Result<()> {
+        let Some(snapshot) = decode_evidence(scope.pack)? else {
+            return Ok(());
+        };
+        insert_evidence_snapshot(connection, &scope.program.summary.id, &snapshot, scope.ids).await
+    }
 }

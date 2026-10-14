@@ -1,19 +1,27 @@
-//! Where a pack may be written. The managed folder and the user's chosen
-//! file or folder all go through here: names come from course titles, never
-//! overwrite another pack unless the OS save dialog asked, and nothing lands
-//! inside the app's own data directory.
-use super::{
-    db, hash, invalid, io_error, pack_operation, parse, validate_uuid, LearningPackRepository,
-};
-use crate::features::learning::portability_dto::{
-    ExportLearningPackRequestDto, LearningPackExportDto,
-};
+//! Where a pack may be read from or written to. The managed folder and the
+//! user's chosen file or folder all go through here: names come from course
+//! titles, never overwrite another pack unless the OS save dialog asked, and
+//! nothing lands inside the app's own data directory.
+use super::{invalid, io_error};
 use crate::shared::error::Result;
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-pub(super) const PACK_EXTENSION: &str = "lattice-learning";
+pub(crate) const PACK_EXTENSION: &str = "lattice-learning";
 const MAX_STEM_BYTES: usize = 80;
+const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Asks the user where a pack goes. Destinations outside the app's folder
+/// come only from here, never from a path the renderer sends, so an export
+/// cannot become an arbitrary write.
+#[async_trait]
+pub trait DestinationPicker: Send + Sync {
+    /// The file for one course, offered under `suggested_file_name`. `None`
+    /// when the user dismissed the dialog.
+    async fn pick_file(&self, suggested_file_name: &str) -> Result<Option<PathBuf>>;
+    /// The folder for every course. `None` when the user dismissed it.
+    async fn pick_folder(&self) -> Result<Option<PathBuf>>;
+}
 
 /// `<title>.lattice-learning`, safe as a file name on every desktop OS.
 pub(crate) fn pack_file_name(title: &str) -> String {
@@ -88,34 +96,6 @@ async fn write_then_rename(
     file.sync_all().await.map_err(io_error)?;
     drop(file);
     tokio::fs::rename(tmp, path).await.map_err(io_error)
-}
-
-pub(super) fn export_dto(r: &SqliteRow) -> Result<LearningPackExportDto> {
-    Ok(LearningPackExportDto {
-        id: r.get("id"),
-        program_id: r.get("program_id"),
-        destination_path: r.get("destination_path"),
-        manifest: parse(r.get::<String, _>("manifest_json").as_bytes())?,
-        created_at: r.get("created_at"),
-    })
-}
-
-/// Called once `replayed_export` found no file for this request: whatever an
-/// earlier attempt recorded under the same operation ID points at a pack that
-/// is gone, and gives way to the one written now.
-pub(super) async fn forget_stale_export(
-    connection: &mut SqliteConnection,
-    req: &ExportLearningPackRequestDto,
-    payload: &str,
-) -> Result<()> {
-    sqlx::query("DELETE FROM learning_pack_exports WHERE operation_id=?")
-        .bind(&req.operation_id)
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    pack_operation(&req.operation_id, "export", payload)
-        .forget(&mut *connection)
-        .await
 }
 
 fn has_pack_extension(path: &Path) -> bool {
@@ -247,42 +227,54 @@ pub(super) async fn chosen_folder(app_data_dir: &Path, chosen: &Path) -> Result<
     Ok(folder)
 }
 
-impl LearningPackRepository {
-    /// What an identical earlier export request wrote, while that file is
-    /// still there. A pack deleted since is written again under the same ID.
-    pub async fn replayed_export(
-        &self,
-        req: &ExportLearningPackRequestDto,
-    ) -> Result<Option<LearningPackExportDto>> {
-        validate_uuid(&req.operation_id, "operation")?;
-        validate_uuid(&req.program_id, "program")?;
-        let Some(path) = self
-            .replay(&req.operation_id, "export", &hash(req)?)
-            .await?
-        else {
-            return Ok(None);
-        };
-        if !Path::new(&path).exists() {
-            return Ok(None);
-        }
-        let row = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
-            .bind(&req.operation_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?;
-        row.as_ref().map(export_dto).transpose()
+/// A fresh `<title>.lattice-learning` in the app's own pack folder,
+/// suffixing ` (2)`, ` (3)`, ... on a name collision.
+pub(super) async fn managed_path(managed: &Path, title: &str) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(managed).await.map_err(io_error)?;
+    let root = tokio::fs::canonicalize(managed).await.map_err(io_error)?;
+    let path = next_free_path(&root, &pack_file_name(title)).await?;
+    if path.parent() != Some(root.as_path()) {
+        return Err(invalid("Pack path escaped its managed directory."));
     }
+    Ok(path)
+}
 
-    /// To the file the user chose in the native save dialog.
-    pub async fn save_as(
-        &self,
-        req: &ExportLearningPackRequestDto,
-        chosen: &Path,
-    ) -> Result<LearningPackExportDto> {
-        if let Some(done) = self.replayed_export(req).await? {
-            return Ok(done);
-        }
-        let path = chosen_file(&self.app_data_dir, chosen).await?;
-        self.export_to_path(req, &path).await
+/// A pack to import: a regular file, never a link, within the size cap.
+pub(super) async fn read_untrusted(path: &Path) -> Result<Vec<u8>> {
+    let metadata = tokio::fs::symlink_metadata(path).await.map_err(io_error)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_PACK_BYTES
+    {
+        return Err(invalid(
+            "Import must be a regular learning-pack file no larger than 256 MiB.",
+        ));
+    }
+    tokio::fs::read(path).await.map_err(io_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_failed_write_leaves_no_temporary_file_behind() -> anyhow::Result<()> {
+        let elsewhere = tempfile::tempdir()?;
+        // The temporary file is written beside the target, then renamed over
+        // it; renaming a file over a folder fails after the write succeeded.
+        let target = elsewhere.path().join("course.lattice-learning");
+        tokio::fs::create_dir(&target).await?;
+        tokio::fs::write(target.join("keep.txt"), b"keep me").await?;
+        atomic_write(&target, b"pack")
+            .await
+            .expect_err("a pack cannot replace a folder");
+        let mut names = std::fs::read_dir(elsewhere.path())?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        names.sort();
+        assert_eq!(names, ["course.lattice-learning"]);
+        assert_eq!(tokio::fs::read(target.join("keep.txt")).await?, b"keep me");
+        Ok(())
     }
 }

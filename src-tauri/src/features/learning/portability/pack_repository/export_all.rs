@@ -1,8 +1,10 @@
 //! Every course, one pack each, into one folder: a backup, or a move of a
 //! whole library. One course failing does not stop the others.
 use super::{
-    destinations::{next_free_path, pack_file_name},
-    hash, pack_operation, validate_uuid, LearningPackRepository,
+    files::{chosen_folder, DestinationPicker},
+    hash, invalid,
+    records::pack_operation,
+    validate_uuid, Destination, LearningPackRepository,
 };
 use crate::features::learning::{
     portability_dto::{
@@ -45,72 +47,60 @@ fn reason(error: &AppError) -> String {
 }
 
 impl LearningPackRepository {
-    /// The result of an identical earlier batch, if one completed.
-    pub async fn replayed_export_all(
-        &self,
-        req: &ExportAllLearningPacksRequestDto,
-    ) -> Result<Option<ExportAllLearningPacksResultDto>> {
-        validate_uuid(&req.operation_id, "operation")?;
-        pack_operation(&req.operation_id, KIND, &hash(req)?)
-            .replay(&self.pool)
-            .await
-    }
-
+    /// Asks `picker` for a folder, then exports every course into it. A
+    /// retried batch answers with what it already did, without asking again.
     pub async fn export_all(
         &self,
         req: &ExportAllLearningPacksRequestDto,
-        chosen_dir: &Path,
+        picker: &dyn DestinationPicker,
     ) -> Result<ExportAllLearningPacksResultDto> {
-        if let Some(done) = self.replayed_export_all(req).await? {
+        validate_uuid(&req.operation_id, "operation")?;
+        let payload = hash(req)?;
+        if let Some(done) = pack_operation(&req.operation_id, KIND, &payload)
+            .replay(&self.pool)
+            .await?
+        {
             return Ok(done);
         }
+        let Some(chosen) = picker.pick_folder().await? else {
+            return Ok(ExportAllLearningPacksResultDto::Cancelled);
+        };
         let batch = uuid::Uuid::parse_str(&req.operation_id)
             .map_err(|_| AppError::InvalidInput("Invalid operation ID.".into()))?;
-        let dir = super::destinations::chosen_folder(&self.app_data_dir, chosen_dir).await?;
-        let mut result = ExportAllLearningPacksResultDto {
-            cancelled: false,
-            destination_dir: Some(dir.to_string_lossy().into_owned()),
-            exported: Vec::new(),
-            failed: Vec::new(),
-        };
+        let dir = chosen_folder(&self.app_data_dir, &chosen).await?;
+        let (mut exported, mut failed) = (Vec::new(), Vec::new());
         for course in LearningRepository::new(self.pool.clone()).list().await? {
             let request = ExportLearningPackRequestDto {
                 operation_id: course_operation_id(&batch, &dir, &course.id),
                 program_id: course.id.clone(),
-                file_name: pack_file_name(&course.title),
-                include_evidence: req.include_evidence,
-                include_practical_artifacts: req.include_practical_artifacts,
-                include_source_bodies: req.include_source_bodies,
-                source_body_redistribution_confirmed: req.source_body_redistribution_confirmed,
+                options: req.options.clone(),
             };
-            match self.export_course_into(&request, &dir).await {
-                Ok(path) => result.exported.push(ExportedLearningPackDto {
+            // Only a picker can be dismissed; a folder always has a free name.
+            let written = self
+                .export_to_path(&request, Destination::Folder(&dir))
+                .await
+                .and_then(|done| done.ok_or_else(|| invalid("The export was cancelled.")));
+            match written {
+                Ok(export) => exported.push(ExportedLearningPackDto {
                     program_id: course.id,
                     title: course.title,
-                    path,
+                    path: export.destination_path,
                 }),
-                Err(error) => result.failed.push(FailedLearningPackExportDto {
+                Err(error) => failed.push(FailedLearningPackExportDto {
                     program_id: course.id,
                     title: course.title,
                     error: reason(&error),
                 }),
             }
         }
-        pack_operation(&req.operation_id, KIND, &hash(req)?)
+        let result = ExportAllLearningPacksResultDto::Exported {
+            destination_dir: dir.to_string_lossy().into_owned(),
+            exported,
+            failed,
+        };
+        pack_operation(&req.operation_id, KIND, &payload)
             .record(&self.pool, &result)
             .await?;
         Ok(result)
-    }
-
-    async fn export_course_into(
-        &self,
-        req: &ExportLearningPackRequestDto,
-        dir: &Path,
-    ) -> Result<String> {
-        if let Some(done) = self.replayed_export(req).await? {
-            return Ok(done.destination_path);
-        }
-        let path = next_free_path(dir, &req.file_name).await?;
-        Ok(self.export_to_path(req, &path).await?.destination_path)
     }
 }

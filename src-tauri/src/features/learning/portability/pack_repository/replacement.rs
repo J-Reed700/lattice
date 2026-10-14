@@ -1,7 +1,13 @@
 //! Replacement backups must describe exactly the database state being removed.
 use super::{
-    atomic_write, db, decode_learning_pack, encode_learning_pack, export, guards, hash, invalid,
-    json_string, managed_path, now, BackupExportRecord, ExportLearningPackRequestDto,
+    db, export,
+    files::{atomic_write, managed_path},
+    guards, hash, invalid, json_string, now,
+    records::BackupExportRecord,
+};
+use crate::features::learning::{
+    pack::{decode_learning_pack, encode_learning_pack},
+    portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use crate::shared::error::Result;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
@@ -178,16 +184,17 @@ async fn backup_if_present(
     let request = ExportLearningPackRequestDto {
         operation_id: uuid::Uuid::new_v4().to_string(),
         program_id: program_id.into(),
-        file_name: format!("backup-{id}.lattice-learning"),
-        include_evidence: true,
-        include_practical_artifacts: true,
-        include_source_bodies: true,
-        source_body_redistribution_confirmed: true,
+        options: LearningPackExportOptionsDto {
+            include_evidence: true,
+            include_practical_artifacts: true,
+            include_source_bodies: true,
+            source_body_redistribution_confirmed: true,
+        },
     };
-    let snapshot = export::snapshot_on(connection, &request).await?;
+    let snapshot = export::snapshot_on(connection, program_id, &request.options).await?;
     let bytes = encode_learning_pack(snapshot)?;
     let decoded = decode_learning_pack(&bytes)?;
-    let path = managed_path(managed_dir, &request.file_name).await?;
+    let path = managed_path(managed_dir, &format!("backup-{id}")).await?;
     atomic_write(&path, &bytes).await?;
     Ok(Some(BackupExportRecord {
         id,

@@ -1,23 +1,55 @@
 //! Exporting every course into one folder.
-use super::{id, packs};
+use super::{id, packs, picks, Picks};
 use crate::features::learning::{
     dto::{AcceptLearningProgramRequestDto, LearningProgramDto},
+    operations::Operation,
     pack::decode_learning_pack,
-    portability_dto::ExportAllLearningPacksRequestDto,
+    persistence::hash,
+    portability_dto::{
+        ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto, ExportedLearningPackDto,
+        FailedLearningPackExportDto, LearningPackExportOptionsDto,
+    },
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::path::Path;
+
+/// What a batch into a chosen folder did.
+struct Batch {
+    destination_dir: String,
+    exported: Vec<ExportedLearningPackDto>,
+    failed: Vec<FailedLearningPackExportDto>,
+}
+
+/// The batch a chosen folder produced; a dismissed dialog fails the test.
+fn done(result: ExportAllLearningPacksResultDto) -> Result<Batch> {
+    match result {
+        ExportAllLearningPacksResultDto::Exported {
+            destination_dir,
+            exported,
+            failed,
+        } => Ok(Batch {
+            destination_dir,
+            exported,
+            failed,
+        }),
+        ExportAllLearningPacksResultDto::Cancelled => Err(AppError::InvalidState(
+            "the folder dialog was dismissed".into(),
+        )),
+    }
+}
 
 fn request() -> ExportAllLearningPacksRequestDto {
     ExportAllLearningPacksRequestDto {
         operation_id: id(),
-        include_evidence: true,
-        include_practical_artifacts: true,
-        include_source_bodies: false,
-        source_body_redistribution_confirmed: false,
+        options: LearningPackExportOptionsDto {
+            include_evidence: true,
+            include_practical_artifacts: true,
+            include_source_bodies: false,
+            source_body_redistribution_confirmed: false,
+        },
     }
 }
 
@@ -69,10 +101,9 @@ async fn every_course_gets_one_file_and_failures_do_not_stop_the_rest() -> Resul
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
-    let result = packs.export_all(&request(), folder.path()).await?;
-    assert!(!result.cancelled);
+    let result = done(packs.export_all(&request(), &picks(folder.path())).await?)?;
     assert_eq!(
-        result.destination_dir.as_deref().map(Path::new),
+        Some(Path::new(&result.destination_dir)),
         Some(std::fs::canonicalize(folder.path())?.as_path())
     );
     let mut exported: Vec<&str> = result
@@ -131,13 +162,13 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
 
     // A completed batch answers from the ledger, before any dialog opens.
     let batch = request();
-    assert!(packs.replayed_export_all(&batch).await?.is_none());
-    let first = packs.export_all(&batch, folder.path()).await?;
+    // A dismissed dialog records nothing, so the same batch can run later.
     assert_eq!(
-        packs.replayed_export_all(&batch).await?,
-        Some(first.clone())
+        packs.export_all(&batch, &Picks(None)).await?,
+        ExportAllLearningPacksResultDto::Cancelled
     );
-    assert_eq!(packs.export_all(&batch, folder.path()).await?, first);
+    let first = packs.export_all(&batch, &picks(folder.path())).await?;
+    assert_eq!(packs.export_all(&batch, &Picks(None)).await?, first);
     let written = files(folder.path())?;
     assert_eq!(
         written,
@@ -147,12 +178,9 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
     // A batch interrupted before it was recorded replays course by course.
     let interrupted = request();
     let other = tempfile::tempdir()?;
-    let partial = packs.export_all(&interrupted, other.path()).await?;
-    sqlx::query("DELETE FROM learning_operations WHERE operation_id=?")
-        .bind(&interrupted.operation_id)
-        .execute(&pool)
-        .await?;
-    let retried = packs.export_all(&interrupted, other.path()).await?;
+    let partial = packs.export_all(&interrupted, &picks(other.path())).await?;
+    forget_batch(&pool, &interrupted).await?;
+    let retried = packs.export_all(&interrupted, &picks(other.path())).await?;
     assert_eq!(retried, partial);
     assert_eq!(files(other.path())?, written);
     Ok(())
@@ -161,11 +189,18 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
 /// The app quit before the batch was recorded, so a retry with the same
 /// operation ID opens the folder dialog again.
 async fn forget_batch(pool: &SqlitePool, batch: &ExportAllLearningPacksRequestDto) -> Result<()> {
-    sqlx::query("DELETE FROM learning_operations WHERE operation_id=?")
-        .bind(&batch.operation_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    let payload_hash = hash(batch)?;
+    Operation {
+        id: &batch.operation_id,
+        scope: "portability",
+        kind: "export_all",
+        program_id: None,
+        subject_id: None,
+        payload_hash: &payload_hash,
+        conflict: "",
+    }
+    .forget(pool)
+    .await
 }
 
 #[tokio::test]
@@ -178,16 +213,19 @@ async fn a_retry_into_another_folder_writes_fresh_packs_there() -> Result<()> {
     let second_folder = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
     let batch = request();
-    packs.export_all(&batch, first_folder.path()).await?;
+    packs
+        .export_all(&batch, &picks(first_folder.path()))
+        .await?;
     let first_files = files(first_folder.path())?;
     forget_batch(&pool, &batch).await?;
 
-    let retried = packs.export_all(&batch, second_folder.path()).await?;
+    let retried = done(
+        packs
+            .export_all(&batch, &picks(second_folder.path()))
+            .await?,
+    )?;
     let second = std::fs::canonicalize(second_folder.path())?;
-    assert_eq!(
-        retried.destination_dir.as_deref().map(Path::new),
-        Some(second.as_path())
-    );
+    assert_eq!(Path::new(&retried.destination_dir), second.as_path());
     assert!(retried.failed.is_empty(), "{:?}", retried.failed);
     assert_eq!(retried.exported.len(), 2);
     for row in &retried.exported {
@@ -208,7 +246,7 @@ async fn a_retry_rewrites_a_pack_deleted_since_the_first_run() -> Result<()> {
     let folder = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
     let batch = request();
-    let first = packs.export_all(&batch, folder.path()).await?;
+    let first = done(packs.export_all(&batch, &picks(folder.path())).await?)?;
     forget_batch(&pool, &batch).await?;
     let deleted = first
         .exported
@@ -218,7 +256,7 @@ async fn a_retry_rewrites_a_pack_deleted_since_the_first_run() -> Result<()> {
         .expect("geometry was exported");
     tokio::fs::remove_file(&deleted).await?;
 
-    let retried = packs.export_all(&batch, folder.path()).await?;
+    let retried = done(packs.export_all(&batch, &picks(folder.path())).await?)?;
     assert!(retried.failed.is_empty(), "{:?}", retried.failed);
     assert_eq!(retried.exported, first.exported);
     decode_learning_pack(&tokio::fs::read(&deleted).await?)?;
@@ -242,15 +280,15 @@ async fn no_courses_and_bad_folders() -> Result<()> {
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
-    let result = packs.export_all(&request(), folder.path()).await?;
-    assert!(result.exported.is_empty() && result.failed.is_empty() && !result.cancelled);
-    assert!(result.destination_dir.is_some());
+    let result = done(packs.export_all(&request(), &picks(folder.path())).await?)?;
+    assert!(result.exported.is_empty() && result.failed.is_empty());
+    assert!(!result.destination_dir.is_empty());
 
     create(&pool, "Anything").await?;
     let inside = app_data.path().join("exports");
     tokio::fs::create_dir_all(&inside).await?;
     let error = packs
-        .export_all(&request(), &inside)
+        .export_all(&request(), &picks(&inside))
         .await
         .expect_err("inside the app data folder");
     assert!(
@@ -260,7 +298,10 @@ async fn no_courses_and_bad_folders() -> Result<()> {
         "{error}"
     );
     let missing = folder.path().join("missing");
-    assert!(packs.export_all(&request(), &missing).await.is_err());
+    assert!(packs
+        .export_all(&request(), &picks(&missing))
+        .await
+        .is_err());
     assert!(files(&inside)?.is_empty());
     Ok(())
 }

@@ -1,5 +1,9 @@
 use super::*;
-use crate::features::learning::pack_repository::{pack_file_name, LearningPackRepository};
+use crate::features::learning::pack_repository::{
+    DestinationPicker, LearningPackRepository, PACK_EXTENSION,
+};
+use crate::shared::error::{AppError, Result as AppResult};
+use async_trait::async_trait;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -15,42 +19,47 @@ fn pack_repository(container: &Container) -> LearningPackRepository {
     )
 }
 
-// Destinations outside the app's folder are chosen in native dialogs opened
-// here, never passed in by the webview, so export cannot become an arbitrary
-// write. Same rule as the backup archive's destination.
-
-/// Native save dialog for one pack. `None` means cancelled.
-async fn pick_save_file<R: Runtime>(app: AppHandle<R>, suggested: String) -> Option<PathBuf> {
-    tokio::task::spawn_blocking(move || {
-        app.dialog()
-            .file()
-            .set_title("Save course")
-            .set_file_name(suggested)
-            .add_filter("Lattice course", &["lattice-learning"])
-            .blocking_save_file()
-            .and_then(|picked| picked.into_path().ok())
-    })
-    .await
-    .unwrap_or_else(|error| {
-        tracing::warn!(%error, "save dialog task failed");
-        None
-    })
+/// The native dialogs behind `DestinationPicker`. Destinations outside the
+/// app's folder are chosen here, never passed in by the webview, so export
+/// cannot become an arbitrary write. Same rule as the backup archive's
+/// destination.
+struct NativeDialogs<R: Runtime> {
+    app: AppHandle<R>,
 }
 
-/// Native folder picker for exporting every course. `None` means cancelled.
-async fn pick_folder<R: Runtime>(app: AppHandle<R>) -> Option<PathBuf> {
-    tokio::task::spawn_blocking(move || {
-        app.dialog()
-            .file()
-            .set_title("Choose a folder for your courses")
-            .blocking_pick_folder()
-            .and_then(|picked| picked.into_path().ok())
-    })
-    .await
-    .unwrap_or_else(|error| {
-        tracing::warn!(%error, "folder dialog task failed");
-        None
-    })
+fn dialog_failed(error: tokio::task::JoinError) -> AppError {
+    AppError::InternalError(format!("The file dialog stopped unexpectedly: {error}"))
+}
+
+#[async_trait]
+impl<R: Runtime> DestinationPicker for NativeDialogs<R> {
+    async fn pick_file(&self, suggested_file_name: &str) -> AppResult<Option<PathBuf>> {
+        let (app, suggested) = (self.app.clone(), suggested_file_name.to_owned());
+        tokio::task::spawn_blocking(move || {
+            app.dialog()
+                .file()
+                .set_title("Save course")
+                .set_file_name(suggested)
+                .add_filter("Lattice course", &[PACK_EXTENSION])
+                .blocking_save_file()
+                .and_then(|picked| picked.into_path().ok())
+        })
+        .await
+        .map_err(dialog_failed)
+    }
+
+    async fn pick_folder(&self) -> AppResult<Option<PathBuf>> {
+        let app = self.app.clone();
+        tokio::task::spawn_blocking(move || {
+            app.dialog()
+                .file()
+                .set_title("Choose a folder for your courses")
+                .blocking_pick_folder()
+                .and_then(|picked| picked.into_path().ok())
+        })
+        .await
+        .map_err(dialog_failed)
+    }
 }
 
 #[tauri::command]
@@ -120,32 +129,10 @@ pub async fn save_learning_pack_as<R: Runtime>(
     request: ExportLearningPackRequestDto,
     container: State<'_, Container>,
 ) -> Result<SaveLearningPackAsResultDto, ApiError> {
-    let packs = pack_repository(&container);
-    // A retried request answers with what it already wrote, without a dialog.
-    if let Some(export) = packs.replayed_export(&request).await? {
-        return Ok(SaveLearningPackAsResultDto {
-            cancelled: false,
-            export: Some(export),
-        });
-    }
-    packs.check_exportable(&request.program_id).await?;
-    let suggested = pack_file_name(
-        request
-            .file_name
-            .trim()
-            .trim_end_matches(".lattice-learning"),
-    );
-    let Some(chosen) = pick_save_file(app, suggested).await else {
-        return Ok(SaveLearningPackAsResultDto {
-            cancelled: true,
-            export: None,
-        });
-    };
-    let export = packs.save_as(&request, &chosen).await?;
-    Ok(SaveLearningPackAsResultDto {
-        cancelled: false,
-        export: Some(export),
-    })
+    pack_repository(&container)
+        .save_as(&request, &NativeDialogs { app })
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -155,20 +142,8 @@ pub async fn export_all_learning_packs<R: Runtime>(
     request: ExportAllLearningPacksRequestDto,
     container: State<'_, Container>,
 ) -> Result<ExportAllLearningPacksResultDto, ApiError> {
-    let packs = pack_repository(&container);
-    if let Some(done) = packs.replayed_export_all(&request).await? {
-        return Ok(done);
-    }
-    let Some(folder) = pick_folder(app).await else {
-        return Ok(ExportAllLearningPacksResultDto {
-            cancelled: true,
-            destination_dir: None,
-            exported: Vec::new(),
-            failed: Vec::new(),
-        });
-    };
-    packs
-        .export_all(&request, &folder)
+    pack_repository(&container)
+        .export_all(&request, &NativeDialogs { app })
         .await
         .map_err(ApiError::from)
 }

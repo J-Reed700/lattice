@@ -81,11 +81,12 @@ async fn export_without_activity(
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
             program_id: program.summary.id.clone(),
-            file_name: format!("provenance-{}.lattice-learning", id()),
-            include_evidence: false,
-            include_practical_artifacts: false,
-            include_source_bodies: false,
-            source_body_redistribution_confirmed: false,
+            options: LearningPackExportOptionsDto {
+                include_evidence: false,
+                include_practical_artifacts: false,
+                include_source_bodies: false,
+                source_body_redistribution_confirmed: false,
+            },
         })
         .await?;
     Ok(workspace.exports[0].destination_path.clone())

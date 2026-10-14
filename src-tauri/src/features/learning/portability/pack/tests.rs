@@ -309,7 +309,7 @@ fn schema_version_is_part_of_the_checksummed_root() -> anyhow::Result<()> {
 }
 
 #[test]
-fn entries_above_the_old_eight_mib_cap_fit_and_the_new_caps_hold() -> anyhow::Result<()> {
+fn entries_up_to_the_entry_cap_fit_and_larger_ones_are_refused_both_ways() -> anyhow::Result<()> {
     let mut large = input();
     large.entries.push(LearningPackEntry {
         path: "sources/large.json".into(),

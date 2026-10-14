@@ -12,6 +12,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 
+pub mod sections;
+use sections::{SectionPath, KEYS_ENTRY, PRACTICAL_ENTRY, SECTIONS, SOURCE_BODY_PREFIX};
+
 pub const LEARNING_PACK_FORMAT: &str = "lattice.learning-pack";
 // v4 stores learner evidence one table per entry and canvases one per entry,
 // and records the database schema that wrote it. Only this version imports:
@@ -23,10 +26,6 @@ const MAX_ENTRY_BYTES: usize = 32 * MIB;
 const MAX_TOTAL_BYTES: usize = 256 * MIB;
 const MAX_COMPRESSED_BYTES: usize = 256 * MIB;
 const MANIFEST_PATH: &str = "manifest.json";
-/// One `<table>.json` entry per program-scoped evidence table.
-pub const EVIDENCE_TABLE_PREFIX: &str = "evidence/tables/";
-/// One `<canvas-id>.json` entry per canvas, with its snapshots.
-pub const CANVAS_PREFIX: &str = "program/canvases/";
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -209,23 +208,26 @@ fn validate_schema_version(schema_version: i64) -> Result<()> {
     Ok(())
 }
 
-/// Entries under a reserved folder carry one kind and sit directly inside it
-/// as `<name>.json`; the importer derives their meaning from the path.
-fn validate_reserved_folder(path: &str, kind: &LearningPackEntryKind) -> Result<()> {
-    for (prefix, required) in [
-        (EVIDENCE_TABLE_PREFIX, LearningPackEntryKind::Evidence),
-        (CANVAS_PREFIX, LearningPackEntryKind::Canvas),
-    ] {
-        let Some(name) = path.strip_prefix(prefix) else {
-            continue;
+/// A path a section owns carries exactly the kind that section declares, and
+/// a folder section's entries sit directly inside it. The importer derives an
+/// entry's meaning from its path, so a harmless-looking entry can never be
+/// read as a different payload.
+fn validate_section_path(path: &str, kind: &LearningPackEntryKind) -> Result<()> {
+    for descriptor in SECTIONS {
+        let name = match descriptor.path {
+            SectionPath::Entry(entry) if entry == path => None,
+            SectionPath::Entry(_) => continue,
+            SectionPath::Folder { prefix, suffix } => match path.strip_prefix(prefix) {
+                Some(name) => Some(name.strip_suffix(suffix).unwrap_or("")),
+                None => continue,
+            },
         };
-        if kind != &required {
+        if kind != &descriptor.kind {
             return Err(invalid(
                 "A reserved learning-pack path has an invalid entry kind.",
             ));
         }
-        let stem = name.strip_suffix(".json").unwrap_or("");
-        if stem.is_empty() || stem.contains('/') {
+        if name.is_some_and(|stem| stem.is_empty() || stem.contains('/')) {
             return Err(invalid(
                 "A learning-pack entry in a reserved folder has an invalid name.",
             ));
@@ -256,17 +258,14 @@ fn validate_content_policy(
     entries: impl IntoIterator<Item = (String, LearningPackEntryKind)>,
 ) -> Result<()> {
     let entries: Vec<(String, LearningPackEntryKind)> = entries.into_iter().collect();
-    let has_keys = entries
-        .iter()
-        .any(|(path, _)| path == "program/answer-keys.json");
+    let has_keys = entries.iter().any(|(path, _)| path == KEYS_ENTRY);
     let has_evidence = entries.iter().any(|(path, kind)| {
         matches!(
             kind,
             LearningPackEntryKind::Attempt
                 | LearningPackEntryKind::Evidence
                 | LearningPackEntryKind::Canvas
-        ) || (kind == &LearningPackEntryKind::PracticalArtifact
-            && path == "practical/artifacts.json")
+        ) || (kind == &LearningPackEntryKind::PracticalArtifact && path == PRACTICAL_ENTRY)
     });
     let has_practical = entries.iter().any(|(_, kind)| {
         matches!(
@@ -304,42 +303,12 @@ fn validate_content_policy(
         }
     }
     for (path, kind) in &entries {
-        if path.starts_with("sources/bodies/") != (kind == &LearningPackEntryKind::SourceBody) {
+        if path.starts_with(SOURCE_BODY_PREFIX) != (kind == &LearningPackEntryKind::SourceBody) {
             return Err(invalid("Source-body entry paths and kinds must agree."));
         }
-        // Fixed archive paths are part of the import contract. Checking both
-        // directions prevents an otherwise harmless-looking entry from being
-        // interpreted as a different payload by a path-based importer.
-        let expected_kind = match path.as_str() {
-            "program/program.json" => Some(LearningPackEntryKind::Program),
-            "program/answer-keys.json"
-            | "program/provenance.json"
-            | "program/outcomes.json"
-            | "curriculum/lesson-state.json" => Some(LearningPackEntryKind::Curriculum),
-            "program/attempts.json" => Some(LearningPackEntryKind::Attempt),
-            "evidence/events.json" | "evidence/follow-ups.json" => {
-                Some(LearningPackEntryKind::Evidence)
-            }
-            "practical/artifacts.json" => Some(LearningPackEntryKind::PracticalArtifact),
-            "sources/library.json" | "sources/selectors.json" | "sources/history.json" => {
-                Some(LearningPackEntryKind::SourceMetadata)
-            }
-            _ => None,
-        };
-        if expected_kind
-            .as_ref()
-            .is_some_and(|expected| expected != kind)
-        {
-            return Err(invalid(
-                "A reserved learning-pack path has an invalid entry kind.",
-            ));
-        }
-        validate_reserved_folder(path, kind)?;
-        if path == "program/answer-keys.json" && kind != &LearningPackEntryKind::Curriculum {
-            return Err(invalid("The answer-key entry has an invalid kind."));
-        }
+        validate_section_path(path, kind)?;
         if matches!(kind, LearningPackEntryKind::SourceBody) {
-            let name = path.strip_prefix("sources/bodies/").unwrap_or("");
+            let name = path.strip_prefix(SOURCE_BODY_PREFIX).unwrap_or("");
             if name.len() != 68
                 || !name.ends_with(".txt")
                 || !name

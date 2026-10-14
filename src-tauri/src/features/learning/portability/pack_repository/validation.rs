@@ -1,5 +1,7 @@
 //! Pure checks on a decoded pack, run before anything is written.
 use super::*;
+use super::{entries::PrivateAnswerKey, evidence_tables::LearningEvidenceSnapshot};
+use std::collections::HashSet;
 
 pub(super) fn validate_aggregate_id_namespaces(
     snapshot: &LearningEvidenceSnapshot,

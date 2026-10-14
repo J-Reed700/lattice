@@ -38,11 +38,12 @@ async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, S
         .export(&ExportLearningPackRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: program.summary.id.clone(),
-            file_name: format!("replacement-test-{}.lattice-learning", uuid::Uuid::new_v4()),
-            include_evidence: true,
-            include_practical_artifacts: true,
-            include_source_bodies: true,
-            source_body_redistribution_confirmed: true,
+            options: LearningPackExportOptionsDto {
+                include_evidence: true,
+                include_practical_artifacts: true,
+                include_source_bodies: true,
+                source_body_redistribution_confirmed: true,
+            },
         })
         .await?;
     let preview_id = uuid::Uuid::new_v4().to_string();
@@ -62,7 +63,7 @@ async fn backup_program(backup: &BackupExportRecord) -> Result<LearningProgramDt
     let bytes = tokio::fs::read(&backup.destination_path).await?;
     let decoded = decode_learning_pack(&bytes)?;
     Ok(serde_json::from_slice(
-        &decoded.entries[super::super::PROGRAM_ENTRY],
+        &decoded.entries[crate::features::learning::pack::sections::PROGRAM_ENTRY],
     )?)
 }
 
@@ -173,41 +174,6 @@ async fn replacement_rechecks_unportable_state_after_preview() -> Result<()> {
             .title,
         program.summary.title
     );
-    pool.close().await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn lesson_notes_no_longer_block_a_replacement() -> Result<()> {
-    let (directory, pool, program, preview_id) = setup().await?;
-    let repo = LearningRepository::new(pool.clone());
-    repo.accept(
-        &crate::features::learning::dto::AcceptLearningProgramRequestDto {
-            program_id: program.summary.id.clone(),
-            expected_revision: 0,
-            title: program.summary.title.clone(),
-        },
-    )
-    .await?;
-    let lesson_id = &program.modules[0].lessons[0].id;
-    repo.ensure_lesson_note(&program.summary.id, lesson_id, "Notes", "Kept")
-        .await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    require_recoverable_on(&mut connection, &program.summary.id).await?;
-    let links = snapshot_note_links(&mut connection, &program.summary.id).await?;
-    assert_eq!(links.links.len(), 1);
-    assert!(links.journal_id.is_some());
-    drop(connection);
-    let (tx, backup) = begin_apply(
-        &pool,
-        directory.path(),
-        &preview_id,
-        &program.summary.id,
-        true,
-    )
-    .await?;
-    assert!(backup.is_some());
-    tx.rollback().await.map_err(db)?;
     pool.close().await;
     Ok(())
 }

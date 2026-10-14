@@ -20,9 +20,7 @@ async fn course(pool: &SqlitePool) -> Result<String> {
 }
 
 async fn export(pool: &SqlitePool, dir: &std::path::Path, program_id: &str) -> Result<String> {
-    let workspace = packs(pool, dir)
-        .export(&move_request(program_id, "evidence"))
-        .await?;
+    let workspace = packs(pool, dir).export(&move_request(program_id)).await?;
     Ok(workspace.exports[0].destination_path.clone())
 }
 
@@ -46,7 +44,7 @@ async fn merge_into(packs: &LearningPackRepository, path: &str) -> Result<()> {
 }
 
 #[tokio::test]
-async fn an_evidence_table_above_eight_mib_round_trips() -> Result<()> {
+async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Result<()> {
     let home = pool().await?;
     let program_id = course(&home).await?;
     let large = serde_json::to_string(&"x".repeat(9 * 1024 * 1024))?;
@@ -93,7 +91,7 @@ async fn a_table_over_the_import_cap_is_refused_at_export_and_backup() -> Result
     };
 
     let refused = home_packs
-        .export(&move_request(&program_id, "Too heavy"))
+        .export(&move_request(&program_id))
         .await
         .expect_err("no computer could import this pack");
     names_cap(&refused);

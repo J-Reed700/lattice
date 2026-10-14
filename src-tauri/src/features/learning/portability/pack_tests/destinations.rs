@@ -1,9 +1,10 @@
 //! Where packs are written: suffixed names in the app's folder, and a file
 //! the user chose, which is never inside the app's data or a link.
-use super::{move_request, packs};
+use super::{move_request, packs, picks, saved, Picks};
 use crate::features::learning::{
     pack::decode_learning_pack,
     pack_repository::pack_file_name,
+    portability_dto::SaveLearningPackAsResultDto,
     repository::LearningRepository,
     tests::{fixture, pool},
 };
@@ -11,7 +12,12 @@ use crate::shared::error::{AppError, Result};
 use std::path::Path;
 
 async fn course(pool: &sqlx::SqlitePool) -> Result<String> {
-    let program = fixture();
+    titled_course(pool, &fixture().summary.title).await
+}
+
+async fn titled_course(pool: &sqlx::SqlitePool, title: &str) -> Result<String> {
+    let mut program = fixture();
+    program.summary.title = title.into();
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
@@ -90,15 +96,13 @@ fn pack_file_names_drop_separators_and_cap_their_length() {
 }
 
 #[tokio::test]
-async fn managed_exports_take_the_next_free_suffix() -> Result<()> {
+async fn managed_exports_are_named_after_the_course_and_take_the_next_free_suffix() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let program_id = titled_course(&pool, "Shared name").await?;
     let app_data = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
     for _ in 0..3 {
-        packs
-            .export(&move_request(&program_id, "Shared name"))
-            .await?;
+        packs.export(&move_request(&program_id)).await?;
     }
     assert_eq!(
         names(&app_data.path().join("learning-packs"))?,
@@ -114,44 +118,37 @@ async fn managed_exports_take_the_next_free_suffix() -> Result<()> {
 }
 
 #[tokio::test]
-async fn export_to_path_writes_and_records_a_chosen_file() -> Result<()> {
+async fn save_as_writes_and_records_the_chosen_file_and_a_retry_asks_nothing() -> Result<()> {
     let pool = pool().await?;
     let program_id = course(&pool).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
     let target = elsewhere.path().join("course.lattice-learning");
-    let request = move_request(&program_id, "ignored");
-    let export = packs.export_to_path(&request, &target).await?;
-    assert_eq!(export.destination_path, target.to_string_lossy());
+    let request = move_request(&program_id);
+    let export = saved(packs.save_as(&request, &picks(&target)).await?)?;
+    let written = std::fs::canonicalize(elsewhere.path())?.join("course.lattice-learning");
+    assert_eq!(export.destination_path, written.to_string_lossy());
     let decoded = decode_learning_pack(&tokio::fs::read(&target).await?)?;
     assert_eq!(decoded.manifest.root_sha256, export.manifest.root_sha256);
     assert_eq!(packs.workspace(&program_id).await?.exports[0].id, export.id);
-    // The same request replays: same record, no second file.
-    let replay = packs.export_to_path(&request, &target).await?;
+    // The same request replays without a dialog: same record, no second file.
+    let replay = saved(packs.save_as(&request, &Picks(None)).await?)?;
     assert_eq!(replay.id, export.id);
     assert_eq!(names(elsewhere.path())?, ["course.lattice-learning"]);
     Ok(())
 }
 
 #[tokio::test]
-async fn a_failed_write_leaves_no_temporary_file_behind() -> Result<()> {
+async fn a_dismissed_save_dialog_writes_and_records_nothing() -> Result<()> {
     let pool = pool().await?;
     let program_id = course(&pool).await?;
     let app_data = tempfile::tempdir()?;
-    let elsewhere = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
-    // The temporary file is written beside the target, then renamed over it;
-    // renaming a file over a folder fails after the write succeeded.
-    let target = elsewhere.path().join("course.lattice-learning");
-    tokio::fs::create_dir(&target).await?;
-    tokio::fs::write(target.join("keep.txt"), b"keep me").await?;
-    packs
-        .export_to_path(&move_request(&program_id, "ignored"), &target)
-        .await
-        .expect_err("a pack cannot replace a folder");
-    assert_eq!(names(elsewhere.path())?, ["course.lattice-learning"]);
-    assert_eq!(tokio::fs::read(target.join("keep.txt")).await?, b"keep me");
+    let result = packs
+        .save_as(&move_request(&program_id), &Picks(None))
+        .await?;
+    assert!(matches!(result, SaveLearningPackAsResultDto::Cancelled));
     assert!(packs.workspace(&program_id).await?.exports.is_empty());
     Ok(())
 }
@@ -164,22 +161,19 @@ async fn a_replayed_export_whose_file_was_deleted_is_written_again() -> Result<(
     let elsewhere = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
 
-    let request = move_request(&program_id, "ignored");
+    let request = move_request(&program_id);
     let target = elsewhere.path().join("course.lattice-learning");
-    let first = packs.export_to_path(&request, &target).await?;
+    let first = saved(packs.save_as(&request, &picks(&target)).await?)?;
     tokio::fs::remove_file(&target).await?;
-    assert!(packs.replayed_export(&request).await?.is_none());
-    let again = packs.export_to_path(&request, &target).await?;
+    let again = saved(packs.save_as(&request, &picks(&target)).await?)?;
     assert_ne!(again.id, first.id);
     decode_learning_pack(&tokio::fs::read(&target).await?)?;
-    // The ledger now answers with the new file.
-    assert_eq!(
-        packs.replayed_export(&request).await?.map(|done| done.id),
-        Some(again.id.clone())
-    );
+    // The ledger now answers with the new file, without a dialog.
+    let replayed = saved(packs.save_as(&request, &Picks(None)).await?)?;
+    assert_eq!(replayed.id, again.id);
 
     // The same holds for the app's own folder.
-    let managed = move_request(&program_id, "Managed");
+    let managed = move_request(&program_id);
     let written = packs.export(&managed).await?;
     let path = written
         .exports
@@ -217,7 +211,7 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
             tokio::fs::create_dir_all(parent).await?;
         }
         let error = packs
-            .save_as(&move_request(&program_id, "x"), &inside)
+            .save_as(&move_request(&program_id), &picks(&inside))
             .await
             .expect_err("inside the app data folder");
         assert!(
@@ -235,7 +229,7 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
         let link = elsewhere.path().join("link.lattice-learning");
         std::os::unix::fs::symlink(&real, &link)?;
         let error = packs
-            .save_as(&move_request(&program_id, "x"), &link)
+            .save_as(&move_request(&program_id), &picks(&link))
             .await
             .expect_err("a link is never followed or replaced");
         assert!(error.to_string().contains("link or a folder"), "{error}");
@@ -248,12 +242,12 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
     let folder = elsewhere.path().join("folder.lattice-learning");
     tokio::fs::create_dir(&folder).await?;
     assert!(packs
-        .save_as(&move_request(&program_id, "x"), &folder)
+        .save_as(&move_request(&program_id), &picks(&folder))
         .await
         .is_err());
 
     let error = packs
-        .save_as(&move_request(&program_id, "x"), &real)
+        .save_as(&move_request(&program_id), &picks(&real))
         .await
         .expect_err("an existing non-pack file");
     assert!(
@@ -267,7 +261,7 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
         .join("no-such-folder")
         .join("course.lattice-learning");
     assert!(packs
-        .save_as(&move_request(&program_id, "x"), &missing)
+        .save_as(&move_request(&program_id), &picks(&missing))
         .await
         .is_err());
     assert!(packs.workspace(&program_id).await?.exports.is_empty());
@@ -281,21 +275,25 @@ async fn save_as_adds_the_extension_and_replaces_an_existing_pack_atomically() -
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
-    let first = packs
-        .save_as(
-            &move_request(&program_id, "x"),
-            &elsewhere.path().join("My course"),
-        )
-        .await?;
+    let first = saved(
+        packs
+            .save_as(
+                &move_request(&program_id),
+                &picks(&elsewhere.path().join("My course")),
+            )
+            .await?,
+    )?;
     assert!(first
         .destination_path
         .ends_with("My course.lattice-learning"));
-    let second = packs
-        .save_as(
-            &move_request(&program_id, "x"),
-            &elsewhere.path().join("My course.lattice-learning"),
-        )
-        .await?;
+    let second = saved(
+        packs
+            .save_as(
+                &move_request(&program_id),
+                &picks(&elsewhere.path().join("My course.lattice-learning")),
+            )
+            .await?,
+    )?;
     assert_eq!(second.destination_path, first.destination_path);
     assert_ne!(second.manifest.pack_id, first.manifest.pack_id);
     let decoded = decode_learning_pack(&tokio::fs::read(&second.destination_path).await?)?;
@@ -312,18 +310,20 @@ async fn save_as_never_replaces_a_pack_the_dialog_did_not_name() -> Result<()> {
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
     let packs = packs(&pool, app_data.path());
-    let existing = packs
-        .save_as(
-            &move_request(&program_id, "x"),
-            &elsewhere.path().join("My course.lattice-learning"),
-        )
-        .await?;
+    let existing = saved(
+        packs
+            .save_as(
+                &move_request(&program_id),
+                &picks(&elsewhere.path().join("My course.lattice-learning")),
+            )
+            .await?,
+    )?;
     // The user typed "My course" and the dialog did not add the extension:
     // it asked about "My course", never about the pack beside it.
     let error = packs
         .save_as(
-            &move_request(&program_id, "x"),
-            &elsewhere.path().join("My course"),
+            &move_request(&program_id),
+            &picks(&elsewhere.path().join("My course")),
         )
         .await
         .expect_err("the existing pack was never confirmed");
